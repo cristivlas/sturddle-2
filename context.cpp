@@ -224,6 +224,7 @@ bool USE_NNUE = true;
 static std::string NNUE_init_msg;
 
 static std::vector<std::array<NNUEdata, PLY_MAX>> NNUE_accumulator_data(SMP_CORES);
+static std::vector<std::array<nnue::Data, PLY_MAX>> NNUE_data(SMP_CORES);
 
 
 void NNUE::log_init_message()
@@ -350,6 +351,12 @@ NNUE_update_dirty_pieces(
     }
 }
 
+/** NNUE 2.0 */
+static void nnue2_eval(int tid, int ply, const State& state)
+{
+    auto& data = NNUE_data[tid][ply];
+    nnue::one_hot_encode(state, data._encoding);
+}
 
 /*
  * Incremental position evaluation using (a fork of) nnue-probe.
@@ -360,6 +367,10 @@ NNUE_update_dirty_pieces(
  */
 void search::Context::eval_incremental()
 {
+    /** experiment */
+    nnue2_eval(tid(), _ply, state());
+
+
     int8_t pieces[33];
     int8_t squares[33];
 
@@ -518,6 +529,7 @@ namespace search
 
         #if WITH_NNUE
             NNUE_accumulator_data.resize(n_threads);
+            NNUE_data.resize(n_threads);
         #endif
 
             for (size_t n = 0; n < n_threads; ++n)

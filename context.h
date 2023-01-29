@@ -20,6 +20,7 @@
  */
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <map>
@@ -60,6 +61,34 @@ struct NNUE
     static void log_init_message();
 };
 
+/********************************************************/
+/** NNUE 2.0. TODO: Consider moving to separate header. */
+/********************************************************/
+namespace nnue
+{
+    using namespace chess;
+
+    template <typename T>
+    INLINE void one_hot_encode(const State& state, T& encoding)
+    {
+        /* Iterate over the 64 squares on the chess board */
+        for (int i = 0; i != 64; ++i)
+        {
+            int j = 0;
+            if (const auto piece_type = state.piece_type_at(Square(i)))
+            {
+                const auto piece_color = state.piece_color_at(Square(i));
+                j = piece_type + 6 * (piece_color != state.turn);
+            }
+            encoding[i * 13 + j] = 1;
+        }
+    }
+
+    struct Data
+    {
+        std::array<int16_t, 832> _encoding;
+    };
+}
 
 namespace search
 {
