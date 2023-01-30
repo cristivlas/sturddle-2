@@ -95,7 +95,7 @@ namespace nnue
         static constexpr int INPUTS = 832;
         static constexpr int OUTPUTS = 256;
 
-        int8_t _encoding[INPUTS] = { 0 };
+        int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
         ALIGN float _output[OUTPUTS] = { 0 };
 
         template <typename L> INLINE void add(const L& layer, int i)
@@ -116,24 +116,23 @@ namespace nnue
 
         template<typename L> INLINE void update(const L& layer, const State& state)
         {
-            memset(&_encoding, 0, sizeof(_encoding));
-            one_hot_encode(state, _encoding);
-
-            layer.dot_product(_encoding, _output);
+            memset(&_input, 0, sizeof(_input));
+            one_hot_encode(state, _input);
+            layer.dot_product(_input, _output);
         }
 
         template<typename L> INLINE
         void update(const L& layer, const State& state, const Accumulator& prev)
         {
-            memset(&_encoding, 0, sizeof(_encoding));
-            one_hot_encode(state, _encoding);
+            memset(&_input, 0, sizeof(_input));
+            one_hot_encode(state, _input);
 
             memcpy(_output, prev._output, sizeof(_output));
             for (int i = 0; i != INPUTS; ++i)
             {
-                if (!_encoding[i] && prev._encoding[i])
+                if (!_input[i] && prev._input[i])
                     remove(layer, i);
-                if (_encoding[i] && !prev._encoding[i])
+                if (_input[i] && !prev._input[i])
                     add(layer, i);
             }
         }
@@ -145,8 +144,11 @@ namespace nnue
         ALIGN float input[L::INPUTS];
         ALIGN float output[1];
 
-        static_assert(sizeof(input) == sizeof(a._output));
-        memcpy(input, a._output, sizeof(a._output));
+        static_assert(L::INPUTS == Accumulator::OUTPUTS);
+        #pragma clang loop vectorize(enable)
+        for (int i = 0; i != Accumulator::OUTPUTS; ++i)
+            input[i] = a._output[i];
+
         activation(input);
 
         layer.dot_product(input, output);
