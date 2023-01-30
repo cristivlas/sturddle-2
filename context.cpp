@@ -224,6 +224,7 @@ static nnue::Layer<256, 1> L2(out_w, out_b);
 void search::Context::eval_nnue()
 {
     auto& acc = NNUE_data[tid()][_ply];
+    memset(&acc._encoding, 0, sizeof(acc._encoding));
     nnue::one_hot_encode(state(), acc._encoding);
     auto eval = nnue::eval(acc, L1, L2);
 
@@ -239,9 +240,28 @@ void search::Context::eval_nnue()
     _eval = std::max(-CHECKMATE, std::min(CHECKMATE, eval));
 }
 
+
+int nnue::eval_fen(const std::string& fen)
+{
+    auto ctxt = search::Context();
+    chess::State state;
+    ASSERT_ALWAYS(ctxt.tid() == 0);
+    ASSERT_ALWAYS(ctxt._ply == 0);
+    ctxt._state = &state;
+    chess::parse_fen(fen, state);
+    ctxt.eval_nnue();
+    return ctxt._eval;
+}
+
 #else
 
 bool USE_NNUE = false;
+
+
+int nnue::eval_fen(const std::string& fen)
+{
+    return 0;
+}
 
 #endif /* WITH_NNUE */
 

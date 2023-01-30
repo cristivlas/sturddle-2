@@ -407,8 +407,12 @@ cdef extern from 'context.h' namespace 'search':
         int moves
 
 
-# def nnue_eval_fen(fen):
-#     return nnue.eval_fen(fen.encode())
+cdef extern from 'nnue.h' namespace 'nnue':
+    int eval_fen(const string&) nogil
+
+
+def nnue_eval_fen(fen):
+    return eval_fen(fen.encode())
 
 
 cdef extern from 'search.h':
