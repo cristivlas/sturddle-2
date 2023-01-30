@@ -22,6 +22,8 @@
 #include "common.h"
 #include "chess.h"
 
+#define ALIGN alignas(32)
+
 namespace nnue
 {
     using namespace chess;
@@ -52,8 +54,6 @@ namespace nnue
         for (int i = 0; i != N; ++i)
             output[i] = clipped_relu(output[i]);
     }
-
-#define ALIGN alignas(32)
 
     template <int N, int M, typename T=float, int Scale=1>
     struct Layer
@@ -96,24 +96,65 @@ namespace nnue
         static constexpr int OUTPUTS = 256;
 
         int8_t _encoding[INPUTS] = { 0 };
-        ALIGN int16_t output[OUTPUTS] = { 0 };
+        ALIGN float _output[OUTPUTS] = { 0 };
+
+        template <typename L> INLINE void add(const L& layer, int i)
+        {
+            static_assert(L::OUTPUTS == OUTPUTS);
+            #pragma clang loop vectorize(enable)
+            for (int j = 0; j != layer.OUTPUTS; ++j)
+                _output[j] += layer._wt[j][i];
+        }
+
+        template<typename L> INLINE void remove(const L& layer, int i)
+        {
+            static_assert(L::OUTPUTS == OUTPUTS);
+            #pragma clang loop vectorize(enable)
+            for (int j = 0; j != layer.OUTPUTS; ++j)
+                _output[j] -= layer._wt[j][i];
+        }
+
+        template<typename L> INLINE void update(const L& layer, const State& state)
+        {
+            memset(&_encoding, 0, sizeof(_encoding));
+            one_hot_encode(state, _encoding);
+
+            layer.dot_product(_encoding, _output);
+        }
+
+        template<typename L> INLINE
+        void update(const L& layer, const State& state, const Accumulator& prev)
+        {
+            memset(&_encoding, 0, sizeof(_encoding));
+            one_hot_encode(state, _encoding);
+
+            memcpy(_output, prev._output, sizeof(_output));
+            for (int i = 0; i != INPUTS; ++i)
+            {
+                if (!_encoding[i] && prev._encoding[i])
+                    remove(layer, i);
+                if (_encoding[i] && !prev._encoding[i])
+                    add(layer, i);
+            }
+        }
     };
 
 
-    template <typename L1, typename L2>
-    INLINE int eval(const Accumulator& a, const L1& l1, const L2& l2)
+    template <typename L> INLINE int eval(const Accumulator& a, const L& layer)
     {
-        ALIGN float l2_input[L2::INPUTS];
+        ALIGN float input[L::INPUTS];
         ALIGN float output[1];
 
-        l1.dot_product(a._encoding, l2_input);
-        activation(l2_input);
+        static_assert(sizeof(input) == sizeof(a._output));
+        memcpy(input, a._output, sizeof(a._output));
+        activation(input);
 
-        l2.dot_product(l2_input, output);
+        layer.dot_product(input, output);
         return 100 * output[0];
     }
-#undef ALIGN
 
     int eval_fen(const std::string&);
 
 } /* namespace nnue */
+
+#undef ALIGN

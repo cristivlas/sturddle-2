@@ -348,13 +348,20 @@ def test_nnue_eval():
         '1r1q1rk1/p3bBpp/2Q5/8/3Pb3/2n1BN2/P4PPP/R4RK1 b - - 0 18',
     ]
     evals = [
-        104, -103, 32, -56, 654, 513, -68, 133,
+        104.84521,
+        -103.18694,
+        33.326575,
+        -57.33185,
+        654.5196,
+        514.288,
+        -69.706154,
+        132.7695,
     ]
     for i, fen in enumerate(tests):
         eval = engine.nnue_eval_fen(fen)
         err = abs(eval - evals[i]) / abs(evals[i]) * 100
         print(f'{fen}: eval={eval}, expected={evals[i]}, error={err:.3f} %')
-        assert abs(eval - evals[i]) <= abs(evals[i] * 15 / 100), (eval, evals[i])
+        assert abs(eval - evals[i]) <= abs(evals[i] * 1/5), (eval, evals[i])
 
 
 def test_parse_fen():

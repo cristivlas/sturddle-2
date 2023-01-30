@@ -224,9 +224,11 @@ static nnue::Layer<256, 1, int16_t, 64> L2(out_w, out_b);
 void search::Context::eval_nnue()
 {
     auto& acc = NNUE_data[tid()][_ply];
-    memset(&acc._encoding, 0, sizeof(acc._encoding));
-    nnue::one_hot_encode(state(), acc._encoding);
-    auto eval = nnue::eval(acc, L1, L2);
+    if (_ply >= 2)
+        acc.update(L1, state(), NNUE_data[tid()][_ply - 2]);
+    else
+        acc.update(L1, state());
+    auto eval = nnue::eval(acc, L2);
 
     eval += eval_fuzz();
 
