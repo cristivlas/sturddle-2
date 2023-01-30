@@ -55,7 +55,7 @@ namespace nnue
 
 #define ALIGN alignas(32)
 
-    template <int NInputs, int NOutputs, typename T=int16_t, int Scale=64>
+    template <int NInputs, int NOutputs, typename T=float, int Scale=1>
     struct Layer
     {
         static constexpr int num_inputs = NInputs;
@@ -83,15 +83,16 @@ namespace nnue
                 output[j] = _b[j] * scale;
 
                 for (int i = 0; i != NInputs; ++i)
-                    output[j] += T(scale * input[i]) * _wt[j][i];
-                output[j] /= scale * scale;
+                    output[j] += scale * input[i] * _wt[j][i];
+                if constexpr(Scale > 1)
+                    output[j] /= scale * scale;
             }
         }
     };
 
     struct Accumulator
     {
-        uint8_t _encoding[832] = { 0 };
+        int8_t _encoding[832] = { 0 };
     };
 
 

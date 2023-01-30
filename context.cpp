@@ -219,7 +219,7 @@ bool USE_NNUE = true;
 static std::vector<std::array<nnue::Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
 
 static nnue::Layer<832, 256> L1(hidden_w, hidden_b);
-static nnue::Layer<256, 1> L2(out_w, out_b);
+static nnue::Layer<256, 1, int16_t, 64> L2(out_w, out_b);
 
 void search::Context::eval_nnue()
 {

@@ -348,13 +348,13 @@ def test_nnue_eval():
         '1r1q1rk1/p3bBpp/2Q5/8/3Pb3/2n1BN2/P4PPP/R4RK1 b - - 0 18',
     ]
     evals = [
-        57, -1074, -63, -277, 974, 426, 92, -249
+        104, -103, 32, -56, 654, 513, -68, 133,
     ]
     for i, fen in enumerate(tests):
         eval = engine.nnue_eval_fen(fen)
-        #assert eval == evals[i], (eval, evals[i])
-        #assert eval == engine.nnue_eval_board(chess.Board(fen=fen)), (fen, eval)
-        print(f'{fen} eval={eval}')
+        err = abs(eval - evals[i]) / abs(evals[i]) * 100
+        print(f'{fen}: eval={eval}, expected={evals[i]}, error={err:.3f} %')
+        assert abs(eval - evals[i]) <= abs(evals[i] * 15 / 100), (eval, evals[i])
 
 
 def test_parse_fen():
@@ -376,7 +376,7 @@ def test_parse_fen():
             result = board.epd()
             assert fen == result, (result, fen)
             assert board.is_valid()
-            print(f'Ok: "{result}"')
+            # print(f'Ok: "{result}"')
 
 
 test_castling()
