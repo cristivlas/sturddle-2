@@ -600,7 +600,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         }
     }
 
-    ctxt.eval_incremental();
+    ctxt.eval_nnue();
 
     /*
      * https://www.chessprogramming.org/Node_Types#PV

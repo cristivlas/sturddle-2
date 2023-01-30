@@ -39,8 +39,6 @@ sourcefiles = [
     'context.cpp',
     'search.cpp',
     'uci_native.cpp',
-    'nnue-probe/src/misc.cpp',
-    'nnue-probe/src/nnue.cpp',
 ]
 
 
@@ -50,7 +48,6 @@ Compiler args.
 inc_dirs = [
     '-I./libpopcnt',
     '-I./magic-bits/include',
-    '-I./nnue-probe/src',
 ]
 
 link = []

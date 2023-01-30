@@ -21,7 +21,6 @@ static void raise_runtime_error(const char* err)
 #include <string>
 #include <sstream>
 #include <vector>
-#include "nnue.h"
 #include "thread_pool.hpp" /* pondering, go infinite */
 
 #if 0
@@ -225,26 +224,6 @@ namespace
         void set(std::string_view value) override { _set_param(_name, to_int(value), true); }
     };
 
-    struct OptionEvalFile : public OptionBase
-    {
-        std::string &_eval_file;
-        explicit OptionEvalFile(std::string& eval_file) : OptionBase("EvalFile"), _eval_file(eval_file) {}
-
-        void print(std::ostream& out) const override
-        {
-            OptionBase::print(out);
-            out << "type string default " << _eval_file;
-        }
-
-        void set(std::string_view value) override
-        {
-            if (nnue_init(std::string(value).c_str()))
-                _eval_file = value;
-            else
-                raise_value_error("invalid NNUE file: {}", value);  /* refuse to run without valid NNUE */
-        }
-    };
-
     struct OptionSyzygy : public OptionBase
     {
         OptionSyzygy() : OptionBase("SyzygyPath") {}
@@ -295,7 +274,6 @@ public:
         _options.emplace("debug", std::make_shared<OptionBool>("Debug", _debug));
         _options.emplace("ownbook", std::make_shared<OptionBool>("OwnBook", _use_opening_book));
         _options.emplace("ponder", std::make_shared<OptionBool>("Ponder", _ponder));
-        _options.emplace("evalfile", std::make_shared<OptionEvalFile>(_eval_file));
         _options.emplace("syzygypath", std::make_shared<OptionSyzygy>());
     }
 
@@ -438,7 +416,6 @@ private:
     search::ContextBuffer _buf;
     search::TranspositionTable _tt;
     std::string _book = "book.bin";
-    std::string _eval_file = NNUE_EVAL_FILE;
     std::atomic_int _extended_time = 0; /* for pondering */
     int _book_depth = max_depth;
     int _depth = max_depth;

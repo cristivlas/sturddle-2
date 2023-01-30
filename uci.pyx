@@ -82,17 +82,6 @@ ALGORITHM = { 'mtdf': engine.MTDf_i,
 }
 
 
-def _set_eval_file(eval_file):
-    if engine.nnue_init(*path.split(eval_file)):
-        return True
-    error = f'nnue_init: {eval_file} ' + (
-        'is not valid' if path.exists(eval_file) else 'file not found'
-    )
-    logging.error(error)
-    print(f'info string {error}')
-    return False
-
-
 def _strbool(b):
     return str(b).lower()
 
@@ -342,9 +331,6 @@ class UCI:
             self.best_opening = (value == 'true')
         elif name == 'SyzygyPath':
             engine.set_syzygy_path(value)
-        elif name == 'EvalFile':
-            if not _set_eval_file(value):
-                return False
         else:
             if value in ['true', 'false']:
                 engine.set_param(name, value == 'true')
@@ -379,8 +365,6 @@ class UCI:
         self.output(f'option name Algorithm type combo default {self.args.algorithm} ' + \
             ' '.join([f'var {k}' for k in ALGORITHM.keys()]))
         self.output(f'option name BestOpening type check default {_strbool(self.best_opening)}')
-        if engine.nnue_ok():
-            self.output(f'option name EvalFile type string default {engine.NNUE_FILE}')
         if engine.opening_book():
             self.output(f'option name OwnBook type check default {_strbool(self.use_opening_book)}')
         self.output(f'option name Ponder type check default {_strbool(self.ponder_enabled)}')

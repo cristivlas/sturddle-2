@@ -379,15 +379,10 @@ cdef class BoardState:
         return zobrist_hash(self._state)
 
 
-    cpdef int nnue(self):
-        return NNUE.eval(self._state)
-
-
 # ---------------------------------------------------------------------
 # context.h
 # ---------------------------------------------------------------------
 cdef extern from 'context.h' nogil:
-    const char* const NNUE_EVAL_FILE
 
     cdef void run_uci_loop(const char* name, const char* version, bool) except*
     #
@@ -405,23 +400,6 @@ cdef extern from 'context.h' nogil:
     map[string, Param] _get_param_info() except+
 
 
-    cdef cppclass NNUE:
-        @staticmethod
-        int piece(PieceType, Color)
-
-        @staticmethod
-        int eval(const BoardPosition&)
-
-        @staticmethod
-        int eval_fen(const string& fen)
-
-        @staticmethod
-        bool init(const string& data_dir, const string& eval_file)
-
-        @staticmethod
-        void log_init_message()
-
-
 cdef extern from 'context.h' namespace 'search':
     cdef cppclass TimeControl:
         int millisec[2]
@@ -429,18 +407,8 @@ cdef extern from 'context.h' namespace 'search':
         int moves
 
 
-NNUE_FILE = NNUE_EVAL_FILE.decode()
-#
-# Export nnue functions for testing.
-#
-def nnue_eval_board(board: chess.Board):
-    return BoardState(board).nnue()
-
-def nnue_eval_fen(fen):
-    return NNUE.eval_fen(fen.encode())
-
-cpdef int nnue_piece(PieceType pt, Color c):
-    return NNUE.piece(pt, c)
+# def nnue_eval_fen(fen):
+#     return nnue.eval_fen(fen.encode())
 
 
 cdef extern from 'search.h':
@@ -914,7 +882,6 @@ cdef class SearchAlgorithm:
     cdef public depth, is_cancelled, time_ctrl
 
     def __init__(self, board: chess.Board, depth=100, **kwargs):
-        NNUE.log_init_message()
         self.best_move = None
         self.depth = depth
         self.is_cancelled = False
@@ -1264,46 +1231,6 @@ def read_config(fname='sturddle.cfg', echo=False):
 
 
 # ---------------------------------------------------------------------
-# NNUE testing, verify that incremental eval matches full eval results.
-# ---------------------------------------------------------------------
-def test_incremental_updates(fen):
-    cdef TranspositionTable table
-    node = NodeContext(chess.Board(fen=fen))
-    node._ctxt.set_tt(address(table))
-    node._ctxt._max_depth = 50 # avoid LMP
-
-    while True:
-        next = node._ctxt.next(False, 0, 0)
-        if next == NULL:
-            break
-
-        # Full evaluation
-        eval_full = next._state.eval_simple()
-
-        # Incremental evaluation from current node state
-        eval_incr = node._ctxt._state.eval_incremental(next._move)
-
-        if eval_full != eval_incr:
-            move = py_move(next._move).uci()
-            raise AssertionError((fen, move, eval_full, eval_incr))
-
-
-def nnue_init(data_dir, eval_file = NNUE_FILE):
-    if not data_dir:
-        data_dir = os.path.dirname(__file__)
-    data_dir = os.path.realpath(data_dir)
-    if NNUE.init(os.path.join(data_dir, '').encode(), eval_file.encode()):
-        global NNUE_FILE
-        if eval_file != NNUE_FILE:
-            NNUE_FILE = eval_file
-        return True
-
-
-def nnue_ok():
-    return USE_NNUE
-
-
-# ---------------------------------------------------------------------
 # optional / experimental FEN parsing (needs -DNATIVE_UCI at compile-time)
 # ---------------------------------------------------------------------
 def board_from_fen(fen: str):
@@ -1373,7 +1300,6 @@ def syzygy_path():
 Context.init()
 
 NodeContext(chess.Board()) # dummy context initializes static cpython methods
-nnue_init(os.path.dirname(__file__))
 _tb_init()
 
 __major__   = 2

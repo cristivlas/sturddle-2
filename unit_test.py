@@ -336,74 +336,25 @@ def test_repetition():
     assert node.is_repeated()
 
 
-"""
- wking=1, wqueen=2, wrook=3, wbishop= 4, wknight= 5, wpawn= 6,
- bking=7, bqueen=8, brook=9, bbishop=10, bknight=11, bpawn=12,
-"""
-def test_nnue_piece_codes():
-    assert engine.nnue_piece(chess.KING, chess.WHITE) == 1
-    assert engine.nnue_piece(chess.QUEEN, chess.WHITE) == 2
-    assert engine.nnue_piece(chess.ROOK, chess.WHITE) == 3
-    assert engine.nnue_piece(chess.BISHOP, chess.WHITE) == 4
-    assert engine.nnue_piece(chess.KNIGHT, chess.WHITE) == 5
-    assert engine.nnue_piece(chess.PAWN, chess.WHITE) == 6
-    assert engine.nnue_piece(chess.KING, chess.BLACK) == 7
-    assert engine.nnue_piece(chess.QUEEN, chess.BLACK) == 8
-    assert engine.nnue_piece(chess.ROOK, chess.BLACK) == 9
-    assert engine.nnue_piece(chess.BISHOP, chess.BLACK) == 10
-    assert engine.nnue_piece(chess.KNIGHT, chess.BLACK) == 11
-    assert engine.nnue_piece(chess.PAWN, chess.BLACK) == 12
-
-
 def test_nnue_eval():
-    tests = [
-        chess.STARTING_FEN,
-        '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - - 0 2',
-        'r2r2k1/1pp2ppp/p2q1b2/3pN3/2PP4/PP1Q3P/5PP1/R3R1K1 b - - 0 22',
-        'r4rk1/1ppnbppp/p2q4/3pNb2/3P4/PP5P/2PNBPP1/R2QK2R w KQ - 5 14',
-        'rqr3k1/p4p1p/5Qp1/2b5/2N5/2Pn2NP/P2B1PP1/2R2RK1 w - - 0 24',
-        '2r3k1/p5p1/4p3/1p1bP3/2pb2Q1/5N2/1q3P1P/3R1RK1 b - - 3 32',
-        'r4rk1/ppp2ppp/5n2/2bPn3/4K3/2NP4/PPPBB1PP/R6R w - - 3 3',
-        '1r1q1rk1/p3bBpp/2Q5/8/3Pb3/2n1BN2/P4PPP/R4RK1 b - - 0 18',
-    ]
-    evals = [
-        57, -1074, -63, -277, 974, 426, 92, -249
-    ]
-    for i, fen in enumerate(tests):
-        eval = engine.nnue_eval_fen(fen)
-        assert eval == evals[i], (eval, evals[i])
-        assert eval == engine.nnue_eval_board(chess.Board(fen=fen)), (fen, eval)
-
-
-def test_incremental_updates():
-    tests = [
-        'r3k2r/pp3ppp/1np5/5PN1/3PB3/2K1P2P/PP3q2/R2Q3R b kq -',
-        'r3r1k1/pp1q1pp1/4b1p1/3p2B1/3Q1R2/8/PPP3PP/4R1K1 w - -',
-        'r4rk1/1bR1bppp/4pn2/1p2N3/1P6/P3P3/4BPPP/3R2K1 b - -',
-        'r3r1k1/5p2/pQ1b2pB/1p6/4p3/6P1/Pq2BP1P/2R3K1 b - -',
-        '8/3b2kp/4p1p1/pr1n4/N1N4P/1P4P1/1K3P2/3R4 w - -',
-        '1br2rk1/1pqb1ppp/p3pn2/8/1P6/P1N1PN1P/1B3PP1/1QRR2K1 w - -',
-        '5rk1/2p4p/2p4r/3P4/4p1b1/1Q2NqPp/PP3P1K/R4R2 b - -',
-        'r1q2rk1/p3bppb/3p1n1p/2nPp3/1p2P1P1/6NP/PP2QPB1/R1BNK2R b KQ -',
-        'rr4k1/p1pq2pp/Q1n1pn2/2bpp3/4P3/2PP1NN1/PP3PPP/R1B1K2R b KQ -',
-        '2r1r2k/1q3ppp/p2Rp3/2p1P3/6QB/p3P3/bP3PPP/3R2K1 w - -',
-        'r1bqk2r/pp3ppp/5n2/8/1b1npB2/2N5/PP1Q2PP/1K2RBNR w kq -',
-        'r1b1r1k1/pp1nqp2/2p1p1pp/8/4N3/P1Q1P3/1P3PPP/1BRR2K1 w - -',
-        '1r3r1k/3p4/1p1Nn1R1/4Pp1q/pP3P1p/P7/5Q1P/6RK w - -',
-        '2kr4/ppp3Pp/4RP1B/2r5/5P2/1P6/P2p4/3K4 w - -',
-        'r1b1kbr1/pp3p1p/5qp1/4p3/1P2P3/P1N3P1/5P1P/R2QKB1R w KQq -',
-        '1nbq1r1k/3rbp1p/p1p1pp1Q/1p6/P1pPN3/5NP1/1P2PPBP/R4RK1 w - -',
-        '3r1rk1/p3qp1p/2bb2p1/2p5/3P4/1P6/PBQN1PPP/2R2RK1 b - -',
-        '3n2nr/4Pqpp/2k5/8/8/8/2B3PP/6K1 w - -',
-
-        # transition from non-endgame to endgame
-        '8/8/4R3/2r3pk/6Pp/7P/1PPB1P2/1K1R4 b - g3',
-
-        '4k3/8/8/8/3pP3/8/8/4K3 b - e3',
-        '4k3/8/8/3pP3/8/8/8/4K3 w - d6',
-    ]
-    for fen in tests:
-        engine.test_incremental_updates(fen)
+    # tests = [
+    #     chess.STARTING_FEN,
+    #     '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - - 0 2',
+    #     'r2r2k1/1pp2ppp/p2q1b2/3pN3/2PP4/PP1Q3P/5PP1/R3R1K1 b - - 0 22',
+    #     'r4rk1/1ppnbppp/p2q4/3pNb2/3P4/PP5P/2PNBPP1/R2QK2R w KQ - 5 14',
+    #     'rqr3k1/p4p1p/5Qp1/2b5/2N5/2Pn2NP/P2B1PP1/2R2RK1 w - - 0 24',
+    #     '2r3k1/p5p1/4p3/1p1bP3/2pb2Q1/5N2/1q3P1P/3R1RK1 b - - 3 32',
+    #     'r4rk1/ppp2ppp/5n2/2bPn3/4K3/2NP4/PPPBB1PP/R6R w - - 3 3',
+    #     '1r1q1rk1/p3bBpp/2Q5/8/3Pb3/2n1BN2/P4PPP/R4RK1 b - - 0 18',
+    # ]
+    # evals = [
+    #     57, -1074, -63, -277, 974, 426, 92, -249
+    # ]
+    # for i, fen in enumerate(tests):
+    #     eval = engine.nnue_eval_fen(fen)
+    #     assert eval == evals[i], (eval, evals[i])
+    #     assert eval == engine.nnue_eval_board(chess.Board(fen=fen)), (fen, eval)
+    pass
 
 
 def test_parse_fen():
@@ -450,10 +401,7 @@ test_longest_pawn_sequence()
 
 test_repetition()
 
-# NNUE tests
-test_nnue_piece_codes()
 test_nnue_eval()
-test_incremental_updates()
 
 test_parse_fen()
 

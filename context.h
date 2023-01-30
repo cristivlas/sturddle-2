@@ -20,7 +20,6 @@
  */
 #pragma once
 
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <map>
@@ -30,12 +29,11 @@
 #include <unordered_set> /* unordered_multiset */
 #include "Python.h"
 #include "config.h"
+#include "nnue.h"
 #include "search.h"
 #include "utility.h"
 
 constexpr auto FIRST_EXCHANGE_PLY = PLY_MAX;
-constexpr auto NNUE_EVAL_FILE = "nn-62ef826d1a6d.nnue";
-
 extern bool USE_NNUE;
 
 /* Configuration API */
@@ -44,51 +42,6 @@ extern std::map<std::string, Param> _get_param_info();
 extern void _set_param(const std::string&, int value, bool echo=false);
 extern std::map<std::string, int> _get_params();
 extern void assert_param_ref();
-
-struct NNUE
-{
-    static constexpr int NO_SQUARE = 64;
-
-    static bool init(const std::string& data_dir, const std::string& eval_file);
-    static int eval(const chess::BoardPosition&); /* test */
-    static int eval_fen(const std::string& fen); /* test */
-
-    static INLINE constexpr int piece(chess::PieceType ptype, chess::Color color)
-    {
-        return 7 - ptype + 6 * (color == chess::BLACK);
-    }
-
-    static void log_init_message();
-};
-
-/********************************************************/
-/** NNUE 2.0. TODO: Consider moving to separate header. */
-/********************************************************/
-namespace nnue
-{
-    using namespace chess;
-
-    template <typename T>
-    INLINE void one_hot_encode(const State& state, T& encoding)
-    {
-        /* Iterate over the 64 squares on the chess board */
-        for (int i = 0; i != 64; ++i)
-        {
-            int j = 0;
-            if (const auto piece_type = state.piece_type_at(Square(i)))
-            {
-                const auto piece_color = state.piece_color_at(Square(i));
-                j = piece_type + 6 * (piece_color != state.turn);
-            }
-            encoding[i * 13 + j] = 1;
-        }
-    }
-
-    struct Data
-    {
-        std::array<int16_t, 832> _encoding;
-    };
-}
 
 namespace search
 {
@@ -323,7 +276,7 @@ namespace search
 
         score_t     evaluate_end();
         score_t     evaluate_material(bool with_piece_squares = true) const;
-        void        eval_incremental();
+        void        eval_nnue();
         score_t     static_eval();
 
         void        extend();       /* fractional extensions */
@@ -695,9 +648,7 @@ namespace search
 
 
 #if !WITH_NNUE
-    INLINE void Context::eval_incremental()
-    {
-    }
+    INLINE void Context::eval_nnue() {}
 #endif /* !WITH_NNUE */
 
 

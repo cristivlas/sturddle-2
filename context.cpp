@@ -30,14 +30,11 @@
 #include <map>
 #include <sstream>
 #include "chess.h"
+#include "weights.h"
+
 #define CONFIG_IMPL
   #include "context.h"
 #undef CONFIG_IMPL
-
-#if WITH_NNUE
-  #include "auto.h" /* for NNUE_CONFIG */
-  #include "nnue.h"
-#endif
 
 #if USE_VECTOR
   #include <xmmintrin.h>
@@ -215,223 +212,36 @@ static INLINE int eval_fuzz()
 /*****************************************************************************
  *  NNUE
  *****************************************************************************/
+
 #if WITH_NNUE
 bool USE_NNUE = true;
 
+static std::vector<std::array<nnue::Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
 
-/* Logging may not be initialized when NNUE::init() is called */
-/* Hold on to message and log on first search. */
-static std::string NNUE_init_msg;
+static nnue::Layer<832, 256> L1(hidden_w, hidden_b);
+static nnue::Layer<256, 1> L2(out_w, out_b);
 
-static std::vector<std::array<NNUEdata, PLY_MAX>> NNUE_accumulator_data(SMP_CORES);
-static std::vector<std::array<nnue::Data, PLY_MAX>> NNUE_data(SMP_CORES);
-
-
-void NNUE::log_init_message()
+void search::Context::eval_nnue()
 {
-    if (!NNUE_init_msg.empty())
-    {
-        search::Context::log_message(LogLevel::INFO, NNUE_init_msg);
-        NNUE_init_msg.clear();
-    }
-}
-
-
-bool NNUE::init(const std::string& data_dir, const std::string& eval_file)
-{
-    if (nnue_init((data_dir + eval_file).c_str()))
-    {
-        USE_NNUE = true;
-        NNUE_init_msg = std::string(NNUE_CONFIG) + " " + eval_file;
-    }
-    else
-    {
-        USE_NNUE = false;
-        NNUE_init_msg = "nnue_init errno=" + std::to_string(errno);
-    }
-    return USE_NNUE;
-}
-
-
-/*
- * Convert from bitboard representation to the format expected by nnue.
- */
-template<bool Full=true, typename T=int8_t> static INLINE void
-NNUE_convert_position(const BoardPosition& pos, T (&pieces)[33], T (&squares)[33])
-{
-    pieces[0] = NNUE::piece(KING, WHITE); squares[0] = pos.king(WHITE);
-    pieces[1] = NNUE::piece(KING, BLACK); squares[1] = pos.king(BLACK);
-
-    int i = 2;
-
-    if constexpr(Full)
-    {
-        for (auto color : { BLACK, WHITE })
-            for_each_square(pos.occupied_co(color) & ~pos.kings, [&](Square s) {
-                pieces[i] = NNUE::piece(pos.piece_type_at(s), color);
-                squares[i] = s;
-                ++i;
-            });
-    }
-    ASSERT(i < 33);
-
-    pieces[i] = 0;
-    squares[i] = 0;
-}
-
-
-/* Testing */
-int NNUE::eval(const chess::BoardPosition& pos)
-{
-    int pieces[33];
-    int squares[33];
-    NNUE_convert_position(pos, pieces, squares);
-
-    /* nnue-probe colors are inverted */
-    const int turn = (pos.turn == WHITE) ? white : black;
-
-    return nnue_evaluate(turn, pieces, squares);
-}
-
-
-int NNUE::eval_fen(const std::string& fen)
-{
-    return nnue_evaluate_fen(fen.c_str());
-}
-
-
-static INLINE void
-NNUE_update_dirty_pieces(
-    const State& from_pos,
-    const State& to_pos,
-    const Move& move,
-    Color color, /* color of side that moved */
-    DirtyPiece& dp)
-{
-    dp.dirtyNum = 1;
-    dp.to[0] = move.to_square();
-
-    if (to_pos.promotion)
-    {
-        dp.pc[0] = NNUE::piece(to_pos.promotion, color);
-        dp.from[0] = NNUE::NO_SQUARE;
-        dp.pc[1] = NNUE::piece(chess::PieceType::PAWN, color);
-        dp.to[1] = NNUE::NO_SQUARE;
-        dp.from[1] = move.from_square();
-        ++dp.dirtyNum;
-    }
-    else
-    {
-        dp.pc[0] = NNUE::piece(from_pos.piece_type_at(move.from_square()), color);
-        dp.from[0] = move.from_square();
-
-        if (to_pos.is_castle)
-        {
-            const auto king_file = square_file(move.to_square());
-
-            dp.pc[1] = NNUE::piece(chess::PieceType::ROOK, color);
-            dp.from[1] = chess::rook_castle_squares[king_file == 2][0][color];
-            dp.to[1] = chess::rook_castle_squares[king_file == 2][1][color];
-            ++dp.dirtyNum;
-        }
-    }
-
-    if (to_pos.capture_value)
-    {
-        const auto capture_square = from_pos.is_en_passant(move)
-            ? Square(from_pos.en_passant_square - 8 * SIGN[color])
-            : move.to_square();
-        const auto victim_type = from_pos.piece_type_at(capture_square);
-
-        dp.pc[dp.dirtyNum] = NNUE::piece(victim_type, !color);
-        dp.to[dp.dirtyNum] = NNUE::NO_SQUARE;
-        dp.from[dp.dirtyNum] = capture_square;
-
-        ++dp.dirtyNum;
-    }
-}
-
-/** NNUE 2.0 */
-static void nnue2_eval(int tid, int ply, const State& state)
-{
-    auto& data = NNUE_data[tid][ply];
-    nnue::one_hot_encode(state, data._encoding);
-}
-
-/*
- * Incremental position evaluation using (a fork of) nnue-probe.
- *
- * https://github.com/dshawul/nnue-probe
- * https://github.com/cristivlas/nnue-probe
- * https://www.chessprogramming.org/NNUE
- */
-void search::Context::eval_incremental()
-{
-    /** experiment */
-    nnue2_eval(tid(), _ply, state());
-
-
-    int8_t pieces[33];
-    int8_t squares[33];
-
-    NNUE_convert_position<false>(state(), pieces, squares);
-    NNUEdata* nnue_data[3] = { nullptr, nullptr, nullptr };
-    auto& acc = NNUE_accumulator_data[tid()];
-    nnue_data[0] = &acc[_ply];
-    nnue_data[0]->accumulator.computedAccumulation = 0;
-
-    if (_parent)
-    {
-        if (is_null_move())
-        {
-            ASSERT(_parent->_parent);
-            nnue_data[0]->dirtyPiece = acc[_parent->_ply].dirtyPiece;
-            nnue_data[1] = &acc[_parent->_parent->_ply];
-        }
-        else
-        {
-            nnue_data[1] = &acc[_parent->_ply];
-            auto& dp = nnue_data[0]->dirtyPiece;
-            NNUE_update_dirty_pieces(_parent->state(), state(), _move, !turn(), dp);
-        }
-        if (_parent->_parent)
-        {
-            nnue_data[2] = &acc[_parent->_parent->_ply];
-        }
-    }
-    const nnue::Position pos{
-        bool(!turn()),
-        pieces,
-        squares,
-        nnue_data,
-        _state,
-        [](const void* board, int8_t (&pcs)[33], int8_t (&sqrs)[33]) {
-            NNUE_convert_position(*reinterpret_cast<const State*>(board), pcs, sqrs);
-        }
-    };
-    auto eval = nnue::evaluate(pos);
-
-    /* Verify incremental result against full eval. */
-    ASSERT(eval == NNUE::eval(state()));
+    auto& acc = NNUE_data[tid()][_ply];
+    nnue::one_hot_encode(state(), acc._encoding);
+    auto eval = nnue::eval(acc, L1, L2);
 
     eval += eval_fuzz();
 
     /* Make sure that insufficient material conditions are detected. */
     eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
 
+#if 0
     eval *= NNUE_EVAL_SCALE + evaluate_material() / 32;
     eval /= 1024;
-
+#endif
     _eval = std::max(-CHECKMATE, std::min(CHECKMATE, eval));
 }
 
 #else
 
 bool USE_NNUE = false;
-bool NNUE::init(const std::string&, const std::string&) { return false; }
-void NNUE::log_init_message() {}
-int NNUE::eval_fen(const std::string&) { return 0; }
-int NNUE::eval(const chess::BoardPosition&) { return 0; }
 
 #endif /* WITH_NNUE */
 
@@ -528,7 +338,6 @@ namespace search
             _state_stacks.resize(n_threads);
 
         #if WITH_NNUE
-            NNUE_accumulator_data.resize(n_threads);
             NNUE_data.resize(n_threads);
         #endif
 
