@@ -338,7 +338,7 @@ namespace search
         INLINE void set_tt(TranspositionTable* tt) { _tt = tt; }
         bool        should_verify_null_move() const;
         int         singular_margin() const;
-        int         tid() const { return _tt->_tid; }
+        int         tid() const { return _tt ? _tt->_tid : 0; }
         static int  time_limit() { return _time_limit.load(std::memory_order_relaxed); }
         Color       turn() const { return state().turn; }
 
