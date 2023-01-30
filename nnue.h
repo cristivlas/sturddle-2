@@ -55,34 +55,34 @@ namespace nnue
 
 #define ALIGN alignas(32)
 
-    template <int NInputs, int NOutputs, typename T=float, int Scale=1>
+    template <int N, int M, typename T=float, int Scale=1>
     struct Layer
     {
-        static constexpr int num_inputs = NInputs;
-        static constexpr int num_outputs = NOutputs;
+        static constexpr int INPUTS = N;
+        static constexpr int OUTPUTS = M;
         static constexpr float scale = Scale;
 
-        ALIGN T _b[NOutputs]; /* biases */
-        ALIGN T _wt[NOutputs][NInputs]; /* weights transposed */
+        ALIGN T _b[OUTPUTS]; /* biases */
+        ALIGN T _wt[OUTPUTS][INPUTS]; /* weights transposed */
 
-        Layer(const float(&w)[NInputs][NOutputs], const float(&b)[NOutputs])
+        Layer(const float(&w)[INPUTS][OUTPUTS], const float(&b)[OUTPUTS])
         {
-            for (int j = 0; j != NOutputs; ++j)
+            for (int j = 0; j != OUTPUTS; ++j)
                 _b[j] = b[j] * Scale;
 
-            for (int i = 0; i != NInputs; ++i)
-                for (int j = 0; j != NOutputs; ++j)
+            for (int i = 0; i != INPUTS; ++i)
+                for (int j = 0; j != OUTPUTS; ++j)
                     _wt[j][i] = w[i][j] * Scale;
         }
 
         template <typename V>
-        INLINE void dot_product(const V(&input)[NInputs], float(&output)[NOutputs]) const
+        INLINE void dot_product(const V(&input)[INPUTS], float(&output)[OUTPUTS]) const
         {
-            for (int j = 0; j != NOutputs; ++j)
+            for (int j = 0; j != OUTPUTS; ++j)
             {
                 output[j] = _b[j] * scale;
 
-                for (int i = 0; i != NInputs; ++i)
+                for (int i = 0; i != INPUTS; ++i)
                     output[j] += scale * input[i] * _wt[j][i];
                 if constexpr(Scale > 1)
                     output[j] /= scale * scale;
@@ -92,14 +92,18 @@ namespace nnue
 
     struct Accumulator
     {
-        int8_t _encoding[832] = { 0 };
+        static constexpr int INPUTS = 832;
+        static constexpr int OUTPUTS = 256;
+
+        int8_t _encoding[INPUTS] = { 0 };
+        ALIGN int16_t output[OUTPUTS] = { 0 };
     };
 
 
     template <typename L1, typename L2>
     INLINE int eval(const Accumulator& a, const L1& l1, const L2& l2)
     {
-        ALIGN float l2_input[L2::num_inputs];
+        ALIGN float l2_input[L2::INPUTS];
         ALIGN float output[1];
 
         l1.dot_product(a._encoding, l2_input);
