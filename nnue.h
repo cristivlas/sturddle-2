@@ -103,7 +103,7 @@ namespace nnue
             const float(&wt)[OUTPUTS][INPUTS]
         )
         {
-            using Vector = Vec8f;
+            using Vector = Vec16f;
             static_assert(INPUTS % Vector::size() == 0);
             static_assert(OUTPUTS % Vector::size() == 0);
             static_assert(Scale == 1);
@@ -133,15 +133,12 @@ namespace nnue
         #if __AVX2__
             const auto vs = _mm256_set1_ps(scale);
         #endif
+
             for (int j = 0; j != OUTPUTS; ++j)
             {
                 output[j] = b[j] * scale;
-        #if !__AVX2__
-                #pragma clang loop vectorize(enable)
 
-                for (int i = 0; i != INPUTS; ++i)
-                    output[j] += scale * input[i] * wt[j][i];
-        #else
+        #if __AVX2__
                 Vec16s sum(0);
                 static_assert(INPUTS % 16 == 0);
                 for (int i = 0; i != INPUTS; i += 16)
@@ -161,7 +158,14 @@ namespace nnue
                 }
                 output[j] += horizontal_add(extend_low(sum));
                 output[j] += horizontal_add(extend_high(sum));
+        #else
+                #pragma clang loop vectorize(enable)
+
+                for (int i = 0; i != INPUTS; ++i)
+                    output[j] += scale * input[i] * wt[j][i];
+
         #endif /* __AVX2__ */
+
                 output[j] /= scale * scale;
             }
         }
@@ -174,10 +178,10 @@ namespace nnue
     };
 
 
-    struct Accumulator
+    template <int N, int M> struct Accumulator
     {
-        static constexpr int INPUTS = 832;
-        static constexpr int OUTPUTS = 256;
+        static constexpr int INPUTS = N;
+        static constexpr int OUTPUTS = M;
 
         ALIGN int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
         ALIGN float _output[OUTPUTS] = { 0 };
@@ -185,12 +189,8 @@ namespace nnue
         template <typename L> INLINE void add(const L& layer, int i)
         {
             static_assert(L::OUTPUTS == OUTPUTS);
-        #if 0
-            #pragma clang loop vectorize(enable)
-            for (int j = 0; j != layer.OUTPUTS; ++j)
-                _output[j] += layer._wt[j][i];
-        #else
-            using Vector = Vec8f;
+
+            using Vector = Vec16f;
             static_assert(OUTPUTS % Vector::size() == 0);
 
             Vector vo, vw;
@@ -202,18 +202,13 @@ namespace nnue
                 vo += vw;
                 vo.store(&_output[j]);
             }
-        #endif
         }
 
         template<typename L> INLINE void remove(const L& layer, int i)
         {
             static_assert(L::OUTPUTS == OUTPUTS);
-        #if 0
-            #pragma clang loop vectorize(enable)
-            for (int j = 0; j != layer.OUTPUTS; ++j)
-                _output[j] -= layer._wt[j][i];
-        #else
-            using Vector = Vec8f;
+
+            using Vector = Vec16f;
             static_assert(OUTPUTS % Vector::size() == 0);
 
             Vector vo, vw;
@@ -225,7 +220,6 @@ namespace nnue
                 vo -= vw;
                 vo.store(&_output[j]);
             }
-        #endif
         }
 
         template <typename L> INLINE void update(const L& layer, const State& state)
@@ -235,8 +229,8 @@ namespace nnue
             layer.dot(_input, _output);
         }
 
-        template <typename L> INLINE
-        void update(const L& layer, const State& state, const Accumulator& prev)
+        template <typename L, typename A>
+        INLINE void update(const L& layer, const State& state, const A& prev)
         {
             memset(&_input, 0, sizeof(_input));
             one_hot_encode(state, _input);
@@ -254,12 +248,12 @@ namespace nnue
     };
 
 
-    template <typename L> INLINE int eval(const Accumulator& a, const L& layer)
+    template <typename A, typename L> INLINE int eval(const A& a, const L& layer)
     {
         ALIGN float input[L::INPUTS];
         ALIGN float output[1];
 
-        static_assert(L::INPUTS == Accumulator::OUTPUTS);
+        static_assert(L::INPUTS == A::OUTPUTS);
         static_assert(sizeof(input) == sizeof(a._output));
 
         activation(a._output, input);

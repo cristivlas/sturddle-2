@@ -216,10 +216,13 @@ static INLINE int eval_fuzz()
 #if WITH_NNUE
 bool USE_NNUE = true;
 
-static std::vector<std::array<nnue::Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
+constexpr int INPUTS = 832;
+constexpr int HIDDEN = 256;
 
-static nnue::Layer<832, 256> L1(hidden_w, hidden_b);
-static nnue::Layer<256, 1, int16_t, 64> L2(out_w, out_b);
+using Accumulator = nnue::Accumulator<INPUTS, HIDDEN>;
+static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
+static nnue::Layer<INPUTS, HIDDEN> L1(hidden_w, hidden_b);
+static nnue::Layer<HIDDEN, 1, int16_t, 64> L2(out_w, out_b);
 
 void search::Context::eval_nnue()
 {
