@@ -64,6 +64,7 @@ namespace nnue
         static constexpr float scale = Scale;
 
         ALIGN T _b[OUTPUTS]; /* biases */
+        ALIGN T _w[INPUTS][OUTPUTS];
         ALIGN T _wt[OUTPUTS][INPUTS]; /* weights transposed */
 
         Layer(const float(&w)[INPUTS][OUTPUTS], const float(&b)[OUTPUTS])
@@ -73,7 +74,7 @@ namespace nnue
 
             for (int i = 0; i != INPUTS; ++i)
                 for (int j = 0; j != OUTPUTS; ++j)
-                    _wt[j][i] = w[i][j] * Scale;
+                    _w[i][j] = _wt[j][i] = w[i][j] * Scale;
         }
 
         static INLINE void dot(
@@ -100,16 +101,17 @@ namespace nnue
             const float(&wt)[OUTPUTS][INPUTS]
         )
         {
-            static_assert(INPUTS % Vec4f::size() == 0);
-            static_assert(OUTPUTS % Vec4f::size() == 0);
+            using Vector = Vec8f;
+            static_assert(INPUTS % Vector::size() == 0);
+            static_assert(OUTPUTS % Vector::size() == 0);
             static_assert(Scale == 1);
 
-            Vec4f v_in, v_out, v_wt;
-            for (int j = 0; j < OUTPUTS; j += Vec4f::size())
+            Vector v_in, v_out, v_wt;
+            for (int j = 0; j < OUTPUTS; j += Vector::size())
             {
                 v_out.load(&b[j]);
 
-                for (int i = 0; i < INPUTS; i += Vec4f::size())
+                for (int i = 0; i < INPUTS; i += Vector::size())
                 {
                     v_in.load(&input[i]);
                     v_wt.load(&wt[j][i]);
@@ -132,17 +134,22 @@ namespace nnue
             for (int j = 0; j != OUTPUTS; ++j)
             {
                 output[j] = b[j] * scale;
-            #if !__AVX2__
+        #if !__AVX2__
+                #pragma clang loop vectorize(enable)
+
                 for (int i = 0; i != INPUTS; ++i)
                     output[j] += scale * input[i] * wt[j][i];
-            #else
+        #else
                 Vec16s sum(0);
                 static_assert(INPUTS % 16 == 0);
                 for (int i = 0; i != INPUTS; i += 16)
                 {
                     const auto v0 = _mm256_cvtps_epi32(_mm256_mul_ps(_mm256_load_ps(&input[i]), vs));
                     const auto v1 = _mm256_cvtps_epi32(_mm256_mul_ps(_mm256_load_ps(&input[i + 8]), vs));
-                    // https://stackoverflow.com/questions/20918987/why-is-permute-needed-in-parallel-simd-sse-avx
+                    /*
+                     * https://stackoverflow.com/questions/20918987/
+                     * why-is-permute-needed-in-parallel-simd-sse-avx
+                     */
                     const auto va = _mm256_permutevar8x32_epi32(
                         _mm256_packs_epi32(v0, v1),
                         _mm256_set_epi32(7, 6, 3, 2, 5, 4, 1, 0)
@@ -152,7 +159,7 @@ namespace nnue
                 }
                 output[j] += horizontal_add(extend_low(sum));
                 output[j] += horizontal_add(extend_high(sum));
-            #endif /* __AVX2__ */
+        #endif /* __AVX2__ */
                 output[j] /= scale * scale;
             }
         }
@@ -176,17 +183,45 @@ namespace nnue
         template <typename L> INLINE void add(const L& layer, int i)
         {
             static_assert(L::OUTPUTS == OUTPUTS);
+        #if 1
+            using Vector = Vec8f;
+            static_assert(OUTPUTS % Vector::size() == 0);
+
+            Vector vo, vw;
+            for (int j = 0; j != layer.OUTPUTS; j += Vector::size())
+            {
+                vo.load(&_output[j]);
+                vw.load(&layer._w[i][j]);
+                vo += vw;
+                vo.store(&_output[j]);
+            }
+        #else
             #pragma clang loop vectorize(enable)
             for (int j = 0; j != layer.OUTPUTS; ++j)
                 _output[j] += layer._wt[j][i];
+        #endif
         }
 
         template<typename L> INLINE void remove(const L& layer, int i)
         {
             static_assert(L::OUTPUTS == OUTPUTS);
+        #if 1
+            using Vector = Vec8f;
+            static_assert(OUTPUTS % Vector::size() == 0);
+
+            Vector vo, vw;
+            for (int j = 0; j != layer.OUTPUTS; j += Vector::size())
+            {
+                vo.load(&_output[j]);
+                vw.load(&layer._w[i][j]);
+                vo -= vw;
+                vo.store(&_output[j]);
+            }
+        #else
             #pragma clang loop vectorize(enable)
             for (int j = 0; j != layer.OUTPUTS; ++j)
                 _output[j] -= layer._wt[j][i];
+        #endif
         }
 
         template<typename L> INLINE void update(const L& layer, const State& state)
@@ -220,10 +255,14 @@ namespace nnue
         ALIGN float output[1];
 
         static_assert(L::INPUTS == Accumulator::OUTPUTS);
+    #if 0
         #pragma clang loop vectorize(enable)
         for (int i = 0; i != Accumulator::OUTPUTS; ++i)
             input[i] = a._output[i];
-
+    #else
+        static_assert(sizeof(input) == sizeof(a._output));
+        memcpy(input, a._output, sizeof(input));
+    #endif
         activation(input);
 
         layer.dot(input, output);

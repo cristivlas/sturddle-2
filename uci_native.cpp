@@ -1017,6 +1017,8 @@ void UCI::uci()
 
 extern "C" void run_uci_loop(const char *name, const char *version, bool debug)
 {
+    output<false>(std::format("{}-{}", name, version));
+
     _debug = debug;
     std::string err;
     try

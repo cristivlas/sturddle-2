@@ -11,7 +11,6 @@ import string
 import sys
 
 BOOK = 'book.bin'
-NNUE = 'nn-62ef826d1a6d.nnue'
 
 def delete_file_or_dir(path):
     paths = glob.glob(path)
@@ -99,7 +98,7 @@ if __name__ == '__main__':
             if os.path.exists(libcxx):
                 libs.append(f'--add-binary={libcxx}{os.path.pathsep}.')
 
-    data = f'--add-data={NNUE}{os.path.pathsep}. --add-data={BOOK}{os.path.pathsep}.'
+    data = f'--add-data={BOOK}{os.path.pathsep}.'
 
     # run PyInstaller
     if run_cmd(f'{installer} {script} -p . --onefile {" ".join(libs)} {data} --key="{KEY}"'):
