@@ -76,54 +76,94 @@ namespace nnue
                     _wt[j][i] = w[i][j] * Scale;
         }
 
-    #if __AVX2__
-        // _mm256_permutevar8x32_epi32
-        // https://stackoverflow.com/questions/20918987/why-is-permute-needed-in-parallel-simd-sse-avx
-        INLINE void avx2_dot_product(const float(&input)[INPUTS], float(&output)[OUTPUTS]) const
+        static INLINE void dot(
+            const int8_t(&input)[INPUTS],
+            float(&output)[OUTPUTS],
+            const float(&b)[OUTPUTS],
+            const float(&wt)[OUTPUTS][INPUTS]
+        )
         {
-            const auto vs = _mm256_set1_ps(Scale);
+            static_assert(Scale == 1);
 
             for (int j = 0; j != OUTPUTS; ++j)
             {
-                output[j] = _b[j] * scale;
-                Vec16s sum(0);
+                output[j] = b[j];
+                for (int i = 0; i != INPUTS; ++i)
+                    output[j] += input[i] * wt[j][i];
+            }
+        }
 
+        static INLINE void dot(
+            const float(&input)[INPUTS],
+            float(&output)[OUTPUTS],
+            const float(&b)[OUTPUTS],
+            const float(&wt)[OUTPUTS][INPUTS]
+        )
+        {
+            static_assert(INPUTS % Vec4f::size() == 0);
+            static_assert(OUTPUTS % Vec4f::size() == 0);
+            static_assert(Scale == 1);
+
+            Vec4f v_in, v_out, v_wt;
+            for (int j = 0; j < OUTPUTS; j += Vec4f::size())
+            {
+                v_out.load(&b[j]);
+
+                for (int i = 0; i < INPUTS; i += Vec4f::size())
+                {
+                    v_in.load(&input[i]);
+                    v_wt.load(&wt[j][i]);
+                    v_out += v_in * v_wt;
+                }
+                v_out.store(&output[j]);
+            }
+        }
+
+       static INLINE void dot(
+            const float(&input)[INPUTS],
+            float(&output)[OUTPUTS],
+            const int16_t(&b)[OUTPUTS],
+            const int16_t(&wt)[OUTPUTS][INPUTS]
+        )
+        {
+        #if __AVX2__
+            const auto vs = _mm256_set1_ps(scale);
+        #endif
+            for (int j = 0; j != OUTPUTS; ++j)
+            {
+                output[j] = b[j] * scale;
+            #if !__AVX2__
+                for (int i = 0; i != INPUTS; ++i)
+                    output[j] += scale * input[i] * wt[j][i];
+            #else
+                Vec16s sum(0);
                 static_assert(INPUTS % 16 == 0);
                 for (int i = 0; i != INPUTS; i += 16)
                 {
                     const auto v0 = _mm256_cvtps_epi32(_mm256_mul_ps(_mm256_load_ps(&input[i]), vs));
                     const auto v1 = _mm256_cvtps_epi32(_mm256_mul_ps(_mm256_load_ps(&input[i + 8]), vs));
+                    // https://stackoverflow.com/questions/20918987/why-is-permute-needed-in-parallel-simd-sse-avx
                     const auto va = _mm256_permutevar8x32_epi32(
                         _mm256_packs_epi32(v0, v1),
                         _mm256_set_epi32(7, 6, 3, 2, 5, 4, 1, 0)
                     );
-                    const auto vb = _mm256_load_si256(reinterpret_cast<const __m256i*>(&_wt[j][i]));
+                    const auto vb = _mm256_load_si256(reinterpret_cast<const __m256i*>(&wt[j][i]));
                     sum = _mm256_adds_epi16(sum, _mm256_mullo_epi16(va, vb));
                 }
                 output[j] += horizontal_add(extend_low(sum));
                 output[j] += horizontal_add(extend_high(sum));
+            #endif /* __AVX2__ */
                 output[j] /= scale * scale;
             }
         }
-    #endif /* __AVX2__ */
 
         template <typename V>
-        INLINE void dot_product(const V(&input)[INPUTS], float(&output)[OUTPUTS]) const
+        INLINE void dot(const V(&input)[INPUTS], float(&output)[OUTPUTS]) const
         {
-        #if __AVX2__
-            if constexpr(Scale > 1)
-                avx2_dot_product(input, output);
-            else
-        #endif /* __AVX2__ */
-                for (int j = 0; j != OUTPUTS; ++j)
-                {
-                    output[j] = _b[j] * scale;
-
-                    for (int i = 0; i != INPUTS; ++i)
-                        output[j] += scale * input[i] * _wt[j][i];
-                }
+            dot(input, output, _b, _wt);
         }
     };
+
 
     struct Accumulator
     {
@@ -153,7 +193,7 @@ namespace nnue
         {
             memset(&_input, 0, sizeof(_input));
             one_hot_encode(state, _input);
-            layer.dot_product(_input, _output);
+            layer.dot(_input, _output);
         }
 
         template<typename L> INLINE
@@ -186,7 +226,7 @@ namespace nnue
 
         activation(input);
 
-        layer.dot_product(input, output);
+        layer.dot(input, output);
         return 100 * output[0];
     }
 
