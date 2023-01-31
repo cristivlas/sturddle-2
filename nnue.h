@@ -50,10 +50,12 @@ namespace nnue
         return std::min<T>(std::max<T>(0, x), 1.0);
     }
 
-    template <typename V, int N> INLINE void activation(V (&output)[N])
+    template <typename U, typename V, int N>
+    INLINE void activation(const U (&input)[N], V (&output)[N])
     {
+        #pragma clang loop vectorize(enable)
         for (int i = 0; i != N; ++i)
-            output[i] = clipped_relu(output[i]);
+            output[i] = clipped_relu(input[i]);
     }
 
     template <int N, int M, typename T=float, int Scale=1>
@@ -64,7 +66,7 @@ namespace nnue
         static constexpr float scale = Scale;
 
         ALIGN T _b[OUTPUTS]; /* biases */
-        ALIGN T _w[INPUTS][OUTPUTS];
+        ALIGN T _w[INPUTS][OUTPUTS]; /* weights */
         ALIGN T _wt[OUTPUTS][INPUTS]; /* weights transposed */
 
         Layer(const float(&w)[INPUTS][OUTPUTS], const float(&b)[OUTPUTS])
@@ -121,7 +123,7 @@ namespace nnue
             }
         }
 
-       static INLINE void dot(
+        static INLINE void dot(
             const float(&input)[INPUTS],
             float(&output)[OUTPUTS],
             const int16_t(&b)[OUTPUTS],
@@ -177,7 +179,7 @@ namespace nnue
         static constexpr int INPUTS = 832;
         static constexpr int OUTPUTS = 256;
 
-        int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
+        ALIGN int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
         ALIGN float _output[OUTPUTS] = { 0 };
 
         template <typename L> INLINE void add(const L& layer, int i)
@@ -192,6 +194,7 @@ namespace nnue
             static_assert(OUTPUTS % Vector::size() == 0);
 
             Vector vo, vw;
+            #pragma clang loop vectorize(enable)
             for (int j = 0; j != layer.OUTPUTS; j += Vector::size())
             {
                 vo.load(&_output[j]);
@@ -214,6 +217,7 @@ namespace nnue
             static_assert(OUTPUTS % Vector::size() == 0);
 
             Vector vo, vw;
+            #pragma clang loop vectorize(enable)
             for (int j = 0; j != layer.OUTPUTS; j += Vector::size())
             {
                 vo.load(&_output[j]);
@@ -224,20 +228,21 @@ namespace nnue
         #endif
         }
 
-        template<typename L> INLINE void update(const L& layer, const State& state)
+        template <typename L> INLINE void update(const L& layer, const State& state)
         {
             memset(&_input, 0, sizeof(_input));
             one_hot_encode(state, _input);
             layer.dot(_input, _output);
         }
 
-        template<typename L> INLINE
+        template <typename L> INLINE
         void update(const L& layer, const State& state, const Accumulator& prev)
         {
             memset(&_input, 0, sizeof(_input));
             one_hot_encode(state, _input);
 
             memcpy(_output, prev._output, sizeof(_output));
+
             for (int i = 0; i != INPUTS; ++i)
             {
                 if (!_input[i] && prev._input[i])
@@ -257,8 +262,7 @@ namespace nnue
         static_assert(L::INPUTS == Accumulator::OUTPUTS);
         static_assert(sizeof(input) == sizeof(a._output));
 
-        memcpy(input, a._output, sizeof(input));
-        activation(input);
+        activation(a._output, input);
 
         layer.dot(input, output);
         return 100 * output[0];
