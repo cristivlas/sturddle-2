@@ -4,3 +4,6 @@
 [submodule "magic-bits"]
 	path = magic-bits
 	url = https://github.com/cristivlas/magic-bits.git
+[submodule "version2"]
+	path = version2
+	url = https://github.com/vectorclass/version2.git

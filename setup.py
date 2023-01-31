@@ -48,6 +48,7 @@ Compiler args.
 inc_dirs = [
     '-I./libpopcnt',
     '-I./magic-bits/include',
+    '-I./version2',
 ]
 
 link = []
