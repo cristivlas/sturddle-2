@@ -183,7 +183,11 @@ namespace nnue
         template <typename L> INLINE void add(const L& layer, int i)
         {
             static_assert(L::OUTPUTS == OUTPUTS);
-        #if 1
+        #if 0
+            #pragma clang loop vectorize(enable)
+            for (int j = 0; j != layer.OUTPUTS; ++j)
+                _output[j] += layer._wt[j][i];
+        #else
             using Vector = Vec8f;
             static_assert(OUTPUTS % Vector::size() == 0);
 
@@ -195,17 +199,17 @@ namespace nnue
                 vo += vw;
                 vo.store(&_output[j]);
             }
-        #else
-            #pragma clang loop vectorize(enable)
-            for (int j = 0; j != layer.OUTPUTS; ++j)
-                _output[j] += layer._wt[j][i];
         #endif
         }
 
         template<typename L> INLINE void remove(const L& layer, int i)
         {
             static_assert(L::OUTPUTS == OUTPUTS);
-        #if 1
+        #if 0
+            #pragma clang loop vectorize(enable)
+            for (int j = 0; j != layer.OUTPUTS; ++j)
+                _output[j] -= layer._wt[j][i];
+        #else
             using Vector = Vec8f;
             static_assert(OUTPUTS % Vector::size() == 0);
 
@@ -217,10 +221,6 @@ namespace nnue
                 vo -= vw;
                 vo.store(&_output[j]);
             }
-        #else
-            #pragma clang loop vectorize(enable)
-            for (int j = 0; j != layer.OUTPUTS; ++j)
-                _output[j] -= layer._wt[j][i];
         #endif
         }
 
@@ -255,14 +255,9 @@ namespace nnue
         ALIGN float output[1];
 
         static_assert(L::INPUTS == Accumulator::OUTPUTS);
-    #if 0
-        #pragma clang loop vectorize(enable)
-        for (int i = 0; i != Accumulator::OUTPUTS; ++i)
-            input[i] = a._output[i];
-    #else
         static_assert(sizeof(input) == sizeof(a._output));
+
         memcpy(input, a._output, sizeof(input));
-    #endif
         activation(input);
 
         layer.dot(input, output);
