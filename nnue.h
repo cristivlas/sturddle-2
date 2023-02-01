@@ -22,8 +22,27 @@
 #include "common.h"
 #include "chess.h"
 #include "vectorclass.h"
+#include <immintrin.h>
 
 #define ALIGN alignas(32)
+
+#if __AVX2__
+/*
+ * https://stackoverflow.com/questions/23189488/
+ * horizontal-sum-of-32-bit-floats-in-256-bit-avx-vector
+ */
+static INLINE float _mm256_reduce_add_ps(__m256 x)
+{
+    // ( x3+x7, x2+x6, x1+x5, x0+x4 )
+    const __m128 x128 = _mm_add_ps(_mm256_extractf128_ps(x, 1), _mm256_castps256_ps128(x));
+    // ( -, -, x1+x3+x5+x7, x0+x2+x4+x6 )
+    const __m128 x64 = _mm_add_ps(x128, _mm_movehl_ps(x128, x128));
+    // ( -, -, -, x0+x1+x2+x3+x4+x5+x6+x7 )
+    const __m128 x32 = _mm_add_ss(x64, _mm_shuffle_ps(x64, x64, 0x55));
+    return _mm_cvtss_f32(x32);
+}
+#endif /* __AVX2__ */
+
 
 namespace nnue
 {
@@ -79,6 +98,7 @@ namespace nnue
                     _w[i][j] = _wt[j][i] = w[i][j] * Scale;
         }
 
+        /* input */
         static INLINE void dot(
             const int8_t(&input)[INPUTS],
             float(&output)[OUTPUTS],
@@ -88,14 +108,54 @@ namespace nnue
         {
             static_assert(Scale == 1);
 
+        #if __AVX2__
+            static_assert(INPUTS % 8 == 0);
+            for (int j = 0; j != OUTPUTS; ++j)
+            {
+                output[j] = b[j];
+                __m256 sum = _mm256_setzero_ps();
+                for (int i = 0; i < INPUTS; i += 8)
+                {
+                    // load the first 4 8-bit integers into a __m128i
+                    __m128i packed_8_bit_ints1 = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(&input[i]));
+
+                    // extend the first 4 8-bit integers to 32-bit integers
+                    __m128i extended_ints1 = _mm_cvtepu8_epi32(packed_8_bit_ints1);
+
+                    // convert the first 4 32-bit integers to floating-point values
+                    __m128 floats1 = _mm_cvtepi32_ps(extended_ints1);
+
+                    // load the second 4 8-bit integers into a __m128i
+                    __m128i packed_8_bit_ints2 = _mm_loadl_epi64(reinterpret_cast<const __m128i*>((&input[i + 4])));
+
+                    // extend the second 4 8-bit integers to 32-bit integers
+                    __m128i extended_ints2 = _mm_cvtepu8_epi32(packed_8_bit_ints2);
+
+                    // convert the second 4 32-bit integers to floating-point values
+                    __m128 floats2 = _mm_cvtepi32_ps(extended_ints2);
+
+                    // pack the two __m128 values into a __m256
+                    __m256 va = _mm256_set_m128(floats2, floats1);
+
+                    // load transposed weights
+                    __m256 vb = _mm256_load_ps(&wt[j][i]);
+
+                    sum = _mm256_fmadd_ps(va, vb, sum);
+                }
+                output[j] += _mm256_reduce_add_ps(sum);
+                output[j] /= scale;
+            }
+        #else
             for (int j = 0; j != OUTPUTS; ++j)
             {
                 output[j] = b[j];
                 for (int i = 0; i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
             }
+        #endif /* __AVX2__ */
         }
 
+        /* hidden */
         static INLINE void dot(
             const float(&input)[INPUTS],
             float(&output)[OUTPUTS],
@@ -109,10 +169,13 @@ namespace nnue
             static_assert(Scale == 1);
 
             Vector v_in, v_out, v_wt;
+
+            #pragma clang loop vectorize(enable)
             for (int j = 0; j < OUTPUTS; j += Vector::size())
             {
                 v_out.load(&b[j]);
 
+                #pragma clang loop vectorize(enable)
                 for (int i = 0; i < INPUTS; i += Vector::size())
                 {
                     v_in.load(&input[i]);
@@ -123,6 +186,7 @@ namespace nnue
             }
         }
 
+        /* output */
         static INLINE void dot(
             const float(&input)[INPUTS],
             float(&output)[OUTPUTS],
@@ -185,6 +249,7 @@ namespace nnue
 
         ALIGN int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
         ALIGN float _output[OUTPUTS] = { 0 };
+        uint64_t _hash = 0;
 
         template <typename L> INLINE void add(const L& layer, int i)
         {
@@ -224,25 +289,34 @@ namespace nnue
 
         template <typename L> INLINE void update(const L& layer, const State& state)
         {
-            memset(&_input, 0, sizeof(_input));
-            one_hot_encode(state, _input);
-            layer.dot(_input, _output);
+            if (state.hash() != _hash)
+            {
+                _hash = state.hash();
+
+                memset(&_input, 0, sizeof(_input));
+                one_hot_encode(state, _input);
+                layer.dot(_input, _output);
+            }
         }
 
         template <typename L, typename A>
         INLINE void update(const L& layer, const State& state, const A& prev)
         {
-            memset(&_input, 0, sizeof(_input));
-            one_hot_encode(state, _input);
-
-            memcpy(_output, prev._output, sizeof(_output));
-
-            for (int i = 0; i != INPUTS; ++i)
+            if (state.hash() != _hash)
             {
-                if (!_input[i] && prev._input[i])
-                    remove(layer, i);
-                if (_input[i] && !prev._input[i])
-                    add(layer, i);
+                _hash = state.hash();
+                memset(&_input, 0, sizeof(_input));
+                one_hot_encode(state, _input);
+
+                memcpy(_output, prev._output, sizeof(_output));
+
+                for (int i = 0; i != INPUTS; ++i)
+                {
+                    if (!_input[i] && prev._input[i])
+                        remove(layer, i);
+                    if (_input[i] && !prev._input[i])
+                        add(layer, i);
+                }
             }
         }
     };
