@@ -226,11 +226,15 @@ static nnue::Layer<HIDDEN, 1, int16_t, 64> L2(out_w, out_b);
 
 void search::Context::eval_nnue()
 {
+    int8_t one_hot[INPUTS] = { 0 };
     auto& acc = NNUE_data[tid()][_ply];
-    if (_ply >= 2)
-        acc.update(L1, state(), NNUE_data[tid()][_ply - 2]);
-    else
+    if (is_root())
         acc.update(L1, state());
+    if (_ply >= 2)
+        acc.update(L1, state(), NNUE_data[tid()][_ply - 2], one_hot);
+    else if (_ply >= 1)
+        acc.update(L1, state(), NNUE_data[tid()][_ply - 1], one_hot);
+
     auto eval = nnue::eval(acc, L2);
 
     eval += eval_fuzz();

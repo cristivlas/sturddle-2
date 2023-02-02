@@ -250,6 +250,7 @@ namespace nnue
         ALIGN int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
         ALIGN float _output[OUTPUTS] = { 0 };
         uint64_t _hash = 0;
+        uint64_t _clock = 0;
 
         template <typename L> INLINE void add(const L& layer, int i)
         {
@@ -287,35 +288,58 @@ namespace nnue
             }
         }
 
+        /** Compute 1st layer output from scratch at root */
         template <typename L> INLINE void update(const L& layer, const State& state)
         {
             if (state.hash() != _hash)
             {
                 _hash = state.hash();
-
                 memset(&_input, 0, sizeof(_input));
                 one_hot_encode(state, _input);
+
                 layer.dot(_input, _output);
+
+                ++_clock;
             }
         }
 
+        /** Update 1st layer output incrementally, based on a previous state */
         template <typename L, typename A>
-        INLINE void update(const L& layer, const State& state, const A& prev)
+        INLINE void update(const L& layer, const State& state, const A& ancestor, int8_t(&temp)[INPUTS])
         {
             if (state.hash() != _hash)
             {
                 _hash = state.hash();
-                memset(&_input, 0, sizeof(_input));
-                one_hot_encode(state, _input);
+                one_hot_encode(state, temp);
 
-                memcpy(_output, prev._output, sizeof(_output));
+                ASSERT(ancestor._clock);
 
-                for (int i = 0; i != INPUTS; ++i)
+                /* part of the same search? use own previous state */
+                if (_clock == ancestor._clock)
                 {
-                    if (!_input[i] && prev._input[i])
-                        remove(layer, i);
-                    if (_input[i] && !prev._input[i])
-                        add(layer, i);
+                    for (int i = 0; i != INPUTS; ++i)
+                    {
+                        if (!temp[i] && _input[i]) /* 1 -> 0 */
+                            remove(layer, i);
+                        if (temp[i] && !_input[i]) /* 0 -> 1*/
+                            add(layer, i);
+                        _input[i] = temp[i];
+                    }
+                }
+                else
+                {
+                    /* compute delta based on ancestor state */
+                    _clock = ancestor._clock;
+                    memcpy(_output, ancestor._output, sizeof(_output));
+
+                    for (int i = 0; i != INPUTS; ++i)
+                    {
+                        if (!temp[i] && ancestor._input[i])
+                            remove(layer, i);
+                        if (temp[i] && !ancestor._input[i])
+                            add(layer, i);
+                        _input[i] = temp[i];
+                    }
                 }
             }
         }
