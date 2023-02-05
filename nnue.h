@@ -143,7 +143,6 @@ namespace nnue
                     sum = _mm256_fmadd_ps(va, vb, sum);
                 }
                 output[j] += _mm256_reduce_add_ps(sum);
-                output[j] /= scale;
             }
         #else
             for (int j = 0; j != OUTPUTS; ++j)

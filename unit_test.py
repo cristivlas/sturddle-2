@@ -347,6 +347,7 @@ def test_nnue_eval():
         'r4rk1/ppp2ppp/5n2/2bPn3/4K3/2NP4/PPPBB1PP/R6R w - - 3 3',
         '1r1q1rk1/p3bBpp/2Q5/8/3Pb3/2n1BN2/P4PPP/R4RK1 b - - 0 18',
     ]
+
     evals = [
         104.84521,
         -103.18694,
@@ -359,9 +360,10 @@ def test_nnue_eval():
     ]
     for i, fen in enumerate(tests):
         eval = engine.nnue_eval_fen(fen)
-        err = abs(eval - evals[i]) / abs(evals[i]) * 100
-        print(f'{fen}: eval={eval}, expected={evals[i]}, error={err:.3f} %')
-        assert abs(eval - evals[i]) <= abs(evals[i] * 1/5), (eval, evals[i])
+        expect = int(evals[i])
+        err = abs(eval - expect)
+        print(f'{fen}: eval={eval}, expected={expect}, error={err}')
+        assert err < 10 
 
 
 def test_parse_fen():

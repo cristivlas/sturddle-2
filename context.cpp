@@ -170,45 +170,6 @@ void assert_param_ref()
 }
 
 
-/*---------------------------------------------------------------------------
- * Evaluation
- *--------------------------------------------------------------------------*/
-template<typename F>
-static INLINE score_t eval_insufficient_material(const State& state, score_t eval, F f)
-{
-    if (state.is_endgame() && state.has_insufficient_material(state.turn))
-    {
-        if (state.has_insufficient_material(!state.turn))
-        {
-            eval = 0; /* neither side can win */
-        }
-        else
-        {
-            eval = std::min<score_t>(eval, 0); /* cannot do better than draw */
-        }
-    }
-    else
-    {
-        eval = f();
-    }
-    return eval;
-}
-
-
-/*
- * Allow apps built on top of the engine to implement strength levels
- * by "fuzzing" the evaluation.
- */
-static INLINE int eval_fuzz()
-{
-#if EVAL_FUZZ_ENABLED
-    return EVAL_FUZZ ? random_int(-EVAL_FUZZ, EVAL_FUZZ) : 0;
-#else
-    return 0;
-#endif /* EVAL_FUZZ_ENABLED */
-}
-
-
 /*****************************************************************************
  *  NNUE
  *****************************************************************************/
@@ -224,7 +185,7 @@ static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
 static nnue::Layer<INPUTS, HIDDEN> L1(hidden_w, hidden_b);
 static nnue::Layer<HIDDEN, 1, int16_t, 64> L2(out_w, out_b);
 
-void search::Context::eval_nnue()
+score_t search::Context::eval_nnue_raw()
 {
     int8_t one_hot[INPUTS] = { 0 };
     auto& acc = NNUE_data[tid()][_ply];
@@ -235,18 +196,7 @@ void search::Context::eval_nnue()
     else if (_ply >= 1)
         acc.update(L1, state(), NNUE_data[tid()][_ply - 1], one_hot);
 
-    auto eval = nnue::eval(acc, L2);
-
-    eval += eval_fuzz();
-
-    /* Make sure that insufficient material conditions are detected. */
-    eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
-
-#if 0
-    eval *= NNUE_EVAL_SCALE + evaluate_material() / 32;
-    eval /= 1024;
-#endif
-    _eval = std::max(-CHECKMATE, std::min(CHECKMATE, eval));
+    return nnue::eval(acc, L2);
 }
 
 
@@ -258,7 +208,7 @@ int nnue::eval_fen(const std::string& fen)
     ASSERT_ALWAYS(ctxt._ply == 0);
     ctxt._state = &state;
     chess::parse_fen(fen, state);
-    ctxt.eval_nnue();
+    ctxt.eval_nnue<true>();
     return ctxt._eval;
 }
 

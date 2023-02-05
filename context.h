@@ -276,10 +276,13 @@ namespace search
 
         score_t     evaluate_end();
         score_t     evaluate_material(bool with_piece_squares = true) const;
-        void        eval_nnue();
-        score_t     static_eval();
 
-        void        extend();       /* fractional extensions */
+        template <bool Raw=false> void eval_nnue();
+        score_t     eval_nnue_raw();
+
+        score_t     static_eval();  /* use TT value if available, eval material otherwise */
+
+        void        extend();       /* fractional and other extensions */
         const Move* first_valid_move();
         score_t     futility_margin();
 
@@ -647,15 +650,60 @@ namespace search
     }
 
 
-#if !WITH_NNUE
-    INLINE void Context::eval_nnue() {}
-#endif /* !WITH_NNUE */
+    INLINE int eval_fuzz()
+    {
+    #if EVAL_FUZZ_ENABLED
+        return EVAL_FUZZ ? random_int(-EVAL_FUZZ, EVAL_FUZZ) : 0;
+    #else
+        return 0;
+    #endif /* EVAL_FUZZ_ENABLED */
+    }
 
 
-    /*
-     * Use value from the TT if available,
-     * else do a quick material evaluation.
-     */
+    template <typename F>
+    INLINE score_t eval_insufficient_material(const State& state, score_t eval, F f)
+    {
+        if (state.is_endgame() && state.has_insufficient_material(state.turn))
+        {
+            if (state.has_insufficient_material(!state.turn))
+            {
+                eval = 0; /* neither side can win */
+            }
+            else
+            {
+                eval = std::min<score_t>(eval, 0); /* cannot do better than draw */
+            }
+        }
+        else
+        {
+            eval = f();
+        }
+
+        return eval;
+    }
+
+
+    template <bool Raw> void search::Context::eval_nnue()
+    {
+#if WITH_NNUE
+        auto eval = eval_nnue_raw();
+
+        if constexpr (!Raw)
+        {
+            eval += eval_fuzz();
+            /* Make sure that insufficient material conditions are detected. */
+            eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
+
+            eval *= NNUE_EVAL_SCALE + evaluate_material() / 32;
+            eval /= 1024;
+        }
+
+        _eval = std::max(-CHECKMATE, std::min(CHECKMATE, eval));
+#endif /* WITH_NNUE */
+    }
+
+
+    /* Use value from the TT if available, else do a quick material evaluation. */
     INLINE score_t Context::static_eval()
     {
         return _eval == SCORE_MIN ? evaluate_material() : _eval;
