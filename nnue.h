@@ -22,166 +22,107 @@
 #include "common.h"
 #include "chess.h"
 #include "vectorclass.h"
-#include <immintrin.h>
 
-#define ALIGN alignas(32)
-
-#if __AVX2__
-/*
- * https://stackoverflow.com/questions/23189488/
- * horizontal-sum-of-32-bit-floats-in-256-bit-avx-vector
- */
-static INLINE float _mm256_reduce_add_ps(__m256 x)
-{
-    // ( x3+x7, x2+x6, x1+x5, x0+x4 )
-    const __m128 x128 = _mm_add_ps(_mm256_extractf128_ps(x, 1), _mm256_castps256_ps128(x));
-    // ( -, -, x1+x3+x5+x7, x0+x2+x4+x6 )
-    const __m128 x64 = _mm_add_ps(x128, _mm_movehl_ps(x128, x128));
-    // ( -, -, -, x0+x1+x2+x3+x4+x5+x6+x7 )
-    const __m128 x32 = _mm_add_ss(x64, _mm_shuffle_ps(x64, x64, 0x55));
-    return _mm_cvtss_f32(x32);
-}
-#endif /* __AVX2__ */
-
+#define DEBUG_INCREMENTAL false
 
 namespace nnue
 {
     using namespace chess;
+    using Vector = Vec16f;
+
+    template<unsigned int N>
+    constexpr unsigned int round_down(unsigned int x)
+    {
+        return (x / N) * N;
+    }
 
     template <typename T>
-    INLINE void one_hot_encode(const State& state, T& encoding)
+    INLINE void one_hot_encode(const State& board, T (&encoding)[769])
     {
-        /* Iterate over the 64 squares on the chess board */
-        for (int i = 0; i != 64; ++i)
+        const auto color_masks = { board.occupied_co(BLACK), board.occupied_co(WHITE) };
+
+        int i = 63;
+        for (const auto bb : {
+            board.kings, board.pawns, board.knights, board.bishops, board.rooks, board.queens })
         {
-            int j = 0;
-            if (const auto piece_type = state.piece_type_at(Square(i)))
+            for (const auto mask : color_masks)
             {
-                const auto piece_color = state.piece_color_at(Square(i));
-                j = piece_type + 6 * (piece_color != state.turn);
+                for_each_square_r((bb & mask), [&](Square j) {
+                    encoding[i - j] = 1;
+                });
+                i += 64;
             }
-            encoding[i * 13 + j] = 1;
         }
+        encoding[768] = board.turn;
     }
 
-    template <typename T> INLINE T clipped_relu(T x)
+    /** Calculate the piece-square index into the one-hot encoding. */
+    INLINE int psi(PieceType piece_type, Color color, Square square)
     {
-        return std::min<T>(std::max<T>(0, x), 1.0);
+        static constexpr int index[] = { 1, 2, 3, 4, 5, 0 };
+        return index[piece_type - 1] * 128 + (64 * color) + 63 - square;
     }
 
+    /** Rectified Linear Unit (reLU) activation */
     template <typename U, typename V, int N>
     INLINE void activation(const U (&input)[N], V (&output)[N])
     {
         #pragma clang loop vectorize(enable)
         for (int i = 0; i != N; ++i)
-            output[i] = clipped_relu(input[i]);
+            output[i] = std::max<V>(0, input[i]);
     }
 
-    template <int N, int M, typename T=float, int Scale=1>
+    template <int N, int M, typename T=float>
     struct Layer
     {
         static constexpr int INPUTS = N;
         static constexpr int OUTPUTS = M;
-        static constexpr float scale = Scale;
 
-        ALIGN T _b[OUTPUTS]; /* biases */
-        ALIGN T _w[INPUTS][OUTPUTS]; /* weights */
-        ALIGN T _wt[OUTPUTS][INPUTS]; /* weights transposed */
+        T _b[OUTPUTS]; /* biases */
+        T _w[INPUTS][OUTPUTS]; /* weights */
+        T _wt[OUTPUTS][INPUTS]; /* weights transposed */
 
         Layer(const float(&w)[INPUTS][OUTPUTS], const float(&b)[OUTPUTS])
         {
             for (int j = 0; j != OUTPUTS; ++j)
-                _b[j] = b[j] * Scale;
+                _b[j] = b[j];
 
             for (int i = 0; i != INPUTS; ++i)
                 for (int j = 0; j != OUTPUTS; ++j)
-                    _w[i][j] = _wt[j][i] = w[i][j] * Scale;
+                    _w[i][j] = _wt[j][i] = w[i][j];
         }
 
         /* input */
+        template <typename V>
         static INLINE void dot(
             const int8_t(&input)[INPUTS],
-            float(&output)[OUTPUTS],
+            V(&output)[OUTPUTS],
             const float(&b)[OUTPUTS],
             const float(&wt)[OUTPUTS][INPUTS]
         )
         {
-            static_assert(Scale == 1);
-
-        #if __AVX2__
-            static_assert(INPUTS % 8 == 0);
             for (int j = 0; j != OUTPUTS; ++j)
             {
                 output[j] = b[j];
-                __m256 sum = _mm256_setzero_ps();
-                for (int i = 0; i < INPUTS; i += 8)
-                {
-                    // load the first 4 8-bit integers into a __m128i
-                    __m128i packed_8_bit_ints1 = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(&input[i]));
-
-                    // extend the first 4 8-bit integers to 32-bit integers
-                    __m128i extended_ints1 = _mm_cvtepu8_epi32(packed_8_bit_ints1);
-
-                    // convert the first 4 32-bit integers to floating-point values
-                    __m128 floats1 = _mm_cvtepi32_ps(extended_ints1);
-
-                    // load the second 4 8-bit integers into a __m128i
-                    __m128i packed_8_bit_ints2 = _mm_loadl_epi64(reinterpret_cast<const __m128i*>((&input[i + 4])));
-
-                    // extend the second 4 8-bit integers to 32-bit integers
-                    __m128i extended_ints2 = _mm_cvtepu8_epi32(packed_8_bit_ints2);
-
-                    // convert the second 4 32-bit integers to floating-point values
-                    __m128 floats2 = _mm_cvtepi32_ps(extended_ints2);
-
-                    // pack the two __m128 values into a __m256
-                    __m256 va = _mm256_set_m128(floats2, floats1);
-
-                    // load transposed weights
-                    __m256 vb = _mm256_load_ps(&wt[j][i]);
-
-                    sum = _mm256_fmadd_ps(va, vb, sum);
-                }
-                output[j] += _mm256_reduce_add_ps(sum);
-            }
-        #else
-            for (int j = 0; j != OUTPUTS; ++j)
-            {
-                output[j] = b[j];
+            #if 0
                 for (int i = 0; i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
-            }
-        #endif /* __AVX2__ */
-        }
-
-        /* hidden */
-        static INLINE void dot(
-            const float(&input)[INPUTS],
-            float(&output)[OUTPUTS],
-            const float(&b)[OUTPUTS],
-            const float(&wt)[OUTPUTS][INPUTS]
-        )
-        {
-            using Vector = Vec16f;
-            static_assert(INPUTS % Vector::size() == 0);
-            static_assert(OUTPUTS % Vector::size() == 0);
-            static_assert(Scale == 1);
-
-            Vector v_in, v_out, v_wt;
-
-            #pragma clang loop vectorize(enable)
-            for (int j = 0; j < OUTPUTS; j += Vector::size())
-            {
-                v_out.load(&b[j]);
-
-                #pragma clang loop vectorize(enable)
-                for (int i = 0; i < INPUTS; i += Vector::size())
+            #else
+                Vector vw;
+                for (int i = 0; i != round_down<Vector::size()>(INPUTS); i += Vector::size())
                 {
-                    v_in.load(&input[i]);
-                    v_wt.load(&wt[j][i]);
-                    v_out += v_in * v_wt;
+                    vw.load(&wt[j][i]);
+                    Vector in(
+                        input[i],   input[i+1], input[i+2], input[i+3],
+                        input[i+4], input[i+5], input[i+6], input[i+7],
+                        input[i+8], input[i+9], input[i+10],input[i+11],
+                        input[i+12],input[i+13],input[i+14],input[i+15]);
+
+                    output[j] += horizontal_add(vw * in);
                 }
-                v_out.store(&output[j]);
+                for (int i = round_down<Vector::size()>(INPUTS); i != INPUTS; ++i)
+                    output[j] += input[i] * wt[j][i];
+            #endif
             }
         }
 
@@ -189,52 +130,35 @@ namespace nnue
         static INLINE void dot(
             const float(&input)[INPUTS],
             float(&output)[OUTPUTS],
-            const int16_t(&b)[OUTPUTS],
-            const int16_t(&wt)[OUTPUTS][INPUTS]
+            const float(&b)[OUTPUTS],
+            const float(&wt)[OUTPUTS][INPUTS]
         )
         {
-        #if __AVX2__
-            const auto vs = _mm256_set1_ps(scale);
-        #endif
-
             for (int j = 0; j != OUTPUTS; ++j)
             {
-                output[j] = b[j] * scale;
-
-        #if __AVX2__
-                Vec16s sum(0);
-                static_assert(INPUTS % 16 == 0);
-                for (int i = 0; i != INPUTS; i += 16)
-                {
-                    const auto v0 = _mm256_cvtps_epi32(_mm256_mul_ps(_mm256_load_ps(&input[i]), vs));
-                    const auto v1 = _mm256_cvtps_epi32(_mm256_mul_ps(_mm256_load_ps(&input[i + 8]), vs));
-                    /*
-                     * https://stackoverflow.com/questions/20918987/
-                     * why-is-permute-needed-in-parallel-simd-sse-avx
-                     */
-                    const auto va = _mm256_permutevar8x32_epi32(
-                        _mm256_packs_epi32(v0, v1),
-                        _mm256_set_epi32(7, 6, 3, 2, 5, 4, 1, 0)
-                    );
-                    const auto vb = _mm256_load_si256(reinterpret_cast<const __m256i*>(&wt[j][i]));
-                    sum = _mm256_adds_epi16(sum, _mm256_mullo_epi16(va, vb));
-                }
-                output[j] += horizontal_add(extend_low(sum));
-                output[j] += horizontal_add(extend_high(sum));
-        #else
+                output[j] = b[j];
+            #if 0
                 #pragma clang loop vectorize(enable)
 
                 for (int i = 0; i != INPUTS; ++i)
-                    output[j] += scale * input[i] * wt[j][i];
+                    output[j] += input[i] * wt[j][i];
+            #else
+                /* explicit vectorization */
+                static_assert(INPUTS % Vector::size() == 0);
+                Vector v_in, v_wt;
 
-        #endif /* __AVX2__ */
-
-                output[j] /= scale * scale;
+                for (int i = 0; i != INPUTS; i += Vector::size())
+                {
+                    v_in.load(&input[i]);
+                    v_wt.load(&wt[j][i]);
+                    output[j] += horizontal_add(v_in * v_wt);
+                }
+            #endif
             }
         }
 
-        template <typename V>
-        INLINE void dot(const V(&input)[INPUTS], float(&output)[OUTPUTS]) const
+        template <typename U, typename V>
+        INLINE void dot(const U(&input)[INPUTS], V(&output)[OUTPUTS]) const
         {
             dot(input, output, _b, _wt);
         }
@@ -246,46 +170,12 @@ namespace nnue
         static constexpr int INPUTS = N;
         static constexpr int OUTPUTS = M;
 
-        ALIGN int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
-        ALIGN float _output[OUTPUTS] = { 0 };
+        /* turn (side-to-move) bit index within one-hot encoding */
+        static constexpr int TURN_INDEX = INPUTS - 1;
+
+        int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
+        float _output[OUTPUTS] = { 0 };
         uint64_t _hash = 0;
-        uint64_t _clock = 0;
-
-        template <typename L> INLINE void add(const L& layer, int i)
-        {
-            static_assert(L::OUTPUTS == OUTPUTS);
-
-            using Vector = Vec16f;
-            static_assert(OUTPUTS % Vector::size() == 0);
-
-            Vector vo, vw;
-            #pragma clang loop vectorize(enable)
-            for (int j = 0; j != layer.OUTPUTS; j += Vector::size())
-            {
-                vo.load(&_output[j]);
-                vw.load(&layer._w[i][j]);
-                vo += vw;
-                vo.store(&_output[j]);
-            }
-        }
-
-        template<typename L> INLINE void remove(const L& layer, int i)
-        {
-            static_assert(L::OUTPUTS == OUTPUTS);
-
-            using Vector = Vec16f;
-            static_assert(OUTPUTS % Vector::size() == 0);
-
-            Vector vo, vw;
-            #pragma clang loop vectorize(enable)
-            for (int j = 0; j != layer.OUTPUTS; j += Vector::size())
-            {
-                vo.load(&_output[j]);
-                vw.load(&layer._w[i][j]);
-                vo -= vw;
-                vo.store(&_output[j]);
-            }
-        }
 
         /** Compute 1st layer output from scratch at root */
         template <typename L> INLINE void update(const L& layer, const State& state)
@@ -297,49 +187,155 @@ namespace nnue
                 one_hot_encode(state, _input);
 
                 layer.dot(_input, _output);
-
-                ++_clock;
             }
         }
 
         /** Update 1st layer output incrementally, based on a previous state */
         template <typename L, typename A>
-        INLINE void update(const L& layer, const State& state, const A& ancestor, int8_t(&temp)[INPUTS])
+        INLINE void update(
+            const L& layer,
+            const State& prev,
+            const State& state,
+            const Move& move,
+            const A& ancestor)
         {
             if (state.hash() != _hash)
             {
                 _hash = state.hash();
+
+                /* compute delta based on ancestor state */
+                ASSERT(prev.turn != state.turn);
+
+                memcpy(_output, ancestor._output, sizeof(_output));
+                memcpy(_input, ancestor._input, sizeof(_input));
+
+                int remove_inputs[INPUTS];
+                int add_inputs[INPUTS];
+                int r_idx = 0, a_idx = 0;
+
+                if (move)
+                {
+                    update(prev, state, move, prev.turn, remove_inputs, add_inputs, r_idx, a_idx);
+                    ASSERT(a_idx < INPUTS);
+                    ASSERT(r_idx < INPUTS);
+
+                    for (int i = 0; i != r_idx; ++i)
+                        _input[remove_inputs[i]] = 0;
+                    for (int i = 0; i != a_idx; ++i)
+                        _input[add_inputs[i]] = 1;
+                }
+                _input[TURN_INDEX] ^= 1;
+
+            #if DEBUG_INCREMENTAL
+                int8_t temp[INPUTS] = { 0 };
                 one_hot_encode(state, temp);
 
-                ASSERT(ancestor._clock);
+                for (int i = 0; i != INPUTS; ++i)
+                    ASSERT_ALWAYS(_input[i] == temp[i]);
+            #endif /* DEBUG_INCREMENTAL */
 
-                /* part of the same search? use own previous state */
-                if (_clock == ancestor._clock)
-                {
-                    for (int i = 0; i != INPUTS; ++i)
-                    {
-                        if (!temp[i] && _input[i]) /* 1 -> 0 */
-                            remove(layer, i);
-                        if (temp[i] && !_input[i]) /* 0 -> 1*/
-                            add(layer, i);
-                        _input[i] = temp[i];
-                    }
-                }
+                if (state.turn)
+                    add_inputs[a_idx++] = TURN_INDEX;
                 else
-                {
-                    /* compute delta based on ancestor state */
-                    _clock = ancestor._clock;
-                    memcpy(_output, ancestor._output, sizeof(_output));
+                    remove_inputs[r_idx++] = TURN_INDEX;
 
-                    for (int i = 0; i != INPUTS; ++i)
-                    {
-                        if (!temp[i] && ancestor._input[i])
-                            remove(layer, i);
-                        if (temp[i] && !ancestor._input[i])
-                            add(layer, i);
-                        _input[i] = temp[i];
-                    }
+                recalculate_output(layer, remove_inputs, add_inputs, r_idx, a_idx);
+
+            #if DEBUG_INCREMENTAL
+                float output[OUTPUTS] = { 0 };
+                layer.dot(_input, output);
+                for (int i = 0; i != OUTPUTS; ++i)
+                {
+                    std::cout << _output[i] << " " << output[i] << "\n";
+                    ASSERT_ALWAYS(abs(output[i] - _output[i]) < 0.0001);
                 }
+            #endif /* DEBUG_INCREMENTAL */
+            }
+        }
+
+        template <typename L>
+        void recalculate_output(
+            const L& layer,
+            const int (&remove_inputs)[INPUTS],
+            const int (&add_inputs)[INPUTS],
+            const int r_idx,
+            const int a_idx)
+        {
+            static_assert(L::OUTPUTS == OUTPUTS);
+            static_assert(OUTPUTS % Vector::size() == 0);
+
+        #if true /* vectorize */
+            Vector vo, vw;
+
+            for (int j = 0; j != layer.OUTPUTS; j += Vector::size())
+            {
+                vo.load(&_output[j]);
+                for (int i = 0; i != r_idx; ++i)
+                {
+                    vw.load(&layer._w[remove_inputs[i]][j]);
+                    vo -= vw;
+                }
+                for (int i = 0; i != a_idx; ++i)
+                {
+                    vw.load(&layer._w[add_inputs[i]][j]);
+                    vo += vw;
+                }
+                vo.store(&_output[j]);
+            }
+        #else /* non-vectorized version */
+            for (int j = 0; j != OUTPUTS; ++j)
+            {
+                for (int i = 0; i != a_idx; ++i)
+                    _output[j] += layer._w[add_inputs[i]][j];
+
+                for (int i = 0; i != r_idx; ++i)
+                    _output[j] -= layer._w[remove_inputs[i]][j];
+            }
+        #endif
+        }
+
+        /** Incremental update of one-hot encoding */
+        INLINE void update(
+            const State& from_pos,
+            const State& to_pos,
+            const Move& move,
+            Color color, /* color of side that moved */
+            int (&remove)[INPUTS],
+            int (&add)[INPUTS],
+            int& r_idx,
+            int& a_idx)
+        {
+            if (to_pos.promotion)
+            {
+                // add the promoted-to piece
+                ASSERT(move.promotion() == to_pos.promotion);
+                add[a_idx++] = psi(to_pos.promotion, color, move.to_square());
+
+                // remove the pawn
+                remove[r_idx++] = psi(PieceType::PAWN, color, move.from_square());
+            }
+            else
+            {
+                const auto ptype = from_pos.piece_type_at(move.from_square());
+                remove[r_idx++] = psi(ptype, color, move.from_square());
+                add[a_idx++] = psi(ptype, color, move.to_square());
+
+                if (to_pos.is_castle)
+                {
+                    const auto king_file = square_file(move.to_square());
+
+                    remove[r_idx++] = psi(PieceType::ROOK, color, rook_castle_squares[king_file == 2][0][color]);
+                    add[a_idx++] = psi(PieceType::ROOK, color, rook_castle_squares[king_file == 2][1][color]);
+                }
+            }
+
+            if (to_pos.capture_value)
+            {
+                const auto capture_square = from_pos.is_en_passant(move)
+                    ? Square(from_pos.en_passant_square - 8 * SIGN[color])
+                    : move.to_square();
+                const auto victim_type = from_pos.piece_type_at(capture_square);
+                remove[r_idx++] = psi(victim_type, !color, capture_square);
             }
         }
     };
@@ -347,11 +343,10 @@ namespace nnue
 
     template <typename A, typename L> INLINE int eval(const A& a, const L& layer)
     {
-        ALIGN float input[L::INPUTS];
-        ALIGN float output[1];
+        float input[L::INPUTS];
+        float output[1];
 
         static_assert(L::INPUTS == A::OUTPUTS);
-        static_assert(sizeof(input) == sizeof(a._output));
 
         activation(a._output, input);
 
@@ -362,5 +357,3 @@ namespace nnue
     int eval_fen(const std::string&);
 
 } /* namespace nnue */
-
-#undef ALIGN

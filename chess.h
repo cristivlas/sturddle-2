@@ -338,7 +338,7 @@ namespace chess
     std::string square_name(Square);
 
 
-    template<typename F> constexpr void for_each_square(Bitboard bb, F f)
+    template<typename F> INLINE constexpr void for_each_square(Bitboard bb, F f)
     {
         while (bb)
         {
@@ -350,18 +350,32 @@ namespace chess
     }
 
 
-    template<typename T, typename F> constexpr T for_each_square_r(Bitboard bb, F f)
+    template<typename F>
+    using result_type = typename std::invoke_result_t<F, Square>;
+
+    template<typename F, typename = std::enable_if_t<!std::is_void_v<result_type<F>>>>
+    INLINE constexpr result_type<F> for_each_square_r(Bitboard bb, F f)
     {
         while (bb)
         {
             const auto temp = bb & -bb;
-
             if (auto r = f(static_cast<Square>(lsb(bb))))
                 return r;
-
             bb ^= temp;
         }
-        return T();
+        return result_type<F>{};
+    }
+
+
+    template<typename F, typename = std::enable_if_t<std::is_void_v<result_type<F>>>>
+    INLINE void for_each_square_r(Bitboard bb, F f)
+    {
+        while (bb)
+        {
+            const auto temp = bb & -bb;
+            f(static_cast<Square>(lsb(bb)));
+            bb ^= temp;
+        }
     }
 
 
@@ -756,7 +770,7 @@ namespace chess
             {
                 const auto snipers = rays & attacks.second & theirs;
 
-                result = for_each_square_r<Bitboard>(snipers, [&](Square sniper)
+                result = for_each_square_r(snipers, [&](Square sniper)
                 {
                     if ((between(sniper, king_square) & (occupied | square_mask)) == square_mask)
                         return BB_RAYS[king_square][sniper];
@@ -956,7 +970,7 @@ namespace chess
             const auto rook_mask = rooks & occupied_co(color);
             const auto occupied = this->occupied();
 
-            return for_each_square_r<bool>(rook_mask, [&](Square rook) {
+            return for_each_square_r(rook_mask, [&](Square rook) {
         #if USE_MAGIC_BITS
                 return magic_bits_attacks.Rook(occupied, rook) & rook_mask;
         #else
@@ -971,7 +985,7 @@ namespace chess
             const auto attacked = occupied_co(!color) & ~pawns;
             const auto occupied = black | white;
 
-            return for_each_square_r<bool>(occupied_co(color) & (pawns | knights | bishops),
+            return for_each_square_r(occupied_co(color) & (pawns | knights | bishops),
                 [&](Square attacking_square) {
                     return popcount(attacks_mask(attacking_square, occupied) & attacked) > 1;
                 });
@@ -1460,7 +1474,7 @@ namespace chess
 
     INLINE bool State::is_pinned(Color color) const
     {
-        return for_each_square_r<bool>(occupied_co(color), [&] (Square square) {
+        return for_each_square_r(occupied_co(color), [&] (Square square) {
 
             auto piece_type = piece_type_at(square);
 

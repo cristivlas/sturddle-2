@@ -493,7 +493,7 @@ namespace chess
             const auto path = between(king_square, king_to_square) | BB_SQUARES[king_to_square];
 
             /* is any square in king's path under attack? */
-            if (for_each_square_r<bool>(path, [&](Square sq) {
+            if (for_each_square_r(path, [&](Square sq) {
                 return attackers_mask(!turn, sq, occupied) != 0;
             }))
                 return;

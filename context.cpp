@@ -177,24 +177,21 @@ void assert_param_ref()
 #if WITH_NNUE
 bool USE_NNUE = true;
 
-constexpr int INPUTS = 832;
-constexpr int HIDDEN = 256;
+constexpr int INPUTS = 769;
+constexpr int HIDDEN = 128;
 
 using Accumulator = nnue::Accumulator<INPUTS, HIDDEN>;
 static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
 static nnue::Layer<INPUTS, HIDDEN> L1(hidden_w, hidden_b);
-static nnue::Layer<HIDDEN, 1, int16_t, 64> L2(out_w, out_b);
+static nnue::Layer<HIDDEN, 1> L2(out_w, out_b);
 
 score_t search::Context::eval_nnue_raw()
 {
-    int8_t one_hot[INPUTS] = { 0 };
     auto& acc = NNUE_data[tid()][_ply];
-    if (is_root())
+    if (is_root() || _update_nnue)
         acc.update(L1, state());
-    if (_ply >= 2)
-        acc.update(L1, state(), NNUE_data[tid()][_ply - 2], one_hot);
-    else if (_ply >= 1)
-        acc.update(L1, state(), NNUE_data[tid()][_ply - 1], one_hot);
+    else
+        acc.update(L1, _parent->state(), state(), _move, NNUE_data[tid()][_ply - 1]);
 
     return nnue::eval(acc, L2);
 }

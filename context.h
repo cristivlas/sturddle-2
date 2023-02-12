@@ -230,6 +230,7 @@ namespace search
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
         bool        _retry_next = false;
+        bool        _update_nnue = false; /* requires full update (non-incremental) */
 
         int         _double_ext = 0;
         score_t     _eval = SCORE_MIN; /* static eval */
@@ -286,13 +287,13 @@ namespace search
         const Move* first_valid_move();
         score_t     futility_margin();
 
-        INLINE bool has_improved(score_t margin = 0) const { return improvement() > margin; }
+        INLINE bool has_improved(score_t margin = 0) { return improvement() > margin; }
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
 
         int         history_count(const Move&) const;
         float       history_score(const Move&) const;
 
-        score_t     improvement() const;
+        score_t     improvement();
         static void init();
         bool        is_beta_cutoff(Context*, score_t);
         static bool is_cancelled() { return _cancel.load(std::memory_order_relaxed); }
@@ -330,6 +331,7 @@ namespace search
         template<bool Construct = false> Context* next_ply() const;
 
         INLINE int  next_move_index() { return _move_maker.current(*this); }
+
         bool        on_next();
         void        reinitialize();
         int         rewind(int where = 0, bool reorder = false);
@@ -683,9 +685,9 @@ namespace search
     }
 
 
-    template <bool Raw> void search::Context::eval_nnue()
-    {
 #if WITH_NNUE
+    template <bool Raw> INLINE void search::Context::eval_nnue()
+    {
         auto eval = eval_nnue_raw();
 
         if constexpr (!Raw)
@@ -699,15 +701,22 @@ namespace search
         }
 
         _eval = std::max(-CHECKMATE, std::min(CHECKMATE, eval));
-#endif /* WITH_NNUE */
     }
 
-
-    /* Use value from the TT if available, else do a quick material evaluation. */
     INLINE score_t Context::static_eval()
     {
         return _eval == SCORE_MIN ? evaluate_material() : _eval;
     }
+#else
+    template <bool Raw> INLINE void search::Context::eval_nnue() {}
+    INLINE void search::Context::nnue_update() {}
+
+    /* Use value from the TT if available, else do a quick material evaluation. */
+    INLINE score_t Context::static_eval()
+    {
+        return _tt_entry._value == SCORE_MIN ? evaluate_material() : _tt_entry._value;
+    }
+#endif /* WITH_NNUE */
 
 
     template<bool EvalCaptures> INLINE score_t Context::evaluate()
@@ -815,7 +824,7 @@ namespace search
     /*
      * Improvement for the side that just moved.
      */
-    INLINE score_t Context::improvement() const
+    INLINE score_t Context::improvement()
     {
         if (_improvement < 0)
         {
@@ -826,10 +835,17 @@ namespace search
             else
             {
                 const auto prev = _parent->_parent;
+            #if WITH_NNUE
+                const auto eval = _eval;
+                const auto prev_eval = prev->_eval;
+            #else
+                const auto eval = static_eval();
+                const auto prev_eval = prev->static_eval();
+            #endif /* WITH_NNUE */
 
-                if (abs(_eval) < MATE_HIGH && abs(prev->_eval) < MATE_HIGH)
+                if (abs(eval) < MATE_HIGH && abs(prev_eval) < MATE_HIGH)
                 {
-                    _improvement = std::max(0, prev->_eval - _eval);
+                    _improvement = std::max(0, prev_eval - eval);
                 }
                 else
                 {
