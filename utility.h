@@ -76,7 +76,6 @@ namespace
 
     /*
      * For sorting small vectors of small objects.
-     * Sorting Move objects takes advantage of the XOR swap hack on 64 bit.
      */
     template<typename Iterator, typename Compare>
     INLINE void insertion_sort(Iterator first, Iterator last, Compare comp)
