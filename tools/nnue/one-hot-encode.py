@@ -40,7 +40,7 @@ def board_to_features(board, test=False):
 
 
 '''
-Convert features to board, for verification.
+Convert encoding back to board, for verification.
 '''
 def features_to_board(f):
     turn = f[768]

@@ -320,7 +320,6 @@ if __name__ == '__main__':
 
         #for future support of other hot-encoding schemes
         parser.add_argument('--hot-encoding', choices=(769,), type=int, default=769, help=argparse.SUPPRESS)
-        
 
         parser.add_argument('--macro-batch-size', type=int, default=0)
         parser.add_argument('--macro-epochs', type=int, default=20, help='epochs per macro-batch')
