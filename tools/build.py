@@ -1,5 +1,8 @@
 '''
-Build all-in-one executable.
+Build all-in-one executable using pyinstaller.
+
+Part of Sturddle Chess 2.0
+Copyright (c) 2023 Cristian Vlasceanu.
 '''
 import argparse
 import glob
