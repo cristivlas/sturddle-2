@@ -47,9 +47,9 @@ class Timer:
 
 
 def print_header():
-    print (f'Algorithm | {"Test":34s} | Time  | Result |   Depth    |  Evals   |   Nodes   |  Hash  |\
+    print (f'Algorithm | {"Test":34s} | Time  | Result |    Depth    |  Evals   |   Nodes   |  Hash  |\
      Speed     |   Solved')
-    print (f"{'-'*10}+{'-'*36}+{'-'*7}+{'-'*8}+{'-'*12}+{'-'*10}+{'-'*11}+{'-'*8}+{'-'*15}+{'-'*15}")
+    print (f"{'-'*10}+{'-'*36}+{'-'*7}+{'-'*8}+{'-'*13}+{'-'*10}+{'-'*11}+{'-'*8}+{'-'*15}+{'-'*15}")
 
 
 """
@@ -124,7 +124,7 @@ def search(algo_class, name, board, expected, depths, **kwargs):
 
     nps = n / timer.seconds_elapsed()
     u = algo.tt_usage
-    stats = f'|{d:2d} {t:2d} ({a:4.1f})| {e:8d} | {n:9d} |{u:6.2f}% | {nps/1000:8.1f} knps |'
+    stats = f'|{d:3d} {t:2d} ({a:4.1f})| {e:8d} | {n:9d} |{u:6.2f}% | {nps/1000:8.1f} knps |'
     if uci in expected or san in expected:
         print (f' \u001b[32mOK.\u001b[0m   {stats}', end='')
         result = True
