@@ -24,10 +24,9 @@ def _configure_logging(args):
         format='%(asctime)s;%(levelname)s;%(message)s',
         level=log_level,
     )
-    tf.get_logger().setLevel(log_level)
-
     # silence off annoying logging, see https://github.com/abseil/abseil-py/issues/99
     logging.getLogger('absl').addFilter(lambda *_:False)
+    return log_level
 
 
 def _make_model(args, strategy):
@@ -331,14 +330,16 @@ if __name__ == '__main__':
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout
 
+        log_level = _configure_logging(args)
+
         # delay tensorflow import so that --help does not have to wait
         print('Importing tensorflow')
 
         import tensorflow as tf
+        tf.get_logger().setLevel(log_level)
+
         from tensorflow.keras.layers import *
         from tensorflow.keras.losses import Huber, MeanSquaredError
-
-        _configure_logging(args)
 
         '''
         Detect GPU presence and compute capability.
