@@ -172,30 +172,35 @@ def main(args):
         x = data[:,:args.hot_encoding]
         y = data[:,args.hot_encoding:]
         print(x.shape, y.shape)
+
         steps_per_epoch = None
 
-        if args.gpu:
-            if args.distribute:
-                dataset = DataGenerator(x, y)
-                steps_per_epoch = len(dataset)
-                dataset = tf.data.Dataset.from_generator(
-                    dataset,
-                    output_types=(dtype, dtype),
-                    output_shapes=((None, args.hot_encoding), (None, 1)),
-                ).prefetch(ft.data.AUTOTUNE).repeat()
+        if args.whole_dataset:
+            # attempt to fit whole training set in memory
+            #dataset = tf.data.Dataset.from_tensor_slices((x, y))
+            #if args.batch_size:
+            #    dataset = dataset.batch(args.batch_size)
+            dataset = None
 
-                dataset = strategy.experimental_distribute_dataset(dataset)
+        elif args.distribute:
+            # distribute data accross several GPUs
+            dataset = DataGenerator(x, y)
+            steps_per_epoch = len(dataset)
+            dataset = tf.data.Dataset.from_generator(
+                dataset,
+                output_types=(dtype, dtype),
+                output_shapes=((None, args.hot_encoding), (None, 1)),
+            ).prefetch(ft.data.AUTOTUNE).repeat()
 
-            elif args.macro_batch_size <= 0:
-                dataset = DataGenerator(x, y)
-            else:
-                dataset = MacroBatchGenerator(x, y)
+            dataset = strategy.experimental_distribute_dataset(dataset)
+
+        elif args.macro_batch_size > 0:
+            # use macro-batching (chunking) to reduce I/O latency
+            dataset = MacroBatchGenerator(x, y)
+
         else:
-            if args.batch_size:
-                dataset = tf.data.Dataset.from_tensor_slices((x, y))
-                dataset = dataset.batch(args.batch_size)
-            else:
-                dataset = None
+            dataset = DataGenerator(x, y)
+
 
     if args.model and os.path.exists(args.model):
         model = _make_model(args, strategy)
@@ -325,6 +330,7 @@ if __name__ == '__main__':
         parser.add_argument('--mixed-precision', dest='mixed_precision', action='store_true', default=True, help='enable mixed precision')
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
         parser.add_argument('--profile-batches', type=int, default=0, help='enable TensorBoard to profile range of batches')
+        parser.add_argument('--whole-dataset', action='store_true', help='attempt to fit whole dataset in memory')
 
         args = parser.parse_args()
         if args.input[0] == 'export' and not args.export:

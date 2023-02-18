@@ -5,9 +5,13 @@ Positions are converted from EPD into features, and stored as a
 memory-mapped numpy array.
 '''
 import argparse
+import os
+import sys
 
 import chess
 import numpy as np
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'sqlite')))
 from dbutils.sqlite import SQLConn
 from tqdm.contrib import tenumerate
 
