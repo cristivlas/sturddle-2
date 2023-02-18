@@ -190,7 +190,7 @@ def main(args):
                 dataset,
                 output_types=(dtype, dtype),
                 output_shapes=((None, args.hot_encoding), (None, 1)),
-            ).prefetch(ft.data.AUTOTUNE).repeat()
+            ).prefetch(tf.data.AUTOTUNE).repeat()
 
             dataset = strategy.experimental_distribute_dataset(dataset)
 
@@ -200,7 +200,6 @@ def main(args):
 
         else:
             dataset = DataGenerator(x, y)
-
 
     if args.model and os.path.exists(args.model):
         model = _make_model(args, strategy)
@@ -316,7 +315,7 @@ if __name__ == '__main__':
         parser.add_argument('--activation', choices=['clipped-relu', 'relu'], default='relu', help='activation function')
         parser.add_argument('--amsgrad', action='store_true', help='use AMSGrad (address Adam convergence problems)')
         parser.add_argument('--decay', type=float, help='Adam weight decay')
-        parser.add_argument('--distribute', action='store_true', help='distribute data set')
+        parser.add_argument('--distribute', action='store_true', help='distribute dataset between GPUs')
         parser.add_argument('--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('--half', action='store_true', help='read half-precision (float16) input')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
