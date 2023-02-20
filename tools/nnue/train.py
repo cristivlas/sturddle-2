@@ -135,6 +135,8 @@ def main(args):
         def __getitem__(self, i):
             x = self.x[i * self.batch_size:(i + 1) * self.batch_size]
             y = self.y[i * self.batch_size:(i + 1) * self.batch_size]
+            if args.clip:
+                y = np.clip(y, -args.clip, args.clip)
             return x, y
 
     '''
@@ -314,6 +316,7 @@ if __name__ == '__main__':
         parser.add_argument('-x', '--export', help='filename to export weights to, as C++ code')
         parser.add_argument('--activation', choices=['clipped-relu', 'relu'], default='relu', help='activation function')
         parser.add_argument('--amsgrad', action='store_true', help='use AMSGrad (address Adam convergence problems)')
+        parser.add_argument('--clip', type=int)
         parser.add_argument('--decay', type=float, help='Adam weight decay')
         parser.add_argument('--distribute', action='store_true', help='distribute dataset between GPUs')
         parser.add_argument('--ema', action='store_true', help='use Exponential Moving Average')
