@@ -36,11 +36,20 @@ iqr = q3 - q1
 outlier_thresh = args.outlier_threshold * iqr
 
 # Identify the outlier data points
-outliers = df[np.abs(df[score_col] - df[score_col].median()) > outlier_thresh]
+# outliers = df[np.abs(df[score_col] - df[score_col].median()) > outlier_thresh]
+
+# Identify the outlier data points with progress bar
+with tqdm.tqdm(total=len(df)) as pbar:
+    outliers = []
+    for i, row in df.iterrows():
+        if abs(row[score_col] - df[score_col].median()) > outlier_thresh:
+            outliers.append(i)
+        pbar.update(1)
+outliers = df.loc[outliers]
 
 # Remove the outlier data points
 # df = df[~df.index.isin(outliers.index)]
-# Remove the outlier data points with progress
+# Remove the outlier data points with progress bar
 with tqdm.tqdm(total=len(df)) as pbar:
     for idx in outliers.index:
         df = df.drop(idx)
