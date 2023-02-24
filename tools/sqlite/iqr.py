@@ -7,6 +7,7 @@ import sqlite3
 
 import numpy as np
 import pandas as pd
+import tqdm
 import ydata_profiling
 
 # Define the command line arguments
@@ -38,7 +39,12 @@ outlier_thresh = args.outlier_threshold * iqr
 outliers = df[np.abs(df[score_col] - df[score_col].median()) > outlier_thresh]
 
 # Remove the outlier data points
-df = df[~df.index.isin(outliers.index)]
+# df = df[~df.index.isin(outliers.index)]
+# Remove the outlier data points with progress
+with tqdm.tqdm(total=len(df)) as pbar:
+    for idx in outliers.index:
+        df = df.drop(idx)
+        pbar.update(1)
 
 # Save the cleaned data to a new SQLite database
 clean_conn = sqlite3.connect(args.output_db)
