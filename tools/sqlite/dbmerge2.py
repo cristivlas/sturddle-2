@@ -23,7 +23,7 @@ def merge_databases(input_dbs, output_db):
         input_cursor = input_conn.cursor()
 
         for row in input_cursor.execute('SELECT * FROM position'):
-            epd, depth, score = row
+            epd, depth, score = row[0:3]
             existing = c.execute('SELECT depth FROM position WHERE epd = ?', (epd,)).fetchone()
             if existing is None or depth > existing[0]:
                 c.execute('REPLACE INTO position (epd, depth, score) VALUES (?, ?, ?)', (epd, depth, score))
