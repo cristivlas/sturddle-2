@@ -54,16 +54,23 @@ def _make_model(args, strategy):
         else:
             assert False
 
-        model.compile(
-            loss=loss,
+        if args.optimizer == 'adam':
+            optimizer=tf.keras.optimizers.Adam(
+                amsgrad=True,
+                learning_rate=args.learn_rate,
+                use_ema=args.ema,
+                weight_decay=args.decay if args.decay else None)
+        elif args.optimizer == 'sgd':
             optimizer=tf.keras.optimizers.SGD(
                 learning_rate=args.learn_rate,
                 nesterov=True,
                 use_ema=args.ema,
-                weight_decay=args.decay if args.decay else None,
-            ),
-            metrics=[]
-        )
+                weight_decay=args.decay if args.decay else None)
+        else:
+            assert False
+
+        model.compile(loss=loss, optimizer=optimizer, metrics=[])
+
     return model
 
 
@@ -322,6 +329,7 @@ if __name__ == '__main__':
         parser.add_argument('--half', action='store_true', help='read half-precision (float16) input')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
+        parser.add_argument('--optimizer', choices=['adam', 'sgd'], default='sgd')
 
         #for future support of other hot-encoding schemes
         parser.add_argument('--hot-encoding', choices=(769,), type=int, default=769, help=argparse.SUPPRESS)
