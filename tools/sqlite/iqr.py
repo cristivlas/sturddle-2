@@ -36,8 +36,9 @@ iqr = q3 - q1
 outlier_thresh = args.outlier_threshold * iqr
 
 # Identify the outlier data points
-# outliers = df[np.abs(df[score_col] - df[score_col].median()) > outlier_thresh]
+outliers = df[np.abs(df[score_col] - df[score_col].median()) > outlier_thresh]
 
+'''
 # Identify the outlier data points with progress bar
 with tqdm.tqdm(total=len(df)) as pbar:
     outliers = []
@@ -46,15 +47,17 @@ with tqdm.tqdm(total=len(df)) as pbar:
             outliers.append(i)
         pbar.update(1)
 outliers = df.loc[outliers]
+'''
 
 # Remove the outlier data points
-# df = df[~df.index.isin(outliers.index)]
+df = df[~df.index.isin(outliers.index)]
+'''
 # Remove the outlier data points with progress bar
 with tqdm.tqdm(total=len(df)) as pbar:
     for idx in outliers.index:
         df = df.drop(idx)
         pbar.update(1)
-
+'''
 # Save the cleaned data to a new SQLite database
 clean_conn = sqlite3.connect(args.output_db)
 df.to_sql('position', clean_conn, index=False, if_exists='replace')
