@@ -54,16 +54,23 @@ def _make_model(args, strategy):
         else:
             assert False
 
-        model.compile(
-            loss=loss,
+        if args.optimizer == 'adam':
             optimizer=tf.keras.optimizers.Adam(
-                amsgrad=args.amsgrad,
+                amsgrad=True,
                 learning_rate=args.learn_rate,
                 use_ema=args.ema,
-                weight_decay=args.decay if args.decay else None,
-            ),
-            metrics=['accuracy']
-        )
+                weight_decay=args.decay if args.decay else None)
+        elif args.optimizer == 'sgd':
+            optimizer=tf.keras.optimizers.SGD(
+                learning_rate=args.learn_rate,
+                nesterov=True,
+                use_ema=args.ema,
+                weight_decay=args.decay if args.decay else None)
+        else:
+            assert False
+
+        model.compile(loss=loss, optimizer=optimizer, metrics=[])
+
     return model
 
 
@@ -258,7 +265,7 @@ def main(args):
             model.summary()
             if not args.model:
                 print('*****************************************************************')
-                print(' WARNING: checkpoint path not provided, model WILL NOT BE SAVED!')
+                print(' WARNING: checkpoint path not provided, model WILL NOT BE SAVED! ')
                 print('*****************************************************************')
             print(f'Training with {row_count} rows of data.')
 
@@ -313,16 +320,16 @@ if __name__ == '__main__':
         parser.add_argument('-m', '--model', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=0.0001, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='use verbose (DEBUG level) logging')
-        parser.add_argument('-x', '--export', help='filename to export weights to, as C++ code')
+        parser.add_argument('-w', '--export', help='filename to export weights to, as C++ code')
         parser.add_argument('--activation', choices=['clipped-relu', 'relu'], default='relu', help='activation function')
-        parser.add_argument('--amsgrad', action='store_true', help='use AMSGrad (address Adam convergence problems)')
         parser.add_argument('--clip', type=int)
-        parser.add_argument('--decay', type=float, help='Adam weight decay')
+        parser.add_argument('--decay', type=float, help='weight decay')
         parser.add_argument('--distribute', action='store_true', help='distribute dataset between GPUs')
         parser.add_argument('--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('--half', action='store_true', help='read half-precision (float16) input')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
+        parser.add_argument('--optimizer', choices=['adam', 'sgd'], default='sgd')
 
         #for future support of other hot-encoding schemes
         parser.add_argument('--hot-encoding', choices=(769,), type=int, default=769, help=argparse.SUPPRESS)
