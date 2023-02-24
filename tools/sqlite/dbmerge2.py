@@ -3,6 +3,8 @@ import argparse
 import os
 import sqlite3
 
+from tqdm.contrib import tenumerate
+
 # Parse command line arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('inputs', nargs='+', help='List of input DB filenames')
@@ -22,8 +24,9 @@ def merge_databases(input_dbs, output_db):
         input_conn = sqlite3.connect(db)
         input_cursor = input_conn.cursor()
 
-        for row in input_cursor.execute('SELECT * FROM position'):
-            epd, depth, score = row[0:3]
+        max_row = input_cursor.execute(f'SELECT MAX(_ROWID_) FROM position').fetchone()[0]
+        for _, row in tenumerate(input_cursor.execute('SELECT * FROM position'), total=max_row):
+            epd, depth, score = row
             existing = c.execute('SELECT depth FROM position WHERE epd = ?', (epd,)).fetchone()
             if existing is None or depth > existing[0]:
                 c.execute('REPLACE INTO position (epd, depth, score) VALUES (?, ?, ?)', (epd, depth, score))
