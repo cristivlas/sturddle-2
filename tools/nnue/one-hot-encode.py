@@ -68,6 +68,7 @@ def decode(f):
 
 
 def main(args):
+    clip = args.clip
     with SQLConn(*args.input) as sql:
         count = sql.row_count('position')
         dtype = np.float16 if args.half else np.float32
@@ -76,7 +77,7 @@ def main(args):
         board = chess.Board()
         for i, row in tenumerate(sql.exec(query), start=0, total=count, desc='Encoding'):
             board.set_fen(row[0])
-            score = max(-1500, min(1500, row[1])) / 100
+            score = np.clip(row[1], -clip, clip) / 100
             out[i]= np.append(encode(board, args.test), score).astype(dtype)
 
 
@@ -84,8 +85,9 @@ if __name__ == '__main__':
     try:
         parser = argparse.ArgumentParser(description='Convert sqlite3 db to numpy array')
         parser.add_argument('input', nargs=1)
-        parser.add_argument('-o', '--output', required=True)
+        parser.add_argument('-c', '--clip', type=int, default=1500, help='centipawns')
         parser.add_argument('-d', '--debug', action='store_true')
+        parser.add_argument('-o', '--output', required=True)
         parser.add_argument('-t', '--test', action='store_true', default=False)
         parser.add_argument('--half', action='store_true', default=False)
 
