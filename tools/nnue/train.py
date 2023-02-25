@@ -56,7 +56,7 @@ def _make_model(args, strategy):
 
         if args.optimizer == 'adam':
             optimizer=tf.keras.optimizers.Adam(
-                amsgrad=True,
+                amsgrad=args.amsgrad,
                 learning_rate=args.learn_rate,
                 use_ema=args.ema,
                 weight_decay=args.decay if args.decay else None)
@@ -322,6 +322,7 @@ if __name__ == '__main__':
         parser.add_argument('-v', '--debug', action='store_true', help='use verbose (DEBUG level) logging')
         parser.add_argument('-w', '--export', help='filename to export weights to, as C++ code')
         parser.add_argument('--activation', choices=['clipped-relu', 'relu'], default='relu', help='activation function')
+        parser.add_argument('--amsgrad', action='store_true', help='use amsgrad (ignored when not using adam)')
         parser.add_argument('--clip', type=int)
         parser.add_argument('--decay', type=float, help='weight decay')
         parser.add_argument('--distribute', action='store_true', help='distribute dataset between GPUs')
