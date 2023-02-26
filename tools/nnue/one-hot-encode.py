@@ -19,7 +19,7 @@ from tqdm.contrib import tenumerate
 Convert chess.Board to array of features.
 Looses castling rights and en-passant square info.
 '''
-def board_to_features(board, test=False):
+def encode(board, test=False):
     mask_black = board.occupied_co[chess.BLACK]
     mask_white = board.occupied_co[chess.WHITE]
 
@@ -38,7 +38,7 @@ def board_to_features(board, test=False):
         board.castling_rights = 0
         board.ep_square = None
         expected = board.epd()
-        actual = features_to_board(f).epd()
+        actual = decode(f).epd()
         assert expected == actual, (expected, actual)
     return f
 
@@ -46,7 +46,7 @@ def board_to_features(board, test=False):
 '''
 Convert encoding back to board, for verification.
 '''
-def features_to_board(f):
+def decode(f):
     turn = f[768]
     bitboards = [int(x) for x in list(np.packbits(f[:768]).view(np.uint64).byteswap())]
     assert len(bitboards) == 12, bitboards
@@ -68,24 +68,26 @@ def features_to_board(f):
 
 
 def main(args):
+    clip = args.clip
     with SQLConn(*args.input) as sql:
         count = sql.row_count('position')
         dtype = np.float16 if args.half else np.float32
         out = np.memmap(args.output, dtype=dtype, mode='w+', shape=(count,770))
         query = '''SELECT epd, score from position'''
         board = chess.Board()
-        for i, row in tenumerate(sql.exec(query), start=0, total=count, desc='Processing'):
+        for i, row in tenumerate(sql.exec(query), start=0, total=count, desc='Encoding'):
             board.set_fen(row[0])
-            score = max(-1500, min(1500, row[1])) / 100
-            out[i]= np.append(board_to_features(board, args.test), score).astype(dtype)
+            score = np.clip(row[1], -clip, clip) / 100
+            out[i]= np.append(encode(board, args.test), score).astype(dtype)
 
 
 if __name__ == '__main__':
     try:
         parser = argparse.ArgumentParser(description='Convert sqlite3 db to numpy array')
         parser.add_argument('input', nargs=1)
-        parser.add_argument('-o', '--output', required=True)
+        parser.add_argument('-c', '--clip', type=int, default=1500, help='centipawns')
         parser.add_argument('-d', '--debug', action='store_true')
+        parser.add_argument('-o', '--output', required=True)
         parser.add_argument('-t', '--test', action='store_true', default=False)
         parser.add_argument('--half', action='store_true', default=False)
 

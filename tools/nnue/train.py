@@ -37,7 +37,7 @@ def _make_model(args, strategy):
     activation = tf.keras.activations.relu if args.activation == 'relu' else _clipped_relu
     with strategy.scope():
         model = tf.keras.models.Sequential([
-            Dense(128, input_shape=(args.hot_encoding,), activation=activation, name='hidden'),
+            Dense(512, input_shape=(args.hot_encoding,), activation=activation, name='hidden'),
             Dense(1, name='out', dtype='float32')
         ])
 
