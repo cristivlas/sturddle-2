@@ -184,7 +184,7 @@ namespace nnue
             {
                 _hash = state.hash();
 
-            #if 0
+            #if 1
                 memset(&_input, 0, sizeof(_input));
                 one_hot_encode(state, _input);
 
