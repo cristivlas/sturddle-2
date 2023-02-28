@@ -183,10 +183,30 @@ namespace nnue
             if (state.hash() != _hash)
             {
                 _hash = state.hash();
+
+            #if 0
                 memset(&_input, 0, sizeof(_input));
                 one_hot_encode(state, _input);
 
                 layer.dot(_input, _output);
+            #else
+                int add_inputs[INPUTS];
+                int remove_inputs[INPUTS];
+                int r_idx = 0, a_idx = 0;
+
+                int8_t input[INPUTS] = { 0 };
+
+                one_hot_encode(state, input);
+                for (int i = 0; i != INPUTS; ++i)
+                {
+                    if (input[i] && !_input[i])
+                        add_inputs[a_idx++] = i;
+                    if (!input[i] && _input[i])
+                        remove_inputs[r_idx++] = i;
+                    _input[i] = input[i];
+                }
+                recalculate_output(layer, remove_inputs, add_inputs, r_idx, a_idx);
+            #endif
             }
         }
 
