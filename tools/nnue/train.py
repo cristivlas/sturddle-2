@@ -63,7 +63,7 @@ def _make_model(args, strategy):
         elif args.optimizer == 'sgd':
             optimizer=tf.keras.optimizers.SGD(
                 learning_rate=args.learn_rate,
-                nesterov=True,
+                nesterov=args.nesterov,
                 use_ema=args.ema,
                 weight_decay=args.decay if args.decay else None)
         else:
@@ -309,12 +309,11 @@ if __name__ == '__main__':
             pass
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy input data')
-        parser.add_argument('-a', '--arch', type=int, default=6, help='network architecture')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
         parser.add_argument('-d', '--delta', type=float, default=1.35, help='Huber delta')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-f', '--save_freq', type=int, help='frequency for saving model')
-        parser.add_argument('-i', '--infer', type=int, default=0)
+        parser.add_argument('-i', '--infer', type=int, default=0, help='test inference on specified number of examples')
         parser.add_argument('-l', '--loss', choices=['huber', 'mse', 'rmse'], default='mse', help='loss function')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
@@ -330,15 +329,16 @@ if __name__ == '__main__':
         parser.add_argument('--half', action='store_true', help='read half-precision (float16) input')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
-        parser.add_argument('--optimizer', choices=['adam', 'sgd'], default='sgd')
-
         #for future support of other hot-encoding schemes
         parser.add_argument('--hot-encoding', choices=(769,), type=int, default=769, help=argparse.SUPPRESS)
 
         parser.add_argument('--macro-batch-size', type=int, default=0)
         parser.add_argument('--macro-epochs', type=int, default=20, help='epochs per macro-batch')
         parser.add_argument('--mixed-precision', dest='mixed_precision', action='store_true', default=True, help='enable mixed precision')
+        parser.add_argument('--nesterov', dest='nesterov', action='store_true', default=False, help='use Nesterov momentum (SGD only)')
+        parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
+        parser.add_argument('--optimizer', choices=['adam', 'sgd'], default='sgd')
         parser.add_argument('--profile-batches', type=int, default=0, help='enable TensorBoard to profile range of batches')
         parser.add_argument('--whole-dataset', action='store_true', help='attempt to fit whole dataset in memory')
 
