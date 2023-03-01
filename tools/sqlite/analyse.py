@@ -42,7 +42,11 @@ def analyse(args, sql_out, engine, epd):
 
 def get_engine(args):
     engine = chess.engine.SimpleEngine.popen_uci(args.engine)
-    engine.configure({'Threads': args.threads, 'Hash': args.hash})
+    config = {'Threads': args.threads, 'Hash': args.hash}
+    if 'Use NNUE' in engine.options:
+        config['Use NNUE'] = args.nnue
+
+    engine.configure(config)
     return engine
 
 
@@ -103,6 +107,8 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--time-limit', type=float, default=0.1)
     parser.add_argument('--threads', type=int, default=1)
     parser.add_argument('--no-skip-existing', action='store_true')
+    parser.add_argument('--nnue', dest='nnue', action='store_true', default=True)
+    parser.add_argument('--no-nnue', dest='nnue', action='store_false')
 
     try:
         main(parser.parse_args())
