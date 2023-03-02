@@ -178,7 +178,7 @@ void assert_param_ref()
 bool USE_NNUE = true;
 
 constexpr int INPUTS = 769;
-constexpr int HIDDEN = 512;
+constexpr int HIDDEN = 640;
 
 using Accumulator = nnue::Accumulator<INPUTS, HIDDEN>;
 static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
