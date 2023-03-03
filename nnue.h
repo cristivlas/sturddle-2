@@ -64,6 +64,7 @@ namespace nnue
     }
 
     /** Rectified Linear Unit (reLU) activation */
+#if 1
     template <typename U, typename V, int N>
     INLINE void activation(const U (&input)[N], V (&output)[N])
     {
@@ -71,6 +72,21 @@ namespace nnue
         for (int i = 0; i != N; ++i)
             output[i] = std::max<V>(0, input[i]);
     }
+#else
+    template <int N>
+    INLINE void activation(const float (&input)[N], float (&output)[N])
+    {
+        static_assert(N % Vector::size() == 0);
+
+        const Vector zero(0.0);
+        Vector v;
+        for (int i = 0; i != N; i += Vector::size())
+        {
+            v.load_a(&input[i]);
+            max(v, zero).store_a(&output[i]);
+        }
+    }
+#endif
 
     template <int N, int M, typename T=float>
     struct Layer
@@ -105,14 +121,15 @@ namespace nnue
             {
                 output[j] = b[j];
             #if 0
+                #pragma clang loop vectorize(enable)
                 for (int i = 0; i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
             #else
                 Vector vw;
                 for (int i = 0; i != round_down<Vector::size()>(INPUTS); i += Vector::size())
                 {
-                    vw.load(&wt[j][i]);
-                    Vector in(
+                    vw.load_a(&wt[j][i]);
+                    const Vector in(
                         input[i],   input[i+1], input[i+2], input[i+3],
                         input[i+4], input[i+5], input[i+6], input[i+7],
                         input[i+8], input[i+9], input[i+10],input[i+11],
@@ -137,23 +154,16 @@ namespace nnue
             for (int j = 0; j != OUTPUTS; ++j)
             {
                 output[j] = b[j];
-            #if 0
-                #pragma clang loop vectorize(enable)
 
-                for (int i = 0; i != INPUTS; ++i)
-                    output[j] += input[i] * wt[j][i];
-            #else
-                /* explicit vectorization */
                 static_assert(INPUTS % Vector::size() == 0);
                 Vector v_in, v_wt;
 
                 for (int i = 0; i != INPUTS; i += Vector::size())
                 {
-                    v_in.load(&input[i]);
-                    v_wt.load(&wt[j][i]);
+                    v_in.load_a(&input[i]);
+                    v_wt.load_a(&wt[j][i]);
                     output[j] += horizontal_add(v_in * v_wt);
                 }
-            #endif
             }
         }
 
@@ -174,7 +184,7 @@ namespace nnue
         static constexpr int TURN_INDEX = INPUTS - 1;
 
         int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
-        float _output[OUTPUTS] = { 0 };
+        alignas(64) float _output[OUTPUTS] = { 0 };
         uint64_t _hash = 0;
 
         /** Compute 1st layer output from scratch at root */
@@ -184,29 +194,10 @@ namespace nnue
             {
                 _hash = state.hash();
 
-            #if 1
                 memset(&_input, 0, sizeof(_input));
                 one_hot_encode(state, _input);
 
                 layer.dot(_input, _output);
-            #else
-                int add_inputs[INPUTS];
-                int remove_inputs[INPUTS];
-                int r_idx = 0, a_idx = 0;
-
-                int8_t input[INPUTS] = { 0 };
-
-                one_hot_encode(state, input);
-                for (int i = 0; i != INPUTS; ++i)
-                {
-                    if (input[i] && !_input[i])
-                        add_inputs[a_idx++] = i;
-                    if (!input[i] && _input[i])
-                        remove_inputs[r_idx++] = i;
-                    _input[i] = input[i];
-                }
-                recalculate_output(layer, remove_inputs, add_inputs, r_idx, a_idx);
-            #endif
             }
         }
 
@@ -289,18 +280,18 @@ namespace nnue
 
             for (int j = 0; j != layer.OUTPUTS; j += Vector::size())
             {
-                vo.load(&_output[j]);
+                vo.load_a(&_output[j]);
                 for (int i = 0; i != r_idx; ++i)
                 {
-                    vw.load(&layer._w[remove_inputs[i]][j]);
+                    vw.load_a(&layer._w[remove_inputs[i]][j]);
                     vo -= vw;
                 }
                 for (int i = 0; i != a_idx; ++i)
                 {
-                    vw.load(&layer._w[add_inputs[i]][j]);
+                    vw.load_a(&layer._w[add_inputs[i]][j]);
                     vo += vw;
                 }
-                vo.store(&_output[j]);
+                vo.store_a(&_output[j]);
             }
         #else /* non-vectorized version */
             for (int j = 0; j != OUTPUTS; ++j)
@@ -363,8 +354,8 @@ namespace nnue
 
     template <typename A, typename L> INLINE int eval(const A& a, const L& layer)
     {
-        float input[L::INPUTS];
-        float output[1];
+        alignas(64) float input[L::INPUTS];
+        alignas(64) float output[1];
 
         static_assert(L::INPUTS == A::OUTPUTS);
 
