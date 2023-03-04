@@ -23,6 +23,7 @@
 #include "chess.h"
 #include "vectorclass.h"
 
+#define ALIGN alignas(64)
 #define DEBUG_INCREMENTAL false
 
 namespace nnue
@@ -94,9 +95,9 @@ namespace nnue
         static constexpr int INPUTS = N;
         static constexpr int OUTPUTS = M;
 
-        T _b[OUTPUTS]; /* biases */
-        T _w[INPUTS][OUTPUTS]; /* weights */
-        T _wt[OUTPUTS][INPUTS]; /* weights transposed */
+        ALIGN T _b[OUTPUTS]; /* biases */
+        ALIGN T _w[INPUTS][OUTPUTS]; /* weights */
+        ALIGN T _wt[OUTPUTS][INPUTS]; /* weights transposed */
 
         Layer(const float(&w)[INPUTS][OUTPUTS], const float(&b)[OUTPUTS])
         {
@@ -128,7 +129,7 @@ namespace nnue
                 Vector vw;
                 for (int i = 0; i != round_down<Vector::size()>(INPUTS); i += Vector::size())
                 {
-                    vw.load_a(&wt[j][i]);
+                    vw.load(&wt[j][i]);
                     const Vector in(
                         input[i],   input[i+1], input[i+2], input[i+3],
                         input[i+4], input[i+5], input[i+6], input[i+7],
@@ -184,7 +185,7 @@ namespace nnue
         static constexpr int TURN_INDEX = INPUTS - 1;
 
         int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
-        alignas(64) float _output[OUTPUTS] = { 0 };
+        ALIGN float _output[OUTPUTS] = { 0 };
         uint64_t _hash = 0;
 
         /** Compute 1st layer output from scratch at root */
@@ -354,8 +355,8 @@ namespace nnue
 
     template <typename A, typename L> INLINE int eval(const A& a, const L& layer)
     {
-        alignas(64) float input[L::INPUTS];
-        alignas(64) float output[1];
+        ALIGN float input[L::INPUTS];
+        ALIGN float output[1];
 
         static_assert(L::INPUTS == A::OUTPUTS);
 
