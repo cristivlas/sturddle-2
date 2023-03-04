@@ -97,7 +97,7 @@ if platform.startswith('win'):
 else:
     # Linux and Mac
     if '-O0' not in args:
-        args.append('-O3')
+        args.append('-Ofast')
     args += [
         '-std=c++17',
         '-Wall',
