@@ -220,9 +220,15 @@ def main(args):
     if args.export:
         export_weights(args, model)
     else:
-        if args.model is None:
-            callbacks = []
-        else:
+        callbacks = []
+
+        if args.schedule_lr:
+            from keras.callbacks import ReduceLROnPlateau
+            lr = ReduceLROnPlateau(
+                monitor='loss', factor=0.2, patience=5, min_lr=0.000001)
+            callbacks.append(lr)
+
+        if args.model is not None:
             assert os.path.exists(os.path.dirname(args.model))
 
             if args.macro_batch_size > 0:
@@ -238,7 +244,7 @@ def main(args):
                 save_best_only=save_best_only,
                 save_freq=args.save_freq if args.save_freq else 'epoch',
             )
-            callbacks = [model_checkpoint_callback]
+            callbacks.append(model_checkpoint_callback)
 
         if args.infer > 0:
             # Test inference.
@@ -340,6 +346,7 @@ if __name__ == '__main__':
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
         parser.add_argument('--optimizer', choices=['adam', 'sgd'], default='sgd')
         parser.add_argument('--profile-batches', type=int, default=0, help='enable TensorBoard to profile range of batches')
+        parser.add_argument('--schedule-lr', action='store_true', help='use learning rate schedule')
         parser.add_argument('--whole-dataset', action='store_true', help='attempt to fit whole dataset in memory')
 
         args = parser.parse_args()
@@ -394,3 +401,4 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print()
         os._exit(0)
+

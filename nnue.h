@@ -66,7 +66,7 @@ namespace nnue
     }
 
     /** Rectified Linear Unit (reLU) activation */
-#if true
+#if 0
     template <typename U, typename V, int N>
     INLINE void activation(const U (&input)[N], V (&output)[N])
     {
@@ -79,8 +79,8 @@ namespace nnue
     INLINE void activation(const float (&input)[N], float (&output)[N])
     {
         static_assert(N % Vector::size() == 0);
+        static const Vector zero(0.0);
 
-        const Vector zero(0.0);
         Vector v;
         for (int i = 0; i != N; i += Vector::size())
         {
@@ -127,9 +127,10 @@ namespace nnue
                 for (int i = 0; i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
             #else
-                Vector sum(0.0);
-                Vector vw;
-                for (int i = 0; i != round_down<Vector::size()>(INPUTS); i += Vector::size())
+                Vector vw, sum(0.0);
+                static constexpr auto R = round_down<Vector::size()>(INPUTS);
+
+                for (int i = 0; i != R; i += Vector::size())
                 {
                     vw.load(&wt[j][i]);
                     const Vector in(
@@ -138,10 +139,10 @@ namespace nnue
                         input[i+8], input[i+9], input[i+10],input[i+11],
                         input[i+12],input[i+13],input[i+14],input[i+15]);
 
-                    sum += vw * in;
+                    sum = mul_add(in, vw, sum);
                 }
                 output[j] = b[j] + horizontal_add(sum);
-                for (int i = round_down<Vector::size()>(INPUTS); i != INPUTS; ++i)
+                for (int i = R; i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
             #endif
             }
@@ -166,7 +167,7 @@ namespace nnue
                 {
                     v_in.load_a(&input[i]);
                     v_wt.load_a(&wt[j][i]);
-                    sum += v_in * v_wt;
+                    sum = mul_add(v_in, v_wt, sum);
                 }
                 output[j] = b[j] + horizontal_add(sum);
             }
@@ -270,7 +271,7 @@ namespace nnue
         }
 
         template <typename L>
-        void recalculate_output(
+        INLINE void recalculate_output(
             const L& layer,
             const int (&remove_inputs)[INPUTS],
             const int (&add_inputs)[INPUTS],
