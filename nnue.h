@@ -43,6 +43,7 @@ namespace nnue
         const auto color_masks = { board.occupied_co(BLACK), board.occupied_co(WHITE) };
 
         int i = 63;
+        #pragma clang loop vectorize(enable)
         for (const auto bb : {
             board.kings, board.pawns, board.knights, board.bishops, board.rooks, board.queens })
         {
@@ -65,7 +66,7 @@ namespace nnue
     }
 
     /** Rectified Linear Unit (reLU) activation */
-#if 1
+#if true
     template <typename U, typename V, int N>
     INLINE void activation(const U (&input)[N], V (&output)[N])
     {
@@ -120,12 +121,13 @@ namespace nnue
         {
             for (int j = 0; j != OUTPUTS; ++j)
             {
-                output[j] = b[j];
             #if 0
+                output[j] = b[j];
                 #pragma clang loop vectorize(enable)
                 for (int i = 0; i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
             #else
+                Vector sum(0.0);
                 Vector vw;
                 for (int i = 0; i != round_down<Vector::size()>(INPUTS); i += Vector::size())
                 {
@@ -136,8 +138,9 @@ namespace nnue
                         input[i+8], input[i+9], input[i+10],input[i+11],
                         input[i+12],input[i+13],input[i+14],input[i+15]);
 
-                    output[j] += horizontal_add(vw * in);
+                    sum += vw * in;
                 }
+                output[j] = b[j] + horizontal_add(sum);
                 for (int i = round_down<Vector::size()>(INPUTS); i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
             #endif
@@ -154,7 +157,7 @@ namespace nnue
         {
             for (int j = 0; j != OUTPUTS; ++j)
             {
-                output[j] = b[j];
+                Vector sum(0.0);
 
                 static_assert(INPUTS % Vector::size() == 0);
                 Vector v_in, v_wt;
@@ -163,8 +166,9 @@ namespace nnue
                 {
                     v_in.load_a(&input[i]);
                     v_wt.load_a(&wt[j][i]);
-                    output[j] += horizontal_add(v_in * v_wt);
+                    sum += v_in * v_wt;
                 }
+                output[j] = b[j] + horizontal_add(sum);
             }
         }
 
