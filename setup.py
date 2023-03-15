@@ -68,7 +68,7 @@ NATIVE_UCI = environ.get('NATIVE_UCI', '').lower() in ['1', 'true', 'yes']
 # Debug build
 if environ.get('BUILD_DEBUG', None):
     if platform.startswith('win'):
-        args = [ '/O0 /Od', '/Zi', '/DTUNING_ENABLED' ]
+        args = [ '/Od', '/Zi', '/DTUNING_ENABLED' ]
         link = [ '/DEBUG' ]
     else:
         args = [ '-O0', '-D_DEBUG', '-DTUNING_ENABLED' ]
@@ -97,7 +97,7 @@ if platform.startswith('win'):
 else:
     # Linux and Mac
     if '-O0' not in args:
-        args.append('-Ofast')
+        args.append('-O3')
     args += [
         '-std=c++17',
         '-Wall',
