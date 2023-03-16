@@ -186,7 +186,7 @@ namespace nnue
         static constexpr int INPUTS = N;
         static constexpr int OUTPUTS = M;
 
-        /* turn (side-to-move) bit index within one-hot encoding */
+        /* bit index of the side-to-move feature within one-hot encoding */
         static constexpr int TURN_INDEX = INPUTS - 1;
 
         int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
@@ -370,6 +370,7 @@ namespace nnue
         layer.dot(input, output);
         return 100 * output[0];
     }
+
 
     int eval_fen(const std::string&);
 
