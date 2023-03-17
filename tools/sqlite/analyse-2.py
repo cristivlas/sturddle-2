@@ -47,9 +47,10 @@ def get_engine(args):
 def filter_positions(args, row):
     if args.popularity_threshold and row[4] < args.popularity_threshold:
         return False
+
     if args.min_win_rate or args.max_loss_rate:
-        win_rate = row[5] / (row[5] + row[6])
-        loss_rate = row[6] / (row[5] + row[6])
+        win_rate = row[5] / row[4]
+        loss_rate = row[6] / row[4]
         if args.min_win_rate and win_rate < args.min_win_rate:
             return False
         if args.max_loss_rate and loss_rate > args.max_loss_rate:
