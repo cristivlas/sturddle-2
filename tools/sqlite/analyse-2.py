@@ -49,8 +49,6 @@ def filter_positions(args, row):
         return False
 
     if args.min_win_rate or args.max_loss_rate:
-        assert 0 < args.min_win_rate <= 1, args.min_win_rate
-        assert 0 < args.max_loss_rate <= 1, args.max_loss_rate
         win_rate = row[5] / row[4]
         loss_rate = row[6] / row[4]
         if args.min_win_rate and win_rate < args.min_win_rate:
@@ -126,7 +124,13 @@ if __name__ == '__main__':
     parser.add_argument('--min-win-rate', type=float, help='minimum win rate (0 to 1)')
     parser.add_argument('--max-loss-rate', type=float, help='maximum loss rate (0 to 1)')
 
+    args = parser.parse_args()
+    if args.min_win_rate:
+        assert 0 < args.min_win_rate <= 1, args.min_win_rate
+    if args.max_loss_rate:
+        assert 0 < args.max_loss_rate <= 1, args.max_loss_rate
+
     try:
-        main(parser.parse_args())
+        main(args)
     except KeyboardInterrupt:
         pass
