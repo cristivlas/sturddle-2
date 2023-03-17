@@ -49,6 +49,8 @@ def filter_positions(args, row):
         return False
 
     if args.min_win_rate or args.max_loss_rate:
+        assert 0 < args.min_win_rate <= 1, args.min_win_rate
+        assert 0 < args.max_loss_rate <= 1, args.max_loss_rate
         win_rate = row[5] / row[4]
         loss_rate = row[6] / row[4]
         if args.min_win_rate and win_rate < args.min_win_rate:
