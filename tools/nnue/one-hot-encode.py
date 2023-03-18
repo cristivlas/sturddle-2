@@ -73,7 +73,7 @@ def main(args):
         count = sql.row_count('position')
         dtype = np.float16 if args.half else np.float32
         out = np.memmap(args.output, dtype=dtype, mode='w+', shape=(count,770))
-        query = '''SELECT epd, score from position'''
+        query = 'SELECT epd, score from position'
         board = chess.Board()
         for i, row in tenumerate(sql.exec(query), start=0, total=count, desc='Encoding'):
             board.set_fen(row[0])
