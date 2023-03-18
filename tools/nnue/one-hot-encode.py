@@ -78,7 +78,9 @@ def main(args):
         for i, row in tenumerate(sql.exec(query), start=0, total=count, desc='Encoding'):
             board.set_fen(row[0])
             score = np.clip(row[1], -clip, clip) / 100
-            out[i]= np.append(encode(board, args.test), score).astype(dtype)
+            encoded_board = encode(board, args.test)
+            out[i, :-1] = encoded_board.astype(dtype)
+            out[i, -1] = score.astype(dtype)
 
 
 if __name__ == '__main__':
