@@ -31,49 +31,6 @@ namespace nnue
     using namespace chess;
     using Vector = Vec16f;
 
-#if INSTRSET >= 10  // AVX512
-    constexpr int unroll_factor = 8;
-#elif INSTRSET >= 8  // AVX2
-    constexpr int unroll_factor = 4;
-#elif INSTRSET >= 4  // SSE3
-    constexpr int unroll_factor = 2;
-#else
-    constexpr int unroll_factor = 1;
-#endif
-
-    template <typename V, std::size_t N>
-    INLINE V sum_vectors(const V (&input)[N])
-    {
-        static_assert(N == unroll_factor);
-
-        V sum;
-        if constexpr (unroll_factor == 2)
-        {
-            sum = input[0] + input[1];
-        }
-        else if constexpr (unroll_factor == 4)
-        {
-            V temp1 = input[0] + input[1];
-            V temp2 = input[2] + input[3];
-            sum = temp1 + temp2;
-        }
-        else if constexpr (unroll_factor == 8)
-        {
-            V temp1 = input[0] + input[1];
-            V temp2 = input[2] + input[3];
-            V temp3 = input[4] + input[5];
-            V temp4 = input[6] + input[7];
-            V temp5 = temp1 + temp2;
-            V temp6 = temp3 + temp4;
-            sum = temp5 + temp6;
-        }
-        else
-            return input[0];
-
-        return sum;
-    }
-
-
     template<unsigned int N>
     constexpr unsigned int round_down(unsigned int x)
     {
@@ -170,34 +127,23 @@ namespace nnue
                 for (int i = 0; i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
             #else
-                Vector sum_unrolled[unroll_factor];
-                for (int u = 0; u < unroll_factor; ++u)
-                    sum_unrolled[u] = Vector(0.0);
+                Vector vw, sum(0.0);
+                static constexpr auto R = round_down<Vector::size()>(INPUTS);
 
-                constexpr int R = round_down<Vector::size()>(INPUTS);
-
-                for (int ii = 0; ii < R; ii += Vector::size() * unroll_factor)
+                for (int i = 0; i != R; i += Vector::size())
                 {
-                    for (int i = ii; i < ii + Vector::size() * unroll_factor; i += Vector::size())
-                    {
-                        Vector vw;
-                        vw.load(&wt[j][i]);
-                        const Vector in(
-                            input[i],   input[i+1], input[i+2], input[i+3],
-                            input[i+4], input[i+5], input[i+6], input[i+7],
-                            input[i+8], input[i+9], input[i+10],input[i+11],
-                            input[i+12],input[i+13],input[i+14],input[i+15]);
+                    vw.load(&wt[j][i]);
+                    const Vector in(
+                        input[i],   input[i+1], input[i+2], input[i+3],
+                        input[i+4], input[i+5], input[i+6], input[i+7],
+                        input[i+8], input[i+9], input[i+10],input[i+11],
+                        input[i+12],input[i+13],input[i+14],input[i+15]);
 
-                        int unroll_idx = (i - ii) / Vector::size();
-                        sum_unrolled[unroll_idx] = mul_add(in, vw, sum_unrolled[unroll_idx]);
-                    }
+                    sum = mul_add(in, vw, sum);
                 }
-
-                output[j] = b[j] + horizontal_add(sum_vectors(sum_unrolled));
-
+                output[j] = b[j] + horizontal_add(sum);
                 for (int i = R; i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
-
             #endif
             }
         }
@@ -210,32 +156,18 @@ namespace nnue
             const float(&wt)[OUTPUTS][INPUTS]
         )
         {
-            static_assert(INPUTS % (Vector::size() * unroll_factor) == 0,
-                "Input size must be a multiple of vector size and unroll factor");
-
             for (int j = 0; j != OUTPUTS; ++j)
             {
                 Vector sum(0.0);
+
+                static_assert(INPUTS % Vector::size() == 0);
                 Vector v_in, v_wt;
 
-                constexpr int unrolled_iterations = INPUTS / (Vector::size() * unroll_factor);
-
-                for (int i = 0;
-                    i < unrolled_iterations * unroll_factor * Vector::size();
-                    i += unroll_factor * Vector::size())
+                for (int i = 0; i != INPUTS; i += Vector::size())
                 {
-                    Vector sum_unrolled[unroll_factor];
-                    for (int u = 0; u < unroll_factor; ++u)
-                        sum_unrolled[u] = Vector(0.0);
-
-                    for (int u = 0; u < unroll_factor; ++u)
-                    {
-                        v_in.load_a(&input[i + u * Vector::size()]);
-                        v_wt.load_a(&wt[j][i + u * Vector::size()]);
-                        sum_unrolled[u] = mul_add(v_in, v_wt, sum_unrolled[u]);
-                    }
-
-                    sum += sum_vectors(sum_unrolled);
+                    v_in.load_a(&input[i]);
+                    v_wt.load_a(&wt[j][i]);
+                    sum = mul_add(v_in, v_wt, sum);
                 }
                 output[j] = b[j] + horizontal_add(sum);
             }
@@ -347,40 +279,36 @@ namespace nnue
             const int a_idx)
         {
             static_assert(L::OUTPUTS == OUTPUTS);
-            static_assert(OUTPUTS % Vector::size() * unroll_factor == 0);
+            static_assert(OUTPUTS % Vector::size() == 0);
 
-            constexpr int unrolled_iterations = (L::OUTPUTS / Vector::size()) / unroll_factor;
+        #if true /* vectorize */
+            Vector vo, vw;
 
-            Vector vo[unroll_factor], vw;
-
-            for (int j = 0;
-                j < unrolled_iterations * unroll_factor * Vector::size();
-                j += unroll_factor * Vector::size())
+            for (int j = 0; j != layer.OUTPUTS; j += Vector::size())
             {
-                for (int u = 0; u < unroll_factor; ++u)
-                    vo[u].load_a(&_output[j + u * Vector::size()]);
-
-                for (int i = 0; i < r_idx; ++i)
+                vo.load_a(&_output[j]);
+                for (int i = 0; i != r_idx; ++i)
                 {
-                    for (int u = 0; u < unroll_factor; ++u)
-                    {
-                        vw.load_a(&layer._w[remove_inputs[i]][j + u * Vector::size()]);
-                        vo[u] -= vw;
-                    }
+                    vw.load_a(&layer._w[remove_inputs[i]][j]);
+                    vo -= vw;
                 }
-
-                for (int i = 0; i < a_idx; ++i)
+                for (int i = 0; i != a_idx; ++i)
                 {
-                    for (int u = 0; u < unroll_factor; ++u)
-                    {
-                        vw.load_a(&layer._w[add_inputs[i]][j + u * Vector::size()]);
-                        vo[u] += vw;
-                    }
+                    vw.load_a(&layer._w[add_inputs[i]][j]);
+                    vo += vw;
                 }
-
-                for (int u = 0; u < unroll_factor; ++u)
-                    vo[u].store_a(&_output[j + u * Vector::size()]);
+                vo.store_a(&_output[j]);
             }
+        #else /* non-vectorized version */
+            for (int j = 0; j != OUTPUTS; ++j)
+            {
+                for (int i = 0; i != a_idx; ++i)
+                    _output[j] += layer._w[add_inputs[i]][j];
+
+                for (int i = 0; i != r_idx; ++i)
+                    _output[j] -= layer._w[remove_inputs[i]][j];
+            }
+        #endif
         }
 
         /** Incremental update of one-hot encoding */
