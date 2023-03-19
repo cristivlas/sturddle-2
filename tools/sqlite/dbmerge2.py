@@ -18,6 +18,8 @@ def merge_databases(input_dbs, output_db):
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS position(epd text PRIMARY KEY, depth integer, score integer)')
 
+    count = 0
+
     # Loop over the input databases and insert the entries into the output database
     for db in input_dbs:
         print(db)
@@ -30,10 +32,14 @@ def merge_databases(input_dbs, output_db):
             existing = c.execute('SELECT depth FROM position WHERE epd = ?', (epd,)).fetchone()
             if existing is None or depth > existing[0]:
                 c.execute('REPLACE INTO position (epd, depth, score) VALUES (?, ?, ?)', (epd, depth, score))
+                count += 1
 
         input_conn.close()
 
     conn.commit()
     conn.close()
+
+    print(f'Inserted {count} positions.')
+
 
 merge_databases(args.inputs, args.output)
