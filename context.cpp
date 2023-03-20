@@ -185,7 +185,8 @@ static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
 static nnue::Layer<INPUTS, HIDDEN> L1(hidden_w, hidden_b);
 static nnue::Layer<HIDDEN, 1> L2(out_w, out_b);
 
-score_t search::Context::eval_nnue_raw()
+
+score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
 {
     auto& acc = NNUE_data[tid()][_ply];
     if (is_root() || _update_nnue)
@@ -193,7 +194,7 @@ score_t search::Context::eval_nnue_raw()
     else
         acc.update(L1, _parent->state(), state(), _move, NNUE_data[tid()][_ply - 1]);
 
-    return nnue::eval(acc, L2);
+    return update_only ? SCORE_MIN : nnue::eval(acc, L2);
 }
 
 

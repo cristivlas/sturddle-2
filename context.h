@@ -279,7 +279,7 @@ namespace search
         score_t     evaluate_material(bool with_piece_squares = true) const;
 
         template <bool Raw=false> void eval_nnue();
-        score_t     eval_nnue_raw();
+        score_t     eval_nnue_raw(bool update_only = false);
 
         score_t     static_eval();  /* use TT value if available, eval material otherwise */
 
@@ -688,6 +688,21 @@ namespace search
 #if WITH_NNUE
     template <bool Raw> INLINE void search::Context::eval_nnue()
     {
+        if constexpr (!Raw)
+        {
+            /* skip NNUE evaluation in endgame for large deltas in material */
+            if (state().is_endgame())
+            {
+                const auto eval = static_eval();
+                if (abs(eval) > 350)
+                {
+                    eval_nnue_raw(true); /* update accumulator, do not evaluate */
+                    _eval = eval + eval_fuzz();
+                    return;
+                }
+            }
+        }
+
         auto eval = eval_nnue_raw();
 
         if constexpr (!Raw)
@@ -699,9 +714,13 @@ namespace search
             eval *= NNUE_EVAL_SCALE + evaluate_material() / 32;
             eval /= 1024;
         }
-
+    #if 0
         _eval = std::max(-CHECKMATE, std::min(CHECKMATE, eval));
+    #else
+        _eval = eval;
+    #endif
     }
+
 
     INLINE score_t Context::static_eval()
     {
