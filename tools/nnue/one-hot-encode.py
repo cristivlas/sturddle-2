@@ -73,21 +73,15 @@ def main(args):
         count = sql.row_count('position')
         dtype = np.float16 if args.half else np.float32
         out = np.memmap(args.output, dtype=dtype, mode='w+', shape=(count,770))
-        if args.normalized:
-            query = 'SELECT epd, score_normalized from position'
-        else:
-            query = 'SELECT epd, score from position'
 
+        query = 'SELECT epd, score from position'
         if args.randomize:
             query += ' ORDER BY RANDOM()'
 
         board = chess.Board()
         for i, row in tenumerate(sql.exec(query), start=0, total=count, desc='Encoding'):
             board.set_fen(row[0])
-            if args.normalized:
-                score = row[1]
-            else:
-                score = np.clip(row[1], -clip, clip) / 100
+            score = np.clip(row[1], -clip, clip) / 100
             out[i]= np.append(encode(board, args.test), score).astype(dtype)
 
 
@@ -99,7 +93,6 @@ if __name__ == '__main__':
         parser.add_argument('-d', '--debug', action='store_true')
         parser.add_argument('-o', '--output', required=True)
         parser.add_argument('-r', '--randomize', action='store_true')
-        parser.add_argument('-n', '--normalized', action='store_true')
         parser.add_argument('-t', '--test', action='store_true')
         parser.add_argument('--half', action='store_true')
 
