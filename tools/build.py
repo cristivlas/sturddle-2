@@ -123,7 +123,7 @@ if __name__ == '__main__':
     while True:
         try:
             print(f'rename {MAIN} as {NAME}')
-            os.rename(MAIN, NAME)
+            os.replace(MAIN, NAME)
             break
         except Exception as e:
             print(e)

@@ -25,16 +25,15 @@
 
 #define FULL_SIZE_LOCK false /* half-size => 32 bit, full => 64 bit */
 
-
 #if _MSC_VER
+  #if !defined(__clang__)
     #include <xmmintrin.h>
-
-    #define __builtin_prefetch(e) _mm_prefetch((e), _MM_HINT_T0)
-
-    static constexpr auto CACHE_LINE_SIZE = std::hardware_destructive_interference_size;
+    #define __builtin_prefetch(e) _mm_prefetch(reinterpret_cast<const char*>(e), _MM_HINT_T0)
+  #endif /* !__clang__ */
+  static constexpr auto CACHE_LINE_SIZE = std::hardware_destructive_interference_size;
 #else
-    /* __cpp_lib_hardware_interference_size is broken in versions of clang and gcc */
-    static constexpr size_t CACHE_LINE_SIZE = 64;
+  /* __cpp_lib_hardware_interference_size is broken in some versions of clang and gcc */
+  static constexpr size_t CACHE_LINE_SIZE = 64;
 #endif /* _MSC_VER */
 
 
