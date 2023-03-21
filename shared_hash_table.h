@@ -27,6 +27,10 @@
 
 
 #if _MSC_VER
+    #include <xmmintrin.h>
+
+    #define __builtin_prefetch(e) _mm_prefetch((e), _MM_HINT_T0)
+
     static constexpr auto CACHE_LINE_SIZE = std::hardware_destructive_interference_size;
 #else
     /* __cpp_lib_hardware_interference_size is broken in versions of clang and gcc */
@@ -323,6 +327,7 @@ namespace search
             const auto h = state.hash();
             ASSERT(h);
             auto* const first = get_entry(h);
+            __builtin_prefetch(first);
             auto* const last = first + entries_per_bucket;
 
             for (auto e = first; e < last; ++e)
@@ -352,11 +357,14 @@ namespace search
             const auto h = state.hash();
             ASSERT(h);
             auto* entry = get_entry(h);
+            __builtin_prefetch(entry);
+
             auto* const last = entry + entries_per_bucket;
 
             for (auto e = entry; e < last; ++e)
             {
                 ASSERT((const uint8_t*)(e + 1) <= &_data.back());
+
                 Proxy q(e, h); /* try non-blocking locking 1st */
                 if (q)
                     return q;
