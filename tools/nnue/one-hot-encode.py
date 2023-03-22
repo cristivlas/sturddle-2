@@ -105,6 +105,7 @@ if __name__ == '__main__':
 
         args = parser.parse_args()
         if os.path.splitext(args.output)[1].lower() == '.h5':
+            print('Using H5 format.')
             args.h5 = True
 
         main(args)
