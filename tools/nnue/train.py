@@ -181,7 +181,7 @@ def main(args):
         filepath = args.input[0]
         if os.path.splitext(filepath)[1].lower() == '.h5':
             f = h5py.File(filepath)
-            data = f['evals']
+            data = f['eval']
             row_count = data.shape[0]
             data = data[:]
         else:

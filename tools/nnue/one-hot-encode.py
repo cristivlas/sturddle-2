@@ -75,7 +75,7 @@ def main(args):
         dtype = np.float16 if args.half else np.float32
         if args.h5:
             f = h5py.File(args.output, 'x')
-            out = f.create_dataset('evals', shape=(count, 770), dtype=dtype)
+            out = f.create_dataset('eval', shape=(count, 770), dtype=dtype)
         else:
             out = np.memmap(args.output, dtype=dtype, mode='w+', shape=(count,770))
 
