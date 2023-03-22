@@ -183,6 +183,7 @@ def main(args):
             f = h5py.File(filepath)
             data = f['eval']
             row_count = data.shape[0]
+            assert data.shape[1] == args.hot_encoding + 1, data.shape[1]
             data = data[:]
         else:
             data = np.memmap(filepath, dtype=dtype, mode='r')
