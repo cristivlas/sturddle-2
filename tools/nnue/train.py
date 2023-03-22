@@ -159,7 +159,7 @@ def main(args):
             self.y = y
             self.macro_batch_size = args.macro_batch_size
             self.len = int(np.ceil(len(self.x) / self.macro_batch_size))
-            logging.info(f'using {self.len} batches.')
+            logging.info(f'using {self.len} macro-batches.')
 
         def __len__(self):
             return self.len
