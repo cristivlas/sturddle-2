@@ -184,14 +184,29 @@ def main(args):
             data = f['eval']
             row_count = data.shape[0]
             assert data.shape[1] == args.hot_encoding + 1, data.shape[1]
+            class LazyView:
+                def __init__(self, data, slice_, rows):
+                    self.data = data
+                    self.slice_ = slice_
+                    self.len = rows
+
+                def __getitem__(self, key):
+                    return self.data[key, self.slice_]
+
+                def __len__(self):
+                    return self.len
+
+            x = LazyView(data, slice(0, args.hot_encoding), row_count)
+            y = LazyView(data, slice(args.hot_encoding, args.hot_encoding + 1), row_count)
+
         else:
             data = np.memmap(filepath, dtype=dtype, mode='r')
             row_count = data.shape[0] // (args.hot_encoding + 1)
             data = data.reshape((row_count, (args.hot_encoding + 1)))
-        x = data[:,:args.hot_encoding]
-        y = data[:,args.hot_encoding:]
+            x = data[:,:args.hot_encoding]
+            y = data[:,args.hot_encoding:]
 
-        print(x.shape, y.shape)
+            print(x.shape, y.shape)
 
         steps_per_epoch = None
 
