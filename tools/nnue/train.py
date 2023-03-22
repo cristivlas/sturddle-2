@@ -1,4 +1,4 @@
-#! /usr/bin/env python3
+#!/usr/bin/env python3
 '''
 Trainer for the Sturddle Chess 2.0 engine's neural network.
 Copyright (c) 2023 Cristian Vlasceanu.
@@ -184,11 +184,10 @@ def main(args):
             data = f['eval']
             row_count = data.shape[0]
             assert data.shape[1] == args.hot_encoding + 1, data.shape[1]
-            data = data[:]
         else:
             data = np.memmap(filepath, dtype=dtype, mode='r')
             row_count = data.shape[0] // (args.hot_encoding + 1)
-        data = data.reshape((row_count, (args.hot_encoding + 1)))
+            data = data.reshape((row_count, (args.hot_encoding + 1)))
         x = data[:,:args.hot_encoding]
         y = data[:,args.hot_encoding:]
 

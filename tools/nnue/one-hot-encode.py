@@ -1,8 +1,8 @@
-#! /usr/bin/env python3
+#!/usr/bin/env python3
 '''
 Prepare data read from sqlite3 database for use by a neural net.
 Positions are converted from EPD into features, and stored as a
-memory-mapped numpy array.
+memory-mapped numpy array or an h5py dataset.
 '''
 import argparse
 import os
