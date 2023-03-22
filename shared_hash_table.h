@@ -26,10 +26,6 @@
 #define FULL_SIZE_LOCK false /* half-size => 32 bit, full => 64 bit */
 
 #if _MSC_VER
-  #if !defined(__clang__)
-    #include <xmmintrin.h>
-    #define __builtin_prefetch(e) _mm_prefetch(reinterpret_cast<const char*>(e), _MM_HINT_T0)
-  #endif /* !__clang__ */
   static constexpr auto CACHE_LINE_SIZE = std::hardware_destructive_interference_size;
 #else
   /* __cpp_lib_hardware_interference_size is broken in some versions of clang and gcc */
@@ -326,7 +322,6 @@ namespace search
             const auto h = state.hash();
             ASSERT(h);
             auto* const first = get_entry(h);
-            __builtin_prefetch(first);
             auto* const last = first + entries_per_bucket;
 
             for (auto e = first; e < last; ++e)
@@ -356,8 +351,6 @@ namespace search
             const auto h = state.hash();
             ASSERT(h);
             auto* entry = get_entry(h);
-            __builtin_prefetch(entry);
-
             auto* const last = entry + entries_per_bucket;
 
             for (auto e = entry; e < last; ++e)
