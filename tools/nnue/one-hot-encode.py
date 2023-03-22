@@ -9,6 +9,7 @@ import os
 import sys
 
 import chess
+import h5py
 import numpy as np
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'sqlite')))
@@ -72,7 +73,11 @@ def main(args):
     with SQLConn(*args.input) as sql:
         count = sql.row_count('position')
         dtype = np.float16 if args.half else np.float32
-        out = np.memmap(args.output, dtype=dtype, mode='w+', shape=(count,770))
+        if args.h5:
+            f = h5py.File(args.output, 'x')
+            out = f.create_dataset('evals', shape=(count, 770), dtype=dtype)
+        else:
+            out = np.memmap(args.output, dtype=dtype, mode='w+', shape=(count,770))
 
         query = 'SELECT epd, score from position'
         if args.randomize:
@@ -82,7 +87,8 @@ def main(args):
         for i, row in tenumerate(sql.exec(query), start=0, total=count, desc='Encoding'):
             board.set_fen(row[0])
             score = np.clip(row[1], -clip, clip) / 100
-            out[i]= np.append(encode(board, args.test), score).astype(dtype)
+            out[i, :-1] = encode(board, args.test).astype(dtype)
+            out[i, -1] = score.astype(dtype)
 
 
 if __name__ == '__main__':
@@ -95,7 +101,13 @@ if __name__ == '__main__':
         parser.add_argument('-r', '--randomize', action='store_true')
         parser.add_argument('-t', '--test', action='store_true')
         parser.add_argument('--half', action='store_true')
+        parser.add_argument('--h5', action='store_true')
 
-        main(parser.parse_args())
+        args = parser.parse_args()
+        if os.path.splitext(args.output)[1].lower() == '.h5':
+            args.h5 = True
+
+        main(args)
+
     except KeyboardInterrupt:
         pass

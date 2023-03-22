@@ -9,6 +9,7 @@ import argparse
 import logging
 import os
 import sys
+import h5py
 from contextlib import redirect_stdout
 
 import numpy as np
@@ -177,23 +178,24 @@ def main(args):
     if not args.export:
         print('Loading dataset')
         dtype = np.float16 if args.half else np.float32
-        data = np.memmap(*args.input, dtype=dtype, mode='r')
-        row_count = data.shape[0] // (args.hot_encoding + 1)
+        filepath = args.input[0]
+        if os.path.splitext(filepath)[1].lower() == '.h5':
+            f = h5py.File(filepath)
+            data = f['evals']
+            row_count = data.shape[0]
+            data = data[:]
+        else:
+            data = np.memmap(filepath, dtype=dtype, mode='r')
+            row_count = data.shape[0] // (args.hot_encoding + 1)
         data = data.reshape((row_count, (args.hot_encoding + 1)))
         x = data[:,:args.hot_encoding]
         y = data[:,args.hot_encoding:]
+
         print(x.shape, y.shape)
 
         steps_per_epoch = None
 
-        if args.whole_dataset:
-            # attempt to fit whole training set in memory
-            #dataset = tf.data.Dataset.from_tensor_slices((x, y))
-            #if args.batch_size:
-            #    dataset = dataset.batch(args.batch_size)
-            dataset = None
-
-        elif args.distribute:
+        if args.distribute:
             # distribute data accross several GPUs
             dataset = DataGenerator(x, y)
             steps_per_epoch = len(dataset)
@@ -283,29 +285,28 @@ def main(args):
                 tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, profile_batch=profile)
                 callbacks = callbacks + [tensorboard_callback]
 
-            if dataset:
-                if isinstance(dataset, MacroBatchGenerator):
-                    loss = []
-                    for era in range(args.epochs // args.macro_epochs):
-                        logging.info(f'===== Era: {era} =====')
+            assert dataset
 
-                        indices = np.arange(len(dataset))
+            if isinstance(dataset, MacroBatchGenerator):
+                loss = []
+                for era in range(args.epochs // args.macro_epochs):
+                    logging.info(f'===== Era: {era} =====')
 
-                        np.random.shuffle(indices)
-                        logging.info(f'indices: {indices}')
+                    indices = np.arange(len(dataset))
 
-                        for i,j in enumerate(indices):
-                            logging.info(f'MacroBatch: {i + 1}/{len(indices)}: {j}')
-                            model.fit(dataset[j], callbacks=callbacks, epochs=args.macro_epochs)
+                    np.random.shuffle(indices)
+                    logging.info(f'indices: {indices}')
 
-                else:
-                    # https://www.tensorflow.org/api_docs/python/tf/keras/Model
-                    model.fit(dataset,
-                        callbacks=callbacks,
-                        epochs=args.epochs,
-                        steps_per_epoch=steps_per_epoch)
+                    for i,j in enumerate(indices):
+                        logging.info(f'MacroBatch: {i + 1}/{len(indices)}: {j}')
+                        model.fit(dataset[j], callbacks=callbacks, epochs=args.macro_epochs)
+
             else:
-                model.fit(x, y, callbacks=callbacks, epochs=args.epochs)
+                # https://www.tensorflow.org/api_docs/python/tf/keras/Model
+                model.fit(dataset,
+                    callbacks=callbacks,
+                    epochs=args.epochs,
+                    steps_per_epoch=steps_per_epoch)
 
 
 if __name__ == '__main__':
@@ -349,7 +350,6 @@ if __name__ == '__main__':
         parser.add_argument('--optimizer', choices=['adam', 'sgd'], default='sgd')
         parser.add_argument('--profile-batches', type=int, default=0, help='enable TensorBoard to profile range of batches')
         parser.add_argument('--schedule-lr', action='store_true', help='use learning rate schedule')
-        parser.add_argument('--whole-dataset', action='store_true', help='attempt to fit whole dataset in memory')
 
         args = parser.parse_args()
         if args.input[0] == 'export' and not args.export:
