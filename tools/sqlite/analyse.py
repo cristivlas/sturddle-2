@@ -20,10 +20,6 @@ _create_table = '''CREATE TABLE IF NOT EXISTS position(
 
 _insert = '''INSERT INTO position(epd, depth, score) VALUES(?,?,?)'''
 
-
-'''
-Analyse one position given by EPD, and insert score into the output database.
-'''
 def analyse(args, sql_out, engine, epd):
     board = chess.Board(fen=epd)
     if not board.is_valid():
@@ -39,7 +35,6 @@ def analyse(args, sql_out, engine, epd):
         score = int(copysign(args.mate_score, mate_dist) - (mate_dist))
         sql_out.exec(_insert, (epd,  info['depth'], score))
 
-
 def get_engine(args):
     engine = chess.engine.SimpleEngine.popen_uci(args.engine)
     config = {'Threads': args.threads, 'Hash': args.hash}
@@ -49,6 +44,18 @@ def get_engine(args):
     engine.configure(config)
     return engine
 
+def filter_positions(args, row):
+    if args.popularity_threshold and row[4] < args.popularity_threshold:
+        return False
+
+    if args.min_win_rate or args.max_loss_rate:
+        win_rate = row[5] / row[4]
+        loss_rate = row[6] / row[4]
+        if args.min_win_rate and win_rate < args.min_win_rate:
+            return False
+        if args.max_loss_rate and loss_rate > args.max_loss_rate:
+            return False
+    return True
 
 def main(args):
     if args.cleanup and os.path.exists(args.output):
@@ -59,9 +66,10 @@ def main(args):
         with SQLConn(*args.input) as sql_in:
             count = sql_in.row_max_count('position')
             if args.reverse:
-                query = '''SELECT DISTINCT(epd) FROM position ORDER BY _rowid_ DESC'''
+                query = '''SELECT epd, prev, move, uci, cnt, win, loss FROM position ORDER BY _rowid_ DESC'''
             else:
-                query = '''SELECT DISTINCT(epd) FROM position'''
+                query = '''SELECT epd, prev, move, uci, cnt, win, loss FROM position'''
+
             for i, row in tenumerate(sql_in.exec(query), start=1, total=count, desc='Analysing'):
                 if (i + args.offset) % args.step:
                     continue
@@ -73,9 +81,12 @@ def main(args):
                     # skip over existing rows
                     if res.fetchone()[0]:
                         continue
+                # Apply the filtering criteria to analyze only positions that meet the criteria
+                if not filter_positions(args, row):
+                    continue
 
                 try:
-                    analyse(args, sql_out, engine, *row)
+                    analyse(args, sql_out, engine, row[0])
                 except KeyboardInterrupt:
                     raise
                 except:
@@ -90,7 +101,6 @@ def main(args):
                 if i / args.step % 1000 == 0:
                     sql_out.commit()
     engine.quit()
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -109,8 +119,18 @@ if __name__ == '__main__':
     parser.add_argument('--no-skip-existing', action='store_true')
     parser.add_argument('--nnue', dest='nnue', action='store_true', default=True)
     parser.add_argument('--no-nnue', dest='nnue', action='store_false')
+    # Add command-line parameters for filtering criteria
+    parser.add_argument('--popularity-threshold', type=int, help='minimum position occurrences')
+    parser.add_argument('--min-win-rate', type=float, help='minimum win rate (0 to 1)')
+    parser.add_argument('--max-loss-rate', type=float, help='maximum loss rate (0 to 1)')
+
+    args = parser.parse_args()
+    if args.min_win_rate:
+        assert 0 < args.min_win_rate <= 1, args.min_win_rate
+    if args.max_loss_rate:
+        assert 0 < args.max_loss_rate <= 1, args.max_loss_rate
 
     try:
-        main(parser.parse_args())
+        main(args)
     except KeyboardInterrupt:
         pass
