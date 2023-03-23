@@ -131,9 +131,12 @@ def main(args):
     '''
     class DataGenerator(tf.keras.utils.Sequence):
         def __init__(self, x, y):
+            assert len(x) == len(y)
             self.x, self.y = x, y
             self.batch_size = args.batch_size if args.batch_size else 1
             self.len = int(np.ceil(len(self.x) / self.batch_size))
+            self.indices = np.arange(self.len)
+            np.random.shuffle(self.indices)
             logging.info(f'using {self.len} batches.')
 
         def __call__(self):
@@ -142,12 +145,18 @@ def main(args):
         def __len__(self):
             return self.len
 
-        def __getitem__(self, i):
-            x = self.x[i * self.batch_size:(i + 1) * self.batch_size]
-            y = self.y[i * self.batch_size:(i + 1) * self.batch_size]
+        def __getitem__(self, index):
+            i = self.indices[index]
+            assert 0 <= i < self.len
+            start, end = i * self.batch_size, (i + 1) * self.batch_size
+            x = self.x[start:end]
+            y = self.y[start:end]
             if args.clip:
                 y = np.clip(y, -args.clip, args.clip)
             return x, y
+
+        def on_epoch_end(self):
+            np.random.shuffle(self.indices)
 
     '''
     Split training data into macro batches (chunks).
@@ -168,6 +177,16 @@ def main(args):
             x_macro_batch = self.x[index * self.macro_batch_size:(index + 1) * self.macro_batch_size]
             y_macro_batch = self.y[index * self.macro_batch_size:(index + 1) * self.macro_batch_size]
             return DataGenerator(x_macro_batch, y_macro_batch)
+
+
+    def prefetch(x, y):
+        dataset = DataGenerator(x, y)
+        steps_per_epoch = len(dataset)
+        return tf.data.Dataset.from_generator(
+            dataset,
+            output_types=(dtype, dtype),
+            output_shapes=((None, args.hot_encoding), (None, 1)),
+        ).prefetch(tf.data.AUTOTUNE).repeat(), steps_per_epoch
 
 
     if args.gpu:
@@ -211,23 +230,15 @@ def main(args):
         steps_per_epoch = None
 
         if args.distribute:
+            dataset, steps_per_epoch = prefetch(x, y)
             # distribute data accross several GPUs
-            dataset = DataGenerator(x, y)
-            steps_per_epoch = len(dataset)
-            dataset = tf.data.Dataset.from_generator(
-                dataset,
-                output_types=(dtype, dtype),
-                output_shapes=((None, args.hot_encoding), (None, 1)),
-            ).prefetch(tf.data.AUTOTUNE).repeat()
-
             dataset = strategy.experimental_distribute_dataset(dataset)
-
         elif args.macro_batch_size > 0:
             # use macro-batching (chunking) to reduce I/O latency
             dataset = MacroBatchGenerator(x, y)
-
         else:
-            dataset = DataGenerator(x, y)
+            dataset, steps_per_epoch = prefetch(x, y)
+
 
     if args.model and os.path.exists(args.model):
         model = _make_model(args, strategy)
