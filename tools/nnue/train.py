@@ -3,7 +3,7 @@
 Trainer for the Sturddle Chess 2.0 engine's neural network.
 Copyright (c) 2023 Cristian Vlasceanu.
 
-Expects memmapped numpy arrays as inputs.
+Expects memmapped numpy arrays or H5 files as inputs.
 '''
 import argparse
 import logging
@@ -14,7 +14,7 @@ from contextlib import redirect_stdout
 
 import numpy as np
 
- # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
+# https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 
@@ -178,6 +178,7 @@ def main(args):
             y_macro_batch = self.y[index * self.macro_batch_size:(index + 1) * self.macro_batch_size]
             return DataGenerator(x_macro_batch, y_macro_batch)
 
+
     callbacks = []
 
     def prefetch(x, y):
@@ -325,22 +326,16 @@ def main(args):
                 loss = []
                 for era in range(args.epochs // args.macro_epochs):
                     logging.info(f'===== Era: {era} =====')
-
                     indices = np.arange(len(dataset))
-
                     np.random.shuffle(indices)
                     logging.info(f'indices: {indices}')
-
                     for i,j in enumerate(indices):
                         logging.info(f'MacroBatch: {i + 1}/{len(indices)}: {j}')
                         model.fit(dataset[j], callbacks=callbacks, epochs=args.macro_epochs)
 
             else:
                 # https://www.tensorflow.org/api_docs/python/tf/keras/Model
-                model.fit(dataset,
-                    callbacks=callbacks,
-                    epochs=args.epochs,
-                    steps_per_epoch=steps_per_epoch)
+                model.fit(dataset, callbacks=callbacks, epochs=args.epochs, steps_per_epoch=steps_per_epoch)
 
 
 if __name__ == '__main__':
