@@ -178,12 +178,22 @@ def main(args):
             y_macro_batch = self.y[index * self.macro_batch_size:(index + 1) * self.macro_batch_size]
             return DataGenerator(x_macro_batch, y_macro_batch)
 
+    callbacks = []
 
     def prefetch(x, y):
-        dataset = DataGenerator(x, y)
-        steps_per_epoch = len(dataset)
+        class CallbackOnEpochEnd(tf.keras.callbacks.Callback):
+            def __init__(self, generator):
+                super(CallbackOnEpochEnd, self).__init__()
+                self.generator = generator
+
+            def on_epoch_end(self, epoch, logs=None):
+                self.generator.on_epoch_end()
+
+        generator = DataGenerator(x, y)
+        callbacks.append(CallbackOnEpochEnd(generator))
+        steps_per_epoch = len(generator)
         return tf.data.Dataset.from_generator(
-            dataset,
+            generator,
             output_types=(dtype, dtype),
             output_shapes=((None, args.hot_encoding), (None, 1)),
         ).prefetch(tf.data.AUTOTUNE).repeat(), steps_per_epoch
@@ -250,8 +260,6 @@ def main(args):
     if args.export:
         export_weights(args, model)
     else:
-        callbacks = []
-
         if args.schedule_lr:
             from keras.callbacks import ReduceLROnPlateau
             lr = ReduceLROnPlateau(
