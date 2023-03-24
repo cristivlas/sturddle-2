@@ -24,15 +24,14 @@
 #include "vectorclass.h"
 
 #define ALIGN alignas(64)
-#define DEBUG_INCREMENTAL false
 
 namespace nnue
 {
     using namespace chess;
     using Vector = Vec16f;
 
+    constexpr bool debug_incremental = false;
     constexpr int unroll_factor = 4;
-
 
     template <typename V, std::size_t N>
     INLINE V sum_vectors(const V (&input)[N])
@@ -250,6 +249,7 @@ namespace nnue
         static constexpr int TURN_INDEX = INPUTS - 1;
 
         int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
+        float _attention = 1.0;
         ALIGN float _output[OUTPUTS] = { 0 };
         uint64_t _hash = 0;
 
@@ -303,40 +303,43 @@ namespace nnue
                 }
                 _input[TURN_INDEX] ^= 1;
 
-            #if DEBUG_INCREMENTAL
-                int8_t temp[INPUTS] = { 0 };
-                one_hot_encode(state, temp);
+                if constexpr(debug_incremental)
+                {
+                    int8_t temp[INPUTS] = { 0 };
+                    one_hot_encode(state, temp);
 
-                for (int i = 0; i != INPUTS; ++i)
-                    ASSERT_ALWAYS(_input[i] == temp[i]);
-            #endif /* DEBUG_INCREMENTAL */
+                    for (int i = 0; i != INPUTS; ++i)
+                        ASSERT_ALWAYS(_input[i] == temp[i]);
+                }
 
                 if (state.turn)
                     add_inputs[a_idx++] = TURN_INDEX;
                 else
                     remove_inputs[r_idx++] = TURN_INDEX;
 
-                recalculate_output(layer, remove_inputs, add_inputs, r_idx, a_idx);
+                recompute(layer, remove_inputs, add_inputs, r_idx, a_idx, ancestor._attention);
 
-            #if DEBUG_INCREMENTAL
-                float output[OUTPUTS] = { 0 };
-                layer.dot(_input, output);
-                for (int i = 0; i != OUTPUTS; ++i)
+                if constexpr(debug_incremental)
                 {
-                    std::cout << _output[i] << " " << output[i] << "\n";
-                    ASSERT_ALWAYS(abs(output[i] - _output[i]) < 0.0001);
+                    float output[OUTPUTS] = { 0 };
+                    layer.dot(_input, output);
+                    for (int i = 0; i != OUTPUTS; ++i)
+                    {
+                        // std::cout << _output[i] << " " << output[i] << "\n";
+                        ASSERT_ALWAYS(abs(output[i] - _output[i]) < 0.0001);
+                    }
                 }
-            #endif /* DEBUG_INCREMENTAL */
             }
         }
 
         template <typename L>
-        INLINE void recalculate_output(
+        INLINE void recompute(
             const L& layer,
             const int (&remove_inputs)[INPUTS],
             const int (&add_inputs)[INPUTS],
             const int r_idx,
-            const int a_idx)
+            const int a_idx,
+            float prev_attention)
         {
             static_assert(L::OUTPUTS == OUTPUTS);
             static_assert(OUTPUTS % Vector::size() * unroll_factor == 0);
@@ -356,7 +359,10 @@ namespace nnue
                 {
                     for (int u = 0; u < unroll_factor; ++u)
                     {
-                        vw.load_a(&layer._w[remove_inputs[i]][j + u * Vector::size()]);
+                        const auto index = remove_inputs[i];
+                        vw.load_a(&layer._w[index][j + u * Vector::size()]);
+                        if (index != TURN_INDEX)
+                            vw *= prev_attention;
                         vo[u] -= vw;
                     }
                 }
@@ -365,7 +371,10 @@ namespace nnue
                 {
                     for (int u = 0; u < unroll_factor; ++u)
                     {
-                        vw.load_a(&layer._w[add_inputs[i]][j + u * Vector::size()]);
+                        const auto index = add_inputs[i];
+                        vw.load_a(&layer._w[index][j + u * Vector::size()]);
+                        if (index != TURN_INDEX)
+                            vw *= _attention;
                         vo[u] += vw;
                     }
                 }
@@ -417,7 +426,14 @@ namespace nnue
                     : move.to_square();
                 const auto victim_type = from_pos.piece_type_at(capture_square);
                 remove[r_idx++] = psi(victim_type, !color, capture_square);
+
+                _attention = 1.02;
             }
+            else
+                _attention = 1.01;
+
+            if constexpr(debug_incremental)
+                _attention = 1.0;
         }
     };
 
