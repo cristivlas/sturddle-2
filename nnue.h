@@ -147,10 +147,9 @@ namespace nnue
         }
 
         /* input */
-        template <typename V>
         static INLINE void dot(
             const int8_t(&input)[INPUTS],
-            V(&output)[OUTPUTS],
+            float (&output)[OUTPUTS],
             const float(&b)[OUTPUTS],
             const float(&wt)[OUTPUTS][INPUTS]
         )
