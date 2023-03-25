@@ -249,7 +249,6 @@ namespace nnue
         static constexpr int TURN_INDEX = INPUTS - 1;
 
         int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
-        float _attention = 1.0;
         ALIGN float _output[OUTPUTS] = { 0 };
         uint64_t _hash = 0;
 
@@ -317,7 +316,7 @@ namespace nnue
                 else
                     remove_inputs[r_idx++] = TURN_INDEX;
 
-                recompute(layer, remove_inputs, add_inputs, r_idx, a_idx, ancestor._attention);
+                recompute(layer, remove_inputs, add_inputs, r_idx, a_idx);
 
                 if constexpr(debug_incremental)
                 {
@@ -338,8 +337,7 @@ namespace nnue
             const int (&remove_inputs)[INPUTS],
             const int (&add_inputs)[INPUTS],
             const int r_idx,
-            const int a_idx,
-            float prev_attention)
+            const int a_idx)
         {
             static_assert(L::OUTPUTS == OUTPUTS);
             static_assert(OUTPUTS % Vector::size() * unroll_factor == 0);
@@ -361,8 +359,6 @@ namespace nnue
                     {
                         const auto index = remove_inputs[i];
                         vw.load_a(&layer._w[index][j + u * Vector::size()]);
-                        if (index != TURN_INDEX)
-                            vw *= prev_attention;
                         vo[u] -= vw;
                     }
                 }
@@ -373,8 +369,6 @@ namespace nnue
                     {
                         const auto index = add_inputs[i];
                         vw.load_a(&layer._w[index][j + u * Vector::size()]);
-                        if (index != TURN_INDEX)
-                            vw *= _attention;
                         vo[u] += vw;
                     }
                 }
@@ -426,14 +420,7 @@ namespace nnue
                     : move.to_square();
                 const auto victim_type = from_pos.piece_type_at(capture_square);
                 remove[r_idx++] = psi(victim_type, !color, capture_square);
-
-                _attention = 1.02;
             }
-            else
-                _attention = 1.01;
-
-            if constexpr(debug_incremental)
-                _attention = 1.0;
         }
     };
 
