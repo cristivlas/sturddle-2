@@ -81,6 +81,7 @@ def main():
             move = chess.Move.from_uci(uci)
             to_square = move.to_square
             piece = board.piece_at(to_square)
+            assert piece, (epd, uci)
             piece_count = chess.popcount(board.occupied)
             update_aggregates(aggregates, to_square, piece.piece_type, piece.color, piece_count, cnt, win, loss)
         conn.close()

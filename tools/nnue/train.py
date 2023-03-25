@@ -58,7 +58,7 @@ def _make_model(args, strategy):
         if args.optimizer == 'adam':
             optimizer=tf.keras.optimizers.Adam(
                 amsgrad=args.amsgrad,
-                beta_1=0.85,
+                beta_1=0.875,
                 beta_2=0.995,
                 learning_rate=args.learn_rate,
                 use_ema=args.ema,
