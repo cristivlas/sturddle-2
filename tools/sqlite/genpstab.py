@@ -79,6 +79,8 @@ def main():
             epd, uci, cnt, win, loss = row
             board = chess.Board(epd)
             move = chess.Move.from_uci(uci)
+            if not move:
+                continue
             to_square = move.to_square
             piece = board.piece_at(to_square)
             assert piece, (epd, uci)
