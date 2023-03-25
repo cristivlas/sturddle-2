@@ -18,7 +18,7 @@ def get_arguments():
     parser.add_argument('databases', nargs='+', help='SQLite3 database files containing chess positions.')
     parser.add_argument('-o', '--output', required=True, help='name of output header file')
     parser.add_argument('--limit', type=int, help='limit the number of entries processed')
-    parser.add_argument('--scale', type=int, default=1000, help='scale factor')
+    parser.add_argument('--scale', type=int, default=100, help='scale factor')
     return parser.parse_args()
 
 
@@ -37,20 +37,15 @@ def piece_map_to_arrays(piece_map):
 
 
 @njit
-def update_aggregates(aggregates, squares, piece_types, colors, piece_count, row):
-    cnt, wins, losses = row
-    for idx in range(len(squares)):
-        square = squares[idx]
-        piece_type = piece_types[idx]
-        color = colors[idx]
-        i = piece_type - 1
-        j = square if color else square ^ 0x38
-        if piece_type == 6 and piece_count <= 12:  # 6 is chess.KING
-            i = ENDGAME_KING_TABLE
+def update_aggregates(aggregates, square_to, piece_type, color, piece_count, cnt, wins, losses):
+    j = square_to if color else square_to ^ 56
+    i = piece_type - 1
+    if piece_type == 6 and piece_count <= 12:  # 6 is chess.KING
+        i = ENDGAME_KING_TABLE
 
-        aggregates[i][j][COUNT] += cnt
-        aggregates[i][j][WINS] += wins
-        aggregates[i][j][LOSSES] += losses
+    aggregates[i][j][COUNT] += cnt
+    aggregates[i][j][WINS] += wins
+    aggregates[i][j][LOSSES] += losses
 
 
 @njit
@@ -74,19 +69,20 @@ def main():
     for db_path in tqdm(args.databases, desc='Processing databases'):
         conn = sqlite3.connect(db_path)
         cur = conn.cursor()
-        query = 'SELECT epd, cnt, win, loss FROM position'
+        query = 'SELECT epd, uci, cnt, win, loss FROM position'
         if args.limit is not None:
             query += ' LIMIT ?'
             cur.execute(query, (args.limit,))
         else:
             cur.execute(query)
         for row in tqdm(cur.fetchall(), desc='Processing positions', leave=False):
-            epd = row[0]
+            epd, uci, cnt, win, loss = row
             board = chess.Board(epd)
-            squares, piece_types, colors = piece_map_to_arrays(board.piece_map())
+            move = chess.Move.from_uci(uci)
+            to_square = move.to_square
+            piece = board.piece_at(to_square)
             piece_count = chess.popcount(board.occupied)
-            update_aggregates(aggregates, squares, piece_types, colors, piece_count, row[1:])
-
+            update_aggregates(aggregates, to_square, piece.piece_type, piece.color, piece_count, cnt, win, loss)
         conn.close()
 
     piece_square_tables = np.zeros((7, 64), dtype=int)

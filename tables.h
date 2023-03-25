@@ -105,7 +105,7 @@ static constexpr int ENDGAME_KING_SQUARE_TABLE[64] = {
 
 #else
 
-#include "pstab-v1.h"
+#include "pstab-v2.h"
 
 #endif
 
