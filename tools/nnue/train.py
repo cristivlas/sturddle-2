@@ -357,7 +357,7 @@ if __name__ == '__main__':
         parser.add_argument('-m', '--model', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=0.0001, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='use verbose (DEBUG level) logging')
-        parser.add_argument('-w', '--export', help='filename to export weights to, as C++ code')
+        parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
         parser.add_argument('--activation', choices=['clipped-relu', 'relu'], default='relu', help='activation function')
         parser.add_argument('--amsgrad', action='store_true', help='use amsgrad (ignored when not using adam)')
         parser.add_argument('--clip', type=int)
