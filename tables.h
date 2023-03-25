@@ -21,7 +21,7 @@
 #pragma once
 
 #include "common.h"
-
+#if 0
 /*
  * Piece-square tables.
  * https://www.chessprogramming.org/Simplified_Evaluation_Function
@@ -103,6 +103,11 @@ static constexpr int ENDGAME_KING_SQUARE_TABLE[64] = {
     -50, -30, -30, -30, -30, -30, -30, -50,
 };
 
+#else
+
+#include "pstab-v1.h"
+
+#endif
 
 static constexpr int square_indices[2][64] = {
     {
