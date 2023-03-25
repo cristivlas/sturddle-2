@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 import sqlite3
+
 import chess
 import numpy as np
+from numba import njit
 from tqdm import tqdm
 
 COUNT = 0
@@ -20,15 +22,30 @@ def get_arguments():
     return parser.parse_args()
 
 
-def update_aggregates(aggregates, board, row):
+def piece_map_to_arrays(piece_map):
+    num_pieces = len(piece_map)
+    squares = np.empty(num_pieces, dtype=np.int32)
+    piece_types = np.empty(num_pieces, dtype=np.int32)
+    colors = np.empty(num_pieces, dtype=np.bool_)
+
+    for idx, (square, piece) in enumerate(piece_map.items()):
+        squares[idx] = square
+        piece_types[idx] = piece.piece_type
+        colors[idx] = piece.color
+
+    return squares, piece_types, colors
+
+
+@njit
+def update_aggregates(aggregates, squares, piece_types, colors, piece_count, row):
     cnt, wins, losses = row
-    for square in chess.SQUARES:
-        piece = board.piece_at(square)
-        if piece is None:
-            continue
-        i = piece.piece_type - 1
-        j = square if piece.color == chess.WHITE else chess.square_mirror(square)
-        if piece.piece_type == chess.KING and chess.popcount(board.occupied) <= 12:
+    for idx in range(len(squares)):
+        square = squares[idx]
+        piece_type = piece_types[idx]
+        color = colors[idx]
+        i = piece_type - 1
+        j = square if color else square ^ 0x38
+        if piece_type == 6 and piece_count <= 12:  # 6 is chess.KING
             i = ENDGAME_KING_TABLE
 
         aggregates[i][j][COUNT] += cnt
@@ -36,9 +53,8 @@ def update_aggregates(aggregates, board, row):
         aggregates[i][j][LOSSES] += losses
 
 
-def compute_piece_square_tables(aggregates, scale):
-    tables = np.zeros((7, 64), dtype=int)
-
+@njit
+def compute_piece_square_tables(aggregates, tables, scale):
     for i in range(7):
         for j in range(64):
             cnt = aggregates[i][j][COUNT]
@@ -47,16 +63,14 @@ def compute_piece_square_tables(aggregates, scale):
                 losses = aggregates[i][j][LOSSES]
                 score = (wins - losses) * scale / cnt
                 tables[i][j] = score
+
     return tables
 
 
 def main():
     args = get_arguments()
-    aggregates = [
-        [
-            {WINS: 0, LOSSES: 0, COUNT: 0} for _ in range(64)
-        ] for _ in range(7)
-    ]
+    aggregates = np.zeros((7, 64, 3), dtype=int)
+
     for db_path in tqdm(args.databases, desc='Processing databases'):
         conn = sqlite3.connect(db_path)
         cur = conn.cursor()
@@ -69,10 +83,14 @@ def main():
         for row in tqdm(cur.fetchall(), desc='Processing positions', leave=False):
             epd = row[0]
             board = chess.Board(epd)
-            update_aggregates(aggregates, board, row[1:])
+            squares, piece_types, colors = piece_map_to_arrays(board.piece_map())
+            piece_count = chess.popcount(board.occupied)
+            update_aggregates(aggregates, squares, piece_types, colors, piece_count, row[1:])
+
         conn.close()
 
-    piece_square_tables = compute_piece_square_tables(aggregates, args.scale)
+    piece_square_tables = np.zeros((7, 64), dtype=int)
+    compute_piece_square_tables(aggregates, piece_square_tables, args.scale)
 
     header_str = '#pragma once\n'
     header_str += '/*\n * Piece-square tables generated from chess databases.\n */\n'
