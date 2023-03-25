@@ -74,8 +74,6 @@ using score_t = int;
   #define NATIVE_UCI                        false
 #endif /* NATIVE_UCI */
 
-#define FAVOR_SACRIFICES                    false
-
 #define KILLER_MOVE_HEURISTIC               true
 
 #define MTDF_CSTAR_BISECT                   true
@@ -100,7 +98,7 @@ using score_t = int;
   #define USE_SIMPLE_SEE                    false
 #endif /* USE_SIMPLE_SEE */
 
-#if !WITH_NNUE && !defined(USE_PIECE_SQUARE_TABLES)
+#if /* !WITH_NNUE && */ !defined(USE_PIECE_SQUARE_TABLES)
   #define USE_PIECE_SQUARE_TABLES           true
 #endif
 
