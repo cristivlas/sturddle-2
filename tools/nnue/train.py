@@ -125,7 +125,7 @@ def export_weights(args, model, indent=2):
                 write_weigths(args, model, indent)
 
 
-def main(args):
+def dataset_from_file(args, strategy, callbacks):
     '''
     Batch generator.
     '''
@@ -178,9 +178,6 @@ def main(args):
             y_macro_batch = self.y[index * self.macro_batch_size:(index + 1) * self.macro_batch_size]
             return DataGenerator(x_macro_batch, y_macro_batch)
 
-
-    callbacks = []
-
     def prefetch(x, y):
         class CallbackOnEpochEnd(tf.keras.callbacks.Callback):
             def __init__(self, generator):
@@ -199,57 +196,56 @@ def main(args):
             output_shapes=((None, args.hot_encoding), (None, 1)),
         ).prefetch(tf.data.AUTOTUNE).repeat(), steps_per_epoch
 
+    print('Loading dataset')
+    dtype = np.float16 if args.half else np.float32
+    filepath = args.input[0]
+    if os.path.splitext(filepath)[1].lower() == '.h5':
+        f = h5py.File(filepath)
+        data = f['eval']
+        row_count = data.shape[0]
+        assert data.shape[1] == args.hot_encoding + 1, data.shape[1]
+        class LazyView:
+            def __init__(self, data, slice_, rows):
+                self.data = data
+                self.slice_ = slice_
+                self.len = rows
 
+            def __getitem__(self, key):
+                return self.data[key, self.slice_]
+
+            def __len__(self):
+                return self.len
+
+        x = LazyView(data, slice(0, args.hot_encoding), row_count)
+        y = LazyView(data, slice(args.hot_encoding, args.hot_encoding + 1), row_count)
+    else:
+        data = np.memmap(filepath, dtype=dtype, mode='r')
+        row_count = data.shape[0] // (args.hot_encoding + 1)
+        data = data.reshape((row_count, (args.hot_encoding + 1)))
+        x = data[:,:args.hot_encoding]
+        y = data[:,args.hot_encoding:]
+        print(x.shape, y.shape)
+
+    steps_per_epoch = None
+
+    if args.distribute:
+        dataset, steps_per_epoch = prefetch(x, y)
+        # distribute data accross several GPUs
+        dataset = strategy.experimental_distribute_dataset(dataset)
+    elif args.macro_batch_size > 0:
+        # use macro-batching (chunking) to reduce I/O latency
+        dataset = MacroBatchGenerator(x, y)
+    else:
+        dataset, steps_per_epoch = prefetch(x, y)
+
+    return dataset, steps_per_epoch
+
+
+def main(args):
     if args.gpu:
         strategy = tf.distribute.MirroredStrategy()
     else:
         strategy = tf.distribute.OneDeviceStrategy(device='/cpu:0')
-
-    if not args.export:
-        print('Loading dataset')
-        dtype = np.float16 if args.half else np.float32
-        filepath = args.input[0]
-        if os.path.splitext(filepath)[1].lower() == '.h5':
-            f = h5py.File(filepath)
-            data = f['eval']
-            row_count = data.shape[0]
-            assert data.shape[1] == args.hot_encoding + 1, data.shape[1]
-            class LazyView:
-                def __init__(self, data, slice_, rows):
-                    self.data = data
-                    self.slice_ = slice_
-                    self.len = rows
-
-                def __getitem__(self, key):
-                    return self.data[key, self.slice_]
-
-                def __len__(self):
-                    return self.len
-
-            x = LazyView(data, slice(0, args.hot_encoding), row_count)
-            y = LazyView(data, slice(args.hot_encoding, args.hot_encoding + 1), row_count)
-
-        else:
-            data = np.memmap(filepath, dtype=dtype, mode='r')
-            row_count = data.shape[0] // (args.hot_encoding + 1)
-            data = data.reshape((row_count, (args.hot_encoding + 1)))
-            x = data[:,:args.hot_encoding]
-            y = data[:,args.hot_encoding:]
-
-            print(x.shape, y.shape)
-
-        steps_per_epoch = None
-
-        if args.distribute:
-            dataset, steps_per_epoch = prefetch(x, y)
-            # distribute data accross several GPUs
-            dataset = strategy.experimental_distribute_dataset(dataset)
-        elif args.macro_batch_size > 0:
-            # use macro-batching (chunking) to reduce I/O latency
-            dataset = MacroBatchGenerator(x, y)
-        else:
-            dataset, steps_per_epoch = prefetch(x, y)
-
 
     if args.model and os.path.exists(args.model):
         model = _make_model(args, strategy)
@@ -261,6 +257,9 @@ def main(args):
     if args.export:
         export_weights(args, model)
     else:
+        callbacks = []
+        dataset, steps_per_epoch = dataset_from_file(args, strategy, callbacks)
+
         if args.schedule_lr:
             from keras.callbacks import ReduceLROnPlateau
             lr = ReduceLROnPlateau(
@@ -312,7 +311,6 @@ def main(args):
                 print('*****************************************************************')
                 print(' WARNING: checkpoint path not provided, model WILL NOT BE SAVED! ')
                 print('*****************************************************************')
-            print(f'Training with {row_count} rows of data.')
 
             if args.profile_batches:
                 log_dir = '/tmp/logs'
@@ -322,7 +320,7 @@ def main(args):
 
             assert dataset
 
-            if isinstance(dataset, MacroBatchGenerator):
+            if args.macro_batch_size:
                 loss = []
                 for era in range(args.epochs // args.macro_epochs):
                     logging.info(f'===== Era: {era} =====')
