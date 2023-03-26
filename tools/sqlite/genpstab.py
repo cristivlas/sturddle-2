@@ -4,6 +4,7 @@ import sqlite3
 
 import chess
 import numpy as np
+from dbutils.sqlite import SQLConn
 from numba import njit
 from tqdm import tqdm
 
@@ -67,26 +68,27 @@ def main():
     aggregates = np.zeros((7, 64, 3), dtype=int)
 
     for db_path in tqdm(args.databases, desc='Processing databases'):
-        conn = sqlite3.connect(db_path)
-        cur = conn.cursor()
-        query = 'SELECT epd, uci, cnt, win, loss FROM position'
-        if args.limit is not None:
-            query += ' LIMIT ?'
-            cur.execute(query, (args.limit,))
-        else:
-            cur.execute(query)
-        for row in tqdm(cur.fetchall(), desc='Processing positions', leave=False):
-            epd, uci, cnt, win, loss = row
-            board = chess.Board(epd)
-            move = chess.Move.from_uci(uci)
-            if not move:
-                continue
-            to_square = move.to_square
-            piece = board.piece_at(to_square)
-            assert piece, (epd, uci)
-            piece_count = chess.popcount(board.occupied)
-            update_aggregates(aggregates, to_square, piece.piece_type, piece.color, piece_count, cnt, win, loss)
-        conn.close()
+        with SQLConn(db_path) as conn:
+            count = conn.row_max_count('position') # use max(_rowid_) for speed
+
+            query = 'SELECT epd, uci, cnt, win, loss FROM position'
+            if args.limit is not None:
+                count = min(count, args.limit)
+                rows = conn.exec(query + ' LIMIT ?', (args.limit,))
+            else:
+                rows = conn.exec(query)
+            for row in tqdm(rows, desc='Processing positions', leave=False, total=count):
+                epd, uci, cnt, win, loss = row
+                board = chess.Board(epd)
+                move = chess.Move.from_uci(uci)
+                if not move:
+                    continue
+                to_square = move.to_square
+                piece = board.piece_at(to_square)
+                if not piece:
+                    continue
+                piece_count = chess.popcount(board.occupied)
+                update_aggregates(aggregates, to_square, piece.piece_type, piece.color, piece_count, cnt, win, loss)
 
     piece_square_tables = np.zeros((7, 64), dtype=int)
     compute_piece_square_tables(aggregates, piece_square_tables, args.scale)
