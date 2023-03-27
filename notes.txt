@@ -1,0 +1,4 @@
+Mon Mar 27 11:32:54 PDT 2023
+The dragon model (trained on dataset 13) seems to have regressed in strength (50-53% win-rate after 90 games against Fruit2.2)
+
+
