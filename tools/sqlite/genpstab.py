@@ -26,7 +26,7 @@ def get_arguments():
     parser.add_argument('-o', '--output', required=True, help='name of output header file')
     parser.add_argument('--limit', type=int, help='limit the number of entries processed')
     parser.add_argument('--scale', type=int, default=100, help='scale factor')
-    parser.add_argument('--threshold', type=int, default=1, help='position popularity threshold')
+    parser.add_argument('--threshold', type=int, default=1, help='square popularity threshold')
     parser.add_argument('--viz', type=str, default=None, help='name of output visualization PNG file')
 
     return parser.parse_args()
@@ -71,11 +71,11 @@ def update_from_board(aggregates, board, endgame, cnt, wins, losses):
 
 
 @njit
-def compute_piece_square_tables(aggregates, tables, scale):
+def compute_piece_square_tables(aggregates, tables, scale, threshold):
     for i in range(7):
         for j in range(64):
             cnt = aggregates[i][j][COUNT]
-            if cnt > 0:
+            if cnt > threshold:
                 wins = aggregates[i][j][WINS]
                 losses = aggregates[i][j][LOSSES]
                 score = (wins - losses) * scale / cnt
@@ -127,8 +127,6 @@ def main():
 
             for row in tqdm(rows, desc='Processing positions', leave=False, total=count):
                 epd, prev, uci, cnt, win, loss = row
-                if cnt <= args.threshold:
-                    continue
                 move = chess.Move.from_uci(uci)
                 if not move:
                     continue
@@ -150,7 +148,7 @@ def main():
                 # update_from_board(aggregates, board, endgame, cnt, win, loss)
 
     piece_square_tables = np.zeros((7, 64), dtype=int)
-    compute_piece_square_tables(aggregates, piece_square_tables, args.scale)
+    compute_piece_square_tables(aggregates, piece_square_tables, args.scale, args.threshold)
 
     header_str = '#pragma once\n'
     header_str += '/*\n * Piece-square tables generated from chess databases.\n */\n'
