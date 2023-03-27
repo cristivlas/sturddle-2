@@ -103,8 +103,13 @@ def visualize_tables(tables, scale, output_filename):
         for (m, n), z in np.ndenumerate(temp_table):
             ax.text(n, m, f'{z}', ha='center', va='center', fontsize=9, color='black' if -50 < z < 50 else 'white')
 
-    if output_filename:
-        plt.savefig(output_filename)
+        ax.set_xticks(range(8))
+        ax.set_xticklabels(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'])
+        ax.set_yticks(range(8))
+        ax.set_yticklabels(range(1, 9)[::-1])
+        ax.xaxis.tick_bottom()
+
+    plt.savefig(output_filename)
 
 
 def main():
