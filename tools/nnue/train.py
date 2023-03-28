@@ -346,7 +346,7 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy input data')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
-        parser.add_argument('-d', '--delta', type=float, default=1.35, help='Huber delta')
+        parser.add_argument('-d', '--delta', type=float, default=100, help='Huber delta')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-f', '--save_freq', type=int, help='frequency for saving model')
         parser.add_argument('-i', '--infer', type=int, default=0, help='test inference on specified number of examples')
