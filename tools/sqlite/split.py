@@ -1,4 +1,4 @@
-#!/usr/env/bin python3
+#!/usr/bin/env python3
 import argparse
 import os
 import sqlite3
@@ -25,6 +25,7 @@ def split_db(input_db, ratio):
     # Get the total number of rows in the input database
     cur_input.execute("SELECT COUNT(*) FROM position")
     total_rows = cur_input.fetchone()[0]
+    conn_input.close()
 
     # Calculate the number of rows for the validation set
     valid_rows = int(total_rows * ratio)
@@ -36,10 +37,11 @@ def split_db(input_db, ratio):
 
     # Commit and close connections
     conn_train.commit()
+    cur_train.execute("VACUUM")
+    cur_train.close()
     conn_valid.commit()
-    conn_train.close()
+    conn_valid.execute("VACUUM")
     conn_valid.close()
-    conn_input.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Split a SQLite3 database into train and validation databases.")
