@@ -45,8 +45,9 @@ def get_engine(args):
     return engine
 
 def filter_positions(args, row):
-    if args.popularity_threshold and row[4] < args.popularity_threshold:
-        return False
+    #if args.popularity_threshold and row[4] < args.popularity_threshold:
+    #    return False
+    assert not args.popularity_threshold or row[4] >= args.popularity_threshold
 
     if args.min_win_rate or args.max_loss_rate:
         win_rate = row[5] / row[4]
@@ -66,9 +67,11 @@ def main(args):
         with SQLConn(*args.input) as sql_in:
             count = sql_in.row_max_count('position')
             if args.reverse:
-                query = '''SELECT epd, prev, move, uci, cnt, win, loss FROM position ORDER BY _rowid_ DESC'''
+                query = 'SELECT epd, prev, move, uci, cnt, win, loss FROM position ORDER BY _rowid_ DESC'
             else:
-                query = '''SELECT epd, prev, move, uci, cnt, win, loss FROM position'''
+                query = 'SELECT epd, prev, move, uci, cnt, win, loss FROM position'
+            if args.popularity_threshold:
+                query += f' WHERE cnt >= {args.popularity_threshold}'
 
             for i, row in tenumerate(sql_in.exec(query), start=1, total=count, desc='Analysing'):
                 if (i + args.offset) % args.step:
@@ -109,7 +112,7 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--depth', type=int)
     parser.add_argument('-e', '--engine', default='stockfish')
     parser.add_argument('--hash', type=int, default=1024, help='engine hashtable size in MB')
-    parser.add_argument('-m', '--mate-score', type=int)
+    parser.add_argument('-m', '--mate-score', type=int, default=29999)
     parser.add_argument('-o', '--output', required=True)
     parser.add_argument('-r', '--reverse', action='store_true')
     parser.add_argument('--offset', type=int, default=0)
