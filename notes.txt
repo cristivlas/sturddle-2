@@ -1,4 +1,9 @@
 Mon Mar 27 11:32:54 PDT 2023
 The dragon model (trained on dataset 13) seems to have regressed in strength (50-53% win-rate after 90 games against Fruit2.2)
 
+Mon Mar 27 15:01:36 PDT 2023
+Chesster model test: 70% / 60 games.
+
+Mon Mar 27 19:05:50 PDT 2023
+Dragon model in master branch: 78% (+220)/ 150 games. 75%(+191) after 175 games.
 
