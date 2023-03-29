@@ -7,3 +7,12 @@ Chesster model test: 70% / 60 games.
 Mon Mar 27 19:05:50 PDT 2023
 Dragon model in master branch: 78% (+220)/ 150 games. 75%(+191) after 175 games.
 
+Tue Mar 28 22:31:06 PDT 2023
+chesster-weights snapshot (trained on dataset 11) %78(+220) / 86 games.
+
+Wed Mar 29 07:26:04 PDT 2023
+... holding up at %79(+230) / 197 games.
+
+Wed Mar 29 09:16:56 PDT 2023
+... %80(+241) / 350 games.
+
