@@ -125,7 +125,7 @@ def export_weights(args, model, indent=2):
                 write_weigths(args, model, indent)
 
 
-def dataset_from_file(args, strategy, callbacks):
+def dataset_from_file(args, filepath, strategy, callbacks):
     '''
     Batch generator.
     '''
@@ -188,6 +188,9 @@ def dataset_from_file(args, strategy, callbacks):
                 self.generator.on_epoch_end()
 
         generator = DataGenerator(x, y)
+        if callbacks is None:
+            return generator, None
+
         callbacks.append(CallbackOnEpochEnd(generator))
         steps_per_epoch = len(generator)
         return tf.data.Dataset.from_generator(
@@ -196,9 +199,9 @@ def dataset_from_file(args, strategy, callbacks):
             output_shapes=((None, args.hot_encoding), (None, 1)),
         ).prefetch(tf.data.AUTOTUNE).repeat(), steps_per_epoch
 
-    print('Loading dataset')
+    print(f'Loading dataset {filepath}')
     dtype = np.float16 if args.half else np.float32
-    filepath = args.input[0]
+
     if os.path.splitext(filepath)[1].lower() == '.h5':
         f = h5py.File(filepath)
         data = f['eval']
@@ -258,7 +261,7 @@ def main(args):
         export_weights(args, model)
     else:
         callbacks = []
-        dataset, steps_per_epoch = dataset_from_file(args, strategy, callbacks)
+        dataset, steps_per_epoch = dataset_from_file(args, args.input[0], strategy, callbacks)
 
         if args.schedule_lr:
             from keras.callbacks import ReduceLROnPlateau
@@ -321,6 +324,7 @@ def main(args):
             assert dataset
 
             if args.macro_batch_size:
+                # validation data is not supported in chunk mode
                 loss = []
                 for era in range(args.epochs // args.macro_epochs):
                     logging.info(f'===== Era: {era} =====')
@@ -331,6 +335,15 @@ def main(args):
                         logging.info(f'MacroBatch: {i + 1}/{len(indices)}: {j}')
                         model.fit(dataset[j], callbacks=callbacks, epochs=args.macro_epochs)
 
+            elif args.validation:
+                validation_data, _ = dataset_from_file(args, args.validation, strategy, None)
+                model.fit(
+                    dataset,
+                    callbacks=callbacks,
+                    epochs=args.epochs,
+                    steps_per_epoch=steps_per_epoch,
+                    validation_data=validation_data,
+                )
             else:
                 # https://www.tensorflow.org/api_docs/python/tf/keras/Model
                 model.fit(dataset, callbacks=callbacks, epochs=args.epochs, steps_per_epoch=steps_per_epoch)
@@ -344,7 +357,7 @@ if __name__ == '__main__':
         ):
             pass
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
-        parser.add_argument('input', nargs=1, help='memmap-ed numpy input data')
+        parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
         parser.add_argument('-d', '--delta', type=float, default=100, help='Huber delta')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
@@ -377,6 +390,7 @@ if __name__ == '__main__':
         parser.add_argument('--optimizer', choices=['adam', 'sgd'], default='sgd')
         parser.add_argument('--profile-batches', type=int, default=0, help='enable TensorBoard to profile range of batches')
         parser.add_argument('--schedule-lr', action='store_true', help='use learning rate schedule')
+        parser.add_argument('--validation', help='validation data filepath')
 
         args = parser.parse_args()
         if args.input[0] == 'export' and not args.export:
