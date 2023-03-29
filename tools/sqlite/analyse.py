@@ -66,12 +66,14 @@ def main(args):
         sql_out.exec(_create_table)
         with SQLConn(*args.input) as sql_in:
             count = sql_in.row_max_count('position')
-            if args.reverse:
-                query = 'SELECT epd, prev, move, uci, cnt, win, loss FROM position ORDER BY _rowid_ DESC'
-            else:
-                query = 'SELECT epd, prev, move, uci, cnt, win, loss FROM position'
+
+            query = 'SELECT epd, prev, move, uci, cnt, win, loss FROM position'
+
             if args.popularity_threshold:
                 query += f' WHERE cnt >= {args.popularity_threshold}'
+
+            if args.reverse:
+                query += ' ORDER BY _rowid_ DESC'
 
             for i, row in tenumerate(sql_in.exec(query), start=1, total=count, desc='Analysing'):
                 if (i + args.offset) % args.step:
