@@ -343,6 +343,7 @@ def main(args):
                     epochs=args.epochs,
                     steps_per_epoch=steps_per_epoch,
                     validation_data=validation_data,
+                    validation_freq=args.vfreq,
                 )
             else:
                 # https://www.tensorflow.org/api_docs/python/tf/keras/Model
@@ -391,6 +392,7 @@ if __name__ == '__main__':
         parser.add_argument('--profile-batches', type=int, default=0, help='enable TensorBoard to profile range of batches')
         parser.add_argument('--schedule-lr', action='store_true', help='use learning rate schedule')
         parser.add_argument('--validation', help='validation data filepath')
+        parser.add_argument('--vfreq', type=int, default=1, help='validation frequency')
 
         args = parser.parse_args()
         if args.input[0] == 'export' and not args.export:
