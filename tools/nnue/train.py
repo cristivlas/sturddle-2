@@ -125,7 +125,7 @@ def export_weights(args, model, indent=2):
                 write_weigths(args, model, indent)
 
 
-def dataset_from_file(args, filepath, strategy, callbacks):
+def dataset_from_file(args, filepath, clip, strategy, callbacks):
     '''
     Batch generator.
     '''
@@ -137,6 +137,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             self.len = int(np.ceil(len(self.x) / self.batch_size))
             self.indices = np.arange(self.len)
             np.random.shuffle(self.indices)
+            self.clip = clip
             logging.info(f'using {self.len} batches.')
 
         def __call__(self):
@@ -151,8 +152,8 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             start, end = i * self.batch_size, (i + 1) * self.batch_size
             x = self.x[start:end]
             y = self.y[start:end]
-            if args.clip:
-                y = np.clip(y, -args.clip, args.clip)
+            if self.clip:
+                y = np.clip(y, -self.clip, self.clip)
             return x, y
 
         def on_epoch_end(self):
@@ -261,7 +262,7 @@ def main(args):
         export_weights(args, model)
     else:
         callbacks = []
-        dataset, steps_per_epoch = dataset_from_file(args, args.input[0], strategy, callbacks)
+        dataset, steps_per_epoch = dataset_from_file(args, args.input[0], args.clip, strategy, callbacks)
 
         if args.schedule_lr:
             from keras.callbacks import ReduceLROnPlateau
@@ -336,7 +337,7 @@ def main(args):
                         model.fit(dataset[j], callbacks=callbacks, epochs=args.macro_epochs)
 
             elif args.validation:
-                validation_data, _ = dataset_from_file(args, args.validation, strategy, None)
+                validation_data, _ = dataset_from_file(args, args.validation, None, strategy, None)
                 model.fit(
                     dataset,
                     callbacks=callbacks,
