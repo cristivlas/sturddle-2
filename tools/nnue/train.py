@@ -37,10 +37,24 @@ def _make_model(args, strategy):
 
     activation = tf.keras.activations.relu if args.activation == 'relu' else _clipped_relu
     with strategy.scope():
-        model = tf.keras.models.Sequential([
-            Dense(640, input_shape=(args.hot_encoding,), activation=activation, name='hidden'),
-            Dense(1, name='out', dtype='float32')
-        ])
+        # Define the input layer
+        input_layer = Input(shape=(args.hot_encoding,), name='input')
+
+        # Define Layer 1a
+        hidden_1a = Dense(640, activation=activation, name='hidden_1a')(input_layer)
+
+        # Define Layer 1b
+        input_1b = Lambda(lambda x: x[:, :256], name='slice_input_1b')(input_layer)
+        hidden_1b = Dense(64, activation=activation, name='hidden_1b')(input_1b)
+
+        # Concatenate Layer 1a and Layer 1b outputs
+        concat_layer = Concatenate(name='concat')([hidden_1a, hidden_1b])
+
+        # Define the output layer
+        output_layer = Dense(1, name='out', dtype='float32')(concat_layer)
+
+        # Create the model
+        model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer)
 
         if args.loss == 'mse':
             loss = MeanSquaredError()
@@ -87,7 +101,10 @@ represented by a numpy.float32 value is 7.
 '''
 def write_weigths(args, model, indent):
     for layer in model.layers:
-        weights, biases = layer.get_weights()
+        params = layer.get_weights()
+        if not params:
+            continue
+        weights, biases = params
         rows, cols = weights.shape
         print(f'constexpr float {layer.name}_w[{rows}][{cols}] = {{')
         for i in range(rows):
@@ -402,7 +419,7 @@ if __name__ == '__main__':
         log_level = _configure_logging(args)
 
         # delay tensorflow import so that --help does not have to wait
-        print('Importing tensorflow')
+        print('Importing TensorFlow')
 
         import tensorflow as tf
         tf.get_logger().setLevel(log_level)

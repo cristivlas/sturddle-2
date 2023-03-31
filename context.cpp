@@ -177,22 +177,28 @@ void assert_param_ref()
 #if WITH_NNUE
 bool USE_NNUE = true;
 
-constexpr int INPUTS = 769;
-constexpr int HIDDEN = 640;
+constexpr int INPUTS_A = 769;
+constexpr int INPUTS_B = 256;
+constexpr int HIDDEN_1A = 640;
+constexpr int HIDDEN_1B = 64;
 
-using Accumulator = nnue::Accumulator<INPUTS, HIDDEN>;
+using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A + HIDDEN_1B>;
 static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
-static nnue::Layer<INPUTS, HIDDEN> L1(hidden_w, hidden_b);
-static nnue::Layer<HIDDEN, 1> L2(out_w, out_b);
+
+static nnue::Layer<INPUTS_A, HIDDEN_1A> L1A(hidden_1a_w, hidden_1a_b);
+static nnue::Layer<INPUTS_B, HIDDEN_1B> L1B(hidden_1b_w, hidden_1b_b);
+
+static nnue::Layer<HIDDEN_1A + HIDDEN_1B, 1> L2(out_w, out_b);
 
 
 score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
 {
     auto& acc = NNUE_data[tid()][_ply];
+
     if (is_root() || _update_nnue)
-        acc.update(L1, state());
+        acc.update(L1A, L1B, state());
     else
-        acc.update(L1, _parent->state(), state(), _move, NNUE_data[tid()][_ply - 1]);
+        acc.update(L1A, L1B, _parent->state(), state(), _move, NNUE_data[tid()][_ply - 1]);
 
     return update_only ? SCORE_MIN : nnue::eval(acc, L2);
 }

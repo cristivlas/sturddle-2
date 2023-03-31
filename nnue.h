@@ -147,8 +147,8 @@ namespace nnue
 
         /* input */
         static INLINE void dot(
-            const int8_t(&input)[INPUTS],
-            float (&output)[OUTPUTS],
+            const int8_t* input,
+            float* output,
             const float(&b)[OUTPUTS],
             const float(&wt)[OUTPUTS][INPUTS]
         )
@@ -195,8 +195,8 @@ namespace nnue
 
         /* output */
         static INLINE void dot(
-            const float(&input)[INPUTS],
-            float(&output)[OUTPUTS],
+            const float* input,
+            float* output,
             const float(&b)[OUTPUTS],
             const float(&wt)[OUTPUTS][INPUTS]
         )
@@ -232,8 +232,7 @@ namespace nnue
             }
         }
 
-        template <typename U, typename V>
-        INLINE void dot(const U(&input)[INPUTS], V(&output)[OUTPUTS]) const
+        template <typename U, typename V> INLINE void dot(const U* input, V* output) const
         {
             dot(input, output, _b, _wt);
         }
@@ -253,7 +252,8 @@ namespace nnue
         uint64_t _hash = 0;
 
         /** Compute 1st layer output from scratch at root */
-        template <typename L> INLINE void update(const L& layer, const State& state)
+        template <typename LA, typename LB>
+        INLINE void update(const LA& layer1a, const LB& layer1b, const State& state)
         {
             if (state.hash() != _hash)
             {
@@ -262,14 +262,16 @@ namespace nnue
                 memset(&_input, 0, sizeof(_input));
                 one_hot_encode(state, _input);
 
-                layer.dot(_input, _output);
+                layer1a.dot(_input, &_output[0]);
+                layer1b.dot(_input, &_output[LA::OUTPUTS]);
             }
         }
 
         /** Update 1st layer output incrementally, based on a previous state */
-        template <typename L, typename A>
+        template <typename LA, typename LB, typename A>
         INLINE void update(
-            const L& layer,
+            const LA& layer_a,
+            const LB& layer_b,
             const State& prev,
             const State& state,
             const Move& move,
@@ -316,38 +318,45 @@ namespace nnue
                 else
                     remove_inputs[r_idx++] = TURN_INDEX;
 
-                recompute(layer, remove_inputs, add_inputs, r_idx, a_idx);
+                recompute(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx);
 
                 if constexpr(debug_incremental)
                 {
                     float output[OUTPUTS] = { 0 };
-                    layer.dot(_input, output);
+                    layer_a.dot(_input, output);
+                    layer_b.dot(_input, &output[LA::OUTPUTS]);
                     for (int i = 0; i != OUTPUTS; ++i)
                     {
-                        // std::cout << _output[i] << " " << output[i] << "\n";
+                        std::cout << _output[i] << " " << output[i] << "\n";
                         ASSERT_ALWAYS(abs(output[i] - _output[i]) < 0.0001);
                     }
                 }
             }
         }
 
-        template <typename L>
+        template <typename LA, typename LB>
         INLINE void recompute(
-            const L& layer,
+            const LA& layer_a,
+            const LB& layer_b,
             const int (&remove_inputs)[INPUTS],
             const int (&add_inputs)[INPUTS],
             const int r_idx,
             const int a_idx)
         {
-            static_assert(L::OUTPUTS == OUTPUTS);
-            static_assert(OUTPUTS % Vector::size() * unroll_factor == 0);
+            static_assert(LA::OUTPUTS + LB::OUTPUTS == OUTPUTS);
+            static_assert(LA::OUTPUTS % Vector::size() * unroll_factor == 0);
+            static_assert(LB::OUTPUTS % Vector::size() * unroll_factor == 0);
 
-            constexpr int unrolled_iterations = (L::OUTPUTS / Vector::size()) / unroll_factor;
+            constexpr int unrolled_iterations_1 = (LA::OUTPUTS / Vector::size()) / unroll_factor;
+            constexpr int unrolled_iterations_2 = (LB::OUTPUTS / Vector::size()) / unroll_factor;
 
             Vector vo[unroll_factor], vw;
+            bool add_king_or_pawn = false;
+            bool remove_king_or_pawn = false;
 
+            /* layer A */
             for (int j = 0;
-                j < unrolled_iterations * unroll_factor * Vector::size();
+                j < unrolled_iterations_1 * unroll_factor * Vector::size();
                 j += unroll_factor * Vector::size())
             {
                 for (int u = 0; u < unroll_factor; ++u)
@@ -355,26 +364,72 @@ namespace nnue
 
                 for (int i = 0; i < r_idx; ++i)
                 {
+                    const auto index = remove_inputs[i];
+                    remove_king_or_pawn |= index < LB::INPUTS;
+
                     for (int u = 0; u < unroll_factor; ++u)
                     {
-                        const auto index = remove_inputs[i];
-                        vw.load_a(&layer._w[index][j + u * Vector::size()]);
+                        vw.load_a(&layer_a._w[index][j + u * Vector::size()]);
                         vo[u] -= vw;
                     }
                 }
 
                 for (int i = 0; i < a_idx; ++i)
                 {
+                    const auto index = add_inputs[i];
+                    add_king_or_pawn |= index < LB::INPUTS;
+
                     for (int u = 0; u < unroll_factor; ++u)
                     {
-                        const auto index = add_inputs[i];
-                        vw.load_a(&layer._w[index][j + u * Vector::size()]);
+                        vw.load_a(&layer_a._w[index][j + u * Vector::size()]);
                         vo[u] += vw;
                     }
                 }
 
                 for (int u = 0; u < unroll_factor; ++u)
                     vo[u].store_a(&_output[j + u * Vector::size()]);
+            }
+
+            if (add_king_or_pawn || remove_king_or_pawn)
+            {
+                /* layer B */
+                for (int j = 0;
+                    j < unrolled_iterations_2 * unroll_factor * Vector::size();
+                    j += unroll_factor * Vector::size())
+                {
+                    for (int u = 0; u < unroll_factor; ++u)
+                        vo[u].load_a(&_output[LA::OUTPUTS + j + u * Vector::size()]);
+
+                    if (remove_king_or_pawn)
+                        for (int i = 0; i < r_idx; ++i)
+                        {
+                            const auto index = remove_inputs[i];
+                            if (index >= LB::INPUTS)
+                                continue;
+                            for (int u = 0; u < unroll_factor; ++u)
+                            {
+                                vw.load_a(&layer_b._w[index][j + u * Vector::size()]);
+                                vo[u] -= vw;
+                            }
+                        }
+
+                    if (add_king_or_pawn)
+                        for (int i = 0; i < a_idx; ++i)
+                        {
+                            const auto index = add_inputs[i];
+                            if (index >= LB::INPUTS)
+                                continue;
+
+                            for (int u = 0; u < unroll_factor; ++u)
+                            {
+                                vw.load_a(&layer_b._w[index][j + u * Vector::size()]);
+                                vo[u] += vw;
+                            }
+                        }
+
+                    for (int u = 0; u < unroll_factor; ++u)
+                        vo[u].store_a(&_output[LA::OUTPUTS + j + u * Vector::size()]);
+                }
             }
         }
 
@@ -423,7 +478,6 @@ namespace nnue
             }
         }
     };
-
 
     template <typename A, typename L> INLINE int eval(const A& a, const L& layer)
     {
