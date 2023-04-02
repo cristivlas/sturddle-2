@@ -1,7 +1,7 @@
 import sqlite3
 
 class SQLConn:
-    """ Sqlite3 Connection Wrapper """
+    ''' Sqlite3 Connection Wrapper '''
     def __init__(self, db_file):
         self._conn = sqlite3.connect(db_file)
         self._cursor = None
@@ -15,6 +15,16 @@ class SQLConn:
                 self._conn.commit()
             self._conn.close()
 
+    def add_column_if_not_exists(self, table, column, column_type):
+            query = f'''
+            SELECT COUNT(*)
+            FROM pragma_table_info('{table}')
+            WHERE name='{column}';
+            '''
+            if not self.exec(query).fetchone()[0]:
+                self.exec(f'ALTER TABLE {table} ADD COLUMN {column} {column_type}')
+                self._conn.commit()
+
     def commit(self):
         assert self._cursor
         self._conn.commit()
@@ -27,6 +37,12 @@ class SQLConn:
             print(*args)
         self._cursor = self._conn.cursor()
         return self._cursor.execute(*args)
+
+    def executemany(self, *args, echo=False):
+        if echo:
+            print(*args)
+        self._cursor = self._conn.cursor()
+        return self._cursor.executemany(*args)
 
     def row_count(self, table):
         return self.exec(f'SELECT COUNT(_ROWID_) FROM {table}').fetchone()[0]
