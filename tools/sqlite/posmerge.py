@@ -24,7 +24,7 @@ def merge_databases(input_files, output_file):
                 num_rows = input_db.row_count('position')
 
                 # Get all distinct rows from the input database
-                rows = input_db.exec('SELECT * FROM position')
+                rows = input_db.exec('SELECT epd, cnt, win, loss FROM position')
 
                 # Iterate through rows with a progress bar
                 for row in tqdm(rows, total=num_rows, desc=f'Processing {input_file}'):
