@@ -10,14 +10,10 @@ def merge_databases(input_files, output_file):
         # Create the output table if it doesn't exist
         output_db.exec('''
             CREATE TABLE IF NOT EXISTS position (
-                epd text,
-                prev text,
-                move integer,
-                uci text,
+                epd text PRIMARY KEY,
                 cnt integer,
                 win integer,
-                loss integer,
-                PRIMARY KEY (epd, move)
+                loss integer
             )
         ''')
 
@@ -32,12 +28,12 @@ def merge_databases(input_files, output_file):
 
                 # Iterate through rows with a progress bar
                 for row in tqdm(rows, total=num_rows, desc=f'Processing {input_file}'):
-                    epd, prev, move, uci, cnt, win, loss = row
+                    epd, cnt, win, loss = row
 
                     # Check if the position already exists in the output database
                     existing_row = output_db.exec('''
-                        SELECT cnt, win, loss FROM position WHERE epd=? AND move=?
-                    ''', (epd, move)).fetchone()
+                        SELECT cnt, win, loss FROM position WHERE epd=?
+                    ''', (epd,)).fetchone()
 
                     if existing_row:
                         cnt += existing_row[0]
@@ -46,13 +42,13 @@ def merge_databases(input_files, output_file):
                         output_db.exec('''
                             UPDATE position
                             SET cnt=?, win=?, loss=?
-                            WHERE epd=? AND move=?
-                        ''', (cnt, win, loss, epd, move))
+                            WHERE epd=?
+                        ''', (cnt, win, loss, epd))
                     else:
                         output_db.exec('''
-                            INSERT INTO position (epd, prev, move, uci, cnt, win, loss)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ''', (epd, prev, move, uci, cnt, win, loss))
+                            INSERT INTO position (epd, cnt, win, loss)
+                            VALUES (?, ?, ?, ?)
+                        ''', (epd, cnt, win, loss))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Merge multiple SQLite3 databases with the specified schema.')
