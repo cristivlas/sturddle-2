@@ -21,8 +21,6 @@ def augment_database(primary_db, secondary_db):
                 primary_depth, has_evaluation = primary_row
                 if not has_evaluation or (depth > primary_depth):
                     primary_conn.exec('UPDATE position SET depth=?, score=?, has_evaluation=1 WHERE epd=?', (depth, score, epd))
-            else:
-                print(f'No matching position found in primary database for EPD: {epd}')
 
         primary_conn.commit()
         print(f'Augmented primary database {primary_db} with depth and score information from {secondary_db}')

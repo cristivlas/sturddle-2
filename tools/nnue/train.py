@@ -249,7 +249,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
     steps_per_epoch = None
 
-    if args.distribute:
+    if args.distribute and callbacks is not None:
         dataset, steps_per_epoch = prefetch(x, y)
         # distribute data accross several GPUs
         dataset = strategy.experimental_distribute_dataset(dataset)
