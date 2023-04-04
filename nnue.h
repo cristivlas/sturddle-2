@@ -181,7 +181,7 @@ namespace nnue
                             input[i+12],input[i+13],input[i+14],input[i+15]);
                     #else
                         Vec16c v16c;
-                        v16c.load(&input[i]);
+                        v16c.load_a(&input[i]);
                         Vec16i v16i = extend(extend(v16c));
                         Vector in = to_float(v16i);
                     #endif
