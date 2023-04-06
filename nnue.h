@@ -212,53 +212,53 @@ namespace nnue
             const float(&wt)[OUTPUTS][INPUTS]
         )
         {
-        #if 0
-            static_assert(INPUTS % (Vector::size() * unroll_factor) == 0,
-                "Input size must be a multiple of vector size and unroll factor");
-
-            for (int j = 0; j != OUTPUTS; ++j)
+            if constexpr (INPUTS % (Vector::size() * unroll_factor) == 0)
             {
-                Vector sum(0.0);
-                Vector v_in, v_wt;
-
-                constexpr int unrolled_iterations = INPUTS / (Vector::size() * unroll_factor);
-
-                for (int i = 0;
-                    i < unrolled_iterations * unroll_factor * Vector::size();
-                    i += unroll_factor * Vector::size())
+                for (int j = 0; j != OUTPUTS; ++j)
                 {
-                    Vector sum_unrolled[unroll_factor];
-                    for (int u = 0; u < unroll_factor; ++u)
-                        sum_unrolled[u] = Vector(0.0);
+                    Vector sum(0.0);
+                    Vector v_in, v_wt;
 
-                    for (int u = 0; u < unroll_factor; ++u)
+                    constexpr int unrolled_iterations = INPUTS / (Vector::size() * unroll_factor);
+
+                    for (int i = 0;
+                        i < unrolled_iterations * unroll_factor * Vector::size();
+                        i += unroll_factor * Vector::size())
                     {
-                        v_in.load_a(&input[i + u * Vector::size()]);
-                        v_wt.load_a(&wt[j][i + u * Vector::size()]);
-                        sum_unrolled[u] = mul_add(v_in, v_wt, sum_unrolled[u]);
+                        Vector sum_unrolled[unroll_factor];
+                        for (int u = 0; u < unroll_factor; ++u)
+                            sum_unrolled[u] = Vector(0.0);
+
+                        for (int u = 0; u < unroll_factor; ++u)
+                        {
+                            v_in.load_a(&input[i + u * Vector::size()]);
+                            v_wt.load_a(&wt[j][i + u * Vector::size()]);
+                            sum_unrolled[u] = mul_add(v_in, v_wt, sum_unrolled[u]);
+                        }
+
+                        sum += sum_vectors(sum_unrolled);
                     }
-
-                    sum += sum_vectors(sum_unrolled);
+                    output[j] = b[j] + horizontal_add(sum);
                 }
-                output[j] = b[j] + horizontal_add(sum);
             }
-        #else
-            for (int j = 0; j != OUTPUTS; ++j)
+            else
             {
-                Vector sum(0.0);
-
-                static_assert(INPUTS % Vector::size() == 0);
-                Vector v_in, v_wt;
-
-                for (int i = 0; i != INPUTS; i += Vector::size())
+                for (int j = 0; j != OUTPUTS; ++j)
                 {
-                    v_in.load_a(&input[i]);
-                    v_wt.load_a(&wt[j][i]);
-                    sum = mul_add(v_in, v_wt, sum);
+                    Vector sum(0.0);
+
+                    static_assert(INPUTS % Vector::size() == 0);
+                    Vector v_in, v_wt;
+
+                    for (int i = 0; i != INPUTS; i += Vector::size())
+                    {
+                        v_in.load_a(&input[i]);
+                        v_wt.load_a(&wt[j][i]);
+                        sum = mul_add(v_in, v_wt, sum);
+                    }
+                    output[j] = b[j] + horizontal_add(sum);
                 }
-                output[j] = b[j] + horizontal_add(sum);
             }
-        #endif
         }
 
         template <typename U, typename V> INLINE void dot(const U* input, V* output) const
