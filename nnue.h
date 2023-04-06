@@ -101,15 +101,6 @@ namespace nnue
     }
 
     /** Rectified Linear Unit (reLU) activation */
-#if 0
-    template <typename U, typename V, int N>
-    INLINE void activation(const U (&input)[N], V (&output)[N])
-    {
-        #pragma clang loop vectorize(enable)
-        for (int i = 0; i != N; ++i)
-            output[i] = std::max<V>(0, input[i]);
-    }
-#else
     template <int N>
     INLINE void activation(const float (&input)[N], float (&output)[N])
     {
@@ -123,7 +114,22 @@ namespace nnue
             max(v, zero).store_a(&output[i]);
         }
     }
-#endif
+
+
+    template <int N>
+    INLINE void activation(float (&output)[N])
+    {
+        static_assert(N % Vector::size() == 0);
+        static const Vector zero(0.0);
+
+        Vector v;
+        for (int i = 0; i != N; i += Vector::size())
+        {
+            v.load_a(&output[i]);
+            max(v, zero).store_a(&output[i]);
+        }
+    }
+
 
     template <int N, int M, typename T=float>
     struct Layer
@@ -206,6 +212,7 @@ namespace nnue
             const float(&wt)[OUTPUTS][INPUTS]
         )
         {
+        #if 0
             static_assert(INPUTS % (Vector::size() * unroll_factor) == 0,
                 "Input size must be a multiple of vector size and unroll factor");
 
@@ -235,6 +242,23 @@ namespace nnue
                 }
                 output[j] = b[j] + horizontal_add(sum);
             }
+        #else
+            for (int j = 0; j != OUTPUTS; ++j)
+            {
+                Vector sum(0.0);
+
+                static_assert(INPUTS % Vector::size() == 0);
+                Vector v_in, v_wt;
+
+                for (int i = 0; i != INPUTS; i += Vector::size())
+                {
+                    v_in.load_a(&input[i]);
+                    v_wt.load_a(&wt[j][i]);
+                    sum = mul_add(v_in, v_wt, sum);
+                }
+                output[j] = b[j] + horizontal_add(sum);
+            }
+        #endif
         }
 
         template <typename U, typename V> INLINE void dot(const U* input, V* output) const
@@ -484,16 +508,21 @@ namespace nnue
         }
     };
 
-    template <typename A, typename L> INLINE int eval(const A& a, const L& layer)
+    template <typename A, typename L2, typename L3>
+    INLINE int eval(const A& a, const L2& l2, const L3& l3)
     {
-        ALIGN float input[L::INPUTS];
+        ALIGN float input[L2::INPUTS];
+        ALIGN float hidden[L3::INPUTS];
         ALIGN float output[1];
 
-        static_assert(L::INPUTS == A::OUTPUTS);
+        static_assert(L2::INPUTS == A::OUTPUTS);
 
         activation(a._output, input);
 
-        layer.dot(input, output);
+        l2.dot(input, hidden);
+        activation(hidden);
+
+        l3.dot(hidden, output);
         return 100 * output[0];
     }
 
