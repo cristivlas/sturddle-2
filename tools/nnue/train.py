@@ -41,22 +41,27 @@ def _make_model(args, strategy):
         input_layer = Input(shape=(args.hot_encoding,), name='input')
 
         # Define Layer 1a
-        hidden_1a = Dense(640, activation=activation, name='hidden_1a')(input_layer)
+        hidden_1a = Dense(512, activation=activation, name='hidden_1a')(input_layer)
 
         # Define Layer 1b
         input_1b = Lambda(lambda x: x[:, :256], name='slice_input_1b')(input_layer)
-        hidden_1b = Dense(64, activation=activation, name='hidden_1b')(input_1b)
+        hidden_1b = Dense(128, activation=activation, name='hidden_1b')(input_1b)
 
         # Concatenate Layer 1a and Layer 1b outputs
         concat_layer = Concatenate(name='concat')([hidden_1a, hidden_1b])
 
+        # Add a bottleneck layer
+        hidden_2 = Dense(32, activation=activation, name='hidden_2')(concat_layer)
+
         # Define the output layer
-        output_layer = Dense(1, name='out', dtype='float32')(concat_layer)
+        output_layer = Dense(1, name='out', dtype='float32')(hidden_2)
 
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer)
 
-        if args.loss == 'mse':
+        if args.loss == 'mae':
+            loss = MeanAbsoluteError()
+        elif args.loss == 'mse':
             loss = MeanSquaredError()
         elif args.loss == 'huber':
             loss = Huber(delta=args.delta)
@@ -382,7 +387,7 @@ if __name__ == '__main__':
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-f', '--save_freq', type=int, help='frequency for saving model')
         parser.add_argument('-i', '--infer', type=int, default=0, help='test inference on specified number of examples')
-        parser.add_argument('-l', '--loss', choices=['huber', 'mse', 'rmse'], default='mse', help='loss function')
+        parser.add_argument('-l', '--loss', choices=['huber', 'mae', 'mse', 'rmse'], default='mae', help='loss function')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=0.0001, help='learning rate')
@@ -425,7 +430,7 @@ if __name__ == '__main__':
         tf.get_logger().setLevel(log_level)
 
         from tensorflow.keras.layers import *
-        from tensorflow.keras.losses import Huber, MeanSquaredError
+        from tensorflow.keras.losses import Huber, MeanAbsoluteError, MeanSquaredError
 
         '''
         Detect GPU presence and compute capability.
