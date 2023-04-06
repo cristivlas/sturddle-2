@@ -48,7 +48,7 @@ def main(args):
 
         # Estimate total number of games based on file size
         file_size = os.path.getsize(args.pgn_file)
-        avg_game_size = 500  # bytes (adjust this value as needed)
+        avg_game_size = 2308  # bytes (adjust this value as needed)
         num_games = file_size // avg_game_size
 
         # Open PGN file
@@ -68,4 +68,8 @@ if __name__ == '__main__':
     parser.add_argument('--mate-score', type=int, default=29999, help='Mate score in centipawns (default: 29999)')
     args = parser.parse_args()
 
-    main(args)
+    try:
+        main(args)
+    except KeyboardInterrupt:
+        pass
+
