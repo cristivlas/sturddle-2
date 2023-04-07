@@ -115,7 +115,7 @@ namespace nnue
         }
     }
 
-
+/*
     template <int N>
     INLINE void activation(float (&output)[N])
     {
@@ -129,7 +129,7 @@ namespace nnue
             max(v, zero).store_a(&output[i]);
         }
     }
-
+ */
 
     template <int N, int M, typename T=float>
     struct Layer
@@ -156,7 +156,8 @@ namespace nnue
             const int8_t* input,
             float* output,
             const float(&b)[OUTPUTS],
-            const float(&wt)[OUTPUTS][INPUTS]
+            const float(&wt)[OUTPUTS][INPUTS],
+            bool /* dummy */
         )
         {
             for (int j = 0; j != OUTPUTS; ++j)
@@ -209,7 +210,8 @@ namespace nnue
             const float* input,
             float* output,
             const float(&b)[OUTPUTS],
-            const float(&wt)[OUTPUTS][INPUTS]
+            const float(&wt)[OUTPUTS][INPUTS],
+            bool activate
         )
         {
             if constexpr (INPUTS % (Vector::size() * unroll_factor) == 0)
@@ -239,6 +241,8 @@ namespace nnue
                         sum += sum_vectors(sum_unrolled);
                     }
                     output[j] = b[j] + horizontal_add(sum);
+                    if (activate)
+                        output[j] = std::max<float>(output[j], 0);
                 }
             }
             else
@@ -257,13 +261,17 @@ namespace nnue
                         sum = mul_add(v_in, v_wt, sum);
                     }
                     output[j] = b[j] + horizontal_add(sum);
+
+                    if (activate)
+                        output[j] = std::max<float>(output[j], 0);
                 }
             }
         }
 
-        template <typename U, typename V> INLINE void dot(const U* input, V* output) const
+        template <typename U, typename V>
+        INLINE void dot(const U* input, V* output, bool activate=false) const
         {
-            dot(input, output, _b, _wt);
+            dot(input, output, _b, _wt, activate);
         }
     };
 
@@ -519,8 +527,7 @@ namespace nnue
 
         activation(a._output, input);
 
-        l2.dot(input, hidden);
-        activation(hidden);
+        l2.dot(input, hidden, true /* activate */);
 
         l3.dot(hidden, output);
         return 100 * output[0];
