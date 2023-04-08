@@ -219,7 +219,10 @@ namespace nnue
             {
                 for (int j = 0; j != OUTPUTS; ++j)
                 {
-                    Vector sum(0.0);
+                    Vector sum_unrolled[unroll_factor];
+                    for (int u = 0; u < unroll_factor; ++u)
+                        sum_unrolled[u] = Vector(0.0);
+
                     Vector v_in, v_wt;
 
                     constexpr int unrolled_iterations = INPUTS / (Vector::size() * unroll_factor);
@@ -228,20 +231,14 @@ namespace nnue
                         i < unrolled_iterations * unroll_factor * Vector::size();
                         i += unroll_factor * Vector::size())
                     {
-                        Vector sum_unrolled[unroll_factor];
-                        for (int u = 0; u < unroll_factor; ++u)
-                            sum_unrolled[u] = Vector(0.0);
-
                         for (int u = 0; u < unroll_factor; ++u)
                         {
                             v_in.load_a(&input[i + u * Vector::size()]);
                             v_wt.load_a(&wt[j][i + u * Vector::size()]);
                             sum_unrolled[u] = mul_add(v_in, v_wt, sum_unrolled[u]);
                         }
-
-                        sum += sum_vectors(sum_unrolled);
                     }
-                    output[j] = activate(b[j] + horizontal_add(sum));
+                    output[j] = activate(b[j] + horizontal_add(sum_vectors(sum_unrolled)));
                 }
             }
             else
