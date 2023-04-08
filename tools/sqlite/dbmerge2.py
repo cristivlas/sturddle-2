@@ -28,7 +28,7 @@ def merge_databases(input_dbs, output_db):
                 for _, row in tenumerate(input_conn.exec('SELECT * FROM position'), total=max_row):
                     epd, depth, score = row
                     existing = conn.exec('SELECT depth FROM position WHERE epd = ?', (epd,)).fetchone()
-                    if existing is None or depth > existing[0]:
+                    if existing is None or abs(depth) > abs(existing[0]):
                         conn.exec('REPLACE INTO position (epd, depth, score) VALUES (?, ?, ?)', (epd, depth, score))
                         if existing:
                             update_count += 1

@@ -4,7 +4,9 @@ import os
 
 import chess
 import chess.pgn as pgn
+
 from dbutils.sqlite import SQLConn
+from math import copysign
 from tqdm import tqdm
 
 
@@ -23,11 +25,17 @@ def pgn_to_epd(game, mate_score):
             # Parse score in centipawns
             score_str = comment.split()[1][:-1]
             if score_str.startswith('#'):
+                if not mate_score:
+                    continue
+
                 # Convert mate score to centipawns
                 mate_in = int(score_str[1:])
-                score = mate_score - mate_in
+                score = int(copysign(mate_score, mate_in) - mate_in)
+                # print(chess.COLOR_NAMES[board.turn], mate_in, score)
+
             else:
                 score = int(float(score_str) * 100)
+
             if not board.turn:
                 score = -score
 
@@ -58,14 +66,14 @@ def main(args):
                 epd_list = pgn_to_epd(game, args.mate_score)
                 for epd, cp_score in epd_list:
                     sqlconn.exec('''INSERT OR IGNORE INTO position(epd, depth, score)
-                                    VALUES(?, ?, ?)''', (epd, -1, int(cp_score)))
+                                    VALUES(?, ?, ?)''', (epd, -2, int(cp_score)))
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Parse PGN file and output SQLite database of evaluated positions')
     parser.add_argument('pgn_file', help='PGN input file')
-    parser.add_argument('-o', '--output', default='output.db', help='SQLite output file (default: output.db)')
-    parser.add_argument('--mate-score', type=int, default=29999, help='Mate score in centipawns (default: 29999)')
+    parser.add_argument('-o', '--output', required=True, help='SQLite output file')
+    parser.add_argument('--mate-score', type=int, default=29999, help='Mate score in centipawns (default: 29999, 0 ignores mate scores)')
     args = parser.parse_args()
 
     try:
