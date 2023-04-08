@@ -94,10 +94,9 @@ namespace nnue
     }
 
     /** Calculate the piece-square index into the one-hot encoding. */
-    INLINE int psi(PieceType piece_type, Color color, Square square)
+    INLINE constexpr int psi(PieceType piece_type, Color color, Square square)
     {
-        static constexpr int index[] = { 1, 2, 3, 4, 5, 0 };
-        return index[piece_type - 1] * 128 + (64 * color) + 63 - square;
+        return (piece_type % 6) * 128 + (64 * color) + 63 - square;
     }
 
     /** Rectified Linear Unit (reLU) activation */
@@ -152,12 +151,13 @@ namespace nnue
         }
 
         /* input */
+        template <typename F>
         static INLINE void dot(
             const int8_t* input,
             float* output,
             const float(&b)[OUTPUTS],
             const float(&wt)[OUTPUTS][INPUTS],
-            bool /* dummy */
+            F /* dummy activation */
         )
         {
             for (int j = 0; j != OUTPUTS; ++j)
@@ -180,7 +180,7 @@ namespace nnue
                     {
                         Vector vw;
                         vw.load(&wt[j][i]);
-                    #if 0
+                    #if 1
                         const Vector in(
                             input[i],   input[i+1], input[i+2], input[i+3],
                             input[i+4], input[i+5], input[i+6], input[i+7],
@@ -206,12 +206,13 @@ namespace nnue
         }
 
         /* output */
+        template<typename F>
         static INLINE void dot(
             const float* input,
             float* output,
             const float(&b)[OUTPUTS],
             const float(&wt)[OUTPUTS][INPUTS],
-            bool activate
+            F activate
         )
         {
             if constexpr (INPUTS % (Vector::size() * unroll_factor) == 0)
@@ -240,9 +241,7 @@ namespace nnue
 
                         sum += sum_vectors(sum_unrolled);
                     }
-                    output[j] = b[j] + horizontal_add(sum);
-                    if (activate)
-                        output[j] = std::max<float>(output[j], 0);
+                    output[j] = activate(b[j] + horizontal_add(sum));
                 }
             }
             else
@@ -260,16 +259,19 @@ namespace nnue
                         v_wt.load_a(&wt[j][i]);
                         sum = mul_add(v_in, v_wt, sum);
                     }
-                    output[j] = b[j] + horizontal_add(sum);
-
-                    if (activate)
-                        output[j] = std::max<float>(output[j], 0);
+                    output[j] = activate(b[j] + horizontal_add(sum));
                 }
             }
         }
 
         template <typename U, typename V>
-        INLINE void dot(const U* input, V* output, bool activate=false) const
+        INLINE void dot(const U* input, V* output) const
+        {
+            dot(input, output, _b, _wt, [](V v) { return v; });
+        }
+
+        template <typename U, typename V, typename F>
+        INLINE void dot(const U* input, V* output, F activate) const
         {
             dot(input, output, _b, _wt, activate);
         }
@@ -384,8 +386,8 @@ namespace nnue
             static_assert(LA::OUTPUTS % Vector::size() * unroll_factor == 0);
             static_assert(LB::OUTPUTS % Vector::size() * unroll_factor == 0);
 
-            constexpr int unrolled_iterations_1 = (LA::OUTPUTS / Vector::size()) / unroll_factor;
-            constexpr int unrolled_iterations_2 = (LB::OUTPUTS / Vector::size()) / unroll_factor;
+            constexpr int unrolled_iterations_a = (LA::OUTPUTS / Vector::size()) / unroll_factor;
+            constexpr int unrolled_iterations_b = (LB::OUTPUTS / Vector::size()) / unroll_factor;
 
             Vector vo[unroll_factor], vw;
             bool add_king_or_pawn = false;
@@ -393,7 +395,7 @@ namespace nnue
 
             /* layer A */
             for (int j = 0;
-                j < unrolled_iterations_1 * unroll_factor * Vector::size();
+                j < unrolled_iterations_a * unroll_factor * Vector::size();
                 j += unroll_factor * Vector::size())
             {
                 for (int u = 0; u < unroll_factor; ++u)
@@ -431,7 +433,7 @@ namespace nnue
             {
                 /* layer B */
                 for (int j = 0;
-                    j < unrolled_iterations_2 * unroll_factor * Vector::size();
+                    j < unrolled_iterations_b * unroll_factor * Vector::size();
                     j += unroll_factor * Vector::size())
                 {
                     for (int u = 0; u < unroll_factor; ++u)
@@ -527,7 +529,7 @@ namespace nnue
 
         activation(a._output, input);
 
-        l2.dot(input, hidden, true /* activate */);
+        l2.dot(input, hidden, [](float v){ return std::max<float>(v, 0); });
 
         l3.dot(hidden, output);
         return 100 * output[0];
@@ -537,3 +539,4 @@ namespace nnue
     int eval_fen(const std::string&);
 
 } /* namespace nnue */
+
