@@ -179,10 +179,10 @@ bool USE_NNUE = true;
 
 constexpr int INPUTS_A = 769;
 constexpr int INPUTS_B = 256;
-constexpr int HIDDEN_1A = 512;
-constexpr int HIDDEN_1B = 64;
+constexpr int HIDDEN_1A = 496;
+constexpr int HIDDEN_1B = 16;
 constexpr int HIDDEN_2 = 16;
-constexpr int HIDDEN_3 = 8;
+constexpr int HIDDEN_3 = 16;
 
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A + HIDDEN_1B>;
 static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
