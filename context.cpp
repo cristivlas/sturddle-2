@@ -182,6 +182,7 @@ constexpr int INPUTS_B = 256;
 constexpr int HIDDEN_1A = 512;
 constexpr int HIDDEN_1B = 64;
 constexpr int HIDDEN_2 = 16;
+constexpr int HIDDEN_3 = 8;
 
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A + HIDDEN_1B>;
 static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
@@ -189,7 +190,8 @@ static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
 static nnue::Layer<INPUTS_A, HIDDEN_1A> L1A(hidden_1a_w, hidden_1a_b);
 static nnue::Layer<INPUTS_B, HIDDEN_1B> L1B(hidden_1b_w, hidden_1b_b);
 static nnue::Layer<HIDDEN_1A + HIDDEN_1B, HIDDEN_2> L2(hidden_2_w, hidden_2_b);
-static nnue::Layer<HIDDEN_2, 1> L3(out_w, out_b);
+static nnue::Layer<HIDDEN_2, HIDDEN_3> L3(hidden_3_w, hidden_3_b);
+static nnue::Layer<HIDDEN_3, 1> L4(out_w, out_b);
 
 
 score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
@@ -201,7 +203,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
     else
         acc.update(L1A, L1B, _parent->state(), state(), _move, NNUE_data[tid()][_ply - 1]);
 
-    return update_only ? SCORE_MIN : nnue::eval(acc, L2, L3);
+    return update_only ? SCORE_MIN : nnue::eval(acc, L2, L3, L4);
 }
 
 

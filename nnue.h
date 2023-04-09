@@ -536,20 +536,21 @@ namespace nnue
         }
     };
 
-    template <typename A, typename L2, typename L3>
-    INLINE int eval(const A& a, const L2& l2, const L3& l3)
+    template <typename A, typename L2, typename L3, typename L4>
+    INLINE int eval(const A& a, const L2& l2, const L3& l3, const L4& l4)
     {
         ALIGN float input[L2::INPUTS];
-        ALIGN float hidden[L3::INPUTS];
+        ALIGN float hidden1[L3::INPUTS];
+        ALIGN float hidden2[L4::INPUTS];
         ALIGN float output[1];
 
         static_assert(L2::INPUTS == A::OUTPUTS);
 
         activation(a._output, input);
+        l2.dot(input, hidden1, [](float v){ return std::max<float>(v, 0); });
+        l3.dot(input, hidden2, [](float v){ return std::max<float>(v, 0); });
+        l4.dot(hidden2, output);
 
-        l2.dot(input, hidden, [](float v){ return std::max<float>(v, 0); });
-
-        l3.dot(hidden, output);
         return 100 * output[0];
     }
 
