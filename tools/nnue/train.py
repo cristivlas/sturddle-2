@@ -57,8 +57,11 @@ def _make_model(args, strategy):
         # Add 2nd hidden layer
         hidden_2 = Dense(16, activation=activation, name='hidden_2')(concat_layer)
 
+        # Add 3rd hidden layer
+        hidden_3 = Dense(8, activation=activation, name='hidden_3')(hidden_2)
+
         # Define the output layer
-        output_layer = Dense(1, name='out', dtype='float32')(hidden_2)
+        output_layer = Dense(1, name='out', dtype='float32')(hidden_3)
 
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer)
