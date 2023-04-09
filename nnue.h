@@ -73,17 +73,7 @@ namespace nnue
 
     INLINE Vector load_vec(const int8_t* input)
     {
-    #if 0
         return Vector(input[0], input[1], input[2], input[3]);
-    #else
-        __m128i input_vec = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(input));
-
-        // Sign-extend the 8-bit integers to 32-bit integers
-        __m128i input_epi32 = _mm_cvtepi8_epi32(input_vec);
-
-        // Convert the 32-bit integers to floats
-        return Vector(_mm_cvtepi32_ps(input_epi32));
-    #endif
     }
 #endif /* INSTRSET */
 
