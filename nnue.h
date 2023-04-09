@@ -200,25 +200,25 @@ namespace nnue
                 for (int i = 0; i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
             #else
-                Vector sum_unrolled[chunk_size];
+                Vector sum_chunks[chunk_size];
                 for (int u = 0; u < chunk_size; ++u)
-                    sum_unrolled[u] = Vector(0.0);
+                    sum_chunks[u] = Vector(0.0);
 
                 constexpr int R = round_down<Vector::size()>(INPUTS);
 
                 for (int ii = 0; ii < R; ii += Vector::size() * chunk_size)
                 {
-                    for (int chunk_idx = 0; chunk_idx < chunk_size; ++chunk_idx)
+                    for (int u = 0; u < chunk_size; ++u)
                     {
-                        int i = ii + chunk_idx * Vector::size();
+                        const int i = ii + u * Vector::size();
                         Vector vw;
                         vw.load(&wt[j][i]);
                         const Vector in(load_vec(input + i));
-                        sum_unrolled[chunk_idx] = mul_add(in, vw, sum_unrolled[chunk_idx]);
+                        sum_chunks[u] = mul_add(in, vw, sum_chunks[u]);
                     }
                 }
 
-                output[j] = b[j] + horizontal_add(sum_vectors(sum_unrolled));
+                output[j] = b[j] + horizontal_add(sum_vectors(sum_chunks));
 
                 for (int i = R; i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
@@ -240,9 +240,9 @@ namespace nnue
             {
                 for (int j = 0; j != OUTPUTS; ++j)
                 {
-                    Vector sum_unrolled[chunk_size];
+                    Vector sum_chunks[chunk_size];
                     for (int u = 0; u < chunk_size; ++u)
-                        sum_unrolled[u] = Vector(0.0);
+                        sum_chunks[u] = Vector(0.0);
 
                     Vector v_in, v_wt;
 
@@ -256,10 +256,10 @@ namespace nnue
                         {
                             v_in.load_a(&input[i + u * Vector::size()]);
                             v_wt.load_a(&wt[j][i + u * Vector::size()]);
-                            sum_unrolled[u] = mul_add(v_in, v_wt, sum_unrolled[u]);
+                            sum_chunks[u] = mul_add(v_in, v_wt, sum_chunks[u]);
                         }
                     }
-                    output[j] = activate(b[j] + horizontal_add(sum_vectors(sum_unrolled)));
+                    output[j] = activate(b[j] + horizontal_add(sum_vectors(sum_chunks)));
                 }
             }
             else
