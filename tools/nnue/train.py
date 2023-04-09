@@ -38,8 +38,9 @@ def _make_model(args, strategy):
 
     tf.keras.utils.get_custom_objects().update({'_clipped_mae': _clipped_mae})
 
-    activation = tf.keras.activations.relu
     with strategy.scope():
+        activation = tf.keras.activations.relu
+
         # Define the input layer
         input_layer = Input(shape=(args.hot_encoding,), name='input')
 
@@ -53,7 +54,7 @@ def _make_model(args, strategy):
         # Concatenate Layer 1a and Layer 1b outputs
         concat_layer = Concatenate(name='concat')([hidden_1a, hidden_1b])
 
-        # Add a bottleneck layer
+        # Add 2nd hidden layer
         hidden_2 = Dense(16, activation=activation, name='hidden_2')(concat_layer)
 
         # Define the output layer
@@ -337,7 +338,8 @@ def main(args):
             assert dataset
 
             if args.macro_batch_size:
-                # validation data is not supported in chunk mode
+                # Validation data is not supported in chunk mode.
+                # H5 files not well supported either (may run out of memory).
                 loss = []
                 for era in range(args.epochs // args.macro_epochs):
                     logging.info(f'===== Era: {era} =====')
@@ -389,6 +391,7 @@ if __name__ == '__main__':
         parser.add_argument('--half', action='store_true', help='read half-precision (float16) input')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
+
         #for future support of other hot-encoding schemes
         parser.add_argument('--hot-encoding', choices=(769,), type=int, default=769, help=argparse.SUPPRESS)
 
@@ -456,4 +459,3 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print()
         os._exit(0)
-

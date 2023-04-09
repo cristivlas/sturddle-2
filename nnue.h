@@ -28,10 +28,65 @@
 namespace nnue
 {
     using namespace chess;
-    using Vector = Vec16f;
 
     constexpr bool debug_incremental = false;
     constexpr int unroll_factor = 4;
+
+#if INSTRSET >= 9
+    using Vector = Vec16f;
+
+    INLINE Vector load_vec(const int8_t* input)
+    {
+    #if 0
+        return Vector(
+            input[0], input[1], input[2], input[3],
+            input[4], input[5], input[6], input[7],
+            input[8], input[9], input[10],input[11],
+            input[12],input[13],input[14],input[15]);
+    #else
+        Vec16c v;
+        v.load_a(input);
+        return to_float(extend(extend(v)));
+    #endif
+    }
+#elif INSTRSET >= 8
+    using Vector = Vec8f;
+
+    INLINE Vector load_vec(const int8_t* input)
+    {
+    #if 0
+        return Vector(
+            input[0], input[1], input[2], input[3],
+            input[4], input[5], input[6], input[7]);
+    #else
+        __m128i input_vec = _mm_loadu_si128(reinterpret_cast<const __m128i*>(input));
+
+        // Sign-extend the 8-bit integers to 32-bit integers
+        __m256i input_epi32 = _mm256_cvtepi8_epi32(input_vec);
+
+        // Convert the 32-bit integers to floats
+        return Vector(_mm256_cvtepi32_ps(input_epi32));
+    #endif
+    }
+#else
+    using Vector = Vec4f;
+
+    INLINE Vector load_vec(const int8_t* input)
+    {
+    #if 0
+        return Vector(input[0], input[1], input[2], input[3]);
+    #else
+        __m128i input_vec = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(input));
+
+        // Sign-extend the 8-bit integers to 32-bit integers
+        __m128i input_epi32 = _mm_cvtepi8_epi32(input_vec);
+
+        // Convert the 32-bit integers to floats
+        return Vector(_mm_cvtepi32_ps(input_epi32));
+    #endif
+    }
+#endif /* INSTRSET */
+
 
     template <typename V, std::size_t N>
     INLINE V sum_vectors(const V (&input)[N])
@@ -49,6 +104,7 @@ namespace nnue
             V temp2 = input[2] + input[3];
             sum = temp1 + temp2;
         }
+    #if 0
         else if constexpr (unroll_factor == 8)
         {
             V temp1 = input[0] + input[1];
@@ -59,6 +115,7 @@ namespace nnue
             V temp6 = temp3 + temp4;
             sum = temp5 + temp6;
         }
+    #endif /* 0 */
         else
             return input[0];
 
@@ -114,21 +171,6 @@ namespace nnue
         }
     }
 
-/*
-    template <int N>
-    INLINE void activation(float (&output)[N])
-    {
-        static_assert(N % Vector::size() == 0);
-        static const Vector zero(0.0);
-
-        Vector v;
-        for (int i = 0; i != N; i += Vector::size())
-        {
-            v.load_a(&output[i]);
-            max(v, zero).store_a(&output[i]);
-        }
-    }
- */
 
     template <int N, int M, typename T=float>
     struct Layer
@@ -180,19 +222,8 @@ namespace nnue
                     {
                         Vector vw;
                         vw.load(&wt[j][i]);
-                    #if 1
-                        const Vector in(
-                            input[i],   input[i+1], input[i+2], input[i+3],
-                            input[i+4], input[i+5], input[i+6], input[i+7],
-                            input[i+8], input[i+9], input[i+10],input[i+11],
-                            input[i+12],input[i+13],input[i+14],input[i+15]);
-                    #else
-                        Vec16c v16c;
-                        v16c.load_a(&input[i]);
-                        Vec16i v16i = extend(extend(v16c));
-                        Vector in = to_float(v16i);
-                    #endif
-                        int unroll_idx = (i - ii) / Vector::size();
+                        const Vector in(load_vec(input + i));
+                        const int unroll_idx = (i - ii) / Vector::size();
                         sum_unrolled[unroll_idx] = mul_add(in, vw, sum_unrolled[unroll_idx]);
                     }
                 }
@@ -536,4 +567,3 @@ namespace nnue
     int eval_fen(const std::string&);
 
 } /* namespace nnue */
-
