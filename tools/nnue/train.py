@@ -32,10 +32,13 @@ def _configure_logging(args):
 
 def _make_model(args, strategy):
     @tf.function
-    def _clipped_relu(x):
-        return tf.keras.activations.relu(x, max_value=1.)
+    def _clipped_mae(y_true, y_pred):
+        y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
+        return tf.keras.losses.mean_absolute_error(y_true, y_pred)
 
-    activation = tf.keras.activations.relu if args.activation == 'relu' else _clipped_relu
+    tf.keras.utils.get_custom_objects().update({'_clipped_mae': _clipped_mae})
+
+    activation = tf.keras.activations.relu
     with strategy.scope():
         # Define the input layer
         input_layer = Input(shape=(args.hot_encoding,), name='input')
@@ -59,20 +62,10 @@ def _make_model(args, strategy):
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer)
 
-        if args.loss == 'mae':
-            loss = MeanAbsoluteError()
-        elif args.loss == 'mse':
-            loss = MeanSquaredError()
-        elif args.loss == 'huber':
-            loss = Huber(delta=args.delta)
-        elif args.loss == 'rmse':
-            @tf.function
-            def rmse(y_true, y_pred):
-                return tf.keras.losses.mean_squared_error(y_true, y_pred)
-
-            loss = rmse
+        if args.clip:
+            loss = _clipped_mae
         else:
-            assert False
+            loss = MeanAbsoluteError()
 
         if args.optimizer == 'adam':
             optimizer=tf.keras.optimizers.Adam(
@@ -159,7 +152,6 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             self.len = int(np.ceil(len(self.x) / self.batch_size))
             self.indices = np.arange(self.len)
             np.random.shuffle(self.indices)
-            self.clip = clip
             logging.info(f'using {self.len} batches.')
 
         def __call__(self):
@@ -174,8 +166,6 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             start, end = i * self.batch_size, (i + 1) * self.batch_size
             x = self.x[start:end]
             y = self.y[start:end]
-            if self.clip:
-                y = np.clip(y, -self.clip, self.clip)
             return x, y
 
         def on_epoch_end(self):
@@ -383,17 +373,14 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
-        parser.add_argument('-d', '--delta', type=float, default=100, help='Huber delta')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-f', '--save_freq', type=int, help='frequency for saving model')
         parser.add_argument('-i', '--infer', type=int, default=0, help='test inference on specified number of examples')
-        parser.add_argument('-l', '--loss', choices=['huber', 'mae', 'mse', 'rmse'], default='mae', help='loss function')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=0.0001, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='use verbose (DEBUG level) logging')
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
-        parser.add_argument('--activation', choices=['clipped-relu', 'relu'], default='relu', help='activation function')
         parser.add_argument('--amsgrad', action='store_true', help='use amsgrad (ignored when not using adam)')
         parser.add_argument('--clip', type=int)
         parser.add_argument('--decay', type=float, help='weight decay')
