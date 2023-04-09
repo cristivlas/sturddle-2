@@ -30,7 +30,7 @@ namespace nnue
     using namespace chess;
 
     constexpr bool debug_incremental = false;
-    constexpr int unroll_factor = 4;
+    constexpr int chunk_size = 4;
 
 #if INSTRSET >= 9
     using Vector = Vec16f;
@@ -81,21 +81,21 @@ namespace nnue
     template <typename V, std::size_t N>
     INLINE V sum_vectors(const V (&input)[N])
     {
-        static_assert(N == unroll_factor);
+        static_assert(N == chunk_size);
 
         V sum;
-        if constexpr (unroll_factor == 2)
+        if constexpr (chunk_size == 2)
         {
             sum = input[0] + input[1];
         }
-        else if constexpr (unroll_factor == 4)
+        else if constexpr (chunk_size == 4)
         {
             V temp1 = input[0] + input[1];
             V temp2 = input[2] + input[3];
             sum = temp1 + temp2;
         }
     #if 0
-        else if constexpr (unroll_factor == 8)
+        else if constexpr (chunk_size == 8)
         {
             V temp1 = input[0] + input[1];
             V temp2 = input[2] + input[3];
@@ -200,21 +200,21 @@ namespace nnue
                 for (int i = 0; i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
             #else
-                Vector sum_unrolled[unroll_factor];
-                for (int u = 0; u < unroll_factor; ++u)
+                Vector sum_unrolled[chunk_size];
+                for (int u = 0; u < chunk_size; ++u)
                     sum_unrolled[u] = Vector(0.0);
 
                 constexpr int R = round_down<Vector::size()>(INPUTS);
 
-                for (int ii = 0; ii < R; ii += Vector::size() * unroll_factor)
+                for (int ii = 0; ii < R; ii += Vector::size() * chunk_size)
                 {
-                    for (int i = ii; i < ii + Vector::size() * unroll_factor; i += Vector::size())
+                    for (int chunk_idx = 0; chunk_idx < chunk_size; ++chunk_idx)
                     {
+                        int i = ii + chunk_idx * Vector::size();
                         Vector vw;
                         vw.load(&wt[j][i]);
                         const Vector in(load_vec(input + i));
-                        const int unroll_idx = (i - ii) / Vector::size();
-                        sum_unrolled[unroll_idx] = mul_add(in, vw, sum_unrolled[unroll_idx]);
+                        sum_unrolled[chunk_idx] = mul_add(in, vw, sum_unrolled[chunk_idx]);
                     }
                 }
 
@@ -236,23 +236,23 @@ namespace nnue
             F activate
         )
         {
-            if constexpr (INPUTS % (Vector::size() * unroll_factor) == 0)
+            if constexpr (INPUTS % (Vector::size() * chunk_size) == 0)
             {
                 for (int j = 0; j != OUTPUTS; ++j)
                 {
-                    Vector sum_unrolled[unroll_factor];
-                    for (int u = 0; u < unroll_factor; ++u)
+                    Vector sum_unrolled[chunk_size];
+                    for (int u = 0; u < chunk_size; ++u)
                         sum_unrolled[u] = Vector(0.0);
 
                     Vector v_in, v_wt;
 
-                    constexpr int unrolled_iterations = INPUTS / (Vector::size() * unroll_factor);
+                    constexpr int chunk_iterations = INPUTS / (Vector::size() * chunk_size);
 
                     for (int i = 0;
-                        i < unrolled_iterations * unroll_factor * Vector::size();
-                        i += unroll_factor * Vector::size())
+                        i < chunk_iterations * chunk_size * Vector::size();
+                        i += chunk_size * Vector::size())
                     {
-                        for (int u = 0; u < unroll_factor; ++u)
+                        for (int u = 0; u < chunk_size; ++u)
                         {
                             v_in.load_a(&input[i + u * Vector::size()]);
                             v_wt.load_a(&wt[j][i + u * Vector::size()]);
@@ -401,22 +401,22 @@ namespace nnue
             const int a_idx)
         {
             static_assert(LA::OUTPUTS + LB::OUTPUTS == OUTPUTS);
-            static_assert(LA::OUTPUTS % Vector::size() * unroll_factor == 0);
-            static_assert(LB::OUTPUTS % Vector::size() * unroll_factor == 0);
+            static_assert(LA::OUTPUTS % Vector::size() * chunk_size == 0);
+            static_assert(LB::OUTPUTS % Vector::size() * chunk_size == 0);
 
-            constexpr int unrolled_iterations_a = (LA::OUTPUTS / Vector::size()) / unroll_factor;
-            constexpr int unrolled_iterations_b = (LB::OUTPUTS / Vector::size()) / unroll_factor;
+            constexpr int chunk_iterations_a = (LA::OUTPUTS / Vector::size()) / chunk_size;
+            constexpr int chunk_iterations_b = (LB::OUTPUTS / Vector::size()) / chunk_size;
 
-            Vector vo[unroll_factor], vw;
+            Vector vo[chunk_size], vw;
             bool add_king_or_pawn = false;
             bool remove_king_or_pawn = false;
 
             /* layer A */
             for (int j = 0;
-                j < unrolled_iterations_a * unroll_factor * Vector::size();
-                j += unroll_factor * Vector::size())
+                j < chunk_iterations_a * chunk_size * Vector::size();
+                j += chunk_size * Vector::size())
             {
-                for (int u = 0; u < unroll_factor; ++u)
+                for (int u = 0; u < chunk_size; ++u)
                     vo[u].load_a(&_output[j + u * Vector::size()]);
 
                 for (int i = 0; i < r_idx; ++i)
@@ -424,7 +424,7 @@ namespace nnue
                     const auto index = remove_inputs[i];
                     remove_king_or_pawn |= index < LB::INPUTS;
 
-                    for (int u = 0; u < unroll_factor; ++u)
+                    for (int u = 0; u < chunk_size; ++u)
                     {
                         vw.load_a(&layer_a._w[index][j + u * Vector::size()]);
                         vo[u] -= vw;
@@ -436,14 +436,14 @@ namespace nnue
                     const auto index = add_inputs[i];
                     add_king_or_pawn |= index < LB::INPUTS;
 
-                    for (int u = 0; u < unroll_factor; ++u)
+                    for (int u = 0; u < chunk_size; ++u)
                     {
                         vw.load_a(&layer_a._w[index][j + u * Vector::size()]);
                         vo[u] += vw;
                     }
                 }
 
-                for (int u = 0; u < unroll_factor; ++u)
+                for (int u = 0; u < chunk_size; ++u)
                     vo[u].store_a(&_output[j + u * Vector::size()]);
             }
 
@@ -451,10 +451,10 @@ namespace nnue
             {
                 /* layer B */
                 for (int j = 0;
-                    j < unrolled_iterations_b * unroll_factor * Vector::size();
-                    j += unroll_factor * Vector::size())
+                    j < chunk_iterations_b * chunk_size * Vector::size();
+                    j += chunk_size * Vector::size())
                 {
-                    for (int u = 0; u < unroll_factor; ++u)
+                    for (int u = 0; u < chunk_size; ++u)
                         vo[u].load_a(&_output[LA::OUTPUTS + j + u * Vector::size()]);
 
                     if (remove_king_or_pawn)
@@ -463,7 +463,7 @@ namespace nnue
                             const auto index = remove_inputs[i];
                             if (index >= LB::INPUTS)
                                 continue;
-                            for (int u = 0; u < unroll_factor; ++u)
+                            for (int u = 0; u < chunk_size; ++u)
                             {
                                 vw.load_a(&layer_b._w[index][j + u * Vector::size()]);
                                 vo[u] -= vw;
@@ -477,14 +477,14 @@ namespace nnue
                             if (index >= LB::INPUTS)
                                 continue;
 
-                            for (int u = 0; u < unroll_factor; ++u)
+                            for (int u = 0; u < chunk_size; ++u)
                             {
                                 vw.load_a(&layer_b._w[index][j + u * Vector::size()]);
                                 vo[u] += vw;
                             }
                         }
 
-                    for (int u = 0; u < unroll_factor; ++u)
+                    for (int u = 0; u < chunk_size; ++u)
                         vo[u].store_a(&_output[LA::OUTPUTS + j + u * Vector::size()]);
                 }
             }
