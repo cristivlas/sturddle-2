@@ -44,21 +44,21 @@ def _make_model(args, strategy):
         # Define the input layer
         input_layer = Input(shape=(args.hot_encoding,), name='input')
 
-        # Define Layer 1a
-        hidden_1a = Dense(496, activation=activation, name='hidden_1a')(input_layer)
+        # Define layer 1a
+        hidden_1a = Dense(512, activation=activation, name='hidden_1a')(input_layer)
 
-        # Define Layer 1b
+        # Add 2nd hidden layer
+        hidden_2 = Dense(16, activation=activation, name='hidden_2')(hidden_1a)
+
+        # Define hidden layer 1b
         input_1b = Lambda(lambda x: x[:, :256], name='slice_input_1b')(input_layer)
         hidden_1b = Dense(16, activation=activation, name='hidden_1b')(input_1b)
 
-        # Concatenate Layer 1a and Layer 1b outputs
-        concat_layer = Concatenate(name='concat')([hidden_1a, hidden_1b])
-
-        # Add 2nd hidden layer
-        hidden_2 = Dense(16, activation=activation, name='hidden_2')(concat_layer)
+        # Concatenate layer hidden_2 and layer 1b outputs
+        concat_layer = Concatenate(name='concat')([hidden_2, hidden_1b])
 
         # Add 3rd hidden layer
-        hidden_3 = Dense(16, activation=activation, name='hidden_3')(hidden_2)
+        hidden_3 = Dense(16, activation=activation, name='hidden_3')(concat_layer)
 
         # Define the output layer
         output_layer = Dense(1, name='out', dtype='float32')(hidden_3)

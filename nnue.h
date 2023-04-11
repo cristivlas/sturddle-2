@@ -29,7 +29,7 @@ namespace nnue
 {
     using namespace chess;
 
-    constexpr bool debug_incremental = true;
+    constexpr bool debug_incremental = false;
     constexpr int chunk_size = 4;
 
 #if INSTRSET >= 9
@@ -391,10 +391,7 @@ namespace nnue
                     float output_b[OUTPUTS_B] = { 0 };
                     layer_b.dot(_input, output_b);
                     for (int i = 0; i != OUTPUTS_B; ++i)
-                    {
-                        std::cout << i << ": " << output_b[i] << ", " << _output_b[i] << "\n";
                         ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
-                    }
                 }
             }
         }
@@ -418,7 +415,7 @@ namespace nnue
             bool remove_king_or_pawn = false;
 
             /* layer A */
-            for (int j = 0; j != OUTPUTS_A; ++j)
+            for (int j = 0; j != OUTPUTS_A; j += Vector::size())
             {
                 vo.load_a(&_output_a[j]);
 
@@ -441,11 +438,11 @@ namespace nnue
                 }
                 vo.store_a(&_output_a[j]);
             }
-            
+
             if (add_king_or_pawn || remove_king_or_pawn)
             {
                 /* layer B */
-                for (int j = 0; j != OUTPUTS_B; ++j)
+                for (int j = 0; j != OUTPUTS_B; j += Vector::size())
                 {
                     vo.load_a(&_output_b[j]);
 

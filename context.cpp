@@ -1282,23 +1282,29 @@ namespace search
 
         if (_eval == SCORE_MIN)
         {
-            ASSERT(!USE_NNUE);
-            /*
-             * 1. Material + piece-squares + mobility
-             */
-            _eval = state().eval();
+            if (USE_NNUE)
+            {
+                eval_nnue();
+            }
+            else
+            {
+                /*
+                * 1. Material + piece-squares + mobility
+                */
+                _eval = state().eval();
 
-            ASSERT(_eval > SCORE_MIN);
-            ASSERT(_eval < SCORE_MAX);
+                ASSERT(_eval > SCORE_MIN);
+                ASSERT(_eval < SCORE_MAX);
 
-            _eval += eval_fuzz();
+                _eval += eval_fuzz();
 
-            /*
-             * 2. Tactical (positional) evaluation.
-             */
-            _eval += eval_insufficient_material(state(), _eval, [this]() {
-                return eval_tactical(*this, _eval);
-            });
+                /*
+                * 2. Tactical (positional) evaluation.
+                */
+                _eval += eval_insufficient_material(state(), _eval, [this]() {
+                    return eval_tactical(*this, _eval);
+                });
+            }
         }
 
         ASSERT(_eval > SCORE_MIN);
