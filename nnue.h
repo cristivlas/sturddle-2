@@ -30,7 +30,6 @@ namespace nnue
     using namespace chess;
 
     constexpr bool debug_incremental = false;
-    constexpr int chunk_size = 4;
 
 #if INSTRSET >= 9
     using Vector = Vec16f;
@@ -77,42 +76,6 @@ namespace nnue
     }
 #endif /* INSTRSET */
 
-
-    template <typename V, std::size_t N>
-    INLINE V sum_vectors(const V (&input)[N])
-    {
-        static_assert(N == chunk_size);
-
-        V sum;
-        if constexpr (chunk_size == 2)
-        {
-            sum = input[0] + input[1];
-        }
-        else if constexpr (chunk_size == 4)
-        {
-            V temp1 = input[0] + input[1];
-            V temp2 = input[2] + input[3];
-            sum = temp1 + temp2;
-        }
-    #if 0
-        else if constexpr (chunk_size == 8)
-        {
-            V temp1 = input[0] + input[1];
-            V temp2 = input[2] + input[3];
-            V temp3 = input[4] + input[5];
-            V temp4 = input[6] + input[7];
-            V temp5 = temp1 + temp2;
-            V temp6 = temp3 + temp4;
-            sum = temp5 + temp6;
-        }
-    #endif /* 0 */
-        else
-            return input[0];
-
-        return sum;
-    }
-
-
     template<unsigned int N>
     constexpr unsigned int round_down(unsigned int x)
     {
@@ -148,7 +111,7 @@ namespace nnue
 
 
     /** Rectified Linear Unit (reLU) activation */
-    static const Vector zero(0.0);
+    static const Vector v_zero(0.0);
 
     template <int N>
     INLINE void activation(const float (&input)[N], float* output)
@@ -159,16 +122,16 @@ namespace nnue
         for (int i = 0; i != N; i += Vector::size())
         {
             v.load_a(&input[i]);
-            max(v, zero).store_a(&output[i]);
+            max(v, v_zero).store_a(&output[i]);
         }
     }
 
 
-    template <int N, int M, typename T=float>
+    template <int I, int O, typename T=float>
     struct Layer
     {
-        static constexpr int INPUTS = N;
-        static constexpr int OUTPUTS = M;
+        static constexpr int INPUTS = I;
+        static constexpr int OUTPUTS = O;
 
         ALIGN T _b[OUTPUTS]; /* biases */
         ALIGN T _w[INPUTS][OUTPUTS]; /* weights */
@@ -194,38 +157,50 @@ namespace nnue
             F /* dummy activation */
         )
         {
+        #if 0
             for (int j = 0; j != OUTPUTS; ++j)
             {
-            #if 0
                 output[j] = b[j];
                 #pragma clang loop vectorize(enable)
                 for (int i = 0; i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
-            #else
-                Vector sum_chunks[chunk_size];
-                for (int u = 0; u < chunk_size; ++u)
-                    sum_chunks[u] = Vector(0.0);
+            }
+        #else /* vector */
+            static_assert(OUTPUTS % Vector::size() == 0);
 
-                constexpr int R = round_down<Vector::size()>(INPUTS);
+            constexpr auto N = Vector::size();
+            constexpr auto R = round_down<Vector::size()>(INPUTS);
 
-                for (int ii = 0; ii < R; ii += Vector::size() * chunk_size)
+            for (int j = 0; j != OUTPUTS; j += N)
+            {
+                Vector vw, sum[N], out;
+
+                for (int k = 0; k != N; ++k)
+                    sum[k] = Vector(0.0);
+
+                for (int i = 0; i != R; i += Vector::size())
                 {
-                    for (int u = 0; u < chunk_size; ++u)
+                    const Vector in(load_vec(input + i));
+
+                    for (int k = 0; k != N; ++k)
                     {
-                        const int i = ii + u * Vector::size();
-                        Vector vw;
-                        vw.load(&wt[j][i]);
-                        const Vector in(load_vec(input + i));
-                        sum_chunks[u] = mul_add(in, vw, sum_chunks[u]);
+                        vw.load(&wt[j + k][i]);
+                        sum[k] = mul_add(in, vw, sum[k]);
                     }
                 }
 
-                output[j] = b[j] + horizontal_add(sum_vectors(sum_chunks));
+                for (int k = 0; k != N; ++k)
+                {
+                    float r = 0;
+                    for (int i = R; i != INPUTS; ++i)
+                        r += input[i] * wt[j + k][i];
 
-                for (int i = R; i != INPUTS; ++i)
-                    output[j] += input[i] * wt[j][i];
-            #endif
+                    out.insert(k, b[j + k] + r + horizontal_add(sum[k]));
+                }
+
+                out.store_a(&output[j]);
             }
+        #endif /* vector */
         }
 
         /* output */
@@ -238,30 +213,33 @@ namespace nnue
             F activate
         )
         {
-            if constexpr (INPUTS % (Vector::size() * chunk_size) == 0)
+            static_assert(INPUTS % Vector::size() == 0);
+
+            if constexpr(OUTPUTS % Vector::size() == 0)
             {
-                for (int j = 0; j != OUTPUTS; ++j)
+                constexpr int N = Vector::size();
+
+                for (int j = 0; j != OUTPUTS; j += N)
                 {
-                    Vector sum_chunks[chunk_size];
-                    for (int u = 0; u < chunk_size; ++u)
-                        sum_chunks[u] = Vector(0.0);
+                    Vector sum[N], out, v_wt, v_in;
 
-                    Vector v_in, v_wt;
+                    for (int k = 0; k != N; ++k)
+                        sum[k] = Vector(0.0);
 
-                    constexpr int chunk_iterations = INPUTS / (Vector::size() * chunk_size);
-
-                    for (int i = 0;
-                        i < chunk_iterations * chunk_size * Vector::size();
-                        i += chunk_size * Vector::size())
+                    for (int i = 0; i != INPUTS; i += Vector::size())
                     {
-                        for (int u = 0; u < chunk_size; ++u)
+                        v_in.load_a(&input[i]);
+                        for (int k = 0; k != N; ++k)
                         {
-                            v_in.load_a(&input[i + u * Vector::size()]);
-                            v_wt.load_a(&wt[j][i + u * Vector::size()]);
-                            sum_chunks[u] = mul_add(v_in, v_wt, sum_chunks[u]);
+                            v_wt.load_a(&wt[j + k][i]);
+                            sum[k] = mul_add(v_in, v_wt, sum[k]);
                         }
                     }
-                    output[j] = activate(b[j] + horizontal_add(sum_vectors(sum_chunks)));
+
+                    for (int k = 0; k != N; ++k)
+                        out.insert(k, activate(b[j + k] + horizontal_add(sum[k])));
+
+                    out.store_a(&output[j]);
                 }
             }
             else
@@ -269,8 +247,6 @@ namespace nnue
                 for (int j = 0; j != OUTPUTS; ++j)
                 {
                     Vector sum(0.0);
-
-                    static_assert(INPUTS % Vector::size() == 0);
                     Vector v_in, v_wt;
 
                     for (int i = 0; i != INPUTS; i += Vector::size())
