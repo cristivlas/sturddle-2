@@ -29,7 +29,7 @@ namespace nnue
 {
     using namespace chess;
 
-    constexpr bool debug_incremental = false;
+    constexpr bool debug_incremental = true;
     constexpr int chunk_size = 4;
 
 #if INSTRSET >= 9
@@ -148,7 +148,7 @@ namespace nnue
 
     /** Rectified Linear Unit (reLU) activation */
     template <int N>
-    INLINE void activation(const float (&input)[N], float (&output)[N])
+    INLINE void activation(const float (&input)[N], float* output)
     {
         static_assert(N % Vector::size() == 0);
         static const Vector zero(0.0);
@@ -296,21 +296,23 @@ namespace nnue
     };
 
 
-    template <int N, int M> struct Accumulator
+    template <int N, int M, int O> struct Accumulator
     {
         static constexpr int INPUTS = N;
-        static constexpr int OUTPUTS = M;
+        static constexpr int OUTPUTS_A = M;
+        static constexpr int OUTPUTS_B = O;
 
         /* bit index of the side-to-move feature within one-hot encoding */
         static constexpr int TURN_INDEX = INPUTS - 1;
 
         int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
-        ALIGN float _output[OUTPUTS] = { 0 };
+        ALIGN float _output_a[OUTPUTS_A] = { 0 };
+        ALIGN float _output_b[OUTPUTS_B] = { 0 };
         uint64_t _hash = 0;
 
         /** Compute 1st layer output from scratch at root */
         template <typename LA, typename LB>
-        INLINE void update(const LA& layer1a, const LB& layer1b, const State& state)
+        INLINE void update(const LA& layer_1a, const LB& layer_1b, const State& state)
         {
             if (state.hash() != _hash)
             {
@@ -319,8 +321,8 @@ namespace nnue
                 memset(&_input, 0, sizeof(_input));
                 one_hot_encode(state, _input);
 
-                layer1a.dot(_input, &_output[0]);
-                layer1b.dot(_input, &_output[LA::OUTPUTS]);
+                layer_1a.dot(_input, _output_a);
+                layer_1b.dot(_input, _output_b);
             }
         }
 
@@ -341,7 +343,8 @@ namespace nnue
                 /* compute delta based on ancestor state */
                 ASSERT(prev.turn != state.turn);
 
-                memcpy(_output, ancestor._output, sizeof(_output));
+                memcpy(_output_a, ancestor._output_a, sizeof(_output_a));
+                memcpy(_output_b, ancestor._output_b, sizeof(_output_b));
                 memcpy(_input, ancestor._input, sizeof(_input));
 
                 int remove_inputs[INPUTS];
@@ -379,13 +382,18 @@ namespace nnue
 
                 if constexpr(debug_incremental)
                 {
-                    float output[OUTPUTS] = { 0 };
-                    layer_a.dot(_input, output);
-                    layer_b.dot(_input, &output[LA::OUTPUTS]);
-                    for (int i = 0; i != OUTPUTS; ++i)
+                    float output_a[OUTPUTS_A] = { 0 };
+                    layer_a.dot(_input, output_a);
+
+                    for (int i = 0; i != OUTPUTS_A; ++i)
+                        ASSERT_ALWAYS(abs(output_a[i] - _output_a[i]) < 0.0001);
+
+                    float output_b[OUTPUTS_B] = { 0 };
+                    layer_b.dot(_input, output_b);
+                    for (int i = 0; i != OUTPUTS_B; ++i)
                     {
-                        std::cout << _output[i] << " " << output[i] << "\n";
-                        ASSERT_ALWAYS(abs(output[i] - _output[i]) < 0.0001);
+                        std::cout << i << ": " << output_b[i] << ", " << _output_b[i] << "\n";
+                        ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
                     }
                 }
             }
@@ -400,62 +408,46 @@ namespace nnue
             const int r_idx,
             const int a_idx)
         {
-            static_assert(LA::OUTPUTS + LB::OUTPUTS == OUTPUTS);
+            static_assert(LA::OUTPUTS == OUTPUTS_A);
+            static_assert(LB::OUTPUTS == OUTPUTS_B);
             static_assert(LA::OUTPUTS % Vector::size() * chunk_size == 0);
             static_assert(LB::OUTPUTS % Vector::size() * chunk_size == 0);
 
-            constexpr int chunk_iterations_a = (LA::OUTPUTS / Vector::size()) / chunk_size;
-            constexpr int chunk_iterations_b = (LB::OUTPUTS / Vector::size()) / chunk_size;
-
-            Vector vo[chunk_size], vw;
+            Vector vo, vw;
             bool add_king_or_pawn = false;
             bool remove_king_or_pawn = false;
 
             /* layer A */
-            for (int j = 0;
-                j < chunk_iterations_a * chunk_size * Vector::size();
-                j += chunk_size * Vector::size())
+            for (int j = 0; j != OUTPUTS_A; ++j)
             {
-                for (int u = 0; u < chunk_size; ++u)
-                    vo[u].load_a(&_output[j + u * Vector::size()]);
+                vo.load_a(&_output_a[j]);
 
                 for (int i = 0; i < r_idx; ++i)
                 {
                     const auto index = remove_inputs[i];
                     remove_king_or_pawn |= index < LB::INPUTS;
-
-                    for (int u = 0; u < chunk_size; ++u)
-                    {
-                        vw.load_a(&layer_a._w[index][j + u * Vector::size()]);
-                        vo[u] -= vw;
-                    }
+                    ASSERT(index < LA::INPUTS);
+                    vw.load_a(&layer_a._w[index][j]);
+                    vo -= vw;
                 }
 
                 for (int i = 0; i < a_idx; ++i)
                 {
                     const auto index = add_inputs[i];
                     add_king_or_pawn |= index < LB::INPUTS;
-
-                    for (int u = 0; u < chunk_size; ++u)
-                    {
-                        vw.load_a(&layer_a._w[index][j + u * Vector::size()]);
-                        vo[u] += vw;
-                    }
+                    ASSERT(index < LA::INPUTS);
+                    vw.load_a(&layer_a._w[index][j]);
+                    vo += vw;
                 }
-
-                for (int u = 0; u < chunk_size; ++u)
-                    vo[u].store_a(&_output[j + u * Vector::size()]);
+                vo.store_a(&_output_a[j]);
             }
-
+            
             if (add_king_or_pawn || remove_king_or_pawn)
             {
                 /* layer B */
-                for (int j = 0;
-                    j < chunk_iterations_b * chunk_size * Vector::size();
-                    j += chunk_size * Vector::size())
+                for (int j = 0; j != OUTPUTS_B; ++j)
                 {
-                    for (int u = 0; u < chunk_size; ++u)
-                        vo[u].load_a(&_output[LA::OUTPUTS + j + u * Vector::size()]);
+                    vo.load_a(&_output_b[j]);
 
                     if (remove_king_or_pawn)
                         for (int i = 0; i < r_idx; ++i)
@@ -463,11 +455,8 @@ namespace nnue
                             const auto index = remove_inputs[i];
                             if (index >= LB::INPUTS)
                                 continue;
-                            for (int u = 0; u < chunk_size; ++u)
-                            {
-                                vw.load_a(&layer_b._w[index][j + u * Vector::size()]);
-                                vo[u] -= vw;
-                            }
+                            vw.load_a(&layer_b._w[index][j]);
+                            vo -= vw;
                         }
 
                     if (add_king_or_pawn)
@@ -477,15 +466,10 @@ namespace nnue
                             if (index >= LB::INPUTS)
                                 continue;
 
-                            for (int u = 0; u < chunk_size; ++u)
-                            {
-                                vw.load_a(&layer_b._w[index][j + u * Vector::size()]);
-                                vo[u] += vw;
-                            }
+                            vw.load_a(&layer_b._w[index][j]);
+                            vo += vw;
                         }
-
-                    for (int u = 0; u < chunk_size; ++u)
-                        vo[u].store_a(&_output[LA::OUTPUTS + j + u * Vector::size()]);
+                    vo.store_a(&_output_b[j]);
                 }
             }
         }
@@ -544,10 +528,13 @@ namespace nnue
         ALIGN float output3[L4::INPUTS];
         ALIGN float output4[1];
 
-        static_assert(L2::INPUTS == A::OUTPUTS);
+        static_assert(L2::INPUTS == A::OUTPUTS_A);
 
-        activation(a._output, output1);
+        activation(a._output_a, output1);
         l2.dot(output1, output2, [](float v){ return std::max<float>(v, 0); });
+
+        activation(a._output_b, &output2[L2::OUTPUTS]);
+
         l3.dot(output2, output3, [](float v){ return std::max<float>(v, 0); });
         l4.dot(output3, output4);
 
