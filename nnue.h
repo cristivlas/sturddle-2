@@ -54,7 +54,7 @@ namespace nnue
 
     INLINE Vector load_vec(const int8_t* input)
     {
-    #if 0
+    #if 1
         return Vector(
             input[0], input[1], input[2], input[3],
             input[4], input[5], input[6], input[7]);
@@ -146,12 +146,14 @@ namespace nnue
         return (piece_type % 6) * 128 + (64 * color) + 63 - square;
     }
 
+
     /** Rectified Linear Unit (reLU) activation */
+    static const Vector zero(0.0);
+
     template <int N>
     INLINE void activation(const float (&input)[N], float* output)
     {
         static_assert(N % Vector::size() == 0);
-        static const Vector zero(0.0);
 
         Vector v;
         for (int i = 0; i != N; i += Vector::size())
@@ -411,9 +413,7 @@ namespace nnue
             static_assert(LB::OUTPUTS % Vec16f::size() == 0);
 
             Vec16f vo, vw;
-            bool add_king_or_pawn = false;
-            bool remove_king_or_pawn = false;
-
+            bool update_layer_b = false;
             /* layer A */
             for (int j = 0; j != OUTPUTS_A; j += Vec16f::size())
             {
@@ -422,7 +422,7 @@ namespace nnue
                 for (int i = 0; i < r_idx; ++i)
                 {
                     const auto index = remove_inputs[i];
-                    remove_king_or_pawn |= index < LB::INPUTS;
+                    update_layer_b |= index < LB::INPUTS;
                     ASSERT(index < LA::INPUTS);
                     vw.load_a(&layer_a._w[index][j]);
                     vo -= vw;
@@ -431,7 +431,7 @@ namespace nnue
                 for (int i = 0; i < a_idx; ++i)
                 {
                     const auto index = add_inputs[i];
-                    add_king_or_pawn |= index < LB::INPUTS;
+                    update_layer_b |= index < LB::INPUTS;
                     ASSERT(index < LA::INPUTS);
                     vw.load_a(&layer_a._w[index][j]);
                     vo += vw;
@@ -439,33 +439,30 @@ namespace nnue
                 vo.store_a(&_output_a[j]);
             }
 
-            if (add_king_or_pawn || remove_king_or_pawn)
+            if (update_layer_b)
             {
                 /* layer B */
                 for (int j = 0; j != OUTPUTS_B; j += Vec16f::size())
                 {
                     vo.load_a(&_output_b[j]);
 
-                    if (remove_king_or_pawn)
-                        for (int i = 0; i < r_idx; ++i)
-                        {
-                            const auto index = remove_inputs[i];
-                            if (index >= LB::INPUTS)
-                                continue;
-                            vw.load_a(&layer_b._w[index][j]);
-                            vo -= vw;
-                        }
+                    for (int i = 0; i < r_idx; ++i)
+                    {
+                        const auto index = remove_inputs[i];
+                        if (index >= LB::INPUTS)
+                            continue;
+                        vw.load_a(&layer_b._w[index][j]);
+                        vo -= vw;
+                    }
 
-                    if (add_king_or_pawn)
-                        for (int i = 0; i < a_idx; ++i)
-                        {
-                            const auto index = add_inputs[i];
-                            if (index >= LB::INPUTS)
-                                continue;
-
-                            vw.load_a(&layer_b._w[index][j]);
-                            vo += vw;
-                        }
+                    for (int i = 0; i < a_idx; ++i)
+                    {
+                        const auto index = add_inputs[i];
+                        if (index >= LB::INPUTS)
+                            continue;
+                        vw.load_a(&layer_b._w[index][j]);
+                        vo += vw;
+                    }
                     vo.store_a(&_output_b[j]);
                 }
             }
