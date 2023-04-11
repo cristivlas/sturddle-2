@@ -407,15 +407,15 @@ namespace nnue
         {
             static_assert(LA::OUTPUTS == OUTPUTS_A);
             static_assert(LB::OUTPUTS == OUTPUTS_B);
-            static_assert(LA::OUTPUTS % Vector::size() * chunk_size == 0);
-            static_assert(LB::OUTPUTS % Vector::size() * chunk_size == 0);
+            static_assert(LA::OUTPUTS % Vec16f::size() == 0);
+            static_assert(LB::OUTPUTS % Vec16f::size() == 0);
 
-            Vector vo, vw;
+            Vec16f vo, vw;
             bool add_king_or_pawn = false;
             bool remove_king_or_pawn = false;
 
             /* layer A */
-            for (int j = 0; j != OUTPUTS_A; j += Vector::size())
+            for (int j = 0; j != OUTPUTS_A; j += Vec16f::size())
             {
                 vo.load_a(&_output_a[j]);
 
@@ -442,7 +442,7 @@ namespace nnue
             if (add_king_or_pawn || remove_king_or_pawn)
             {
                 /* layer B */
-                for (int j = 0; j != OUTPUTS_B; j += Vector::size())
+                for (int j = 0; j != OUTPUTS_B; j += Vec16f::size())
                 {
                     vo.load_a(&_output_b[j]);
 
