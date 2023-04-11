@@ -173,7 +173,7 @@ namespace nnue
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
-                Vector vw, sum[N], out;
+                Vector vw, sum[N];
 
                 for (int k = 0; k != N; ++k)
                     sum[k] = Vector(0.0);
@@ -194,11 +194,8 @@ namespace nnue
                     float r = 0;
                     for (int i = R; i != INPUTS; ++i)
                         r += input[i] * wt[j + k][i];
-
-                    out.insert(k, b[j + k] + r + horizontal_add(sum[k]));
+                    output[j + k] = b[j + k] + r + horizontal_add(sum[k]);
                 }
-
-                out.store_a(&output[j]);
             }
         #endif /* vector */
         }
@@ -235,11 +232,15 @@ namespace nnue
                             sum[k] = mul_add(v_in, v_wt, sum[k]);
                         }
                     }
-
+                #if 0
                     for (int k = 0; k != N; ++k)
                         out.insert(k, activate(b[j + k] + horizontal_add(sum[k])));
 
                     out.store_a(&output[j]);
+                #else
+                    for (int k = 0; k != N; ++k)
+                        output[j + k] = activate(b[j + k] + horizontal_add(sum[k]));
+                #endif
                 }
             }
             else
