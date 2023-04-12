@@ -491,25 +491,41 @@ namespace nnue
         }
     };
 
-    template <typename A, typename L2, typename L3, typename L4>
-    INLINE int eval(const A& a, const L2& l2, const L3& l3, const L4& l4)
+
+    template <typename A, typename L2, typename ATTN, typename OUT>
+    INLINE int eval(const A& a, const L2& l2, const ATTN& attn, const OUT& out)
     {
-        ALIGN float output1[L2::INPUTS];
-        ALIGN float output2[L3::INPUTS];
-        ALIGN float output3[L4::INPUTS];
-        ALIGN float output4[1];
+        static_assert(A::OUTPUTS_A == L2::INPUTS);
+        static_assert(A::OUTPUTS_B == ATTN::INPUTS);
 
-        static_assert(L2::INPUTS == A::OUTPUTS_A);
+        ALIGN float attn_in[ATTN::INPUTS];
+        ALIGN float attn_out[ATTN::OUTPUTS];
+        ALIGN float l2_in[L2::INPUTS];
+        ALIGN float l2_out[L2::OUTPUTS];
+        ALIGN float output[1];
 
-        activation(a._output_a, output1);
-        l2.dot(output1, output2, [](float v){ return std::max<float>(v, 0); });
+        activation(a._output_a, l2_in); // process output of hidden_1a
+        l2.dot(l2_in, l2_out, [](float v){ return std::max<float>(v, 0); });
 
-        activation(a._output_b, &output2[L2::OUTPUTS]);
+        activation(a._output_b, attn_in); // process output of hidden_1b
+        attn.dot(attn_in, attn_out);
 
-        l3.dot(output2, output3, [](float v){ return std::max<float>(v, 0); });
-        l4.dot(output3, output4);
-
-        return 100 * output4[0];
+        static_assert(ATTN::OUTPUTS == L2::OUTPUTS);
+    #if 0
+        for (int i = 0; i != ATTN::OUTPUTS; ++i)
+            l2_out[i] *= attn_out[i];
+    #else
+        static_assert(ATTN::OUTPUTS % Vec16f::size() == 0);
+        Vec16f v1, v2;
+        for (int i = 0; i != L2::OUTPUTS; i += Vec16f::size())
+        {
+            v1.load_a(&l2_out[i]);
+            v2.load_a(&attn_out[i]);
+            (v1 * v2).store_a(&l2_out[i]);
+        }
+    #endif
+        out.dot(l2_out, output);
+        return 100 * output[0];
     }
 
 

@@ -54,14 +54,14 @@ def _make_model(args, strategy):
         input_1b = Lambda(lambda x: x[:, :256], name='slice_input_1b')(input_layer)
         hidden_1b = Dense(16, activation=activation, name='hidden_1b')(input_1b)
 
-        # Concatenate layer hidden_2 and layer 1b outputs
-        concat_layer = Concatenate(name='concat')([hidden_2, hidden_1b])
+        # Compute dynamic weights based on hidden_1b
+        dynamic_weights = Dense(16, activation=None, name='dynamic_weights')(hidden_1b)
 
-        # Add 3rd hidden layer
-        hidden_3 = Dense(16, activation=activation, name='hidden_3')(concat_layer)
+        # Apply dynamic weights to hidden_2
+        weighted_hidden_2 = Multiply(name='weighted_hidden_2')([hidden_2, dynamic_weights])
 
         # Define the output layer
-        output_layer = Dense(1, name='out', dtype='float32')(hidden_3)
+        output_layer = Dense(1, name='out', dtype='float32')(weighted_hidden_2)
 
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer)
