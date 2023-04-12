@@ -218,7 +218,7 @@ namespace nnue
 
                 for (int j = 0; j != OUTPUTS; j += N)
                 {
-                    Vector sum[N], out, v_wt, v_in;
+                    Vector sum[N], v_wt, v_in;
 
                     for (int k = 0; k != N; ++k)
                         sum[k] = Vector(0.0);
@@ -232,15 +232,8 @@ namespace nnue
                             sum[k] = mul_add(v_in, v_wt, sum[k]);
                         }
                     }
-                #if 0
-                    for (int k = 0; k != N; ++k)
-                        out.insert(k, activate(b[j + k] + horizontal_add(sum[k])));
-
-                    out.store_a(&output[j]);
-                #else
                     for (int k = 0; k != N; ++k)
                         output[j + k] = activate(b[j + k] + horizontal_add(sum[k]));
-                #endif
                 }
             }
             else
@@ -510,6 +503,11 @@ namespace nnue
         activation(a._output_b, attn_in); // process output of hidden_1b
         attn.dot(attn_in, attn_out);
 
+        /*
+         * The dynamic weights computed by the "attention" layer
+         * are used to modulate the output of another
+         * hidden layer (L2, aka hidden_2) through element-wise multiplication
+         */
         static_assert(ATTN::OUTPUTS == L2::OUTPUTS);
     #if 0
         for (int i = 0; i != ATTN::OUTPUTS; ++i)
