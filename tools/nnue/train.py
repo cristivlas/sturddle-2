@@ -50,9 +50,9 @@ def _make_model(args, strategy):
         # Add 2nd hidden layer
         hidden_2 = Dense(16, activation=activation, name='hidden_2')(hidden_1a)
 
-        # Define hidden layer 1b
+        # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
         input_1b = Lambda(lambda x: x[:, :256], name='slice_input_1b')(input_layer)
-        hidden_1b = Dense(16, activation=activation, name='hidden_1b')(input_1b)
+        hidden_1b = Dense(64, activation=activation, name='hidden_1b')(input_1b)
 
         # Compute dynamic weights based on hidden_1b
         dynamic_weights = Dense(16, activation=None, name='dynamic_weights')(hidden_1b)

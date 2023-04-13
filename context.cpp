@@ -180,7 +180,7 @@ bool USE_NNUE = true;
 constexpr int INPUTS_A = 769;
 constexpr int INPUTS_B = 256;
 constexpr int HIDDEN_1A = 512;
-constexpr int HIDDEN_1B = 16;
+constexpr int HIDDEN_1B = 64;
 constexpr int HIDDEN_2 = 16;
 
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
