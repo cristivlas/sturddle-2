@@ -45,7 +45,6 @@ def pgn_to_epd(game, mate_score):
     return epd_list
 
 
-
 def main(args):
     with SQLConn(args.output) as sqlconn:
         sqlconn.exec('''CREATE TABLE IF NOT EXISTS position(
@@ -62,11 +61,21 @@ def main(args):
         # Open PGN file
         with open(args.pgn_file, 'r') as pgn_data:
             game_iter = iter(lambda: pgn.read_game(pgn_data), None)
+            game_count = 0
             for game in tqdm(game_iter, total=num_games):
                 epd_list = pgn_to_epd(game, args.mate_score)
+
+                if not epd_list:
+                    continue
+
                 for epd, cp_score in epd_list:
                     sqlconn.exec('''INSERT OR IGNORE INTO position(epd, depth, score)
                                     VALUES(?, ?, ?)''', (epd, -2, int(cp_score)))
+
+                game_count += 1
+                # Commit every 100 games with evals
+                if game_count % 100 == 0:
+                    sqlconn.commit()
 
 
 if __name__ == '__main__':
