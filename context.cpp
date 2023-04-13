@@ -193,8 +193,8 @@ static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
  * of the dynamic weights (attention) layer are multiplied element-wise
  * with the result of the L2 (hidden_2) layer.
  */
-static nnue::Layer<INPUTS_A, HIDDEN_1A> L1A(hidden_1a_w, hidden_1a_b);
-static nnue::Layer<INPUTS_B, HIDDEN_1B> L1B(hidden_1b_w, hidden_1b_b);
+static nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE> L1A(hidden_1a_w, hidden_1a_b);
+static nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE> L1B(hidden_1b_w, hidden_1b_b);
 
 static nnue::Layer<HIDDEN_1A, HIDDEN_2> L2(hidden_2_w, hidden_2_b);
 static nnue::Layer<HIDDEN_1B, HIDDEN_2> L_DYN(dynamic_weights_w, dynamic_weights_b);

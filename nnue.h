@@ -29,51 +29,15 @@ namespace nnue
 {
     using namespace chess;
 
-    constexpr bool debug_incremental = false;
+    constexpr bool DEBUG_INCREMENTAL = false;
+    constexpr int QSCALE = 1024;
 
 #if INSTRSET >= 9
     using Vector = Vec16f;
-
-    INLINE Vector load_vec(const int8_t* input)
-    {
-    #if 0
-        return Vector(
-            input[0], input[1], input[2], input[3],
-            input[4], input[5], input[6], input[7],
-            input[8], input[9], input[10],input[11],
-            input[12],input[13],input[14],input[15]);
-    #else
-        Vec16c v;
-        v.load_a(input);
-        return to_float(extend(extend(v)));
-    #endif
-    }
 #elif INSTRSET >= 8
     using Vector = Vec8f;
-
-    INLINE Vector load_vec(const int8_t* input)
-    {
-    #if 0
-        return Vector(
-            input[0], input[1], input[2], input[3],
-            input[4], input[5], input[6], input[7]);
-    #else
-        __m128i input_vec = _mm_loadu_si128(reinterpret_cast<const __m128i*>(input));
-
-        // Sign-extend the 8-bit integers to 32-bit integers
-        __m256i input_epi32 = _mm256_cvtepi8_epi32(input_vec);
-
-        // Convert the 32-bit integers to floats
-        return Vector(_mm256_cvtepi32_ps(input_epi32));
-    #endif
-    }
 #else
     using Vector = Vec4f;
-
-    INLINE Vector load_vec(const int8_t* input)
-    {
-        return Vector(input[0], input[1], input[2], input[3]);
-    }
 #endif /* INSTRSET */
 
     template<unsigned int N>
@@ -109,25 +73,23 @@ namespace nnue
         return (piece_type % 6) * 128 + (64 * color) + 63 - square;
     }
 
-
     /** Rectified Linear Unit (reLU) activation */
-    static const Vector v_zero(0.0);
+    static const Vec16f v_zero(0.0);
 
     template <int N>
-    INLINE void activation(const float (&input)[N], float* output)
+    INLINE void activation(const int16_t (&input)[N], float (&output)[N])
     {
-        static_assert(N % Vector::size() == 0);
+        static_assert(N % Vec16s::size() == 0);
 
-        Vector v;
-        for (int i = 0; i != N; i += Vector::size())
+        Vec16s v;
+        for (int i = 0; i != N; i += Vec16s::size())
         {
             v.load_a(&input[i]);
-            max(v, v_zero).store_a(&output[i]);
+            max(to_float(extend(v)) / QSCALE, v_zero).store_a(&output[i]);
         }
     }
 
-
-    template <int I, int O, typename T=float>
+    template <int I, int O, typename T=float, int Scale=1>
     struct Layer
     {
         static constexpr int INPUTS = I;
@@ -140,24 +102,25 @@ namespace nnue
         Layer(const float(&w)[INPUTS][OUTPUTS], const float(&b)[OUTPUTS])
         {
             for (int j = 0; j != OUTPUTS; ++j)
-                _b[j] = b[j];
+                _b[j] = b[j] * Scale;
 
             for (int i = 0; i != INPUTS; ++i)
                 for (int j = 0; j != OUTPUTS; ++j)
-                    _w[i][j] = _wt[j][i] = w[i][j];
+                    _w[i][j] = _wt[j][i] = w[i][j] * Scale;
         }
 
         /* input */
         template <size_t S, typename F>
         static INLINE void dot(
             const int8_t (&input)[S],
-            float (&output)[OUTPUTS],
-            const float(&b)[OUTPUTS],
-            const float(&wt)[OUTPUTS][INPUTS],
-            F /* dummy activation */
+            int16_t (&output)[OUTPUTS],
+            const int16_t(&b)[OUTPUTS],
+            const int16_t(&wt)[OUTPUTS][INPUTS],
+            F /* no activation */
         )
         {
             static_assert(S >= INPUTS);
+
         #if 0
             for (int j = 0; j != OUTPUTS; ++j)
             {
@@ -167,26 +130,29 @@ namespace nnue
                     output[j] += input[i] * wt[j][i];
             }
         #else /* vector */
-            static_assert(OUTPUTS % Vector::size() == 0);
+            constexpr auto N = Vec16s::size();
+            static_assert(OUTPUTS % N == 0);
 
-            constexpr auto N = Vector::size();
-            constexpr auto R = round_down<Vector::size()>(INPUTS);
+            constexpr auto R = round_down<N>(INPUTS);
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
-                Vector vw, sum[N];
+                Vec16c vc;
+                Vec16s vw;
+                Vec16s in, sum[N];
 
                 for (int k = 0; k != N; ++k)
-                    sum[k] = Vector(0.0);
+                    sum[k] = Vec16s(0);
 
-                for (int i = 0; i != R; i += Vector::size())
+                for (int i = 0; i != R; i += N)
                 {
-                    const Vector in(load_vec(input + i));
+                    vc.load_a(input + i);
+                    in = extend(vc);
 
                     for (int k = 0; k != N; ++k)
                     {
                         vw.load(&wt[j + k][i]);
-                        sum[k] = mul_add(in, vw, sum[k]);
+                        sum[k] += in * vw;
                     }
                 }
 
@@ -211,12 +177,11 @@ namespace nnue
             F activate
         )
         {
-            static_assert(INPUTS % Vector::size() == 0);
+            constexpr int N = Vector::size();
+            static_assert(INPUTS % N == 0);
 
-            if constexpr(OUTPUTS % Vector::size() == 0)
+            if constexpr(OUTPUTS % N == 0)
             {
-                constexpr int N = Vector::size();
-
                 for (int j = 0; j != OUTPUTS; j += N)
                 {
                     Vector sum[N], v_wt, v_in;
@@ -224,7 +189,7 @@ namespace nnue
                     for (int k = 0; k != N; ++k)
                         sum[k] = Vector(0.0);
 
-                    for (int i = 0; i != INPUTS; i += Vector::size())
+                    for (int i = 0; i != INPUTS; i += N)
                     {
                         v_in.load_a(&input[i]);
                         for (int k = 0; k != N; ++k)
@@ -244,7 +209,7 @@ namespace nnue
                     Vector sum(0.0);
                     Vector v_in, v_wt;
 
-                    for (int i = 0; i != INPUTS; i += Vector::size())
+                    for (int i = 0; i != INPUTS; i += N)
                     {
                         v_in.load_a(&input[i]);
                         v_wt.load_a(&wt[j][i]);
@@ -279,8 +244,8 @@ namespace nnue
         static constexpr int TURN_INDEX = INPUTS - 1;
 
         int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
-        ALIGN float _output_a[OUTPUTS_A] = { 0 };
-        ALIGN float _output_b[OUTPUTS_B] = { 0 };
+        ALIGN int16_t _output_a[OUTPUTS_A] = { 0 };
+        ALIGN int16_t _output_b[OUTPUTS_B] = { 0 };
         uint64_t _hash = 0;
 
         /** Compute 1st layer output from scratch at root */
@@ -337,7 +302,7 @@ namespace nnue
                 }
                 _input[TURN_INDEX] ^= 1;
 
-                if constexpr(debug_incremental)
+                if constexpr(DEBUG_INCREMENTAL)
                 {
                     int8_t temp[INPUTS] = { 0 };
                     one_hot_encode(state, temp);
@@ -353,18 +318,23 @@ namespace nnue
 
                 recompute(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx);
 
-                if constexpr(debug_incremental)
+                if constexpr(DEBUG_INCREMENTAL)
                 {
                     float output_a[OUTPUTS_A] = { 0 };
                     layer_a.dot(_input, output_a);
-
                     for (int i = 0; i != OUTPUTS_A; ++i)
+                    {
+                        // std::cout << i << ": " << output_a[i] << " " << _output_a[i] << "\n";
                         ASSERT_ALWAYS(abs(output_a[i] - _output_a[i]) < 0.0001);
+                    }
 
                     float output_b[OUTPUTS_B] = { 0 };
                     layer_b.dot(_input, output_b);
                     for (int i = 0; i != OUTPUTS_B; ++i)
+                    {
+                        // std::cout << i << ": " << output_b[i] << " " << _output_b[i] << "\n";
                         ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
+                    }
                 }
             }
         }
@@ -383,12 +353,13 @@ namespace nnue
             static_assert(LA::OUTPUTS % Vec16f::size() == 0);
             static_assert(LB::OUTPUTS % Vec16f::size() == 0);
 
-            Vec16f vo, vw;
+            Vec16s vo, vw;
             bool update_layer_b = false;
+
             /* layer A */
             for (int j = 0; j != OUTPUTS_A; j += Vec16f::size())
             {
-                vo.load_a(&_output_a[j]);
+                vo.load_a(&_output_a[j]);;
 
                 for (int i = 0; i < r_idx; ++i)
                 {
