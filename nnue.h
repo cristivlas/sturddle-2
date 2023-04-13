@@ -30,7 +30,7 @@ namespace nnue
     using namespace chess;
 
     constexpr bool DEBUG_INCREMENTAL = false;
-    constexpr int QSCALE = 1024;
+    constexpr int QSCALE = 2048;
 
 #if INSTRSET >= 9
     using Vector = Vec16f;
