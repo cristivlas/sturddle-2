@@ -53,7 +53,7 @@ namespace nnue
 
     INLINE Vector load_vec(const int8_t* input)
     {
-    #if 1
+    #if 0
         return Vector(
             input[0], input[1], input[2], input[3],
             input[4], input[5], input[6], input[7]);
@@ -430,7 +430,7 @@ namespace nnue
                     {
                         const auto index = add_inputs[i];
                         if (index >= LB::INPUTS)
-                            continue;
+                            break;
                         vw.load_a(&layer_b._w[index][j]);
                         vo += vw;
                     }
