@@ -320,7 +320,7 @@ namespace nnue
 
                 if constexpr(DEBUG_INCREMENTAL)
                 {
-                    float output_a[OUTPUTS_A] = { 0 };
+                    int16_t output_a[OUTPUTS_A] = { 0 };
                     layer_a.dot(_input, output_a);
                     for (int i = 0; i != OUTPUTS_A; ++i)
                     {
@@ -328,7 +328,7 @@ namespace nnue
                         ASSERT_ALWAYS(abs(output_a[i] - _output_a[i]) < 0.0001);
                     }
 
-                    float output_b[OUTPUTS_B] = { 0 };
+                    int16_t output_b[OUTPUTS_B] = { 0 };
                     layer_b.dot(_input, output_b);
                     for (int i = 0; i != OUTPUTS_B; ++i)
                     {
