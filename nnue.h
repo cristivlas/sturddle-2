@@ -148,15 +148,16 @@ namespace nnue
         }
 
         /* input */
-        template <typename F>
+        template <size_t S, typename F>
         static INLINE void dot(
-            const int8_t* input,
-            float* output,
+            const int8_t (&input)[S],
+            float (&output)[OUTPUTS],
             const float(&b)[OUTPUTS],
             const float(&wt)[OUTPUTS][INPUTS],
             F /* dummy activation */
         )
         {
+            static_assert(S >= INPUTS);
         #if 0
             for (int j = 0; j != OUTPUTS; ++j)
             {
@@ -203,8 +204,8 @@ namespace nnue
         /* output */
         template<typename F>
         static INLINE void dot(
-            const float* input,
-            float* output,
+            const float (&input)[INPUTS],
+            float (&output)[OUTPUTS],
             const float(&b)[OUTPUTS],
             const float(&wt)[OUTPUTS][INPUTS],
             F activate
@@ -254,14 +255,14 @@ namespace nnue
             }
         }
 
-        template <typename U, typename V>
-        INLINE void dot(const U* input, V* output) const
+        template <size_t N, typename U, typename V>
+        INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS]) const
         {
             dot(input, output, _b, _wt, [](V v) { return v; });
         }
 
-        template <typename U, typename V, typename F>
-        INLINE void dot(const U* input, V* output, F activate) const
+        template <size_t N, typename U, typename V, typename F>
+        INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], F activate) const
         {
             dot(input, output, _b, _wt, activate);
         }

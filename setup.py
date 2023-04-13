@@ -95,11 +95,13 @@ if platform.startswith('win'):
             '-Wno-unused-variable',
         ]
 else:
+    STDCPP=20 if NATIVE_UCI else 17
+
     # Linux and Mac
     if '-O0' not in args:
         args.append('-O3')
     args += [
-        '-std=c++17',
+        f'-std=c++{STDCPP}',
         '-Wall',
         '-Wextra',
         '-Wno-unused-label',
@@ -115,7 +117,6 @@ else:
     ]
     if NATIVE_UCI:
         args += [
-            '-std=c++20',
             '-stdlib=libc++',
             '-fexperimental-library',
             '-DNATIVE_UCI=true',
