@@ -74,7 +74,7 @@ namespace nnue
     }
 
     /** Rectified Linear Unit (reLU) activation */
-    static const Vec16f v_zero(0.0);
+    static Vec16s vec16s_zero(0);
 
     template <int N>
     INLINE void activation(const int16_t (&input)[N], float (&output)[N])
@@ -85,7 +85,7 @@ namespace nnue
         for (int i = 0; i != N; i += Vec16s::size())
         {
             v.load_a(&input[i]);
-            max(to_float(extend(v)) / QSCALE, v_zero).store_a(&output[i]);
+            (to_float(extend(max(v, vec16s_zero))) / QSCALE).store_a(&output[i]);
         }
     }
 
@@ -473,6 +473,7 @@ namespace nnue
         l2.dot(l2_in, l2_out, [](float v){ return std::max<float>(v, 0); });
 
         activation(a._output_b, attn_in); // process output of hidden_1b
+    #if 1
         attn.dot(attn_in, attn_out);
 
         /*
@@ -481,11 +482,8 @@ namespace nnue
          * hidden layer (L2, aka hidden_2) through element-wise multiplication
          */
         static_assert(ATTN::OUTPUTS == L2::OUTPUTS);
-    #if 0
-        for (int i = 0; i != ATTN::OUTPUTS; ++i)
-            l2_out[i] *= attn_out[i];
-    #else
         static_assert(ATTN::OUTPUTS % Vec16f::size() == 0);
+
         Vec16f v1, v2;
         for (int i = 0; i != L2::OUTPUTS; i += Vec16f::size())
         {
@@ -493,7 +491,14 @@ namespace nnue
             v2.load_a(&attn_out[i]);
             (v1 * v2).store_a(&l2_out[i]);
         }
+    #else
+        int i = 0;
+        attn.dot(attn_in, attn_out, [&l2_out, &i](float v) {
+            l2_out[i++] *= v;
+            return v;
+        });
     #endif
+
         out.dot(l2_out, output);
         return 100 * output[0];
     }
