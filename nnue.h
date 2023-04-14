@@ -74,7 +74,7 @@ namespace nnue
     }
 
     /** Rectified Linear Unit (reLU) activation */
-    static Vec16s vec16s_zero(0);
+    static const Vec16s vec16s_zero(0);
 
     template <int N>
     INLINE void activation(const int16_t (&input)[N], float (&output)[N])
@@ -116,7 +116,7 @@ namespace nnue
             int16_t (&output)[OUTPUTS],
             const int16_t(&b)[OUTPUTS],
             const int16_t(&wt)[OUTPUTS][INPUTS],
-            F /* no activation */
+            F /* linear activation */
         )
         {
             static_assert(S >= INPUTS);
@@ -359,7 +359,7 @@ namespace nnue
             /* layer A */
             for (int j = 0; j != OUTPUTS_A; j += Vec16f::size())
             {
-                vo.load_a(&_output_a[j]);;
+                vo.load_a(&_output_a[j]);
 
                 for (int i = 0; i < r_idx; ++i)
                 {
@@ -473,7 +473,8 @@ namespace nnue
         l2.dot(l2_in, l2_out, [](float v){ return std::max<float>(v, 0); });
 
         activation(a._output_b, attn_in); // process output of hidden_1b
-    #if 1
+
+    #if true
         attn.dot(attn_in, attn_out);
 
         /*
