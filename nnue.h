@@ -130,19 +130,18 @@ namespace nnue
                     output[j] += input[i] * wt[j][i];
             }
         #else /* vector */
-            constexpr auto N = Vec16s::size();
+            constexpr auto N = Vec32s::size();
             static_assert(OUTPUTS % N == 0);
 
             constexpr auto R = round_down<N>(INPUTS);
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
-                Vec16c vc;
-                Vec16s vw;
-                Vec16s in, sum[N];
+                Vec32c vc;
+                Vec32s in, vw, sum[N];
 
                 for (int k = 0; k != N; ++k)
-                    sum[k] = Vec16s(0);
+                    sum[k] = Vec32s(0);
 
                 for (int i = 0; i != R; i += N)
                 {
@@ -234,16 +233,16 @@ namespace nnue
     };
 
 
-    template <int N, int M, int O> struct Accumulator
+    template <int M, int N, int O> struct Accumulator
     {
-        static constexpr int INPUTS = N;
-        static constexpr int OUTPUTS_A = M;
+        static constexpr int INPUTS = M;
+        static constexpr int OUTPUTS_A = N;
         static constexpr int OUTPUTS_B = O;
 
         /* bit index of the side-to-move feature within one-hot encoding */
         static constexpr int TURN_INDEX = INPUTS - 1;
 
-        int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
+        ALIGN int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
         ALIGN int16_t _output_a[OUTPUTS_A] = { 0 };
         ALIGN int16_t _output_b[OUTPUTS_B] = { 0 };
         uint64_t _hash = 0;
@@ -350,14 +349,14 @@ namespace nnue
         {
             static_assert(LA::OUTPUTS == OUTPUTS_A);
             static_assert(LB::OUTPUTS == OUTPUTS_B);
-            static_assert(LA::OUTPUTS % Vec16f::size() == 0);
-            static_assert(LB::OUTPUTS % Vec16f::size() == 0);
+            static_assert(LA::OUTPUTS % Vec32s::size() == 0);
+            static_assert(LB::OUTPUTS % Vec32s::size() == 0);
 
-            Vec16s vo, vw;
+            Vec32s vo, vw;
             bool update_layer_b = false;
 
             /* layer A */
-            for (int j = 0; j != OUTPUTS_A; j += Vec16f::size())
+            for (int j = 0; j != OUTPUTS_A; j += Vec32s::size())
             {
                 vo.load_a(&_output_a[j]);
 
@@ -384,7 +383,7 @@ namespace nnue
             if (update_layer_b)
             {
                 /* layer B */
-                for (int j = 0; j != OUTPUTS_B; j += Vec16f::size())
+                for (int j = 0; j != OUTPUTS_B; j += Vec32s::size())
                 {
                     vo.load_a(&_output_b[j]);
 
