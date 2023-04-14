@@ -175,7 +175,6 @@ void assert_param_ref()
  *****************************************************************************/
 
 #if WITH_NNUE
-bool USE_NNUE = true;
 
 constexpr int INPUTS_A = 769;
 constexpr int INPUTS_B = 256;
@@ -227,9 +226,6 @@ int nnue::eval_fen(const std::string& fen)
 }
 
 #else
-
-bool USE_NNUE = false;
-
 
 int nnue::eval_fen(const std::string& fen)
 {
@@ -1288,15 +1284,15 @@ namespace search
 
         if (_eval == SCORE_MIN)
         {
-            if (USE_NNUE)
+            if constexpr(USE_NNUE)
             {
                 eval_nnue();
             }
             else
             {
                 /*
-                * 1. Material + piece-squares + mobility
-                */
+                 * 1. Material + piece-squares + mobility
+                 */
                 _eval = state().eval();
 
                 ASSERT(_eval > SCORE_MIN);
@@ -1305,8 +1301,8 @@ namespace search
                 _eval += eval_fuzz();
 
                 /*
-                * 2. Tactical (positional) evaluation.
-                */
+                 * 2. Tactical (positional) evaluation.
+                 */
                 _eval += eval_insufficient_material(state(), _eval, [this]() {
                     return eval_tactical(*this, _eval);
                 });
