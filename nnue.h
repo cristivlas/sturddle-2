@@ -74,18 +74,19 @@ namespace nnue
     }
 
     /** Rectified Linear Unit (reLU) activation */
-    static const Vec16s vec16s_zero(0);
+    static const Vec16s v_zero(0);
 
     template <int N>
     INLINE void activation(const int16_t (&input)[N], float (&output)[N])
     {
-        static_assert(N % Vec16s::size() == 0);
+        static_assert(N % Vec32s::size() == 0);
 
-        Vec16s v;
-        for (int i = 0; i != N; i += Vec16s::size())
+        Vec32s v;
+        for (int i = 0; i != N; i += Vec32s::size())
         {
             v.load_a(&input[i]);
-            (to_float(extend(max(v, vec16s_zero))) / QSCALE).store_a(&output[i]);
+            (to_float(extend(max(v.get_low(), v_zero))) / QSCALE).store_a(&output[i]);
+            (to_float(extend(max(v.get_high(), v_zero))) / QSCALE).store_a(&output[i + 16]);
         }
     }
 
@@ -197,6 +198,7 @@ namespace nnue
                             sum[k] = mul_add(v_in, v_wt, sum[k]);
                         }
                     }
+                    #pragma unroll N
                     for (int k = 0; k != N; ++k)
                         output[j + k] = activate(b[j + k] + horizontal_add(sum[k]));
                 }
@@ -291,6 +293,7 @@ namespace nnue
                 if (move)
                 {
                     update(prev, state, move, prev.turn, remove_inputs, add_inputs, r_idx, a_idx);
+
                     ASSERT(a_idx < INPUTS);
                     ASSERT(r_idx < INPUTS);
 
