@@ -32,6 +32,9 @@ namespace nnue
     constexpr bool DEBUG_INCREMENTAL = false;
     constexpr int QSCALE = 2048;
 
+    /* bit index of the side-to-move feature within one-hot encoding */
+    constexpr int TURN_INDEX = 768;
+
 #if INSTRSET >= 9
     using Vector = Vec16f;
 #elif INSTRSET >= 8
@@ -64,7 +67,7 @@ namespace nnue
                 i += 64;
             }
         }
-        encoding[768] = board.turn;
+        encoding[TURN_INDEX] = board.turn;
     }
 
     /** Calculate the piece-square index into the one-hot encoding. */
@@ -240,9 +243,6 @@ namespace nnue
         static constexpr int INPUTS = M;
         static constexpr int OUTPUTS_A = N;
         static constexpr int OUTPUTS_B = O;
-
-        /* bit index of the side-to-move feature within one-hot encoding */
-        static constexpr int TURN_INDEX = INPUTS - 1;
 
         ALIGN int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
         ALIGN int16_t _output_a[OUTPUTS_A] = { 0 };
