@@ -11,7 +11,6 @@ import os
 import sys
 import h5py
 from contextlib import redirect_stdout
-
 import numpy as np
 
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
@@ -74,8 +73,8 @@ def _make_model(args, strategy):
         if args.optimizer == 'adam':
             optimizer=tf.keras.optimizers.Adam(
                 amsgrad=args.amsgrad,
-                beta_1=0.875,
-                beta_2=0.995,
+                beta_1=0.995,
+                beta_2=0.9995,
                 learning_rate=args.learn_rate,
                 use_ema=args.ema,
                 weight_decay=args.decay if args.decay else None)
@@ -166,7 +165,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
         def __getitem__(self, index):
             i = self.indices[index]
-            assert 0 <= i < self.len
+            # assert 0 <= i < self.len
             start, end = i * self.batch_size, (i + 1) * self.batch_size
             x = self.x[start:end]
             y = self.y[start:end]
@@ -195,7 +194,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             y_macro_batch = self.y[index * self.macro_batch_size:(index + 1) * self.macro_batch_size]
             return DataGenerator(x_macro_batch, y_macro_batch)
 
-    def prefetch(x, y):
+    def make_dataset(x, y):
         class CallbackOnEpochEnd(tf.keras.callbacks.Callback):
             def __init__(self, generator):
                 super(CallbackOnEpochEnd, self).__init__()
@@ -210,11 +209,16 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
         callbacks.append(CallbackOnEpochEnd(generator))
         steps_per_epoch = len(generator)
-        return tf.data.Dataset.from_generator(
+        prefetch_batches = tf.data.AUTOTUNE
+
+        dataset = tf.data.Dataset.from_generator(
             generator,
             output_types=(dtype, dtype),
             output_shapes=((None, args.hot_encoding), (None, 1)),
-        ).prefetch(tf.data.AUTOTUNE).repeat(), steps_per_epoch
+        ).prefetch(prefetch_batches).repeat()
+
+        return dataset, steps_per_epoch
+
 
     print(f'Loading dataset {filepath}')
     dtype = np.float16 if args.half else np.float32
@@ -249,14 +253,14 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
     steps_per_epoch = None
 
     if args.distribute and callbacks is not None:
-        dataset, steps_per_epoch = prefetch(x, y)
+        dataset, steps_per_epoch = make_dataset(x, y)
         # distribute data accross several GPUs
         dataset = strategy.experimental_distribute_dataset(dataset)
     elif args.macro_batch_size > 0:
         # use macro-batching (chunking) to reduce I/O latency
         dataset = MacroBatchGenerator(x, y)
     else:
-        dataset, steps_per_epoch = prefetch(x, y)
+        dataset, steps_per_epoch = make_dataset(x, y)
 
     return dataset, steps_per_epoch
 
@@ -332,18 +336,19 @@ def main(args):
                 print(' WARNING: checkpoint path not provided, model WILL NOT BE SAVED! ')
                 print('*****************************************************************')
 
-            if args.profile_batches:
-                log_dir = '/tmp/logs'
-                profile = (1, args.profile_batches)
-                tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, profile_batch=profile)
-                callbacks = callbacks + [tensorboard_callback]
+            if args.tensorboard:
+                tensorboard_callback = tf.keras.callbacks.TensorBoard(
+                    log_dir=args.logdir,
+                    update_freq=args.save_freq if args.save_freq else 'epoch',
+                    profile_batch=(1, steps_per_epoch)
+                )
+                callbacks.append(tensorboard_callback)
 
             assert dataset
 
             if args.macro_batch_size:
                 # Validation data is not supported in chunk mode.
                 # H5 files not well supported either (may run out of memory).
-                loss = []
                 for era in range(args.epochs // args.macro_epochs):
                     logging.info(f'===== Era: {era} =====')
                     indices = np.arange(len(dataset))
@@ -398,14 +403,15 @@ if __name__ == '__main__':
         #for future support of other hot-encoding schemes
         parser.add_argument('--hot-encoding', choices=(769,), type=int, default=769, help=argparse.SUPPRESS)
 
+        parser.add_argument('--logdir', default='/tmp/logs', help='tensorboard log dir')
         parser.add_argument('--macro-batch-size', type=int, default=0)
-        parser.add_argument('--macro-epochs', type=int, default=20, help='epochs per macro-batch')
+        parser.add_argument('--macro-epochs', type=int, default=1, help='epochs per macro-batch')
         parser.add_argument('--mixed-precision', dest='mixed_precision', action='store_true', default=True, help='enable mixed precision')
         parser.add_argument('--nesterov', dest='nesterov', action='store_true', default=False, help='use Nesterov momentum (SGD only)')
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
         parser.add_argument('--optimizer', choices=['adam', 'sgd'], default='sgd')
-        parser.add_argument('--profile-batches', type=int, default=0, help='enable TensorBoard to profile range of batches')
+        parser.add_argument('--tensorboard', '-tb', action='store_true', help='enable TensorBoard')
         parser.add_argument('--schedule-lr', action='store_true', help='use learning rate schedule')
         parser.add_argument('--validation', help='validation data filepath')
         parser.add_argument('--vfreq', type=int, default=1, help='validation frequency')
