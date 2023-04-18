@@ -55,7 +55,7 @@ namespace nnue
         const auto color_masks = { board.occupied_co(BLACK), board.occupied_co(WHITE) };
 
         int i = 63;
-        #pragma clang loop vectorize(enable)
+        #pragma unroll 6
         for (const auto bb : {
             board.kings, board.pawns, board.knights, board.bishops, board.rooks, board.queens })
         {
