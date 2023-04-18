@@ -54,7 +54,12 @@ def _make_model(args, strategy):
         hidden_1b = Dense(64, activation=activation, name='hidden_1b')(input_1b)
 
         # Compute dynamic weights based on hidden_1b
-        dynamic_weights = Dense(16, activation=None, name='dynamic_weights')(hidden_1b)
+        dynamic_weights = Dense(
+            16,
+            activation=None,
+            name='dynamic_weights',
+            kernel_regularizer=L1L2(l1=2.5*1e-5, l2=5*1e-4),
+        )(hidden_1b)
 
         # Apply dynamic weights to hidden_2
         weighted_hidden_2 = Multiply(name='weighted_hidden_2')([hidden_2, dynamic_weights])
@@ -430,6 +435,7 @@ if __name__ == '__main__':
 
         from tensorflow.keras.layers import *
         from tensorflow.keras.losses import Huber, MeanAbsoluteError, MeanSquaredError
+        from tensorflow.keras.regularizers import L1L2
 
         '''
         Detect GPU presence and compute capability.
