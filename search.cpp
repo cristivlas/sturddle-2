@@ -461,6 +461,8 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
     if (state.just_king_and_pawns())
         return false;
 
+    ctxt.eval_nnue();
+
     int move_count = 0, cutoffs = 0;
     const auto reduction = (ctxt.depth() - 1) / 2;
 

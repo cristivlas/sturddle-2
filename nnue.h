@@ -30,7 +30,7 @@ namespace nnue
     using namespace chess;
 
     constexpr bool DEBUG_INCREMENTAL = false;
-    constexpr int QSCALE = 2048;
+    constexpr int QSCALE = 1024;
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
