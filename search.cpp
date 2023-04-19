@@ -461,8 +461,6 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
     if (state.just_king_and_pawns())
         return false;
 
-    ctxt.eval_nnue();
-
     int move_count = 0, cutoffs = 0;
     const auto reduction = (ctxt.depth() - 1) / 2;
 
@@ -690,14 +688,14 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         }
     #endif /* REVERSE_FUTILITY_PRUNING */
 
-    #if RAZORING
+    #if RAZORING && WITH_NNUE
         if (ctxt.depth() > 0
             && eval < alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(ctxt.depth())
             && eval + eval_captures(ctxt) < alpha)
         {
             return alpha;
         }
-    #endif /* RAZORING */
+    #endif /* RAZORING && WITH_NNUE */
 
         /* Reduce depth by 2 if PV node not found in the TT (idea from SF). */
         if (ctxt._ply

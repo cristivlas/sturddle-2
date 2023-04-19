@@ -120,7 +120,7 @@ namespace nnue
             int16_t (&output)[OUTPUTS],
             const int16_t(&b)[OUTPUTS],
             const int16_t(&wt)[OUTPUTS][INPUTS],
-            F /* linear activation */
+            F /* activation applied separately */
         )
         {
             static_assert(S >= INPUTS);
@@ -164,6 +164,7 @@ namespace nnue
                     float r = 0;
                     for (int i = R; i != INPUTS; ++i)
                         r += input[i] * wt[j + k][i];
+
                     output[j + k] = b[j + k] + r + horizontal_add(sum[k]);
                 }
             }
@@ -325,18 +326,12 @@ namespace nnue
                     int16_t output_a[OUTPUTS_A] = { 0 };
                     layer_a.dot(_input, output_a);
                     for (int i = 0; i != OUTPUTS_A; ++i)
-                    {
-                        // std::cout << i << ": " << output_a[i] << " " << _output_a[i] << "\n";
                         ASSERT_ALWAYS(abs(output_a[i] - _output_a[i]) < 0.0001);
-                    }
 
                     int16_t output_b[OUTPUTS_B] = { 0 };
                     layer_b.dot(_input, output_b);
-                    for (int i = 0; i != OUTPUTS_B; ++i)
-                    {
-                        // std::cout << i << ": " << output_b[i] << " " << _output_b[i] << "\n";
+                    for (int i = 0; i != OUTPUTS_B; ++i);
                         ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
-                    }
                 }
             }
         }
