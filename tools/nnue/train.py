@@ -361,7 +361,14 @@ def main(args):
                     logging.info(f'indices: {indices}')
                     for i,j in enumerate(indices):
                         logging.info(f'MacroBatch: {i + 1}/{len(indices)}: {j}')
-                        model.fit(dataset[j], callbacks=callbacks, epochs=args.macro_epochs)
+                        model.fit(
+                            dataset[j],
+                            callbacks=callbacks,
+                            epochs=args.macro_epochs,
+                            max_queue_size=args.max_queue_size,
+                            workers=args.workers,
+                            use_multiprocessing=args.use_multiprocessing,
+                        )
 
             elif args.validation:
                 validation_data, _ = dataset_from_file(args, args.validation, None, strategy, None)
@@ -372,11 +379,21 @@ def main(args):
                     steps_per_epoch=steps_per_epoch,
                     validation_data=validation_data,
                     validation_freq=args.vfreq,
+                    max_queue_size=args.max_queue_size,
+                    workers=args.workers,
+                    use_multiprocessing=args.use_multiprocessing,
                 )
             else:
                 # https://www.tensorflow.org/api_docs/python/tf/keras/Model
-                model.fit(dataset, callbacks=callbacks, epochs=args.epochs, steps_per_epoch=steps_per_epoch)
-
+                model.fit(
+                    dataset,
+                    callbacks=callbacks,
+                    epochs=args.epochs,
+                    steps_per_epoch=steps_per_epoch,
+                    max_queue_size=args.max_queue_size,
+                    workers=args.workers,
+                    use_multiprocessing=args.use_multiprocessing,
+                )
 
 if __name__ == '__main__':
     try:
@@ -411,6 +428,7 @@ if __name__ == '__main__':
         parser.add_argument('--logdir', default='/tmp/logs', help='tensorboard log dir')
         parser.add_argument('--macro-batch-size', type=int, default=0)
         parser.add_argument('--macro-epochs', type=int, default=1, help='epochs per macro-batch')
+        parser.add_argument('--max-queue-size', type=int, default=1000, help='max size for queue that holds batches')
         parser.add_argument('--mixed-precision', dest='mixed_precision', action='store_true', default=True, help='enable mixed precision')
         parser.add_argument('--nesterov', dest='nesterov', action='store_true', default=False, help='use Nesterov momentum (SGD only)')
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
@@ -420,6 +438,8 @@ if __name__ == '__main__':
         parser.add_argument('--schedule-lr', action='store_true', help='use learning rate schedule')
         parser.add_argument('--validation', help='validation data filepath')
         parser.add_argument('--vfreq', type=int, default=1, help='validation frequency')
+        parser.add_argument('--use-multiprocessing', action='store_true')
+        parser.add_argument('--workers', type=int, default=4)
 
         args = parser.parse_args()
         if args.input[0] == 'export' and not args.export:
