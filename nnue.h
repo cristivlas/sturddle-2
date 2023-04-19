@@ -71,7 +71,7 @@ namespace nnue
     }
 
     /** Calculate the piece-square index into the one-hot encoding. */
-    INLINE constexpr int psi(PieceType piece_type, Color color, Square square)
+    INLINE constexpr int piece_square_index(PieceType piece_type, Color color, Square square)
     {
         return (piece_type % 6) * 128 + (64 * color) + 63 - square;
     }
@@ -330,7 +330,7 @@ namespace nnue
 
                     int16_t output_b[OUTPUTS_B] = { 0 };
                     layer_b.dot(_input, output_b);
-                    for (int i = 0; i != OUTPUTS_B; ++i);
+                    for (int i = 0; i != OUTPUTS_B; ++i)
                         ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
                 }
             }
@@ -422,23 +422,25 @@ namespace nnue
             {
                 // add the promoted-to piece
                 ASSERT(move.promotion() == to_pos.promotion);
-                add[a_idx++] = psi(to_pos.promotion, color, move.to_square());
+                add[a_idx++] = piece_square_index(to_pos.promotion, color, move.to_square());
 
                 // remove the pawn
-                remove[r_idx++] = psi(PieceType::PAWN, color, move.from_square());
+                remove[r_idx++] = piece_square_index(PieceType::PAWN, color, move.from_square());
             }
             else
             {
                 const auto ptype = from_pos.piece_type_at(move.from_square());
-                remove[r_idx++] = psi(ptype, color, move.from_square());
-                add[a_idx++] = psi(ptype, color, move.to_square());
+                remove[r_idx++] = piece_square_index(ptype, color, move.from_square());
+                add[a_idx++] = piece_square_index(ptype, color, move.to_square());
 
                 if (to_pos.is_castle)
                 {
                     const auto king_file = square_file(move.to_square());
 
-                    remove[r_idx++] = psi(PieceType::ROOK, color, rook_castle_squares[king_file == 2][0][color]);
-                    add[a_idx++] = psi(PieceType::ROOK, color, rook_castle_squares[king_file == 2][1][color]);
+                    remove[r_idx++] = piece_square_index(
+                        PieceType::ROOK, color, rook_castle_squares[king_file == 2][0][color]);
+                    add[a_idx++] = piece_square_index(
+                        PieceType::ROOK, color, rook_castle_squares[king_file == 2][1][color]);
                 }
             }
 
@@ -448,7 +450,7 @@ namespace nnue
                     ? Square(from_pos.en_passant_square - 8 * SIGN[color])
                     : move.to_square();
                 const auto victim_type = from_pos.piece_type_at(capture_square);
-                remove[r_idx++] = psi(victim_type, !color, capture_square);
+                remove[r_idx++] = piece_square_index(victim_type, !color, capture_square);
             }
         }
     };
