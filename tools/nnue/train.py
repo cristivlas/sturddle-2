@@ -428,7 +428,7 @@ if __name__ == '__main__':
         parser.add_argument('--logdir', default='/tmp/logs', help='tensorboard log dir')
         parser.add_argument('--macro-batch-size', type=int, default=0)
         parser.add_argument('--macro-epochs', type=int, default=1, help='epochs per macro-batch')
-        parser.add_argument('--max-queue-size', type=int, default=1000, help='max size for queue that holds batches')
+        parser.add_argument('--max-queue-size', type=int, default=10000, help='max size for queue that holds batches')
         parser.add_argument('--mixed-precision', dest='mixed_precision', action='store_true', default=True, help='enable mixed precision')
         parser.add_argument('--nesterov', dest='nesterov', action='store_true', default=False, help='use Nesterov momentum (SGD only)')
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
@@ -439,7 +439,7 @@ if __name__ == '__main__':
         parser.add_argument('--validation', help='validation data filepath')
         parser.add_argument('--vfreq', type=int, default=1, help='validation frequency')
         parser.add_argument('--use-multiprocessing', action='store_true')
-        parser.add_argument('--workers', type=int, default=4)
+        parser.add_argument('--workers', type=int, default=16)
 
         args = parser.parse_args()
         if args.input[0] == 'export' and not args.export:
