@@ -16,6 +16,12 @@ import numpy as np
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+'''
+Quantization range: use int16_t with QSCALE of 2048, and need to add 33 values
+(32 weights, 1 bias) without overflow, and represent floats with 1e-6 precision.
+'''
+MAX_QVAL = 2.035
+MIN_QVAL = -MAX_QVAL
 
 def _configure_logging(args):
     log_level = logging.DEBUG if args.debug else logging.INFO
@@ -44,14 +50,26 @@ def _make_model(args, strategy):
         input_layer = Input(shape=(args.hot_encoding,), name='input')
 
         # Define layer 1a
-        hidden_1a = Dense(512, activation=activation, name='hidden_1a')(input_layer)
+        hidden_1a = Dense(
+            512,
+            activation=activation,
+            name='hidden_1a',
+            kernel_constraint=MinMaxNorm(min_value=MIN_QVAL, max_value=MAX_QVAL),
+            bias_constraint=MinMaxNorm(min_value=MIN_QVAL, max_value=MAX_QVAL),
+        )(input_layer)
 
         # Add 2nd hidden layer
         hidden_2 = Dense(16, activation=activation, name='hidden_2')(hidden_1a)
 
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
         input_1b = Lambda(lambda x: x[:, :256], name='slice_input_1b')(input_layer)
-        hidden_1b = Dense(64, activation=activation, name='hidden_1b')(input_1b)
+        hidden_1b = Dense(
+            64,
+            activation=activation,
+            name='hidden_1b',
+            kernel_constraint=MinMaxNorm(min_value=MIN_QVAL, max_value=MAX_QVAL),
+            bias_constraint=MinMaxNorm(min_value=MIN_QVAL, max_value=MAX_QVAL),
+        )(input_1b)
 
         # Compute dynamic weights based on hidden_1b
         dynamic_weights = Dense(
@@ -453,6 +471,7 @@ if __name__ == '__main__':
         import tensorflow as tf
         tf.get_logger().setLevel(log_level)
 
+        from tensorflow.keras.constraints import MinMaxNorm
         from tensorflow.keras.layers import *
         from tensorflow.keras.losses import Huber, MeanAbsoluteError, MeanSquaredError
         from tensorflow.keras.regularizers import L1L2
