@@ -17,10 +17,10 @@ import numpy as np
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 '''
-Quantization range: use int16_t with QSCALE of 2048, and need to add 33 values
+Quantization range: use int16_t with QSCALE of 2048, and need to add 34 values
 (32 weights, 1 bias) without overflow, and represent floats with 1e-6 precision.
 '''
-MAX_QVAL = 2.035
+MAX_QVAL = 1.972
 MIN_QVAL = -MAX_QVAL
 
 def _configure_logging(args):
