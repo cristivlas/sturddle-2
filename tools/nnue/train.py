@@ -17,10 +17,10 @@ import numpy as np
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 '''
-Quantization range: use int16_t with QSCALE of 2048, and need to add 34 values
-(32 weights, 1 bias) without overflow, and represent floats with 1e-6 precision.
+Quantization range: use int16_t with QSCALE of 512, and need to add 34 values
+(32 weights, 1 bias, 1 residual) without overflow, max representable value is 32767 / 34 / 512
 '''
-MAX_QVAL = 1.972
+MAX_QVAL = 1.882
 MIN_QVAL = -MAX_QVAL
 
 def _configure_logging(args):
@@ -86,7 +86,7 @@ def _make_model(args, strategy):
         output_layer = Dense(1, name='out', dtype='float32')(weighted_hidden_2)
 
         # Create the model
-        model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer)
+        model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer, name=args.name)
 
         if args.clip:
             loss = _clipped_mae
@@ -295,8 +295,11 @@ def main(args):
         strategy = tf.distribute.OneDeviceStrategy(device='/cpu:0')
 
     if args.model and os.path.exists(args.model):
+        saved_model = tf.keras.models.load_model(args.model, custom_objects={'_clipped_mae' : None})
+        if not args.name:
+            args.name = saved_model.name
         model = _make_model(args, strategy)
-        model.set_weights(tf.keras.models.load_model(args.model).get_weights())
+        model.set_weights(saved_model.get_weights())
         print(f'Loaded model {os.path.abspath(args.model)}.')
     else:
         model = _make_model(args, strategy)
@@ -448,6 +451,7 @@ if __name__ == '__main__':
         parser.add_argument('--macro-epochs', type=int, default=1, help='epochs per macro-batch')
         parser.add_argument('--max-queue-size', type=int, default=10000, help='max size for queue that holds batches')
         parser.add_argument('--mixed-precision', dest='mixed_precision', action='store_true', default=True, help='enable mixed precision')
+        parser.add_argument('--name', help='optional model name')
         parser.add_argument('--nesterov', dest='nesterov', action='store_true', default=False, help='use Nesterov momentum (SGD only)')
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
