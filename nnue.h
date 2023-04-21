@@ -30,7 +30,7 @@ namespace nnue
     using namespace chess;
 
     constexpr bool DEBUG_INCREMENTAL = false;
-    constexpr int QSCALE = 1024;
+    constexpr int QSCALE = 2048;
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
@@ -161,7 +161,7 @@ namespace nnue
 
                 for (int k = 0; k != N; ++k)
                 {
-                    float r = 0;
+                    int16_t r = 0;
                     for (int i = R; i != INPUTS; ++i)
                         r += input[i] * wt[j + k][i];
 
