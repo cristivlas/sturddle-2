@@ -17,10 +17,10 @@ import numpy as np
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 '''
-Quantization range: use int16_t with QSCALE of 512, and need to add 34 values
-(32 weights, 1 bias, 1 residual) without overflow, max representable value is 32767 / 34 / 512
+Quantization range: use int16_t with QSCALE of 1024, and need to add 18 values
+(16 weights, 1 bias, 1 residual) without overflow, max representable value is 32767 / 18 / 1024
 '''
-MAX_QVAL = 1.882
+MAX_QVAL = 1.7777
 MIN_QVAL = -MAX_QVAL
 
 def _configure_logging(args):
@@ -76,7 +76,8 @@ def _make_model(args, strategy):
             16,
             activation=None,
             name='dynamic_weights',
-            kernel_regularizer=L1L2(l1=2.5*1e-5, l2=5*1e-4),
+            #kernel_regularizer=L1L2(l1=2.5*1e-5, l2=5*1e-4),
+            #bias_regularizer=L1L2(l1=2.5*1e-5, l2=5*1e-4),
         )(hidden_1b)
 
         # Apply dynamic weights to hidden_2
@@ -455,7 +456,7 @@ if __name__ == '__main__':
         parser.add_argument('--nesterov', dest='nesterov', action='store_true', default=False, help='use Nesterov momentum (SGD only)')
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
-        parser.add_argument('--optimizer', choices=['adam', 'sgd'], default='sgd')
+        parser.add_argument('--optimizer', choices=['adam', 'sgd'], default='adam')
         parser.add_argument('--tensorboard', '-tb', action='store_true', help='enable TensorBoard')
         parser.add_argument('--schedule-lr', action='store_true', help='use learning rate schedule')
         parser.add_argument('--validation', help='validation data filepath')
