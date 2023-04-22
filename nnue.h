@@ -30,7 +30,7 @@ namespace nnue
     using namespace chess;
 
     constexpr bool DEBUG_INCREMENTAL = false;
-    constexpr int QSCALE = 2048;
+    constexpr int QSCALE = 1024;
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
@@ -134,18 +134,18 @@ namespace nnue
                     output[j] += input[i] * wt[j][i];
             }
         #else /* vector */
-            constexpr auto N = Vec32s::size();
+            constexpr auto N = Vec16s::size();
             static_assert(OUTPUTS % N == 0);
 
             constexpr auto R = round_down<N>(INPUTS);
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
-                Vec32c vc;
-                Vec32s in, vw, sum[N];
+                Vec16c vc;
+                Vec16s in, vw, sum[N];
 
                 for (int k = 0; k != N; ++k)
-                    sum[k] = Vec32s(0);
+                    sum[k] = Vec16s(0);
 
                 for (int i = 0; i != R; i += N)
                 {
@@ -347,14 +347,14 @@ namespace nnue
         {
             static_assert(LA::OUTPUTS == OUTPUTS_A);
             static_assert(LB::OUTPUTS == OUTPUTS_B);
-            static_assert(LA::OUTPUTS % Vec32s::size() == 0);
-            static_assert(LB::OUTPUTS % Vec32s::size() == 0);
+            static_assert(LA::OUTPUTS % Vec16s::size() == 0);
+            static_assert(LB::OUTPUTS % Vec16s::size() == 0);
 
-            Vec32s vo, vw;
+            Vec16s vo, vw;
             bool update_layer_b = false;
 
             /* layer A */
-            for (int j = 0; j != OUTPUTS_A; j += Vec32s::size())
+            for (int j = 0; j != OUTPUTS_A; j += Vec16s::size())
             {
                 vo.load_a(&_output_a[j]);
 
@@ -381,7 +381,7 @@ namespace nnue
             if (update_layer_b)
             {
                 /* layer B */
-                for (int j = 0; j != OUTPUTS_B; j += Vec32s::size())
+                for (int j = 0; j != OUTPUTS_B; j += Vec16s::size())
                 {
                     vo.load_a(&_output_b[j]);
 
