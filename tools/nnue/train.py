@@ -77,8 +77,8 @@ def _make_model(args, strategy):
             16,
             activation=None,
             name='dynamic_weights',
-            #kernel_regularizer=L1L2(l1=2.5*1e-5, l2=5*1e-4),
-            #bias_regularizer=L1L2(l1=2.5*1e-5, l2=5*1e-4),
+            #kernel_regularizer=L1L2(l1=1e-5, l2=1e-4),
+            #bias_regularizer=L1L2(l1=1e-5, l2=1e-4),
         )(hidden_1b)
 
         # Apply dynamic weights to hidden_2
@@ -316,8 +316,7 @@ def main(args):
 
         if args.schedule_lr:
             from keras.callbacks import ReduceLROnPlateau
-            lr = ReduceLROnPlateau(
-                monitor='loss', factor=0.2, patience=5, min_lr=0.000001)
+            lr = ReduceLROnPlateau(monitor='loss', factor=0.2, patience=5, min_lr=1e-9)
             callbacks.append(lr)
 
         if args.model is not None:
@@ -435,7 +434,7 @@ if __name__ == '__main__':
         parser.add_argument('-i', '--infer', type=int, default=0, help='test inference on specified number of examples')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
-        parser.add_argument('-r', '--learn-rate', type=float, default=0.0001, help='learning rate')
+        parser.add_argument('-r', '--learn-rate', type=float, default=1e-5, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='use verbose (DEBUG level) logging')
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
         parser.add_argument('--amsgrad', action='store_true', help='use amsgrad (ignored when not using adam)')
