@@ -9,8 +9,9 @@ import argparse
 import logging
 import os
 import sys
-import h5py
 from contextlib import redirect_stdout
+
+import h5py
 import numpy as np
 
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
@@ -249,9 +250,11 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
     if os.path.splitext(filepath)[1].lower() == '.h5':
         f = h5py.File(filepath)
-        data = f['eval']
+        data = f['data']
         row_count = data.shape[0]
         assert data.shape[1] == args.hot_encoding + 1, data.shape[1]
+        print(f'{row_count} rows.')
+
         class LazyView:
             def __init__(self, data, slice_, rows):
                 self.data = data
@@ -478,7 +481,7 @@ if __name__ == '__main__':
 
         from tensorflow.keras.constraints import MinMaxNorm
         from tensorflow.keras.layers import *
-        from tensorflow.keras.losses import Huber, MeanAbsoluteError, MeanSquaredError
+        from tensorflow.keras.losses import MeanAbsoluteError
         from tensorflow.keras.regularizers import L1L2
 
         '''
