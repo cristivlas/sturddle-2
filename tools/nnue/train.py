@@ -251,6 +251,8 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
     if os.path.splitext(filepath)[1].lower() == '.h5':
         f = h5py.File(filepath)
         data = f['data']
+        # print(data.dtype, data.shape)
+        dtype = data.dtype
         row_count = data.shape[0]
         assert data.shape[1] == args.hot_encoding + 1, data.shape[1]
         print(f'{row_count} rows.')
