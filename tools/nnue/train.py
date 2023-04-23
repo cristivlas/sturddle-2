@@ -21,8 +21,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 Quantization range: use int16_t with QSCALE of 1024, and need to add 18 values
 (16 weights, 1 bias, 1 residual) without overflow, max representable value is 32767 / 18 / 1024
 '''
-MAX_QVAL = 1.7777
-MIN_QVAL = -MAX_QVAL
+Q_MAX = 1.7777
+Q_MIN = -Q_MAX
 
 def _configure_logging(args):
     log_level = logging.DEBUG if args.debug else logging.INFO
@@ -55,8 +55,8 @@ def _make_model(args, strategy):
             512,
             activation=activation,
             name='hidden_1a',
-            kernel_constraint=MinMaxNorm(min_value=MIN_QVAL, max_value=MAX_QVAL),
-            bias_constraint=MinMaxNorm(min_value=MIN_QVAL, max_value=MAX_QVAL),
+            kernel_constraint=MinMaxNorm(min_value=Q_MIN, max_value=Q_MAX),
+            bias_constraint=MinMaxNorm(min_value=Q_MIN, max_value=Q_MAX),
         )(input_layer)
 
         # Add 2nd hidden layer
@@ -68,8 +68,8 @@ def _make_model(args, strategy):
             64,
             activation=activation,
             name='hidden_1b',
-            kernel_constraint=MinMaxNorm(min_value=MIN_QVAL, max_value=MAX_QVAL),
-            bias_constraint=MinMaxNorm(min_value=MIN_QVAL, max_value=MAX_QVAL),
+            kernel_constraint=MinMaxNorm(min_value=Q_MIN, max_value=Q_MAX),
+            bias_constraint=MinMaxNorm(min_value=Q_MIN, max_value=Q_MAX),
         )(input_1b)
 
         # Compute dynamic weights based on hidden_1b
@@ -95,9 +95,9 @@ def _make_model(args, strategy):
         else:
             loss = MeanAbsoluteError()
 
-        if args.optimizer == 'adam':
+        if args.optimizer in ['adam', 'amsgrad']:
             optimizer=tf.keras.optimizers.Adam(
-                amsgrad=args.amsgrad,
+                amsgrad=args.optimizer=='amsgrad',
                 beta_1=0.995,
                 beta_2=0.9995,
                 learning_rate=args.learn_rate,
@@ -437,7 +437,6 @@ if __name__ == '__main__':
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-5, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='use verbose (DEBUG level) logging')
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
-        parser.add_argument('--amsgrad', action='store_true', help='use amsgrad (ignored when not using adam)')
         parser.add_argument('--clip', type=int)
         parser.add_argument('--decay', type=float, help='weight decay')
         parser.add_argument('--distribute', action='store_true', help='distribute dataset between GPUs')
@@ -458,7 +457,7 @@ if __name__ == '__main__':
         parser.add_argument('--nesterov', dest='nesterov', action='store_true', default=False, help='use Nesterov momentum (SGD only)')
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
-        parser.add_argument('--optimizer', choices=['adam', 'sgd'], default='adam')
+        parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad')
         parser.add_argument('--tensorboard', '-tb', action='store_true', help='enable TensorBoard')
         parser.add_argument('--schedule-lr', action='store_true', help='use learning rate schedule')
         parser.add_argument('--validation', help='validation data filepath')
