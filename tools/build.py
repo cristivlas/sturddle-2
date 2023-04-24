@@ -63,11 +63,6 @@ if __name__ == '__main__':
         if is_windows():
             if arch:
                 arch_flags = f'/arch:{arch}'
-            # if 'clang' in os.environ.get('CL_EXE', '').lower():
-            #     if arch == 'AVX2':
-            #         arch_flags += ' -Xclang -mtune -Xclang core-avx2'
-            #     elif arch == 'AVX512':
-            #         arch_flags += ' -Xclang -mtune -Xclang skylake-avx512'
         # otherwise assume Clang or GCC on POSIX
         elif arch == 'AVX2':
             arch_flags = '-march=core-avx2 -mtune=core-avx2' # '-DUSE_AVX2'
