@@ -358,6 +358,7 @@ namespace nnue
             {
                 vo.load_a(&_output_a[j]);
 
+                #pragma unroll 2
                 for (int i = 0; i < r_idx; ++i)
                 {
                     const auto index = remove_inputs[i];
@@ -367,6 +368,7 @@ namespace nnue
                     vo -= vw;
                 }
 
+                #pragma unroll 2
                 for (int i = 0; i < a_idx; ++i)
                 {
                     const auto index = add_inputs[i];
@@ -385,6 +387,7 @@ namespace nnue
                 {
                     vo.load_a(&_output_b[j]);
 
+                    #pragma unroll 2
                     for (int i = 0; i < r_idx; ++i)
                     {
                         const auto index = remove_inputs[i];
@@ -394,6 +397,7 @@ namespace nnue
                         vo -= vw;
                     }
 
+                    #pragma unroll 2
                     for (int i = 0; i < a_idx; ++i)
                     {
                         const auto index = add_inputs[i];
