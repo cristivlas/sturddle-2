@@ -98,8 +98,8 @@ def _make_model(args, strategy):
         if args.optimizer in ['adam', 'amsgrad']:
             optimizer=tf.keras.optimizers.Adam(
                 amsgrad=args.optimizer=='amsgrad',
-                beta_1=0.995,
-                beta_2=0.9995,
+                beta_1=0.99,
+                beta_2=0.995,
                 learning_rate=args.learn_rate,
                 use_ema=args.ema,
                 weight_decay=args.decay if args.decay else None)
@@ -316,7 +316,7 @@ def main(args):
         callbacks = []
         dataset, steps_per_epoch = dataset_from_file(args, args.input[0], args.clip, strategy, callbacks)
 
-        if args.schedule_lr:
+        if args.schedule:
             from keras.callbacks import ReduceLROnPlateau
             lr = ReduceLROnPlateau(monitor='loss', factor=0.2, patience=5, min_lr=1e-9)
             callbacks.append(lr)
@@ -379,7 +379,7 @@ def main(args):
 
             if args.macro_batch_size:
                 # Validation data is not supported in chunk mode.
-                # H5 files not well supported either (may run out of memory).
+                # H5 files not supported either (may run out of memory).
                 for era in range(args.epochs // args.macro_epochs):
                     logging.info(f'===== Era: {era} =====')
                     indices = np.arange(len(dataset))
@@ -431,19 +431,20 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
+        parser.add_argument('-c', '--clip', type=int)
+        parser.add_argument('-d', '--decay', type=float, help='weight decay')
+        parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
-        parser.add_argument('-f', '--save_freq', type=int, help='frequency for saving model')
+        parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
+        parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
+        parser.add_argument('-H', '--half', action='store_true', help='treat input data as half-precision (float16)')
         parser.add_argument('-i', '--infer', type=int, default=0, help='test inference on specified number of examples')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
-        parser.add_argument('-r', '--learn-rate', type=float, default=1e-5, help='learning rate')
-        parser.add_argument('-v', '--debug', action='store_true', help='use verbose (DEBUG level) logging')
+        parser.add_argument('-r', '--learn-rate', type=float, default=1e-4, help='learning rate')
+        parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
-        parser.add_argument('--clip', type=int)
-        parser.add_argument('--decay', type=float, help='weight decay')
-        parser.add_argument('--distribute', action='store_true', help='distribute dataset between GPUs')
-        parser.add_argument('--ema', action='store_true', help='use Exponential Moving Average')
-        parser.add_argument('--half', action='store_true', help='read half-precision (float16) input')
+
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
 
@@ -459,13 +460,13 @@ if __name__ == '__main__':
         parser.add_argument('--nesterov', dest='nesterov', action='store_true', default=False, help='use Nesterov momentum (SGD only)')
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
-        parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad')
-        parser.add_argument('--tensorboard', '-tb', action='store_true', help='enable TensorBoard')
-        parser.add_argument('--schedule-lr', action='store_true', help='use learning rate schedule')
+        parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad', help='optimization algorithm')
+        parser.add_argument('--tensorboard', '-t', action='store_true', help='enable TensorBoard')
+        parser.add_argument('--schedule', action='store_true', help='use learning rate schedule')
         parser.add_argument('--validation', help='validation data filepath')
         parser.add_argument('--vfreq', type=int, default=1, help='validation frequency')
         parser.add_argument('--use-multiprocessing', action='store_true')
-        parser.add_argument('--workers', type=int, default=16)
+        parser.add_argument('--workers', '-w', type=int, default=4)
 
         args = parser.parse_args()
         if args.input[0] == 'export' and not args.export:

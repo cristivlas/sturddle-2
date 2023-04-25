@@ -112,8 +112,10 @@ else:
         '-DCALLBACK_PERIOD=8192',
         '-fno-stack-protector',
         '-DWITH_NNUE',
-        '-D_FORTIFY_SOURCE=0',
         '-Wno-macro-redefined',
+        '-D_FORTIFY_SOURCE=0',
+        '-Wno-empty-body',
+        '-Wno-int-in-bool-context',
     ]
     if NATIVE_UCI:
         args += [
