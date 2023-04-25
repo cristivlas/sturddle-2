@@ -169,6 +169,14 @@ def export_weights(args, model, indent=2):
 
 
 def dataset_from_file(args, filepath, clip, strategy, callbacks):
+    # hack: filter out values close to mate
+    @tf.function
+    def filter(x, y):
+        greater_than_minus_200 = tf.greater(y[0], -200)  # Keep samples with y > -200
+        less_than_200 = tf.less(y[0], 200)  # Keep samples with y < 200
+        condition = tf.logical_and(greater_than_minus_200, less_than_200)
+        return tf.reduce_all(condition)
+
     '''
     Batch generator.
     '''
@@ -240,7 +248,10 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             generator,
             output_types=(dtype, dtype),
             output_shapes=((None, args.hot_encoding), (None, 1)),
-        ).prefetch(prefetch_batches).repeat()
+        )
+
+        dataset = dataset.filter(filter)
+        datatset = dataset.repeat().prefetch(prefetch_batches)
 
         return dataset, steps_per_epoch
 
