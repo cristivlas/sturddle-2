@@ -35,6 +35,8 @@ namespace nnue
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
 
+    static const Vec16s vs_zero(0);
+
 #if INSTRSET >= 9
     using Vector = Vec16f;
 #elif INSTRSET >= 8
@@ -74,23 +76,6 @@ namespace nnue
     INLINE constexpr int piece_square_index(PieceType piece_type, Color color, Square square)
     {
         return (piece_type % 6) * 128 + (64 * color) + 63 - square;
-    }
-
-    /** Rectified Linear Unit (reLU) activation */
-    static const Vec16s v_zero(0);
-
-    template <int N>
-    INLINE void activation(const int16_t (&input)[N], float (&output)[N])
-    {
-        static_assert(N % Vec32s::size() == 0);
-
-        Vec32s v;
-        for (int i = 0; i != N; i += Vec32s::size())
-        {
-            v.load_a(&input[i]);
-            (to_float(extend(max(v.get_low(), v_zero))) / QSCALE).store_a(&output[i]);
-            (to_float(extend(max(v.get_high(), v_zero))) / QSCALE).store_a(&output[i + 16]);
-        }
     }
 
     template <int I, int O, typename T=float, int Scale=1>
@@ -171,8 +156,47 @@ namespace nnue
         #endif /* vector */
         }
 
+        template <typename F>
+        static INLINE void dot(
+            const int16_t (&input)[INPUTS],
+            float (&output)[OUTPUTS],
+            const float(&b)[OUTPUTS],
+            const float(&wt)[OUTPUTS][INPUTS],
+            F activate
+        )
+        {
+            constexpr int N = Vec16s::size();
+
+            static_assert(INPUTS % N == 0);
+            static_assert(OUTPUTS % N == 0);
+
+            Vec16f sum[N], v_wt, v_in;
+            Vec16s vs_in;
+
+            for (int j = 0; j != OUTPUTS; j += N)
+            {
+                for (int k = 0; k != N; ++k)
+                    sum[k] = Vec16f(0.0);
+
+                for (int i = 0; i != INPUTS; i += N)
+                {
+                    vs_in.load_a(&input[i]);
+                    v_in = to_float(extend(max(vs_in, vs_zero))) / QSCALE;
+
+                    for (int k = 0; k != N; ++k)
+                    {
+                        v_wt.load_a(&wt[j + k][i]);
+                        sum[k] = mul_add(v_in, v_wt, sum[k]);
+                    }
+                }
+
+                for (int k = 0; k != N; ++k)
+                    output[j + k] = activate(b[j + k] + horizontal_add(sum[k]));
+            }
+        }
+
         /* output */
-        template<typename F>
+        template <typename F>
         static INLINE void dot(
             const float (&input)[INPUTS],
             float (&output)[OUTPUTS],
@@ -202,7 +226,7 @@ namespace nnue
                             sum[k] = mul_add(v_in, v_wt, sum[k]);
                         }
                     }
-                    #pragma unroll N
+
                     for (int k = 0; k != N; ++k)
                         output[j + k] = activate(b[j + k] + horizontal_add(sum[k]));
                 }
@@ -462,17 +486,12 @@ namespace nnue
         static_assert(A::OUTPUTS_A == L2::INPUTS);
         static_assert(A::OUTPUTS_B == ATTN::INPUTS);
 
-        ALIGN float attn_in[ATTN::INPUTS];
         ALIGN float attn_out[ATTN::OUTPUTS];
-        ALIGN float l2_in[L2::INPUTS];
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float output[1];
 
-        activation(a._output_a, l2_in); // process output of hidden_1a
-        l2.dot(l2_in, l2_out, [](float v){ return std::max<float>(v, 0); });
-
-        activation(a._output_b, attn_in); // process output of hidden_1b
-        attn.dot(attn_in, attn_out);
+        l2.dot(a._output_a, l2_out, [](float v){ return std::max<float>(v, 0); });
+        attn.dot(a._output_b, attn_out);
 
         /*
          * The dynamic weights computed by the "attention" layer
