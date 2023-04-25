@@ -251,7 +251,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         )
 
         dataset = dataset.filter(filter)
-        datatset = dataset.repeat().prefetch(prefetch_batches)
+        datatset = dataset.prefetch(prefetch_batches).repeat()
 
         return dataset, steps_per_epoch
 
