@@ -169,12 +169,11 @@ def export_weights(args, model, indent=2):
 
 
 def dataset_from_file(args, filepath, clip, strategy, callbacks):
-    # hack: filter out values close to mate
     @tf.function
     def filter(x, y):
-        greater_than_minus_200 = tf.greater(y[0], -200)  # Keep samples with y > -200
-        less_than_200 = tf.less(y[0], 200)  # Keep samples with y < 200
-        condition = tf.logical_and(greater_than_minus_200, less_than_200)
+        lower_bound = tf.greater(y[0], -args.filter)
+        upper_bound = tf.less(y[0], args.filter)
+        condition = tf.logical_and(lower_bound, upper_bound)
         return tf.reduce_all(condition)
 
     '''
@@ -242,7 +241,6 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
         callbacks.append(CallbackOnEpochEnd(generator))
         steps_per_epoch = len(generator)
-        prefetch_batches = tf.data.AUTOTUNE
 
         dataset = tf.data.Dataset.from_generator(
             generator,
@@ -250,8 +248,9 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             output_shapes=((None, args.hot_encoding), (None, 1)),
         )
 
-        dataset = dataset.filter(filter)
-        dataset = dataset.prefetch(prefetch_batches).repeat()
+        if args.filter:
+            dataset = dataset.filter(filter)
+        dataset = dataset.prefetch(tf.data.AUTOTUNE).repeat()
 
         return dataset, steps_per_epoch
 
@@ -448,6 +447,7 @@ if __name__ == '__main__':
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
+        parser.add_argument('-F', '--filter', type=int)
         parser.add_argument('-H', '--half', action='store_true', help='treat input data as half-precision (float16)')
         parser.add_argument('-i', '--infer', type=int, default=0, help='test inference on specified number of examples')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
