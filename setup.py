@@ -80,6 +80,7 @@ args += environ.get("CXXFLAGS", '').split()
 if platform.startswith('win'):
     # Windows build
     args += [
+        '/fp:fast',
         '/std:c++20',
         '/DWITH_NNUE',
         '/DCALLBACK_PERIOD=8192',
