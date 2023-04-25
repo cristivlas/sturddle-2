@@ -1327,4 +1327,7 @@ void TranspositionTable::shift()
 
     shift_left_2(_killer_moves.begin(), _killer_moves.end());
     shift_left_2(_plyHistory.begin(), _plyHistory.end());
+
+    // "shift" accumulator from ply 2 into root position
+    search::Context::nnue_init();
 }

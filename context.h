@@ -285,6 +285,7 @@ namespace search
 
         template <bool Raw=false> void eval_nnue();
         score_t     eval_nnue_raw(bool update_only = false);
+        static void nnue_init();
 
         score_t     static_eval();  /* use TT value if available, eval material otherwise */
 
@@ -734,7 +735,7 @@ namespace search
     }
 #else
     template <bool Raw> INLINE void search::Context::eval_nnue() {}
-    INLINE void search::Context::nnue_update() {}
+    INLINE void search::Context::nnue_init() {}
 
     /* Use value from the TT if available, else do a quick material evaluation. */
     INLINE score_t Context::static_eval()

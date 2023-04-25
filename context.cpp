@@ -200,6 +200,18 @@ static nnue::Layer<HIDDEN_1B, HIDDEN_2> L_DYN(dynamic_weights_w, dynamic_weights
 static nnue::Layer<HIDDEN_2, 1> L4(out_w, out_b);
 
 
+void search::Context::nnue_init()
+{
+    auto& root = NNUE_data[0][0];
+    auto& next = NNUE_data[0][2];
+
+    root._hash = next._hash;
+    memcpy(root._input, next._input, sizeof(root._input));
+    memcpy(root._output_a, next._output_a, sizeof(root._output_a));
+    memcpy(root._output_b, next._output_b, sizeof(root._output_b));
+}
+
+
 score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
 {
     auto& acc = NNUE_data[tid()][_ply];
