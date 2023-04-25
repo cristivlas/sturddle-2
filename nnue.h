@@ -472,8 +472,6 @@ namespace nnue
         l2.dot(l2_in, l2_out, [](float v){ return std::max<float>(v, 0); });
 
         activation(a._output_b, attn_in); // process output of hidden_1b
-
-    #if true
         attn.dot(attn_in, attn_out);
 
         /*
@@ -491,13 +489,6 @@ namespace nnue
             v2.load_a(&attn_out[i]);
             (v1 * v2).store_a(&l2_out[i]);
         }
-    #else
-        int i = 0;
-        attn.dot(attn_in, attn_out, [&l2_out, &i](float v) {
-            l2_out[i++] *= v;
-            return v;
-        });
-    #endif
 
         out.dot(l2_out, output);
         return 100 * output[0];
