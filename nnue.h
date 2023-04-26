@@ -158,6 +158,8 @@ namespace nnue
                 for (int i = 0; i != R; i += N)
                 {
                     vc.load_a(input + i);
+                    if (horizontal_add(vc) == 0)
+                        continue;
                     in = extend(vc);
 
                     for (int k = 0; k != N; ++k)
@@ -204,6 +206,8 @@ namespace nnue
                     for (int i = 0; i != INPUTS; i += N)
                     {
                         v_in.load_a(&input[i]);
+                        if (horizontal_add(v_in) == 0)
+                            continue;
                         for (int k = 0; k != N; ++k)
                         {
                             v_wt.load_a(&wt[j + k][i]);
