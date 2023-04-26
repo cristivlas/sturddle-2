@@ -176,7 +176,7 @@ void assert_param_ref()
 
 #if WITH_NNUE
 
-constexpr int INPUTS_A = 769;
+constexpr int INPUTS_A = 897;
 constexpr int INPUTS_B = 256;
 constexpr int HIDDEN_1A = 512;
 constexpr int HIDDEN_1B = 64;

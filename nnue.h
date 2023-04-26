@@ -50,9 +50,9 @@ namespace nnue
     }
 
     template <typename T>
-    INLINE void one_hot_encode(const State& board, T (&encoding)[769])
+    INLINE void one_hot_encode(const State& board, T (&encoding)[897])
     {
-        const auto color_masks = { board.occupied_co(BLACK), board.occupied_co(WHITE) };
+        const uint64_t color_masks[2] = { board.occupied_co(BLACK), board.occupied_co(WHITE) };
 
         int i = 63;
         #pragma unroll 6
@@ -61,13 +61,14 @@ namespace nnue
         {
             for (const auto mask : color_masks)
             {
-                for_each_square_r((bb & mask), [&](Square j) {
-                    encoding[i - j] = 1;
-                });
+                for_each_square_r((bb & mask), [&](Square j) { encoding[i - j] = 1; });
                 i += 64;
             }
         }
         encoding[TURN_INDEX] = board.turn;
+
+        for_each_square_r(color_masks[0], [&](Square j) { encoding[769 + 63 - j] = 1; });
+        for_each_square_r(color_masks[1], [&](Square j) { encoding[769 + 127 - j] = 1; });
     }
 
     /** Calculate the piece-square index into the one-hot encoding. */
@@ -75,6 +76,12 @@ namespace nnue
     {
         return (piece_type % 6) * 128 + (64 * color) + 63 - square;
     }
+
+    INLINE constexpr int mask_index(Color color, Square square) noexcept
+    {
+        return (color ? 833 : 769) + 63 - square;
+    }
+
 
     /** Rectified Linear Unit (reLU) activation */
     static const Vec16s v_zero(0);
@@ -430,24 +437,31 @@ namespace nnue
                 // add the promoted-to piece
                 ASSERT(move.promotion() == to_pos.promotion);
                 add[a_idx++] = piece_square_index(to_pos.promotion, color, move.to_square());
+                add[a_idx++] = mask_index(color, move.to_square());
 
                 // remove the pawn
                 remove[r_idx++] = piece_square_index(PieceType::PAWN, color, move.from_square());
+                remove[r_idx++] = mask_index(color, move.from_square());
             }
             else
             {
                 const auto ptype = from_pos.piece_type_at(move.from_square());
                 remove[r_idx++] = piece_square_index(ptype, color, move.from_square());
+                remove[r_idx++] = mask_index(color, move.from_square());
                 add[a_idx++] = piece_square_index(ptype, color, move.to_square());
+                add[a_idx++] = mask_index(color, move.to_square());
 
                 if (to_pos.is_castle)
                 {
                     const auto king_file = square_file(move.to_square());
+                    const auto rook_from_square = rook_castle_squares[king_file == 2][0][color];
+                    const auto rook_to_square = rook_castle_squares[king_file == 2][1][color];
 
-                    remove[r_idx++] = piece_square_index(
-                        PieceType::ROOK, color, rook_castle_squares[king_file == 2][0][color]);
-                    add[a_idx++] = piece_square_index(
-                        PieceType::ROOK, color, rook_castle_squares[king_file == 2][1][color]);
+                    remove[r_idx++] = piece_square_index(PieceType::ROOK, color, rook_from_square);
+                    remove[r_idx++] = mask_index(color, rook_from_square);
+
+                    add[a_idx++] = piece_square_index(PieceType::ROOK, color, rook_to_square);
+                    add[a_idx++] = mask_index(color, rook_to_square);
                 }
             }
 
@@ -458,6 +472,7 @@ namespace nnue
                     : move.to_square();
                 const auto victim_type = from_pos.piece_type_at(capture_square);
                 remove[r_idx++] = piece_square_index(victim_type, !color, capture_square);
+                remove[r_idx++] = mask_index(!color, capture_square);
             }
         }
     };

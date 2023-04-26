@@ -50,6 +50,26 @@ def _make_model(args, strategy):
         # Define the input layer
         input_layer = Input(shape=(args.hot_encoding,), name='input')
 
+        def black_occupied_mask_func(x):
+            mask = tf.zeros_like(x[:, :64])
+            for i in range(0, 12, 2):
+                mask = tf.math.add(mask, x[:, i*64:(i+1)*64])
+            return mask
+
+        def white_occupied_mask_func(x):
+            mask = tf.zeros_like(x[:, :64])
+            for i in range(1, 12, 2):
+                mask = tf.math.add(mask, x[:, i*64:(i+1)*64])
+            return mask
+
+        # Extracting black occupation mask (summing black pieces' bitboards)
+        black_occupied = Lambda(black_occupied_mask_func)(input_layer)
+
+        # Extracting white occupation mask (summing white pieces' bitboards)
+        white_occupied = Lambda(white_occupied_mask_func)(input_layer)
+
+        concat = Concatenate()([input_layer, black_occupied, white_occupied])
+
         # Define layer 1a
         hidden_1a = Dense(
             512,
@@ -57,7 +77,7 @@ def _make_model(args, strategy):
             name='hidden_1a',
             kernel_constraint=MinMaxNorm(min_value=Q_MIN, max_value=Q_MAX),
             bias_constraint=MinMaxNorm(min_value=Q_MIN, max_value=Q_MAX),
-        )(input_layer)
+        )(concat)
 
         # Add 2nd hidden layer
         hidden_2 = Dense(16, activation=activation, name='hidden_2')(hidden_1a)
