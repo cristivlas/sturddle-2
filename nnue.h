@@ -43,6 +43,13 @@ namespace nnue
     using Vector = Vec4f;
 #endif /* INSTRSET */
 
+
+    INLINE bool all_zero(const Vec16c& v)
+    {
+        return !horizontal_or(v);
+    }
+
+
     template<unsigned int N>
     constexpr unsigned int round_down(unsigned int x)
     {
@@ -158,7 +165,7 @@ namespace nnue
                 for (int i = 0; i != R; i += N)
                 {
                     vc.load_a(input + i);
-                    if (horizontal_add(vc) == 0)
+                    if (all_zero(vc))
                         continue;
                     in = extend(vc);
 
@@ -206,8 +213,6 @@ namespace nnue
                     for (int i = 0; i != INPUTS; i += N)
                     {
                         v_in.load_a(&input[i]);
-                        if (horizontal_add(v_in) == 0)
-                            continue;
                         for (int k = 0; k != N; ++k)
                         {
                             v_wt.load_a(&wt[j + k][i]);
