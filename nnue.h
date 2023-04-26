@@ -77,6 +77,7 @@ namespace nnue
         return (piece_type % 6) * 128 + (64 * color) + 63 - square;
     }
 
+    /** Calculate index into occupancy mask for given color */
     INLINE constexpr int mask_index(Color color, Square square) noexcept
     {
         return (color ? 833 : 769) + 63 - square;
@@ -279,6 +280,13 @@ namespace nnue
             }
         }
 
+        /** Utility for incremental updates */
+        static INLINE void delta(int (&d)[INPUTS], int& idx, PieceType pt, Color col, Square sq)
+        {
+            d[idx++] = piece_square_index(pt, col, sq);
+            d[idx++] = mask_index(col, sq);
+        }
+
         /** Update 1st layer output incrementally, based on a previous state */
         template <typename LA, typename LB, typename A>
         INLINE void update(
@@ -436,20 +444,17 @@ namespace nnue
             {
                 // add the promoted-to piece
                 ASSERT(move.promotion() == to_pos.promotion);
-                add[a_idx++] = piece_square_index(to_pos.promotion, color, move.to_square());
-                add[a_idx++] = mask_index(color, move.to_square());
+                delta(add, a_idx, to_pos.promotion, color, move.to_square());
 
                 // remove the pawn
-                remove[r_idx++] = piece_square_index(PieceType::PAWN, color, move.from_square());
-                remove[r_idx++] = mask_index(color, move.from_square());
+                delta(remove, r_idx, PieceType::PAWN, color, move.from_square());
             }
             else
             {
                 const auto ptype = from_pos.piece_type_at(move.from_square());
-                remove[r_idx++] = piece_square_index(ptype, color, move.from_square());
-                remove[r_idx++] = mask_index(color, move.from_square());
-                add[a_idx++] = piece_square_index(ptype, color, move.to_square());
-                add[a_idx++] = mask_index(color, move.to_square());
+
+                delta(remove, r_idx, ptype, color, move.from_square());
+                delta(add, a_idx, ptype, color, move.to_square());;
 
                 if (to_pos.is_castle)
                 {
@@ -457,11 +462,8 @@ namespace nnue
                     const auto rook_from_square = rook_castle_squares[king_file == 2][0][color];
                     const auto rook_to_square = rook_castle_squares[king_file == 2][1][color];
 
-                    remove[r_idx++] = piece_square_index(PieceType::ROOK, color, rook_from_square);
-                    remove[r_idx++] = mask_index(color, rook_from_square);
-
-                    add[a_idx++] = piece_square_index(PieceType::ROOK, color, rook_to_square);
-                    add[a_idx++] = mask_index(color, rook_to_square);
+                    delta(remove, r_idx, PieceType::ROOK, color, rook_from_square);
+                    delta(add, a_idx, PieceType::ROOK, color, rook_to_square);
                 }
             }
 
@@ -471,8 +473,8 @@ namespace nnue
                     ? Square(from_pos.en_passant_square - 8 * SIGN[color])
                     : move.to_square();
                 const auto victim_type = from_pos.piece_type_at(capture_square);
-                remove[r_idx++] = piece_square_index(victim_type, !color, capture_square);
-                remove[r_idx++] = mask_index(!color, capture_square);
+
+                delta(remove, r_idx, victim_type, !color, capture_square);
             }
         }
     };
