@@ -36,12 +36,6 @@
 
 constexpr auto FIRST_EXCHANGE_PLY = PLY_MAX;
 
-#if WITH_NNUE
-    constexpr bool USE_NNUE = true;
-#else
-    constexpr bool USE_NNUE = false;
-#endif
-
 /* Configuration API */
 struct Param { int val = 0; int min_val; int max_val; std::string group; };
 extern std::map<std::string, Param> _get_param_info();

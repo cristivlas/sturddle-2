@@ -82,7 +82,6 @@ cdef extern from 'common.h':
     score_t SCORE_MAX
     score_t SCORE_MIN
     const bool MOBILITY_TUNING_ENABLED
-    const bool USE_NNUE
     string timestamp() nogil
 
 
@@ -1308,11 +1307,11 @@ _tb_init()
 
 __major__   = 2
 __minor__   = 0
-__build__   = ['NNUE', str(__major__), f'{int(__minor__):02d}', timestamp().decode()]
+__build__   = [str(__major__), f'{int(__minor__):02d}', timestamp().decode()]
 
 
 def version():
-    return '.'.join(__build__[not USE_NNUE:])
+    return '.'.join(__build__)
 
 
 # ---------------------------------------------------------------------

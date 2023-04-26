@@ -75,7 +75,7 @@ std::map<std::string, Param> _get_param_info()
 
     for (const auto& elem : Config::_namespace)
     {
-        if (USE_NNUE && elem.second._group == "Eval" && elem.first.find("MOBILITY") != 0)
+        if (WITH_NNUE && elem.second._group == "Eval" && elem.first.find("MOBILITY") != 0)
             continue;
 
         info.emplace(elem.first,
@@ -116,7 +116,7 @@ void _set_param(const std::string& name, int value, bool echo)
     {
         search::Context::log_message(LogLevel::ERROR, "unknown parameter: \"" + name + "\"");
     }
-    else if (USE_NNUE && iter->second._group == "Eval" && name.find("MOBILITY") != 0)
+    else if (WITH_NNUE && iter->second._group == "Eval" && name.find("MOBILITY") != 0)
     {
         search::Context::log_message(LogLevel::WARN, "not used in NNUE mode: \"" + name + "\"");
     }
@@ -1284,7 +1284,7 @@ namespace search
 
         if (_eval == SCORE_MIN)
         {
-            if constexpr(USE_NNUE)
+            if constexpr(WITH_NNUE)
             {
                 eval_nnue();
             }
