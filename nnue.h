@@ -24,12 +24,12 @@
 #include "vectorclass.h"
 
 #define ALIGN alignas(64)
+#define DEBUG_INCREMENTAL false
 
 namespace nnue
 {
     using namespace chess;
 
-    constexpr bool DEBUG_INCREMENTAL = false;
     constexpr int QSCALE = 1024;
 
     /* bit index of the side-to-move feature within one-hot encoding */
@@ -245,7 +245,9 @@ namespace nnue
         static constexpr int OUTPUTS_A = N;
         static constexpr int OUTPUTS_B = O;
 
+    #if DEBUG_INCREMENTAL
         ALIGN int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
+    #endif
         ALIGN int16_t _output_a[OUTPUTS_A] = { 0 };
         ALIGN int16_t _output_b[OUTPUTS_B] = { 0 };
         uint64_t _hash = 0;
@@ -258,7 +260,11 @@ namespace nnue
             {
                 _hash = state.hash();
 
+            #if DEBUG_INCREMENTAL
                 memset(&_input, 0, sizeof(_input));
+            #else
+                ALIGN int8_t _input[INPUTS] = { 0 };
+            #endif
                 one_hot_encode(state, _input);
 
                 layer_1a.dot(_input, _output_a);
@@ -285,8 +291,10 @@ namespace nnue
 
                 memcpy(_output_a, ancestor._output_a, sizeof(_output_a));
                 memcpy(_output_b, ancestor._output_b, sizeof(_output_b));
-                memcpy(_input, ancestor._input, sizeof(_input));
 
+            #if DEBUG_INCREMENTAL
+                memcpy(_input, ancestor._input, sizeof(_input));
+            #endif
                 int remove_inputs[INPUTS];
                 int add_inputs[INPUTS];
                 int r_idx = 0, a_idx = 0;
@@ -297,22 +305,22 @@ namespace nnue
 
                     ASSERT(a_idx < INPUTS);
                     ASSERT(r_idx < INPUTS);
-
-                    for (int i = 0; i != r_idx; ++i)
-                        _input[remove_inputs[i]] = 0;
-                    for (int i = 0; i != a_idx; ++i)
-                        _input[add_inputs[i]] = 1;
                 }
+
+            #if DEBUG_INCREMENTAL
+                for (int i = 0; i != r_idx; ++i)
+                    _input[remove_inputs[i]] = 0;
+                for (int i = 0; i != a_idx; ++i)
+                    _input[add_inputs[i]] = 1;
+
                 _input[TURN_INDEX] ^= 1;
 
-                if constexpr(DEBUG_INCREMENTAL)
-                {
-                    int8_t temp[INPUTS] = { 0 };
-                    one_hot_encode(state, temp);
+                int8_t temp[INPUTS] = { 0 };
+                one_hot_encode(state, temp);
 
-                    for (int i = 0; i != INPUTS; ++i)
-                        ASSERT_ALWAYS(_input[i] == temp[i]);
-                }
+                for (int i = 0; i != INPUTS; ++i)
+                    ASSERT_ALWAYS(_input[i] == temp[i]);
+            #endif /* DEBUG_INCREMENTAL */
 
                 if (state.turn)
                     add_inputs[a_idx++] = TURN_INDEX;
@@ -321,18 +329,17 @@ namespace nnue
 
                 recompute(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx);
 
-                if constexpr(DEBUG_INCREMENTAL)
-                {
-                    int16_t output_a[OUTPUTS_A] = { 0 };
-                    layer_a.dot(_input, output_a);
-                    for (int i = 0; i != OUTPUTS_A; ++i)
-                        ASSERT_ALWAYS(abs(output_a[i] - _output_a[i]) < 0.0001);
+            #if DEBUG_INCREMENTAL
+                int16_t output_a[OUTPUTS_A] = { 0 };
+                layer_a.dot(_input, output_a);
+                for (int i = 0; i != OUTPUTS_A; ++i)
+                    ASSERT_ALWAYS(abs(output_a[i] - _output_a[i]) < 0.0001);
 
-                    int16_t output_b[OUTPUTS_B] = { 0 };
-                    layer_b.dot(_input, output_b);
-                    for (int i = 0; i != OUTPUTS_B; ++i)
-                        ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
-                }
+                int16_t output_b[OUTPUTS_B] = { 0 };
+                layer_b.dot(_input, output_b);
+                for (int i = 0; i != OUTPUTS_B; ++i)
+                    ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
+            #endif /* DEBUG_INCREMENTAL */
             }
         }
 
