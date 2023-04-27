@@ -92,7 +92,12 @@ if __name__ == '__main__':
         lo, hi, _ = params[p]
         tune_params[p] = f'({lo}, {hi})'
 
-    command = make_path('sturddle.py')
+    try:
+        import uci
+        command = make_path('sturddle.py')
+    except:
+        # use native (built-in) uci version
+        command = make_path('main.py')
     platform = sysconfig.get_platform()
     if platform.startswith('win'):
         command = sys.executable + ' ' + command
