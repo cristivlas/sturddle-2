@@ -688,14 +688,13 @@ namespace search
 #if WITH_NNUE
     template <bool Raw> INLINE void search::Context::eval_nnue()
     {
-    #if 0
         if constexpr (!Raw)
         {
             /* skip NNUE evaluation in endgame for large deltas in material */
             if (state().is_endgame())
             {
                 const auto eval = static_eval();
-                if (abs(eval) > 350)
+                if (abs(eval) > MAX_NNUE_EVAL)
                 {
                     eval_nnue_raw(true); /* update accumulator, do not evaluate */
                     _eval = eval + eval_fuzz();
@@ -703,7 +702,7 @@ namespace search
                 }
             }
         }
-    #endif
+
         auto eval = eval_nnue_raw();
 
         if constexpr (!Raw)
