@@ -21,7 +21,11 @@
  */
 #include "common.h"
 #include "chess.h"
-#include "vectorclass.h"
+
+#if (__amd64__) || (__amd64) || (__x86_64__) || (__x86_64) || (_M_X64) || (_M_AMD64)
+    #define USE_VECTORCLASS true
+    #include "vectorclass.h"
+#endif
 
 #define ALIGN alignas(64)
 #define DEBUG_INCREMENTAL false
@@ -29,26 +33,25 @@
 namespace nnue
 {
     using namespace chess;
-
     constexpr int QSCALE = 1024;
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
 
-#if INSTRSET >= 9
-    using Vector = Vec16f;
-#elif INSTRSET >= 8
-    using Vector = Vec8f;
-#else
-    using Vector = Vec4f;
-#endif /* INSTRSET */
-
+#if USE_VECTORCLASS
+    #if INSTRSET >= 9
+        using Vector = Vec16f;
+    #elif INSTRSET >= 8
+        using Vector = Vec8f;
+    #else
+        using Vector = Vec4f;
+    #endif /* INSTRSET */
 
     INLINE bool all_zero(const Vec16c& v)
     {
         return !horizontal_or(v);
     }
-
+#endif /* USE_VECTORCLASS */
 
     template<unsigned int N>
     constexpr unsigned int round_down(unsigned int x)
@@ -90,7 +93,7 @@ namespace nnue
         return (color ? 833 : 769) + 63 - square;
     }
 
-
+#if USE_VECTORCLASS
     /** Rectified Linear Unit (reLU) activation */
     static const Vec16s v_zero(0);
 
@@ -107,6 +110,16 @@ namespace nnue
             (to_float(extend(max(v.get_high(), v_zero))) / QSCALE).store_a(&output[i + 16]);
         }
     }
+#else
+    template <int N>
+    INLINE void activation(const int16_t (&input)[N], float (&output)[N])
+    {
+        #pragma clang loop vectorize(enable)
+        for (int i = 0; i != N; ++i)
+            output[i] = float(std::max<int16_t>(0, input[i])) / QSCALE;
+    }
+#endif /* USE_VECTORCLASS */
+
 
     template <int I, int O, typename T=float, int Scale=1>
     struct Layer
@@ -140,7 +153,7 @@ namespace nnue
         {
             static_assert(S >= INPUTS);
 
-        #if 0
+        #if !USE_VECTORCLASS
             for (int j = 0; j != OUTPUTS; ++j)
             {
                 output[j] = b[j];
@@ -148,7 +161,7 @@ namespace nnue
                 for (int i = 0; i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
             }
-        #else /* vector */
+        #else
             constexpr auto N = Vec16s::size();
             static_assert(OUTPUTS % N == 0);
 
@@ -185,7 +198,7 @@ namespace nnue
                     output[j + k] = b[j + k] + r + horizontal_add(sum[k]);
                 }
             }
-        #endif /* vector */
+        #endif /* USE_VECTORCLASS */
         }
 
         /* output */
@@ -198,6 +211,7 @@ namespace nnue
             F activate
         )
         {
+        #if USE_VECTORCLASS
             constexpr int N = Vector::size();
             static_assert(INPUTS % N == 0);
 
@@ -240,6 +254,16 @@ namespace nnue
                     output[j] = activate(b[j] + horizontal_add(sum));
                 }
             }
+        #else
+            for (int j = 0; j != OUTPUTS; ++j)
+            {
+                output[j] = b[j];
+                #pragma clang loop vectorize(enable)
+                for (int i = 0; i != INPUTS; ++i)
+                    output[j] += input[i] * wt[j][i];
+                output[j] = activate(output[j]);
+            }
+        #endif /* !USE_VECTORCLASS */
         }
 
         template <size_t N, typename U, typename V>
@@ -378,11 +402,14 @@ namespace nnue
         {
             static_assert(LA::OUTPUTS == OUTPUTS_A);
             static_assert(LB::OUTPUTS == OUTPUTS_B);
+
+            bool update_layer_b = false;
+
+        #if USE_VECTORCLASS
             static_assert(LA::OUTPUTS % Vec16s::size() == 0);
             static_assert(LB::OUTPUTS % Vec16s::size() == 0);
 
             Vec16s vo, vw;
-            bool update_layer_b = false;
 
             /* layer A */
             for (int j = 0; j != OUTPUTS_A; j += Vec16s::size())
@@ -436,6 +463,48 @@ namespace nnue
                     vo.store_a(&_output_b[j]);
                 }
             }
+        #else
+            for (int j = 0; j != OUTPUTS_A; ++j)
+            {
+                for (int i = 0; i < r_idx; ++i)
+                {
+                    const auto index = remove_inputs[i];
+                    update_layer_b |= index < LB::INPUTS;
+                    ASSERT(index < LA::INPUTS);
+                    _output_a[j] -= layer_a._w[index][j];
+                }
+
+                for (int i = 0; i < a_idx; ++i)
+                {
+                    const auto index = add_inputs[i];
+                    update_layer_b |= index < LB::INPUTS;
+                    ASSERT(index < LA::INPUTS);
+                    _output_a[j] += layer_a._w[index][j];
+                }
+            }
+
+            if (update_layer_b)
+            {
+                for (int j = 0; j != OUTPUTS_B; ++j)
+                {
+                    for (int i = 0; i < r_idx; ++i)
+                    {
+                        const auto index = remove_inputs[i];
+                        if (index >= LB::INPUTS)
+                            continue;
+                        _output_b[j] -= layer_b._w[index][j];
+                    }
+
+                    for (int i = 0; i < a_idx; ++i)
+                    {
+                        const auto index = add_inputs[i];
+                        if (index >= LB::INPUTS)
+                            break;
+                        _output_b[j] += layer_b._w[index][j];
+                    }
+                }
+            }
+        #endif /* !USE_VECTORCLASS */
         }
 
         /** Incremental update of one-hot encoding */
@@ -505,6 +574,7 @@ namespace nnue
         l2.dot(l2_in, l2_out, [](float v){ return std::max<float>(v, 0); });
 
         activation(a._output_b, attn_in); // process output of hidden_1b
+    #if USE_VECTORCLASS
         attn.dot(attn_in, attn_out);
 
         /*
@@ -522,7 +592,13 @@ namespace nnue
             v2.load_a(&attn_out[i]);
             (v1 * v2).store_a(&l2_out[i]);
         }
-
+    #else
+        int i = 0;
+        attn.dot(attn_in, attn_out, [&l2_out, &i](float v) {
+            l2_out[i++] *= v;
+            return v;
+        });
+    #endif /* USE_VECTORCLASS */
         out.dot(l2_out, output);
         return 100 * output[0];
     }
