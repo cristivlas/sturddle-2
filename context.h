@@ -690,8 +690,8 @@ namespace search
     {
         if constexpr (!Raw)
         {
-            /* skip NNUE evaluation in endgame for large deltas in material */
-            if (state().is_endgame())
+            /* skip NNUE evaluation for large deltas in material */
+            /* if (state().is_endgame()) */
             {
                 const auto eval = static_eval();
                 if (abs(eval) > MAX_NNUE_EVAL)
