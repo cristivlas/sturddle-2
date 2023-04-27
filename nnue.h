@@ -22,7 +22,7 @@
 #include "common.h"
 #include "chess.h"
 
-#if (__amd64__) || (__amd64) || (__x86_64__) || (__x86_64) || (_M_X64) || (_M_AMD64)
+#if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #define USE_VECTORCLASS true
     #include "vectorclass.h"
 #endif
@@ -77,8 +77,8 @@ namespace nnue
         }
         encoding[TURN_INDEX] = board.turn;
 
-        for_each_square_r(color_masks[0], [&](Square j) { encoding[769 + 63 - j] = 1; });
-        for_each_square_r(color_masks[1], [&](Square j) { encoding[769 + 127 - j] = 1; });
+        for_each_square_r(color_masks[0], [&](Square j) { encoding[832 - j] = 1; });
+        for_each_square_r(color_masks[1], [&](Square j) { encoding[896 - j] = 1; });
     }
 
     /** Calculate the piece-square index into the one-hot encoding. */
@@ -195,7 +195,7 @@ namespace nnue
                     for (int i = R; i != INPUTS; ++i)
                         r += input[i] * wt[j + k][i];
 
-                    output[j + k] = b[j + k] + r + horizontal_add(sum[k]);
+                    output[j + k] = b[j + k] + r + horizontal_add_x(sum[k]);
                 }
             }
         #endif /* USE_VECTORCLASS */
