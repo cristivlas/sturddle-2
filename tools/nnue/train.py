@@ -17,10 +17,8 @@ import numpy as np
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-'''
-Quantization range: use int16_t with QSCALE of 1024, and need to add 18 values
-(16 weights, 1 bias, 1 residual) without overflow, max representable value is 32767 / 18 / 1024
-'''
+# Quantization range: use int16_t with QSCALE of 1024, and need to add 18 values
+# (16 weights, 1 bias, 1 residual) w/o overflow, max representable value is 32767 / 18 / 1024
 Q_MAX = 1.7777
 Q_MIN = -Q_MAX
 
@@ -274,7 +272,6 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
         return dataset, steps_per_epoch
 
-
     print(f'Loading dataset {filepath}')
     dtype = np.float16 if args.half else np.float32
 
@@ -369,87 +366,65 @@ def main(args):
             )
             callbacks.append(model_checkpoint_callback)
 
-        if args.infer > 0:
-            # Test inference.
-            x_test, y_test = x[:args.infer], y[:args.infer]
-            for u, v in zip(model(x_test, training=False), y_test):
-                print(u.numpy(), v)
+        model.summary()
+        if not args.model:
+            print('*****************************************************************')
+            print(' WARNING: checkpoint path not provided, model WILL NOT BE SAVED! ')
+            print('*****************************************************************')
 
-            print(x_test.shape)
-            predictions = model.predict(x_test)
-            # Compute the confidence matrix
-            confidence_matrix = np.zeros((args.hot_encoding, args.hot_encoding))
-            for i in range(len(x_test)):
-                true_value = y_test[i]
-                predicted_value = predictions[i][0]
-                error = true_value - predicted_value
-                confidence_matrix += np.outer(error, error)
+        if args.tensorboard:
+            tensorboard_callback = tf.keras.callbacks.TensorBoard(
+                log_dir=args.logdir,
+                update_freq=args.save_freq if args.save_freq else 'epoch',
+                profile_batch=(1, steps_per_epoch)
+            )
+            callbacks.append(tensorboard_callback)
 
-            # Normalize the confidence matrix
-            confidence_matrix /= len(x_test)
+        assert dataset
 
-            # Print the confidence matrix
-            print(confidence_matrix)
+        if args.macro_batch_size:
+            # Validation data is not supported in chunk mode.
+            # H5 files not supported either (may run out of memory).
+            for era in range(args.epochs // args.macro_epochs):
+                logging.info(f'===== Era: {era} =====')
+                indices = np.arange(len(dataset))
+                np.random.shuffle(indices)
+                logging.info(f'indices: {indices}')
+                for i,j in enumerate(indices):
+                    logging.info(f'MacroBatch: {i + 1}/{len(indices)}: {j}')
+                    model.fit(
+                        dataset[j],
+                        callbacks=callbacks,
+                        epochs=args.macro_epochs,
+                        max_queue_size=args.max_queue_size,
+                        workers=args.workers,
+                        use_multiprocessing=args.use_multiprocessing,
+                    )
+
+        elif args.validation:
+            validation_data, _ = dataset_from_file(args, args.validation, None, strategy, None)
+            model.fit(
+                dataset,
+                callbacks=callbacks,
+                epochs=args.epochs,
+                steps_per_epoch=steps_per_epoch,
+                validation_data=validation_data,
+                validation_freq=args.vfreq,
+                max_queue_size=args.max_queue_size,
+                workers=args.workers,
+                use_multiprocessing=args.use_multiprocessing,
+            )
         else:
-            model.summary()
-            if not args.model:
-                print('*****************************************************************')
-                print(' WARNING: checkpoint path not provided, model WILL NOT BE SAVED! ')
-                print('*****************************************************************')
-
-            if args.tensorboard:
-                tensorboard_callback = tf.keras.callbacks.TensorBoard(
-                    log_dir=args.logdir,
-                    update_freq=args.save_freq if args.save_freq else 'epoch',
-                    profile_batch=(1, steps_per_epoch)
-                )
-                callbacks.append(tensorboard_callback)
-
-            assert dataset
-
-            if args.macro_batch_size:
-                # Validation data is not supported in chunk mode.
-                # H5 files not supported either (may run out of memory).
-                for era in range(args.epochs // args.macro_epochs):
-                    logging.info(f'===== Era: {era} =====')
-                    indices = np.arange(len(dataset))
-                    np.random.shuffle(indices)
-                    logging.info(f'indices: {indices}')
-                    for i,j in enumerate(indices):
-                        logging.info(f'MacroBatch: {i + 1}/{len(indices)}: {j}')
-                        model.fit(
-                            dataset[j],
-                            callbacks=callbacks,
-                            epochs=args.macro_epochs,
-                            max_queue_size=args.max_queue_size,
-                            workers=args.workers,
-                            use_multiprocessing=args.use_multiprocessing,
-                        )
-
-            elif args.validation:
-                validation_data, _ = dataset_from_file(args, args.validation, None, strategy, None)
-                model.fit(
-                    dataset,
-                    callbacks=callbacks,
-                    epochs=args.epochs,
-                    steps_per_epoch=steps_per_epoch,
-                    validation_data=validation_data,
-                    validation_freq=args.vfreq,
-                    max_queue_size=args.max_queue_size,
-                    workers=args.workers,
-                    use_multiprocessing=args.use_multiprocessing,
-                )
-            else:
-                # https://www.tensorflow.org/api_docs/python/tf/keras/Model
-                model.fit(
-                    dataset,
-                    callbacks=callbacks,
-                    epochs=args.epochs,
-                    steps_per_epoch=steps_per_epoch,
-                    max_queue_size=args.max_queue_size,
-                    workers=args.workers,
-                    use_multiprocessing=args.use_multiprocessing,
-                )
+            # https://www.tensorflow.org/api_docs/python/tf/keras/Model
+            model.fit(
+                dataset,
+                callbacks=callbacks,
+                epochs=args.epochs,
+                steps_per_epoch=steps_per_epoch,
+                max_queue_size=args.max_queue_size,
+                workers=args.workers,
+                use_multiprocessing=args.use_multiprocessing,
+            )
 
 if __name__ == '__main__':
     try:
@@ -469,7 +444,6 @@ if __name__ == '__main__':
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
         parser.add_argument('-F', '--filter', type=int)
         parser.add_argument('-H', '--half', action='store_true', help='treat input data as half-precision (float16)')
-        parser.add_argument('-i', '--infer', type=int, default=0, help='test inference on specified number of examples')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-4, help='learning rate')
@@ -516,13 +490,11 @@ if __name__ == '__main__':
         from tensorflow.keras.losses import MeanAbsoluteError
         from tensorflow.keras.regularizers import L1L2
 
-        '''
-        Detect GPU presence and compute capability.
-        '''
+        # Detect GPU presence and compute capability.
         compute = 0
 
         if not args.gpu:
-            # force TensorFlow to place all operations on the CPU
+            # Force TensorFlow to place all operations on the CPU
             tf.config.set_soft_device_placement(True)
         else:
             if gpus := tf.config.list_physical_devices('GPU'):
@@ -535,11 +507,9 @@ if __name__ == '__main__':
             else:
                 args.gpu = False
 
-        '''
-        The mixed_float16 policy specifies that TensorFlow should use a mix of float16 and float32
-        data types during training, with float32 being used for the activations and the parameters
-        of the model, and float16 being used for the intermediate computations. !!!! GPU Only !!!!
-        '''
+        # The mixed_float16 policy specifies that TensorFlow should use a mix of float16 and float32
+        # data types during training, with float32 being used for the activations and the parameters
+        # of the model, and float16 being used for the intermediate computations. !!!! GPU Only !!!!
         if args.gpu and args.mixed_precision:
             from tensorflow.keras import mixed_precision
             if compute >= 7:
