@@ -278,7 +278,6 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
     if os.path.splitext(filepath)[1].lower() == '.h5':
         f = h5py.File(filepath)
         data = f['data']
-        # print(data.dtype, data.shape)
         dtype = data.dtype
         row_count = data.shape[0]
         assert data.shape[1] == args.hot_encoding + 1, data.shape[1]
@@ -305,7 +304,6 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         x = data[:,:args.hot_encoding]
         y = data[:,args.hot_encoding:]
         print(x.shape, y.shape)
-
     steps_per_epoch = None
 
     if args.distribute and callbacks is not None:
@@ -317,7 +315,6 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         dataset = MacroBatchGenerator(x, y)
     else:
         dataset, steps_per_epoch = make_dataset(x, y)
-
     return dataset, steps_per_epoch
 
 
@@ -380,8 +377,6 @@ def main(args):
             )
             callbacks.append(tensorboard_callback)
 
-        assert dataset
-
         if args.macro_batch_size:
             # Validation data is not supported in chunk mode.
             # H5 files not supported either (may run out of memory).
@@ -398,9 +393,7 @@ def main(args):
                         epochs=args.macro_epochs,
                         max_queue_size=args.max_queue_size,
                         workers=args.workers,
-                        use_multiprocessing=args.use_multiprocessing,
-                    )
-
+                        use_multiprocessing=args.use_multiprocessing)
         elif args.validation:
             validation_data, _ = dataset_from_file(args, args.validation, None, strategy, None)
             model.fit(
@@ -412,8 +405,7 @@ def main(args):
                 validation_freq=args.vfreq,
                 max_queue_size=args.max_queue_size,
                 workers=args.workers,
-                use_multiprocessing=args.use_multiprocessing,
-            )
+                use_multiprocessing=args.use_multiprocessing)
         else:
             # https://www.tensorflow.org/api_docs/python/tf/keras/Model
             model.fit(
@@ -423,8 +415,7 @@ def main(args):
                 steps_per_epoch=steps_per_epoch,
                 max_queue_size=args.max_queue_size,
                 workers=args.workers,
-                use_multiprocessing=args.use_multiprocessing,
-            )
+                use_multiprocessing=args.use_multiprocessing)
 
 if __name__ == '__main__':
     try:
