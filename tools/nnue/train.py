@@ -48,23 +48,23 @@ def _make_model(args, strategy):
         # Define the input layer
         input_layer = Input(shape=(args.hot_encoding,), name='input')
 
-        def black_occupied_mask_func(x):
+        def black_occupied_mask(x):
             mask = tf.zeros_like(x[:, :64])
             for i in range(0, 12, 2):
                 mask = tf.math.add(mask, x[:, i*64:(i+1)*64])
             return mask
 
-        def white_occupied_mask_func(x):
+        def white_occupied_mask(x):
             mask = tf.zeros_like(x[:, :64])
             for i in range(1, 12, 2):
                 mask = tf.math.add(mask, x[:, i*64:(i+1)*64])
             return mask
 
         # Extracting black occupation mask (summing black pieces' bitboards)
-        black_occupied = Lambda(black_occupied_mask_func)(input_layer)
+        black_occupied = Lambda(black_occupied_mask)(input_layer)
 
         # Extracting white occupation mask (summing white pieces' bitboards)
-        white_occupied = Lambda(white_occupied_mask_func)(input_layer)
+        white_occupied = Lambda(white_occupied_mask)(input_layer)
 
         concat = Concatenate()([input_layer, black_occupied, white_occupied])
 

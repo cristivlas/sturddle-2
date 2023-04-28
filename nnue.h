@@ -69,6 +69,7 @@ namespace nnue
         for (const auto bb : {
             board.kings, board.pawns, board.knights, board.bishops, board.rooks, board.queens })
         {
+            #pragma unroll 2
             for (const auto mask : color_masks)
             {
                 for_each_square_r((bb & mask), [&](Square j) { encoding[i - j] = 1; });
@@ -403,7 +404,11 @@ namespace nnue
             static_assert(LA::OUTPUTS == OUTPUTS_A);
             static_assert(LB::OUTPUTS == OUTPUTS_B);
 
-            bool update_layer_b = false;
+            int update_layer_b = 0;
+            for (int i = 0; i < r_idx; ++i)
+                update_layer_b += remove_inputs[i] < LB::INPUTS;
+            for (int i = 0; i < a_idx; ++i)
+                update_layer_b += add_inputs[i] < LB::INPUTS;
 
         #if USE_VECTORCLASS
             static_assert(LA::OUTPUTS % Vec16s::size() == 0);
@@ -419,7 +424,6 @@ namespace nnue
                 for (int i = 0; i < r_idx; ++i)
                 {
                     const auto index = remove_inputs[i];
-                    update_layer_b |= index < LB::INPUTS;
                     ASSERT(index < LA::INPUTS);
                     vw.load_a(&layer_a._w[index][j]);
                     vo -= vw;
@@ -428,7 +432,6 @@ namespace nnue
                 for (int i = 0; i < a_idx; ++i)
                 {
                     const auto index = add_inputs[i];
-                    update_layer_b |= index < LB::INPUTS;
                     ASSERT(index < LA::INPUTS);
                     vw.load_a(&layer_a._w[index][j]);
                     vo += vw;
@@ -469,7 +472,6 @@ namespace nnue
                 for (int i = 0; i < r_idx; ++i)
                 {
                     const auto index = remove_inputs[i];
-                    update_layer_b |= index < LB::INPUTS;
                     ASSERT(index < LA::INPUTS);
                     _output_a[j] -= layer_a._w[index][j];
                 }
@@ -477,7 +479,6 @@ namespace nnue
                 for (int i = 0; i < a_idx; ++i)
                 {
                     const auto index = add_inputs[i];
-                    update_layer_b |= index < LB::INPUTS;
                     ASSERT(index < LA::INPUTS);
                     _output_a[j] += layer_a._w[index][j];
                 }
