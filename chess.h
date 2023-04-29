@@ -1838,6 +1838,7 @@ namespace chess
         );
         return ok;
 #else
+        throw std::runtime_error("parse_fen: not implemented");
         return false;
 #endif /* NATIVE_UCI */
     }
