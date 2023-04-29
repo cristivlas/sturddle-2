@@ -54,7 +54,7 @@ public:
         _mm_store_si128((__m128i*)p,     y0);
         _mm_store_si128((__m128i*)p + 1, y1);
     }
-    
+
     __m128i get_low() const { return y0; }
     __m128i get_high() const { return y1; }
 };
@@ -75,20 +75,37 @@ public:
 
 INLINE int16_t horizontal_add_x(__m128i a)
 {
-    __m128i aeven = _mm_slli_epi32(a, 16);                 // even numbered elements of a. get sign bit in position
-    aeven = _mm_srai_epi32(aeven, 16);                     // sign extend even numbered elements
-    __m128i aodd = _mm_srai_epi32(a, 16);                  // sign extend odd  numbered elements
-    __m128i sum1 = _mm_add_epi32(aeven, aodd);             // add even and odd elements
-     __m128i sum2 = _mm_unpackhi_epi64(sum1, sum1);        // 2 high elements
+    __m128i aeven = _mm_slli_epi32(a, 16);              // even numbered elements of a. get sign bit in position
+    aeven = _mm_srai_epi32(aeven, 16);                  // sign extend even numbered elements
+    __m128i aodd = _mm_srai_epi32(a, 16);               // sign extend odd  numbered elements
+    __m128i sum1 = _mm_add_epi32(aeven, aodd);          // add even and odd elements
+     __m128i sum2 = _mm_unpackhi_epi64(sum1, sum1);     // 2 high elements
     __m128i sum3 = _mm_add_epi32(sum1, sum2);
-    __m128i sum4 = _mm_shuffle_epi32(sum3, 1);             // 1 high elements
+    __m128i sum4 = _mm_shuffle_epi32(sum3, 1);          // 1 high elements
     __m128i sum5 = _mm_add_epi32(sum3, sum4);
-    return _mm_cvtsi128_si32(sum5);                       // 32 bit sum
+    return _mm_cvtsi128_si32(sum5);                     // 32 bit sum
 }
 
 INLINE int16_t horizontal_add_x(Vec16s a)
 {
     return horizontal_add_x(a.get_low()) + horizontal_add_x(a.get_high());
+}
+
+INLINE int16_t horizontal_add(__m128i a)
+{
+    __m128i sum1 = _mm_unpackhi_epi64(a, a);            // 4 high elements
+    __m128i sum2 = _mm_add_epi16(a, sum1);              // 4 sums
+    __m128i sum3 = _mm_shuffle_epi32(sum2, 0x01);       // 2 high elements
+    __m128i sum4 = _mm_add_epi16(sum2, sum3);           // 2 sums
+    __m128i sum5 = _mm_shufflelo_epi16(sum4, 0x01);     // 1 high element
+    __m128i sum6 = _mm_add_epi16(sum4, sum5);           // 1 sum
+    int16_t sum7 = (int16_t)_mm_cvtsi128_si32(sum6);    // 16 bit sum
+    return  sum7;                                       // sign extend to 32 bits
+}
+
+INLINE int16_t horizontal_add(Vec16s a)
+{
+    return horizontal_add(a.get_low()) + horizontal_add(a.get_high());
 }
 
 INLINE float horizontal_add(Vec4f a)

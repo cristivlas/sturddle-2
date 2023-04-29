@@ -30,7 +30,7 @@
     #define USE_VECTORCLASS true
 #endif
 
-#define ALIGN alignas(64)
+#define ALIGN alignas(32)
 #define DEBUG_INCREMENTAL false
 
 namespace nnue
@@ -97,7 +97,7 @@ namespace nnue
         return (color ? 833 : 769) + 63 - square;
     }
 
-#if USE_VECTORCLASS && !defined(__arm__)
+#if 0 && USE_VECTORCLASS && !defined(__arm__)
     /** Rectified Linear Unit (reLU) activation */
     static const Vec16s v_zero(0);
 
@@ -199,7 +199,7 @@ namespace nnue
                     for (int i = R; i != INPUTS; ++i)
                         r += input[i] * wt[j + k][i];
 
-                    output[j + k] = b[j + k] + r + horizontal_add_x(sum[k]);
+                    output[j + k] = b[j + k] + r + horizontal_add(sum[k]);
                 }
             }
         #endif /* USE_VECTORCLASS */
