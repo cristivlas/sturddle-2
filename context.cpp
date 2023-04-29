@@ -782,7 +782,7 @@ namespace search
         return result;
     }
 
-
+#if !WITH_NNUE
     /*----------------------------------------------------------------------
      * Tactical evaluations.
      * All tactical scores are computed from the white side's perspective.
@@ -1269,7 +1269,7 @@ namespace search
 
         return eval;
     }
-
+#endif /* !WITH_NNUE */
 
     /*
      * Static evaluation has three components:
@@ -1284,29 +1284,26 @@ namespace search
 
         if (_eval == SCORE_MIN)
         {
-            if constexpr(WITH_NNUE)
-            {
-                eval_nnue();
-            }
-            else
-            {
-                /*
-                 * 1. Material + piece-squares + mobility
-                 */
-                _eval = state().eval();
+        #if WITH_NNUE
+            eval_nnue();
+        #else
+            /*
+             * 1. Material + piece-squares + mobility
+             */
+            _eval = state().eval();
 
-                ASSERT(_eval > SCORE_MIN);
-                ASSERT(_eval < SCORE_MAX);
+            ASSERT(_eval > SCORE_MIN);
+            ASSERT(_eval < SCORE_MAX);
 
-                _eval += eval_fuzz();
+            _eval += eval_fuzz();
 
-                /*
-                 * 2. Tactical (positional) evaluation.
-                 */
-                _eval += eval_insufficient_material(state(), _eval, [this]() {
-                    return eval_tactical(*this, _eval);
-                });
-            }
+            /*
+             * 2. Tactical (positional) evaluation.
+             */
+            _eval += eval_insufficient_material(state(), _eval, [this]() {
+                return eval_tactical(*this, _eval);
+            });
+        #endif /* !WITH_NNUE */
         }
 
         ASSERT(_eval > SCORE_MIN);
