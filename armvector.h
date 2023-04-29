@@ -60,26 +60,13 @@ public:
 };
 
 
-class Vec16c
-{
-    __m128i xmm;
-
-public:
-    Vec16c() = default;
-    static constexpr size_t size() { return 16; }
-
-    void load_a(const int8_t* p) {  xmm = _mm_load_si128((__m128i const*)p); }
-    operator __m128i() const { return xmm; }
-};
-
-
 INLINE int16_t horizontal_add_x(__m128i a)
 {
     __m128i aeven = _mm_slli_epi32(a, 16);              // even numbered elements of a. get sign bit in position
     aeven = _mm_srai_epi32(aeven, 16);                  // sign extend even numbered elements
     __m128i aodd = _mm_srai_epi32(a, 16);               // sign extend odd  numbered elements
     __m128i sum1 = _mm_add_epi32(aeven, aodd);          // add even and odd elements
-     __m128i sum2 = _mm_unpackhi_epi64(sum1, sum1);     // 2 high elements
+    __m128i sum2 = _mm_unpackhi_epi64(sum1, sum1);      // 2 high elements
     __m128i sum3 = _mm_add_epi32(sum1, sum2);
     __m128i sum4 = _mm_shuffle_epi32(sum3, 1);          // 1 high elements
     __m128i sum5 = _mm_add_epi32(sum3, sum4);
@@ -117,26 +104,10 @@ INLINE float horizontal_add(Vec4f a)
     return _mm_cvtss_f32(t4);
 }
 
-INLINE bool horizontal_or(const Vec16c a)
+INLINE bool horizontal_or(const Vec16s a)
 {
-    return !_mm_testz_si128(a, a);
-}
-
-// Extend the low 8 elements to 16 bits with sign extension
-INLINE __m128i extend_low(Vec16c a) {
-    __m128i sign = _mm_cmpgt_epi8(_mm_setzero_si128(), a);  // 0 > a
-    return         _mm_unpacklo_epi8(a, sign);              // interleave with sign extensions
-}
-
-// Extend the high 8 elements to 16 bits with sign extension
-INLINE __m128i extend_high(Vec16c a) {
-    __m128i sign = _mm_cmpgt_epi8(_mm_setzero_si128(), a);  // 0 > a
-    return         _mm_unpackhi_epi8(a, sign);              // interleave with sign extensions
-}
-
-INLINE Vec16s extend(Vec16c a)
-{
-    return Vec16s(extend_low(a), extend_high(a));
+    auto b = _mm_or_si128(a.get_low(), a.get_high());
+    return !_mm_testz_si128(b, b);
 }
 
 INLINE Vec16s operator + (Vec16s a, Vec16s b)
