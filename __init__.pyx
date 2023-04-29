@@ -202,7 +202,7 @@ cdef extern from 'chess.h' namespace 'chess':
 
 
 cdef extern from 'zobrist.h' namespace 'chess':
-    cdef size_t zobrist_hash(const State&)
+    cdef uint64_t zobrist_hash(const State&)
 
 
 assert BLACK == chess.BLACK
@@ -374,7 +374,7 @@ cdef class BoardState:
         return [py_move(m) for m in moves]
 
 
-    cpdef size_t zobrist(self):
+    cpdef uint64_t zobrist(self):
         return zobrist_hash(self._state)
 
 
