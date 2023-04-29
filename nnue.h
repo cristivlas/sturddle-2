@@ -36,6 +36,8 @@
 namespace nnue
 {
     using namespace chess;
+    using input_t = int16_t;
+
     constexpr int QSCALE = 1024;
 
     /* bit index of the side-to-move feature within one-hot encoding */
@@ -50,7 +52,7 @@ namespace nnue
         using Vector = Vec4f;
     #endif /* INSTRSET */
 
-    INLINE bool all_zero(const Vec16c& v)
+    INLINE bool all_zero(const Vec16s& v)
     {
         return !horizontal_or(v);
     }
@@ -97,24 +99,7 @@ namespace nnue
         return (color ? 833 : 769) + 63 - square;
     }
 
-#if 0 && USE_VECTORCLASS && !defined(__arm__)
     /** Rectified Linear Unit (reLU) activation */
-    static const Vec16s v_zero(0);
-
-    template <int N>
-    INLINE void activation(const int16_t (&input)[N], float (&output)[N])
-    {
-        static_assert(N % Vec32s::size() == 0);
-
-        Vec32s v;
-        for (int i = 0; i != N; i += Vec32s::size())
-        {
-            v.load_a(&input[i]);
-            (to_float(extend(max(v.get_low(), v_zero))) / QSCALE).store_a(&output[i]);
-            (to_float(extend(max(v.get_high(), v_zero))) / QSCALE).store_a(&output[i + 16]);
-        }
-    }
-#else
     template <int N>
     INLINE void activation(const int16_t (&input)[N], float (&output)[N])
     {
@@ -122,7 +107,6 @@ namespace nnue
         for (int i = 0; i != N; ++i)
             output[i] = std::max<float>(0, float(input[i]) / QSCALE);
     }
-#endif /* USE_VECTORCLASS */
 
 
     template <int I, int O, typename T=float, int Scale=1>
@@ -148,7 +132,7 @@ namespace nnue
         /* input */
         template <size_t S, typename F>
         static INLINE void dot(
-            const int8_t (&input)[S],
+            const input_t (&input)[S],
             int16_t (&output)[OUTPUTS],
             const int16_t(&b)[OUTPUTS],
             const int16_t(&wt)[OUTPUTS][INPUTS],
@@ -173,7 +157,6 @@ namespace nnue
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
-                Vec16c vc;
                 Vec16s in, vw, sum[N];
 
                 for (int k = 0; k != N; ++k)
@@ -181,10 +164,9 @@ namespace nnue
 
                 for (int i = 0; i != R; i += N)
                 {
-                    vc.load_a(input + i);
-                    if (all_zero(vc))
+                    in.load_a(input + i);
+                    if (all_zero(in))
                         continue;
-                    in = extend(vc);
 
                     for (int k = 0; k != N; ++k)
                     {
@@ -291,7 +273,7 @@ namespace nnue
         static constexpr int OUTPUTS_B = O;
 
     #if DEBUG_INCREMENTAL
-        ALIGN int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
+        ALIGN input_t _input[INPUTS] = { 0 }; /* one-hot encoding */
     #endif
         ALIGN int16_t _output_a[OUTPUTS_A] = { 0 };
         ALIGN int16_t _output_b[OUTPUTS_B] = { 0 };
@@ -308,7 +290,7 @@ namespace nnue
             #if DEBUG_INCREMENTAL
                 memset(&_input, 0, sizeof(_input));
             #else
-                ALIGN int8_t _input[INPUTS] = { 0 };
+                ALIGN input_t _input[INPUTS] = { 0 };
             #endif
                 one_hot_encode(state, _input);
 
@@ -367,7 +349,7 @@ namespace nnue
 
                 _input[TURN_INDEX] ^= 1;
 
-                int8_t temp[INPUTS] = { 0 };
+                input_t temp[INPUTS] = { 0 };
                 one_hot_encode(state, temp);
 
                 for (int i = 0; i != INPUTS; ++i)
