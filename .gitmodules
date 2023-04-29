@@ -7,3 +7,6 @@
 [submodule "version2"]
 	path = version2
 	url = https://github.com/vectorclass/version2.git
+[submodule "simde"]
+	path = simde
+	url = https://github.com/simd-everywhere/simde.git

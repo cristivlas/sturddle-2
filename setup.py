@@ -77,8 +77,17 @@ if environ.get('BUILD_DEBUG', None):
 args.append('-DBUILD_STAMP=' + build_stamp)
 args += environ.get("CXXFLAGS", '').split()
 
-if 'armv7' in platform:
-    args.append('-mfpu=neon')
+
+# Emulate SSE on ARM using: https://github.com/simd-everywhere/simde
+if 'arm' in platform:
+    args.append('-I./simde')
+    if 'armv7' in platform:
+        args += [
+            '-mfpu=neon-vfpv4',
+            '-mfloat-abi=hard',
+            '-Wno-bitwise-instead-of-logical',
+        ]
+
 if platform.startswith('win'):
     # Windows build
     args += [
@@ -105,7 +114,6 @@ else:
         args.append('-O3')
     args += [
         f'-std=c++{STDCPP}',
-        '-Wall',
         '-Wextra',
         '-Wno-unused-label',
         '-Wno-unknown-pragmas',

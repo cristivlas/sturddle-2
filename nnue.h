@@ -23,8 +23,11 @@
 #include "chess.h"
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
-    #define USE_VECTORCLASS true
     #include "vectorclass.h"
+    #define USE_VECTORCLASS true
+#elif __arm__
+    #include "armvector.h"
+    #define USE_VECTORCLASS true
 #endif
 
 #define ALIGN alignas(64)
@@ -94,7 +97,7 @@ namespace nnue
         return (color ? 833 : 769) + 63 - square;
     }
 
-#if USE_VECTORCLASS
+#if USE_VECTORCLASS && !defined(__arm__)
     /** Rectified Linear Unit (reLU) activation */
     static const Vec16s v_zero(0);
 
@@ -117,7 +120,7 @@ namespace nnue
     {
         #pragma clang loop vectorize(enable)
         for (int i = 0; i != N; ++i)
-            output[i] = float(std::max<int16_t>(0, input[i])) / QSCALE;
+            output[i] = std::max<float>(0, float(input[i]) / QSCALE);
     }
 #endif /* USE_VECTORCLASS */
 
@@ -575,7 +578,8 @@ namespace nnue
         l2.dot(l2_in, l2_out, [](float v){ return std::max<float>(v, 0); });
 
         activation(a._output_b, attn_in); // process output of hidden_1b
-    #if USE_VECTORCLASS
+
+    #if USE_VECTORCLASS && !defined(__arm__)
         attn.dot(attn_in, attn_out);
 
         /*
