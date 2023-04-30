@@ -79,14 +79,10 @@ args += environ.get("CXXFLAGS", '').split()
 
 
 # Emulate SSE on ARM using: https://github.com/simd-everywhere/simde
-if 'arm' in platform:
-    args.append('-I./simde')
+if any(('arm' in platform, 'aarch64' in platform)):
+    args += [ '-I./simde', '-Wno-bitwise-instead-of-logical' ]
     if 'armv7' in platform:
-        args += [
-            '-mfpu=neon-vfpv4',
-            '-mfloat-abi=hard',
-            '-Wno-bitwise-instead-of-logical',
-        ]
+        args += [ '-mfpu=neon-vfpv4', '-mfloat-abi=hard' ]
 
 if platform.startswith('win'):
     # Windows build

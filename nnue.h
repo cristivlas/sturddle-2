@@ -25,7 +25,7 @@
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
     #define USE_VECTORCLASS true
-#elif __arm__
+#elif (__arm__) || (__aarch64__)
     #include "armvector.h"
     #define USE_VECTORCLASS true
 #endif
@@ -561,14 +561,14 @@ namespace nnue
 
         activation(a._output_b, attn_in); // process output of hidden_1b
 
-    #if USE_VECTORCLASS && !defined(__arm__)
-        attn.dot(attn_in, attn_out);
-
         /*
          * The dynamic weights computed by the "attention" layer
          * are used to modulate the output of another
          * hidden layer (L2, aka hidden_2) through element-wise multiplication
          */
+    #if (INSTRSET > 0)
+        attn.dot(attn_in, attn_out);
+
         static_assert(ATTN::OUTPUTS == L2::OUTPUTS);
         static_assert(ATTN::OUTPUTS % Vec16f::size() == 0);
 
@@ -586,6 +586,7 @@ namespace nnue
             return v;
         });
     #endif /* USE_VECTORCLASS */
+
         out.dot(l2_out, output);
         return 100 * output[0];
     }
