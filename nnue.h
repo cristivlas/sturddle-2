@@ -21,15 +21,42 @@
  */
 #include "common.h"
 #include "chess.h"
-#include "vectorclass.h"
 
-#define ALIGN alignas(64)
+#if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
+    #include "vectorclass.h"
+    #define USE_VECTORCLASS true
+#elif (__arm__) || (__aarch64__)
+    #include "armvector.h"
+    #define USE_VECTORCLASS true
+#endif
+
+#define ALIGN alignas(32)
 #define DEBUG_INCREMENTAL false
 
 namespace nnue
 {
     using namespace chess;
-    using Vector = Vec16f;
+    using input_t = int16_t;
+
+    constexpr int QSCALE = 1024;
+
+    /* bit index of the side-to-move feature within one-hot encoding */
+    constexpr int TURN_INDEX = 768;
+
+#if USE_VECTORCLASS
+    #if INSTRSET >= 9
+        using Vector = Vec16f;
+    #elif INSTRSET >= 8
+        using Vector = Vec8f;
+    #else
+        using Vector = Vec4f;
+    #endif /* INSTRSET */
+
+    INLINE bool all_zero(const Vec16s& v)
+    {
+        return !horizontal_or(v);
+    }
+#endif /* USE_VECTORCLASS */
 
     template<unsigned int N>
     constexpr unsigned int round_down(unsigned int x)
@@ -38,63 +65,55 @@ namespace nnue
     }
 
     template <typename T>
-    INLINE void one_hot_encode(const State& board, T (&encoding)[769])
+    INLINE void one_hot_encode(const State& board, T (&encoding)[897])
     {
-        const auto color_masks = { board.occupied_co(BLACK), board.occupied_co(WHITE) };
+        const uint64_t color_masks[2] = { board.occupied_co(BLACK), board.occupied_co(WHITE) };
 
         int i = 63;
-        #pragma clang loop vectorize(enable)
+        #pragma unroll 6
         for (const auto bb : {
             board.kings, board.pawns, board.knights, board.bishops, board.rooks, board.queens })
         {
+            #pragma unroll 2
             for (const auto mask : color_masks)
             {
-                for_each_square_r((bb & mask), [&](Square j) {
-                    encoding[i - j] = 1;
-                });
+                for_each_square_r((bb & mask), [&](Square j) { encoding[i - j] = 1; });
                 i += 64;
             }
         }
-        encoding[768] = board.turn;
+        encoding[TURN_INDEX] = board.turn;
+
+        for_each_square_r(color_masks[0], [&](Square j) { encoding[832 - j] = 1; });
+        for_each_square_r(color_masks[1], [&](Square j) { encoding[896 - j] = 1; });
     }
 
     /** Calculate the piece-square index into the one-hot encoding. */
-    INLINE int psi(PieceType piece_type, Color color, Square square)
+    INLINE constexpr int piece_square_index(PieceType piece_type, Color color, Square square)
     {
-        static constexpr int index[] = { 1, 2, 3, 4, 5, 0 };
-        return index[piece_type - 1] * 128 + (64 * color) + 63 - square;
+        return (piece_type % 6) * 128 + (64 * color) + 63 - square;
+    }
+
+    /** Calculate index into occupancy mask for given color */
+    INLINE constexpr int mask_index(Color color, Square square) noexcept
+    {
+        return (color ? 833 : 769) + 63 - square;
     }
 
     /** Rectified Linear Unit (reLU) activation */
-#if 0
-    template <typename U, typename V, int N>
-    INLINE void activation(const U (&input)[N], V (&output)[N])
+    template <int N>
+    INLINE void activation(const int16_t (&input)[N], float (&output)[N])
     {
         #pragma clang loop vectorize(enable)
         for (int i = 0; i != N; ++i)
-            output[i] = std::max<V>(0, input[i]);
+            output[i] = std::max<float>(0, float(input[i]) / QSCALE);
     }
-#else
-    template <int N>
-    INLINE void activation(const float (&input)[N], float (&output)[N])
-    {
-        static_assert(N % Vector::size() == 0);
-        static const Vector zero(0.0);
 
-        Vector v;
-        for (int i = 0; i != N; i += Vector::size())
-        {
-            v.load_a(&input[i]);
-            max(v, zero).store_a(&output[i]);
-        }
-    }
-#endif
 
-    template <int N, int M, typename T=float>
+    template <int I, int O, typename T=float, int Scale=1>
     struct Layer
     {
-        static constexpr int INPUTS = N;
-        static constexpr int OUTPUTS = M;
+        static constexpr int INPUTS = I;
+        static constexpr int OUTPUTS = O;
 
         ALIGN T _b[OUTPUTS]; /* biases */
         ALIGN T _w[INPUTS][OUTPUTS]; /* weights */
@@ -103,114 +122,195 @@ namespace nnue
         Layer(const float(&w)[INPUTS][OUTPUTS], const float(&b)[OUTPUTS])
         {
             for (int j = 0; j != OUTPUTS; ++j)
-                _b[j] = b[j];
+                _b[j] = b[j] * Scale;
 
             for (int i = 0; i != INPUTS; ++i)
                 for (int j = 0; j != OUTPUTS; ++j)
-                    _w[i][j] = _wt[j][i] = w[i][j];
+                    _w[i][j] = _wt[j][i] = w[i][j] * Scale;
         }
 
         /* input */
-        template <typename V>
+        template <size_t S, typename F>
         static INLINE void dot(
-            const int8_t(&input)[INPUTS],
-            V(&output)[OUTPUTS],
-            const float(&b)[OUTPUTS],
-            const float(&wt)[OUTPUTS][INPUTS]
+            const input_t (&input)[S],
+            int16_t (&output)[OUTPUTS],
+            const int16_t(&b)[OUTPUTS],
+            const int16_t(&wt)[OUTPUTS][INPUTS],
+            F /* activation applied separately */
         )
         {
+            static_assert(S >= INPUTS);
+
+        #if !USE_VECTORCLASS
             for (int j = 0; j != OUTPUTS; ++j)
             {
-            #if 0
                 output[j] = b[j];
                 #pragma clang loop vectorize(enable)
                 for (int i = 0; i != INPUTS; ++i)
                     output[j] += input[i] * wt[j][i];
-            #else
-                Vector vw, sum(0.0);
-                static constexpr auto R = round_down<Vector::size()>(INPUTS);
-
-                for (int i = 0; i != R; i += Vector::size())
-                {
-                    vw.load(&wt[j][i]);
-                    const Vector in(
-                        input[i],   input[i+1], input[i+2], input[i+3],
-                        input[i+4], input[i+5], input[i+6], input[i+7],
-                        input[i+8], input[i+9], input[i+10],input[i+11],
-                        input[i+12],input[i+13],input[i+14],input[i+15]);
-
-                    sum = mul_add(in, vw, sum);
-                }
-                output[j] = b[j] + horizontal_add(sum);
-                for (int i = R; i != INPUTS; ++i)
-                    output[j] += input[i] * wt[j][i];
-            #endif
             }
+        #else
+            constexpr auto N = Vec16s::size();
+            static_assert(OUTPUTS % N == 0);
+
+            constexpr auto R = round_down<N>(INPUTS);
+
+            for (int j = 0; j != OUTPUTS; j += N)
+            {
+                Vec16s in, vw, sum[N];
+
+                for (int k = 0; k != N; ++k)
+                    sum[k] = Vec16s(0);
+
+                for (int i = 0; i != R; i += N)
+                {
+                    in.load_a(input + i);
+                    if (all_zero(in))
+                        continue;
+
+                    for (int k = 0; k != N; ++k)
+                    {
+                        vw.load(&wt[j + k][i]);
+                        sum[k] += in * vw;
+                    }
+                }
+
+                for (int k = 0; k != N; ++k)
+                {
+                    int16_t r = 0;
+                    for (int i = R; i != INPUTS; ++i)
+                        r += input[i] * wt[j + k][i];
+
+                    output[j + k] = b[j + k] + r + horizontal_add(sum[k]);
+                }
+            }
+        #endif /* USE_VECTORCLASS */
         }
 
         /* output */
+        template<typename F>
         static INLINE void dot(
-            const float(&input)[INPUTS],
-            float(&output)[OUTPUTS],
+            const float (&input)[INPUTS],
+            float (&output)[OUTPUTS],
             const float(&b)[OUTPUTS],
-            const float(&wt)[OUTPUTS][INPUTS]
+            const float(&wt)[OUTPUTS][INPUTS],
+            F activate
         )
         {
+        #if USE_VECTORCLASS
+            constexpr int N = Vector::size();
+            static_assert(INPUTS % N == 0);
+
+            if constexpr(OUTPUTS % N == 0)
+            {
+                for (int j = 0; j != OUTPUTS; j += N)
+                {
+                    Vector sum[N], v_wt, v_in;
+
+                    for (int k = 0; k != N; ++k)
+                        sum[k] = Vector(0.0);
+
+                    for (int i = 0; i != INPUTS; i += N)
+                    {
+                        v_in.load_a(&input[i]);
+                        for (int k = 0; k != N; ++k)
+                        {
+                            v_wt.load_a(&wt[j + k][i]);
+                            sum[k] = mul_add(v_in, v_wt, sum[k]);
+                        }
+                    }
+                    #pragma unroll N
+                    for (int k = 0; k != N; ++k)
+                        output[j + k] = activate(b[j + k] + horizontal_add(sum[k]));
+                }
+            }
+            else
+            {
+                for (int j = 0; j != OUTPUTS; ++j)
+                {
+                    Vector sum(0.0);
+                    Vector v_in, v_wt;
+
+                    for (int i = 0; i != INPUTS; i += N)
+                    {
+                        v_in.load_a(&input[i]);
+                        v_wt.load_a(&wt[j][i]);
+                        sum = mul_add(v_in, v_wt, sum);
+                    }
+                    output[j] = activate(b[j] + horizontal_add(sum));
+                }
+            }
+        #else
             for (int j = 0; j != OUTPUTS; ++j)
             {
-                Vector sum(0.0);
-
-                static_assert(INPUTS % Vector::size() == 0);
-                Vector v_in, v_wt;
-
-                for (int i = 0; i != INPUTS; i += Vector::size())
-                {
-                    v_in.load_a(&input[i]);
-                    v_wt.load_a(&wt[j][i]);
-                    sum = mul_add(v_in, v_wt, sum);
-                }
-                output[j] = b[j] + horizontal_add(sum);
+                output[j] = b[j];
+                #pragma clang loop vectorize(enable)
+                for (int i = 0; i != INPUTS; ++i)
+                    output[j] += input[i] * wt[j][i];
+                output[j] = activate(output[j]);
             }
+        #endif /* !USE_VECTORCLASS */
         }
 
-        template <typename U, typename V>
-        INLINE void dot(const U(&input)[INPUTS], V(&output)[OUTPUTS]) const
+        template <size_t N, typename U, typename V>
+        INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS]) const
         {
-            dot(input, output, _b, _wt);
+            dot(input, output, _b, _wt, [](V v) { return v; });
+        }
+
+        template <size_t N, typename U, typename V, typename F>
+        INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], F activate) const
+        {
+            dot(input, output, _b, _wt, activate);
         }
     };
 
 
-    template <int N, int M> struct Accumulator
+    template <int M, int N, int O> struct Accumulator
     {
-        static constexpr int INPUTS = N;
-        static constexpr int OUTPUTS = M;
+        static constexpr int INPUTS = M;
+        static constexpr int OUTPUTS_A = N;
+        static constexpr int OUTPUTS_B = O;
 
-        /* bit index of the side-to-move feature within one-hot encoding */
-        static constexpr int TURN_INDEX = INPUTS - 1;
-
-        int8_t _input[INPUTS] = { 0 }; /* one-hot encoding */
-        ALIGN float _output[OUTPUTS] = { 0 };
+    #if DEBUG_INCREMENTAL
+        ALIGN input_t _input[INPUTS] = { 0 }; /* one-hot encoding */
+    #endif
+        ALIGN int16_t _output_a[OUTPUTS_A] = { 0 };
+        ALIGN int16_t _output_b[OUTPUTS_B] = { 0 };
         uint64_t _hash = 0;
 
         /** Compute 1st layer output from scratch at root */
-        template <typename L> INLINE void update(const L& layer, const State& state)
+        template <typename LA, typename LB>
+        INLINE void update(const LA& layer_1a, const LB& layer_1b, const State& state)
         {
             if (state.hash() != _hash)
             {
                 _hash = state.hash();
 
+            #if DEBUG_INCREMENTAL
                 memset(&_input, 0, sizeof(_input));
+            #else
+                ALIGN input_t _input[INPUTS] = { 0 };
+            #endif
                 one_hot_encode(state, _input);
 
-                layer.dot(_input, _output);
+                layer_1a.dot(_input, _output_a);
+                layer_1b.dot(_input, _output_b);
             }
         }
 
+        /** Utility for incremental updates */
+        static INLINE void delta(int (&d)[INPUTS], int& idx, PieceType pt, Color col, Square sq)
+        {
+            d[idx++] = piece_square_index(pt, col, sq);
+            d[idx++] = mask_index(col, sq);
+        }
+
         /** Update 1st layer output incrementally, based on a previous state */
-        template <typename L, typename A>
+        template <typename LA, typename LB, typename A>
         INLINE void update(
-            const L& layer,
+            const LA& layer_a,
+            const LB& layer_b,
             const State& prev,
             const State& state,
             const Move& move,
@@ -223,9 +323,12 @@ namespace nnue
                 /* compute delta based on ancestor state */
                 ASSERT(prev.turn != state.turn);
 
-                memcpy(_output, ancestor._output, sizeof(_output));
-                memcpy(_input, ancestor._input, sizeof(_input));
+                memcpy(_output_a, ancestor._output_a, sizeof(_output_a));
+                memcpy(_output_b, ancestor._output_b, sizeof(_output_b));
 
+            #if DEBUG_INCREMENTAL
+                memcpy(_input, ancestor._input, sizeof(_input));
+            #endif
                 int remove_inputs[INPUTS];
                 int add_inputs[INPUTS];
                 int r_idx = 0, a_idx = 0;
@@ -233,18 +336,20 @@ namespace nnue
                 if (move)
                 {
                     update(prev, state, move, prev.turn, remove_inputs, add_inputs, r_idx, a_idx);
+
                     ASSERT(a_idx < INPUTS);
                     ASSERT(r_idx < INPUTS);
-
-                    for (int i = 0; i != r_idx; ++i)
-                        _input[remove_inputs[i]] = 0;
-                    for (int i = 0; i != a_idx; ++i)
-                        _input[add_inputs[i]] = 1;
                 }
-                _input[TURN_INDEX] ^= 1;
 
             #if DEBUG_INCREMENTAL
-                int8_t temp[INPUTS] = { 0 };
+                for (int i = 0; i != r_idx; ++i)
+                    _input[remove_inputs[i]] = 0;
+                for (int i = 0; i != a_idx; ++i)
+                    _input[add_inputs[i]] = 1;
+
+                _input[TURN_INDEX] ^= 1;
+
+                input_t temp[INPUTS] = { 0 };
                 one_hot_encode(state, temp);
 
                 for (int i = 0; i != INPUTS; ++i)
@@ -256,59 +361,136 @@ namespace nnue
                 else
                     remove_inputs[r_idx++] = TURN_INDEX;
 
-                recalculate_output(layer, remove_inputs, add_inputs, r_idx, a_idx);
+                recompute(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx);
 
             #if DEBUG_INCREMENTAL
-                float output[OUTPUTS] = { 0 };
-                layer.dot(_input, output);
-                for (int i = 0; i != OUTPUTS; ++i)
-                {
-                    std::cout << _output[i] << " " << output[i] << "\n";
-                    ASSERT_ALWAYS(abs(output[i] - _output[i]) < 0.0001);
-                }
+                int16_t output_a[OUTPUTS_A] = { 0 };
+                layer_a.dot(_input, output_a);
+                for (int i = 0; i != OUTPUTS_A; ++i)
+                    ASSERT_ALWAYS(abs(output_a[i] - _output_a[i]) < 0.0001);
+
+                int16_t output_b[OUTPUTS_B] = { 0 };
+                layer_b.dot(_input, output_b);
+                for (int i = 0; i != OUTPUTS_B; ++i)
+                    ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
             #endif /* DEBUG_INCREMENTAL */
             }
         }
 
-        template <typename L>
-        INLINE void recalculate_output(
-            const L& layer,
+        template <typename LA, typename LB>
+        INLINE void recompute(
+            const LA& layer_a,
+            const LB& layer_b,
             const int (&remove_inputs)[INPUTS],
             const int (&add_inputs)[INPUTS],
             const int r_idx,
             const int a_idx)
         {
-            static_assert(L::OUTPUTS == OUTPUTS);
-            static_assert(OUTPUTS % Vector::size() == 0);
+            static_assert(LA::OUTPUTS == OUTPUTS_A);
+            static_assert(LB::OUTPUTS == OUTPUTS_B);
 
-        #if true /* vectorize */
-            Vector vo, vw;
+            int update_layer_b = 0;
+            for (int i = 0; i < r_idx; ++i)
+                update_layer_b += remove_inputs[i] < LB::INPUTS;
+            for (int i = 0; i < a_idx; ++i)
+                update_layer_b += add_inputs[i] < LB::INPUTS;
 
-            for (int j = 0; j != layer.OUTPUTS; j += Vector::size())
+        #if USE_VECTORCLASS
+            static_assert(LA::OUTPUTS % Vec16s::size() == 0);
+            static_assert(LB::OUTPUTS % Vec16s::size() == 0);
+
+            Vec16s vo, vw;
+
+            /* layer A */
+            for (int j = 0; j != OUTPUTS_A; j += Vec16s::size())
             {
-                vo.load_a(&_output[j]);
-                for (int i = 0; i != r_idx; ++i)
+                vo.load_a(&_output_a[j]);
+
+                for (int i = 0; i < r_idx; ++i)
                 {
-                    vw.load_a(&layer._w[remove_inputs[i]][j]);
+                    const auto index = remove_inputs[i];
+                    ASSERT(index < LA::INPUTS);
+                    vw.load_a(&layer_a._w[index][j]);
                     vo -= vw;
                 }
-                for (int i = 0; i != a_idx; ++i)
+
+                for (int i = 0; i < a_idx; ++i)
                 {
-                    vw.load_a(&layer._w[add_inputs[i]][j]);
+                    const auto index = add_inputs[i];
+                    ASSERT(index < LA::INPUTS);
+                    vw.load_a(&layer_a._w[index][j]);
                     vo += vw;
                 }
-                vo.store_a(&_output[j]);
+                vo.store_a(&_output_a[j]);
             }
-        #else /* non-vectorized version */
-            for (int j = 0; j != OUTPUTS; ++j)
-            {
-                for (int i = 0; i != a_idx; ++i)
-                    _output[j] += layer._w[add_inputs[i]][j];
 
-                for (int i = 0; i != r_idx; ++i)
-                    _output[j] -= layer._w[remove_inputs[i]][j];
+            if (update_layer_b)
+            {
+                /* layer B */
+                for (int j = 0; j != OUTPUTS_B; j += Vec16s::size())
+                {
+                    vo.load_a(&_output_b[j]);
+
+                    for (int i = 0; i < r_idx; ++i)
+                    {
+                        const auto index = remove_inputs[i];
+                        if (index >= LB::INPUTS)
+                            continue;
+                        vw.load_a(&layer_b._w[index][j]);
+                        vo -= vw;
+                    }
+
+                    for (int i = 0; i < a_idx; ++i)
+                    {
+                        const auto index = add_inputs[i];
+                        if (index >= LB::INPUTS)
+                            break;
+                        vw.load_a(&layer_b._w[index][j]);
+                        vo += vw;
+                    }
+                    vo.store_a(&_output_b[j]);
+                }
             }
-        #endif
+        #else
+            for (int j = 0; j != OUTPUTS_A; ++j)
+            {
+                for (int i = 0; i < r_idx; ++i)
+                {
+                    const auto index = remove_inputs[i];
+                    ASSERT(index < LA::INPUTS);
+                    _output_a[j] -= layer_a._w[index][j];
+                }
+
+                for (int i = 0; i < a_idx; ++i)
+                {
+                    const auto index = add_inputs[i];
+                    ASSERT(index < LA::INPUTS);
+                    _output_a[j] += layer_a._w[index][j];
+                }
+            }
+
+            if (update_layer_b)
+            {
+                for (int j = 0; j != OUTPUTS_B; ++j)
+                {
+                    for (int i = 0; i < r_idx; ++i)
+                    {
+                        const auto index = remove_inputs[i];
+                        if (index >= LB::INPUTS)
+                            continue;
+                        _output_b[j] -= layer_b._w[index][j];
+                    }
+
+                    for (int i = 0; i < a_idx; ++i)
+                    {
+                        const auto index = add_inputs[i];
+                        if (index >= LB::INPUTS)
+                            break;
+                        _output_b[j] += layer_b._w[index][j];
+                    }
+                }
+            }
+        #endif /* !USE_VECTORCLASS */
         }
 
         /** Incremental update of one-hot encoding */
@@ -326,23 +508,26 @@ namespace nnue
             {
                 // add the promoted-to piece
                 ASSERT(move.promotion() == to_pos.promotion);
-                add[a_idx++] = psi(to_pos.promotion, color, move.to_square());
+                delta(add, a_idx, to_pos.promotion, color, move.to_square());
 
                 // remove the pawn
-                remove[r_idx++] = psi(PieceType::PAWN, color, move.from_square());
+                delta(remove, r_idx, PieceType::PAWN, color, move.from_square());
             }
             else
             {
                 const auto ptype = from_pos.piece_type_at(move.from_square());
-                remove[r_idx++] = psi(ptype, color, move.from_square());
-                add[a_idx++] = psi(ptype, color, move.to_square());
+
+                delta(remove, r_idx, ptype, color, move.from_square());
+                delta(add, a_idx, ptype, color, move.to_square());;
 
                 if (to_pos.is_castle)
                 {
                     const auto king_file = square_file(move.to_square());
+                    const auto rook_from_square = rook_castle_squares[king_file == 2][0][color];
+                    const auto rook_to_square = rook_castle_squares[king_file == 2][1][color];
 
-                    remove[r_idx++] = psi(PieceType::ROOK, color, rook_castle_squares[king_file == 2][0][color]);
-                    add[a_idx++] = psi(PieceType::ROOK, color, rook_castle_squares[king_file == 2][1][color]);
+                    delta(remove, r_idx, PieceType::ROOK, color, rook_from_square);
+                    delta(add, a_idx, PieceType::ROOK, color, rook_to_square);
                 }
             }
 
@@ -352,22 +537,57 @@ namespace nnue
                     ? Square(from_pos.en_passant_square - 8 * SIGN[color])
                     : move.to_square();
                 const auto victim_type = from_pos.piece_type_at(capture_square);
-                remove[r_idx++] = psi(victim_type, !color, capture_square);
+
+                delta(remove, r_idx, victim_type, !color, capture_square);
             }
         }
     };
 
 
-    template <typename A, typename L> INLINE int eval(const A& a, const L& layer)
+    template <typename A, typename L2, typename ATTN, typename OUT>
+    INLINE int eval(const A& a, const L2& l2, const ATTN& attn, const OUT& out)
     {
-        ALIGN float input[L::INPUTS];
+        static_assert(A::OUTPUTS_A == L2::INPUTS);
+        static_assert(A::OUTPUTS_B == ATTN::INPUTS);
+
+        ALIGN float attn_in[ATTN::INPUTS];
+        ALIGN float attn_out[ATTN::OUTPUTS];
+        ALIGN float l2_in[L2::INPUTS];
+        ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float output[1];
 
-        static_assert(L::INPUTS == A::OUTPUTS);
+        activation(a._output_a, l2_in); // process output of hidden_1a
+        l2.dot(l2_in, l2_out, [](float v){ return std::max<float>(v, 0); });
 
-        activation(a._output, input);
+        activation(a._output_b, attn_in); // process output of hidden_1b
 
-        layer.dot(input, output);
+        /*
+         * The dynamic weights computed by the "attention" layer
+         * are used to modulate the output of another
+         * hidden layer (L2, aka hidden_2) through element-wise multiplication
+         */
+    #if (INSTRSET > 0)
+        attn.dot(attn_in, attn_out);
+
+        static_assert(ATTN::OUTPUTS == L2::OUTPUTS);
+        static_assert(ATTN::OUTPUTS % Vec16f::size() == 0);
+
+        Vec16f v1, v2;
+        for (int i = 0; i != L2::OUTPUTS; i += Vec16f::size())
+        {
+            v1.load_a(&l2_out[i]);
+            v2.load_a(&attn_out[i]);
+            (v1 * v2).store_a(&l2_out[i]);
+        }
+    #else
+        int i = 0;
+        attn.dot(attn_in, attn_out, [&l2_out, &i](float v) {
+            l2_out[i++] *= v;
+            return v;
+        });
+    #endif /* USE_VECTORCLASS */
+
+        out.dot(l2_out, output);
         return 100 * output[0];
     }
 

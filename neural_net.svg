@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1158pt" height="545pt" viewBox="0.00 0.00 1158.09 545.10">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 541.1)">
+<title>G</title>
+<polygon fill="#ffffff" stroke="transparent" points="-4,4 -4,-541.1 1154.094,-541.1 1154.094,4 -4,4"/>
+<!-- input_layer -->
+<g id="node1" class="node">
+<title>input_layer</title>
+<polygon fill="none" stroke="#000000" points="116.4543,-247.5 116.4543,-297.1 231.0391,-297.1 231.0391,-247.5 116.4543,-247.5"/>
+<text text-anchor="middle" x="173.7467" y="-280.5" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">input</text>
+<polyline fill="none" stroke="#000000" points="116.4543,-272.3 231.0391,-272.3 "/>
+<text text-anchor="middle" x="128.3456" y="-255.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">0</text>
+<polyline fill="none" stroke="#000000" points="140.2369,-247.5 140.2369,-272.3 "/>
+<text text-anchor="middle" x="152.1282" y="-255.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">1</text>
+<polyline fill="none" stroke="#000000" points="164.0195,-247.5 164.0195,-272.3 "/>
+<text text-anchor="middle" x="177.8554" y="-255.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">...</text>
+<polyline fill="none" stroke="#000000" points="191.6913,-247.5 191.6913,-272.3 "/>
+<text text-anchor="middle" x="211.3652" y="-255.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">769</text>
+</g>
+<!-- hidden_1a -->
+<g id="node2" class="node">
+<title>hidden_1a</title>
+<polygon fill="none" stroke="#000000" points="364.4934,-396.5 364.4934,-446.1 479.0782,-446.1 479.0782,-396.5 364.4934,-396.5"/>
+<text text-anchor="middle" x="421.7858" y="-429.5" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">hidden_1a</text>
+<polyline fill="none" stroke="#000000" points="364.4934,-421.3 479.0782,-421.3 "/>
+<text text-anchor="middle" x="376.3847" y="-404.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">0</text>
+<polyline fill="none" stroke="#000000" points="388.276,-396.5 388.276,-421.3 "/>
+<text text-anchor="middle" x="400.1673" y="-404.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">1</text>
+<polyline fill="none" stroke="#000000" points="412.0586,-396.5 412.0586,-421.3 "/>
+<text text-anchor="middle" x="425.8945" y="-404.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">...</text>
+<polyline fill="none" stroke="#000000" points="439.7304,-396.5 439.7304,-421.3 "/>
+<text text-anchor="middle" x="459.4043" y="-404.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">511</text>
+</g>
+<!-- input_layer&#45;&gt;hidden_1a -->
+<g id="edge1" class="edge">
+<title>input_layer-&gt;hidden_1a</title>
+<path fill="none" stroke="#000000" d="M215.2629,-297.2392C258.2772,-323.0785 325.5248,-363.4749 371.5185,-391.1038"/>
+<polygon fill="#000000" stroke="#000000" points="369.7596,-394.1302 380.1342,-396.2794 373.3643,-388.1296 369.7596,-394.1302"/>
+</g>
+<!-- slice_input_1b -->
+<g id="node4" class="node">
+<title>slice_input_1b</title>
+<polygon fill="none" stroke="#000000" points="364.4934,-123.5 364.4934,-173.1 479.0782,-173.1 479.0782,-123.5 364.4934,-123.5"/>
+<text text-anchor="middle" x="421.7858" y="-156.5" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">slice_input_1b</text>
+<polyline fill="none" stroke="#000000" points="364.4934,-148.3 479.0782,-148.3 "/>
+<text text-anchor="middle" x="376.3847" y="-131.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">0</text>
+<polyline fill="none" stroke="#000000" points="388.276,-123.5 388.276,-148.3 "/>
+<text text-anchor="middle" x="400.1673" y="-131.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">1</text>
+<polyline fill="none" stroke="#000000" points="412.0586,-123.5 412.0586,-148.3 "/>
+<text text-anchor="middle" x="425.8945" y="-131.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">...</text>
+<polyline fill="none" stroke="#000000" points="439.7304,-123.5 439.7304,-148.3 "/>
+<text text-anchor="middle" x="459.4043" y="-131.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">255</text>
+</g>
+<!-- input_layer&#45;&gt;slice_input_1b -->
+<g id="edge3" class="edge">
+<title>input_layer-&gt;slice_input_1b</title>
+<path fill="none" stroke="#000000" d="M223.6427,-247.3559C263.8409,-227.26 320.4495,-198.9602 362.8723,-177.7521"/>
+<polygon fill="#000000" stroke="#000000" points="364.59,-180.8064 371.9695,-173.2042 361.4599,-174.5453 364.59,-180.8064"/>
+</g>
+<!-- hidden_2 -->
+<g id="node3" class="node">
+<title>hidden_2</title>
+<polygon fill="none" stroke="#000000" points="610.8804,-414.5 610.8804,-464.1 717.6826,-464.1 717.6826,-414.5 610.8804,-414.5"/>
+<text text-anchor="middle" x="664.2815" y="-447.5" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">hidden_2</text>
+<polyline fill="none" stroke="#000000" points="610.8804,-439.3 717.6826,-439.3 "/>
+<text text-anchor="middle" x="622.7717" y="-422.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">0</text>
+<polyline fill="none" stroke="#000000" points="634.663,-414.5 634.663,-439.3 "/>
+<text text-anchor="middle" x="646.5543" y="-422.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">1</text>
+<polyline fill="none" stroke="#000000" points="658.4456,-414.5 658.4456,-439.3 "/>
+<text text-anchor="middle" x="672.2815" y="-422.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">...</text>
+<polyline fill="none" stroke="#000000" points="686.1174,-414.5 686.1174,-439.3 "/>
+<text text-anchor="middle" x="701.9" y="-422.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">15</text>
+</g>
+<!-- hidden_1a&#45;&gt;hidden_2 -->
+<g id="edge2" class="edge">
+<title>hidden_1a-&gt;hidden_2</title>
+<path fill="none" stroke="#000000" d="M479.2539,-425.5657C515.6119,-428.2645 562.6662,-431.7573 600.2239,-434.5451"/>
+<polygon fill="#000000" stroke="#000000" points="600.3168,-438.0616 610.5485,-435.3115 600.835,-431.0808 600.3168,-438.0616"/>
+</g>
+<!-- weighted_hidden_2 -->
+<g id="node7" class="node">
+<title>weighted_hidden_2</title>
+<polygon fill="none" stroke="#000000" points="941.7098,-210.5 941.7098,-260.1 1079.094,-260.1 1079.094,-210.5 941.7098,-210.5"/>
+<text text-anchor="middle" x="1010.4019" y="-243.5" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">weighted_hidden_2</text>
+<polyline fill="none" stroke="#000000" points="941.7098,-235.3 1079.094,-235.3 "/>
+<text text-anchor="middle" x="957.1011" y="-218.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">0</text>
+<polyline fill="none" stroke="#000000" points="972.4924,-210.5 972.4924,-235.3 "/>
+<text text-anchor="middle" x="988.3837" y="-218.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">1</text>
+<polyline fill="none" stroke="#000000" points="1004.275,-210.5 1004.275,-235.3 "/>
+<text text-anchor="middle" x="1021.6109" y="-218.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">...</text>
+<polyline fill="none" stroke="#000000" points="1038.9468,-210.5 1038.9468,-235.3 "/>
+<text text-anchor="middle" x="1058.7294" y="-218.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">15</text>
+</g>
+<!-- hidden_2&#45;&gt;weighted_hidden_2 -->
+<g id="edge6" class="edge">
+<title>hidden_2-&gt;weighted_hidden_2</title>
+<path fill="none" stroke="#000000" d="M706.3766,-414.4895C769.999,-376.9911 890.4916,-305.974 959.1362,-265.5155"/>
+<polygon fill="#000000" stroke="#000000" points="961.221,-268.3495 968.0589,-260.2566 957.6667,-262.319 961.221,-268.3495"/>
+<text text-anchor="middle" x="787.3572" y="-405.3" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#000000">hidden_2</text>
+</g>
+<!-- hidden_1b -->
+<g id="node5" class="node">
+<title>hidden_1b</title>
+<polygon fill="none" stroke="#000000" points="496.0782,-73.5 496.0782,-123.1 602.8804,-123.1 602.8804,-73.5 496.0782,-73.5"/>
+<text text-anchor="middle" x="549.4793" y="-106.5" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">hidden_1b</text>
+<polyline fill="none" stroke="#000000" points="496.0782,-98.3 602.8804,-98.3 "/>
+<text text-anchor="middle" x="507.9695" y="-81.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">0</text>
+<polyline fill="none" stroke="#000000" points="519.8608,-73.5 519.8608,-98.3 "/>
+<text text-anchor="middle" x="531.7521" y="-81.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">1</text>
+<polyline fill="none" stroke="#000000" points="543.6434,-73.5 543.6434,-98.3 "/>
+<text text-anchor="middle" x="557.4793" y="-81.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">...</text>
+<polyline fill="none" stroke="#000000" points="571.3152,-73.5 571.3152,-98.3 "/>
+<text text-anchor="middle" x="587.0978" y="-81.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">15</text>
+</g>
+<!-- slice_input_1b&#45;&gt;hidden_1b -->
+<g id="edge4" class="edge">
+<title>slice_input_1b-&gt;hidden_1b</title>
+<path fill="none" stroke="#000000" d="M479.2822,-125.7866C481.7149,-124.834 484.1601,-123.8766 486.6034,-122.9199"/>
+<polygon fill="#000000" stroke="#000000" points="487.9522,-126.1505 495.9877,-119.2453 485.3999,-119.6324 487.9522,-126.1505"/>
+</g>
+<!-- dynamic_weights -->
+<g id="node6" class="node">
+<title>dynamic_weights</title>
+<polygon fill="none" stroke="#000000" points="725.6826,-.5 725.6826,-50.1 849.0318,-50.1 849.0318,-.5 725.6826,-.5"/>
+<text text-anchor="middle" x="787.3572" y="-33.5" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">dynamic_weights</text>
+<polyline fill="none" stroke="#000000" points="725.6826,-25.3 849.0318,-25.3 "/>
+<text text-anchor="middle" x="739.5739" y="-8.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">0</text>
+<polyline fill="none" stroke="#000000" points="753.4652,-.5 753.4652,-25.3 "/>
+<text text-anchor="middle" x="767.3565" y="-8.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">1</text>
+<polyline fill="none" stroke="#000000" points="781.2478,-.5 781.2478,-25.3 "/>
+<text text-anchor="middle" x="797.0837" y="-8.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">...</text>
+<polyline fill="none" stroke="#000000" points="812.9196,-.5 812.9196,-25.3 "/>
+<text text-anchor="middle" x="830.7022" y="-8.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">15</text>
+</g>
+<!-- hidden_1b&#45;&gt;dynamic_weights -->
+<g id="edge5" class="edge">
+<title>hidden_1b-&gt;dynamic_weights</title>
+<path fill="none" stroke="#000000" d="M603.1603,-81.8264C636.3528,-71.6403 679.366,-58.4404 715.4784,-47.3582"/>
+<polygon fill="#000000" stroke="#000000" points="716.9339,-50.5727 725.4671,-44.2929 714.8802,-43.8807 716.9339,-50.5727"/>
+</g>
+<!-- dynamic_weights&#45;&gt;weighted_hidden_2 -->
+<g id="edge7" class="edge">
+<title>dynamic_weights-&gt;weighted_hidden_2</title>
+<path fill="none" stroke="#000000" d="M813.8192,-50.2144C854.3986,-88.4205 931.9705,-161.4556 976.5772,-203.4535"/>
+<polygon fill="#000000" stroke="#000000" points="974.2943,-206.1113 983.9743,-210.418 979.0927,-201.0147 974.2943,-206.1113"/>
+<text text-anchor="middle" x="895.3708" y="-165.3" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#000000">dynamic_weights</text>
+</g>
+<!-- output_layer -->
+<g id="node8" class="node">
+<title>output_layer</title>
+<polygon fill="none" stroke="#000000" points="1096.094,-210.5 1096.094,-260.1 1150.094,-260.1 1150.094,-210.5 1096.094,-210.5"/>
+<text text-anchor="middle" x="1123.094" y="-243.5" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">out</text>
+<polyline fill="none" stroke="#000000" points="1096.094,-235.3 1150.094,-235.3 "/>
+<text text-anchor="middle" x="1123.094" y="-218.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">0</text>
+</g>
+<!-- weighted_hidden_2&#45;&gt;output_layer -->
+<g id="edge8" class="edge">
+<title>weighted_hidden_2-&gt;output_layer</title>
+<path fill="none" stroke="#000000" d="M1079.2016,-235.3C1081.4012,-235.3 1083.5742,-235.3 1085.7061,-235.3"/>
+<polygon fill="#000000" stroke="#000000" points="1085.9581,-238.8001 1095.958,-235.3 1085.958,-231.8001 1085.9581,-238.8001"/>
+</g>
+<!-- legend -->
+<g id="node9" class="node">
+<title>legend</title>
+<text text-anchor="middle" x="173.7467" y="-520.5" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">Dynamic Weights:</text>
+<text text-anchor="middle" x="173.7467" y="-503.7" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#000000">Modulate the output of hidden_2 based on hidden_1b</text>
+</g>
+</g>
+</svg>

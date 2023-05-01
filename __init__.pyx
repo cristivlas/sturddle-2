@@ -82,7 +82,6 @@ cdef extern from 'common.h':
     score_t SCORE_MAX
     score_t SCORE_MIN
     const bool MOBILITY_TUNING_ENABLED
-    const bool USE_NNUE
     string timestamp() nogil
 
 
@@ -203,7 +202,7 @@ cdef extern from 'chess.h' namespace 'chess':
 
 
 cdef extern from 'zobrist.h' namespace 'chess':
-    cdef size_t zobrist_hash(const State&)
+    cdef uint64_t zobrist_hash(const State&)
 
 
 assert BLACK == chess.BLACK
@@ -375,7 +374,7 @@ cdef class BoardState:
         return [py_move(m) for m in moves]
 
 
-    cpdef size_t zobrist(self):
+    cpdef uint64_t zobrist(self):
         return zobrist_hash(self._state)
 
 
@@ -1308,11 +1307,11 @@ _tb_init()
 
 __major__   = 2
 __minor__   = 0
-__build__   = ['NNUE', str(__major__), f'{int(__minor__):02d}', timestamp().decode()]
+__build__   = [str(__major__), f'{int(__minor__):02d}', timestamp().decode()]
 
 
 def version():
-    return '.'.join(__build__[not USE_NNUE:])
+    return '.'.join(__build__)
 
 
 # ---------------------------------------------------------------------

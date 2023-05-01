@@ -25,12 +25,11 @@
 
 #define FULL_SIZE_LOCK false /* half-size => 32 bit, full => 64 bit */
 
-
 #if _MSC_VER
-    static constexpr auto CACHE_LINE_SIZE = std::hardware_destructive_interference_size;
+  static constexpr auto CACHE_LINE_SIZE = std::hardware_destructive_interference_size;
 #else
-    /* __cpp_lib_hardware_interference_size is broken in versions of clang and gcc */
-    static constexpr size_t CACHE_LINE_SIZE = 64;
+  /* __cpp_lib_hardware_interference_size is broken in some versions of clang and gcc */
+  static constexpr size_t CACHE_LINE_SIZE = 64;
 #endif /* _MSC_VER */
 
 
@@ -357,6 +356,7 @@ namespace search
             for (auto e = entry; e < last; ++e)
             {
                 ASSERT((const uint8_t*)(e + 1) <= &_data.back());
+
                 Proxy q(e, h); /* try non-blocking locking 1st */
                 if (q)
                     return q;

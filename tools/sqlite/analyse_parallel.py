@@ -6,13 +6,21 @@ import argparse
 import multiprocessing
 import os
 import signal
+import time
 from math import copysign
 
 import chess
 import chess.engine
 import chess.pgn
 import dbutils.sqlite
-from tqdm.contrib import tenumerate
+from tqdm import tqdm
+
+
+def handle_sigint(sig, frame):
+    os.killpg(0, signal.SIGTERM)
+
+signal.signal(signal.SIGINT, handle_sigint)
+
 
 _create_table = '''CREATE TABLE IF NOT EXISTS position(
     epd text PRIMARY KEY,   -- Position
@@ -23,7 +31,7 @@ _create_table = '''CREATE TABLE IF NOT EXISTS position(
 _insert = '''INSERT INTO position(epd, depth, score) VALUES(?,?,?)'''
 
 
-def analyse(args, queue, lock):
+def analyse(args, queue, lock, progress, event):
     engine = get_engine(args)
     try:
         while True:
@@ -45,9 +53,10 @@ def analyse(args, queue, lock):
                         mate_dist = score.pov(score.turn).mate()
                         score = int(copysign(args.mate_score, mate_dist) - (mate_dist))
                         sql_out.exec(_insert, (epd,  info['depth'], score))
-    except KeyboardInterrupt:
-        pass
-    engine.quit()
+                    progress.value += 1
+                    event.set()
+    finally:
+        engine.quit()
 
 
 def get_engine(args):
@@ -59,49 +68,59 @@ def get_engine(args):
 processes = []
 
 
-def handler(signum, frame):
-    os._exit(-1)
-
-
 def main(args):
-    signal.signal(signal.SIGINT, handler)
-
     if args.cleanup and os.path.exists(args.output):
         os.unlink(args.output)
+
     with dbutils.sqlite.SQLConn(args.output) as sql_out:
         sql_out.exec(_create_table)
+
     with dbutils.sqlite.SQLConn(*args.input) as sql_in:
         # Create a queue to store the EPDs
         queue = multiprocessing.Queue()
         lock = multiprocessing.Lock()
-        # Start worker processes
-        for _ in range(args.num_workers):
-            p = multiprocessing.Process(target=analyse, args=(args, queue, lock))
-            processes.append(p)
-            p.start()
+
         count = sql_in.row_max_count('position')
         query = '''SELECT DISTINCT(epd) from position'''
-        # Put the EPDs in the queue
-        for _, row in tenumerate(sql_in.exec(query), start=1, total=count, desc='Analysing'):
-            epd = row[0]
-            if not args.no_skip_existing:
+
+        progress = multiprocessing.Value('i', 0)
+
+        # progress event
+        event = multiprocessing.Event()
+
+        with tqdm(progress, total=count, desc='Analysing') as pbar:
+            # Start worker processes
+            for _ in range(args.num_workers):
+                p = multiprocessing.Process(target=analyse, args=(args, queue, lock, progress, event))
+                processes.append(p)
+                p.start()
+
+            # Put the EPDs in the queue
+            for row in sql_in.exec(query):
+                epd = row[0]
                 with lock:
                     with dbutils.sqlite.SQLConn(args.output) as sql_out:
-                        res = sql_out.exec(f'''
-                            SELECT EXISTS(SELECT (epd) FROM position WHERE epd="{epd}")'''
-                        )
+                        res = sql_out.exec(f'SELECT EXISTS(SELECT (epd) FROM position WHERE epd="{epd}")')
                         # skip over existing rows
                         if res.fetchone()[0]:
+                            progress.value += 1
+                            pbar.update(1)
                             continue
-            queue.put(epd)
+                    pbar.n = progress.value
+                    pbar.refresh()
+                queue.put(epd)
 
-        # Put sentinels in the queue to signal the worker processes to stop
-        for _ in range(args.num_workers):
-            queue.put(None)
+            # Put sentinels in the queue to signal the worker processes to stop
+            for _ in range(args.num_workers):
+                queue.put(None)
 
-        # Wait for all worker processes to finish
-        for p in processes:
-            p.join()
+            # periodically check the progress and update the tqdm progress bar
+            while multiprocessing.active_children():
+                with lock:
+                    pbar.n = progress.value
+                    pbar.refresh()
+                time.sleep(0.1)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -115,9 +134,8 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--output', required=True)
     parser.add_argument('-t', '--time-limit', type=float, default=0.1)
     parser.add_argument('--threads', type=int, default=1)
-    parser.add_argument('--no-skip-existing', action='store_true')
 
-    try:
-        main(parser.parse_args())
-    except KeyboardInterrupt:
-        pass
+    main(parser.parse_args())
+    # Wait for all worker processes to finish
+    for p in processes:
+        p.join()

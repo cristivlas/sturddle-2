@@ -600,7 +600,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         }
     }
 
-    ctxt.eval_nnue();
+    ctxt.eval_nnue_raw(true /* update only */);
 
     /*
      * https://www.chessprogramming.org/Node_Types#PV
@@ -660,6 +660,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         ASSERT(ctxt._alpha < ctxt._beta);
 
     #if WITH_NNUE
+        ctxt.eval_nnue();
         const auto eval = ctxt._eval;
     #else
         const auto eval = ctxt._tt_entry._value;
@@ -689,6 +690,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
     #if RAZORING
         if (ctxt.depth() > 0
+            && eval > SCORE_MIN
             && eval < alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(ctxt.depth())
             && eval + eval_captures(ctxt) < alpha)
         {

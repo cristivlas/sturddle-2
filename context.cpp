@@ -75,7 +75,7 @@ std::map<std::string, Param> _get_param_info()
 
     for (const auto& elem : Config::_namespace)
     {
-        if (USE_NNUE && elem.second._group == "Eval" && elem.first.find("MOBILITY") != 0)
+        if (WITH_NNUE && elem.second._group == "Eval" && elem.first.find("MOBILITY") != 0)
             continue;
 
         info.emplace(elem.first,
@@ -116,7 +116,7 @@ void _set_param(const std::string& name, int value, bool echo)
     {
         search::Context::log_message(LogLevel::ERROR, "unknown parameter: \"" + name + "\"");
     }
-    else if (USE_NNUE && iter->second._group == "Eval" && name.find("MOBILITY") != 0)
+    else if (WITH_NNUE && iter->second._group == "Eval" && name.find("MOBILITY") != 0)
     {
         search::Context::log_message(LogLevel::WARN, "not used in NNUE mode: \"" + name + "\"");
     }
@@ -175,25 +175,41 @@ void assert_param_ref()
  *****************************************************************************/
 
 #if WITH_NNUE
-bool USE_NNUE = true;
 
-constexpr int INPUTS = 769;
-constexpr int HIDDEN = 640;
+constexpr int INPUTS_A = 897;
+constexpr int INPUTS_B = 256;
+constexpr int HIDDEN_1A = 512;
+constexpr int HIDDEN_1B = 64;
+constexpr int HIDDEN_2 = 16;
 
-using Accumulator = nnue::Accumulator<INPUTS, HIDDEN>;
+using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
 static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
-static nnue::Layer<INPUTS, HIDDEN> L1(hidden_w, hidden_b);
-static nnue::Layer<HIDDEN, 1> L2(out_w, out_b);
+/*
+ * The accumulator takes the inputs and process them into two outputs,
+ * using (hidden) neural layers L1A and L1B. L1B processes only the 1st
+ * 128 inputs, which correspond to kings and pawns. The output of L1B is
+ * processed by the dynamic weights layer (attention layer). The outputs
+ * of the dynamic weights (attention) layer are multiplied element-wise
+ * with the result of the L2 (hidden_2) layer.
+ */
+static nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE> L1A(hidden_1a_w, hidden_1a_b);
+static nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE> L1B(hidden_1b_w, hidden_1b_b);
 
-score_t search::Context::eval_nnue_raw()
+static nnue::Layer<HIDDEN_1A, HIDDEN_2> L2(hidden_2_w, hidden_2_b);
+static nnue::Layer<HIDDEN_1B, HIDDEN_2> L_DYN(dynamic_weights_w, dynamic_weights_b);
+static nnue::Layer<HIDDEN_2, 1> L4(out_w, out_b);
+
+
+score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
 {
     auto& acc = NNUE_data[tid()][_ply];
-    if (is_root() || _update_nnue)
-        acc.update(L1, state());
-    else
-        acc.update(L1, _parent->state(), state(), _move, NNUE_data[tid()][_ply - 1]);
 
-    return nnue::eval(acc, L2);
+    if (is_root() || _update_nnue)
+        acc.update(L1A, L1B, state());
+    else
+        acc.update(L1A, L1B, _parent->state(), state(), _move, NNUE_data[tid()][_ply - 1]);
+
+    return update_only ? SCORE_MIN : nnue::eval(acc, L2, L_DYN, L4);
 }
 
 
@@ -210,9 +226,6 @@ int nnue::eval_fen(const std::string& fen)
 }
 
 #else
-
-bool USE_NNUE = false;
-
 
 int nnue::eval_fen(const std::string& fen)
 {
@@ -769,7 +782,7 @@ namespace search
         return result;
     }
 
-
+#if !WITH_NNUE
     /*----------------------------------------------------------------------
      * Tactical evaluations.
      * All tactical scores are computed from the white side's perspective.
@@ -1256,7 +1269,7 @@ namespace search
 
         return eval;
     }
-
+#endif /* !WITH_NNUE */
 
     /*
      * Static evaluation has three components:
@@ -1271,7 +1284,9 @@ namespace search
 
         if (_eval == SCORE_MIN)
         {
-            ASSERT(!USE_NNUE);
+        #if WITH_NNUE
+            eval_nnue();
+        #else
             /*
              * 1. Material + piece-squares + mobility
              */
@@ -1288,6 +1303,7 @@ namespace search
             _eval += eval_insufficient_material(state(), _eval, [this]() {
                 return eval_tactical(*this, _eval);
             });
+        #endif /* !WITH_NNUE */
         }
 
         ASSERT(_eval > SCORE_MIN);

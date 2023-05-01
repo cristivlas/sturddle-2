@@ -156,6 +156,7 @@ DECLARE_VALUE(  DOUBLE_EXT_MARGIN,                  853,    0,    1000)
 DECLARE_VALUE(  DOUBLE_EXT_MAX,                      12,    0,     100)
 DECLARE_VALUE(  LMP_BASE,                             2,    2,     100)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
+DECLARE_VALUE(  MAX_NNUE_EVAL,                      496,    0,    1000)
 DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,     100)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    827,    0,    1000)
 DECLARE_VALUE(  NNUE_EVAL_SCALE,                    411,    0,     500)
@@ -189,7 +190,8 @@ DECLARE_VALUE(  HISTORY_HIGH,                        92,    0,     100)
 DECLARE_VALUE(  HISTORY_LOW,                         65,    0, HISTORY_HIGH)
 DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,     100)
 DECLARE_VALUE(  HISTORY_PRUNE,                       56,    0,     100)
-
+/****************************************************************************/
+#if !WITH_NNUE
 GROUP(Eval)
 DECLARE_VALUE(  BISHOP_PAIR,                         68,    0,     100)
 DECLARE_VALUE(  CASTLING_RIGHTS_BONUS,               33,    0,     100)
@@ -226,7 +228,8 @@ DECLARE_VALUE(  MIDGAME_PAWN_MAJORITY,               48,    0,     250)
 DECLARE_VALUE(  MIDGAME_THREATS,                     67,    0,     250)
 DECLARE_VALUE(  MIDGAME_UNBLOCKED_PASSED_6,         135,    0,     250)
 DECLARE_VALUE(  MIDGAME_UNBLOCKED_PASSED_7,         215,    0,     250)
-
+#endif /* !WITH_NNUE */
+/****************************************************************************/
 #undef DECLARE_ALIAS
 #undef DECLARE_PARAM
 #undef DECLARE_VALUE

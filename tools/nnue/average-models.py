@@ -33,7 +33,7 @@ if __name__ == '__main__':
 
     models = []
     for model_dir in args.model_dirs:
-        models.append(tf.keras.models.load_model(model_dir))
+        models.append(tf.keras.models.load_model(model_dir, custom_objects={'_clipped_mae': None}))
 
     averaged_model = average_models(models)
     averaged_model.save(args.output)

@@ -77,9 +77,17 @@ if environ.get('BUILD_DEBUG', None):
 args.append('-DBUILD_STAMP=' + build_stamp)
 args += environ.get("CXXFLAGS", '').split()
 
+
+# Emulate SSE on ARM using: https://github.com/simd-everywhere/simde
+if any(('arm' in platform, 'aarch64' in platform)):
+    args += [ '-I./simde', '-Wno-bitwise-instead-of-logical' ]
+    if 'armv7' in platform:
+        args += [ '-mfpu=neon-vfpv4', '-mfloat-abi=hard' ]
+
 if platform.startswith('win'):
     # Windows build
     args += [
+        '/fp:fast',
         '/std:c++20',
         '/DWITH_NNUE',
         '/DCALLBACK_PERIOD=8192',
@@ -95,12 +103,13 @@ if platform.startswith('win'):
             '-Wno-unused-variable',
         ]
 else:
+    STDCPP=20 if NATIVE_UCI else 17
+
     # Linux and Mac
     if '-O0' not in args:
         args.append('-O3')
     args += [
-        '-std=c++17',
-        '-Wall',
+        f'-std=c++{STDCPP}',
         '-Wextra',
         '-Wno-unused-label',
         '-Wno-unknown-pragmas',
@@ -110,12 +119,13 @@ else:
         '-DCALLBACK_PERIOD=8192',
         '-fno-stack-protector',
         '-DWITH_NNUE',
-        '-D_FORTIFY_SOURCE=0',
         '-Wno-macro-redefined',
+        '-D_FORTIFY_SOURCE=0',
+        '-Wno-empty-body',
+        '-Wno-int-in-bool-context',
     ]
     if NATIVE_UCI:
         args += [
-            '-std=c++20',
             '-stdlib=libc++',
             '-fexperimental-library',
             '-DNATIVE_UCI=true',

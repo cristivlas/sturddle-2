@@ -1,8 +1,8 @@
 #! /usr/bin/env python3
 import argparse
 import os
-import sqlite3
 
+from dbutils.sqlite import SQLConn
 from tqdm.contrib import tenumerate
 
 # Parse command line arguments
@@ -13,33 +13,31 @@ args = parser.parse_args()
 
 
 def merge_databases(input_dbs, output_db):
+    insert_count = 0
+    update_count = 0
+
     # Connect to the output database and create the position table if it doesn't exist
-    conn = sqlite3.connect(output_db)
-    c = conn.cursor()
-    c.execute('CREATE TABLE IF NOT EXISTS position(epd text PRIMARY KEY, depth integer, score integer)')
+    with SQLConn(output_db) as conn:
+        conn.exec('CREATE TABLE IF NOT EXISTS position(epd text PRIMARY KEY, depth integer, score integer)')
 
-    count = 0
+        # Loop over the input databases and insert the entries into the output database
+        for db in input_dbs:
+            print(db)
+            with SQLConn(db) as input_conn:
+                max_row = input_conn.row_max_count('position')
+                for _, row in tenumerate(input_conn.exec('SELECT * FROM position'), total=max_row):
+                    epd, depth, score = row
+                    existing = conn.exec('SELECT depth FROM position WHERE epd = ?', (epd,)).fetchone()
+                    if existing is None or abs(depth) > abs(existing[0]):
+                        conn.exec('REPLACE INTO position (epd, depth, score) VALUES (?, ?, ?)', (epd, depth, score))
+                        if existing:
+                            update_count += 1
+                        else:
+                            insert_count += 1
 
-    # Loop over the input databases and insert the entries into the output database
-    for db in input_dbs:
-        print(db)
-        input_conn = sqlite3.connect(db)
-        input_cursor = input_conn.cursor()
+    print(f'Inserted: {insert_count} positions, updated: {update_count}.')
 
-        max_row = input_cursor.execute(f'SELECT MAX(_ROWID_) FROM position').fetchone()[0]
-        for _, row in tenumerate(input_cursor.execute('SELECT * FROM position'), total=max_row):
-            epd, depth, score = row
-            existing = c.execute('SELECT depth FROM position WHERE epd = ?', (epd,)).fetchone()
-            if existing is None or depth > existing[0]:
-                c.execute('REPLACE INTO position (epd, depth, score) VALUES (?, ?, ?)', (epd, depth, score))
-                count += 1
-
-        input_conn.close()
-
-    conn.commit()
-    conn.close()
-
-    print(f'Inserted {count} positions.')
-
-
-merge_databases(args.inputs, args.output)
+try:
+    merge_databases(args.inputs, args.output)
+except KeyboardInterrupt:
+    pass
