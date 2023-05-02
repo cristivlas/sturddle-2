@@ -113,7 +113,7 @@ if __name__ == '__main__':
     import chess_engine
 
     MAIN = os.path.join('dist', 'main' if args.native_uci else 'sturddle')
-    NAME = os.path.join('dist', f'sturddle-{".".join(chess_engine.__build__[1:3])}')
+    NAME = os.path.join('dist', f'sturddle-{".".join(chess_engine.__build__[:2])}')
     if is_windows():
         MAIN += '.exe'
         NAME += '.exe'

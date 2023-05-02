@@ -199,46 +199,29 @@ namespace nnue
         {
         #if USE_VECTORCLASS
             constexpr int N = Vector::size();
+            constexpr int Q = (OUTPUTS % N == 0) ? N : 1;
+
             static_assert(INPUTS % N == 0);
 
-            if constexpr(OUTPUTS % N == 0)
+            for (int j = 0; j != OUTPUTS; j += Q)
             {
-                for (int j = 0; j != OUTPUTS; j += N)
+                Vector sum[Q], v_wt, v_in;
+
+                for (int k = 0; k != Q; ++k)
+                    sum[k] = Vector(0.0);
+
+                for (int i = 0; i != INPUTS; i += N)
                 {
-                    Vector sum[N], v_wt, v_in;
-
-                    for (int k = 0; k != N; ++k)
-                        sum[k] = Vector(0.0);
-
-                    for (int i = 0; i != INPUTS; i += N)
+                    v_in.load_a(&input[i]);
+                    for (int k = 0; k != Q; ++k)
                     {
-                        v_in.load_a(&input[i]);
-                        for (int k = 0; k != N; ++k)
-                        {
-                            v_wt.load_a(&wt[j + k][i]);
-                            sum[k] = mul_add(v_in, v_wt, sum[k]);
-                        }
+                        v_wt.load_a(&wt[j + k][i]);
+                        sum[k] = mul_add(v_in, v_wt, sum[k]);
                     }
-                    #pragma unroll N
-                    for (int k = 0; k != N; ++k)
-                        output[j + k] = activate(b[j + k] + horizontal_add(sum[k]));
                 }
-            }
-            else
-            {
-                for (int j = 0; j != OUTPUTS; ++j)
-                {
-                    Vector sum(0.0);
-                    Vector v_in, v_wt;
-
-                    for (int i = 0; i != INPUTS; i += N)
-                    {
-                        v_in.load_a(&input[i]);
-                        v_wt.load_a(&wt[j][i]);
-                        sum = mul_add(v_in, v_wt, sum);
-                    }
-                    output[j] = activate(b[j] + horizontal_add(sum));
-                }
+                #pragma unroll Q
+                for (int k = 0; k != Q; ++k)
+                    output[j + k] = activate(b[j + k] + horizontal_add(sum[k]));
             }
         #else
             for (int j = 0; j != OUTPUTS; ++j)

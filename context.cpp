@@ -225,6 +225,19 @@ int nnue::eval_fen(const std::string& fen)
     return ctxt._eval;
 }
 
+void search::Context::update_root_accumulators()
+{
+    const auto& root = NNUE_data[0][0];
+
+    for (int i = 1; i != SMP_CORES; ++i)
+    {
+        auto& acc = NNUE_data[i][0];
+        memcpy(acc._output_a, root._output_a, sizeof(acc._output_a));
+        memcpy(acc._output_b, root._output_b, sizeof(acc._output_b));
+        acc._hash = root._hash;
+    }
+}
+
 #else
 
 int nnue::eval_fen(const std::string& fen)
