@@ -65,7 +65,7 @@ INLINE Vec4f mul_add(Vec4f a, Vec4f b, Vec4f c)
     return _mm_fmadd_ps(a, b, c);
 }
 
-#if __aarch64__
+#if true
 class Vec16s
 {
     __m256i ymm;
@@ -189,7 +189,7 @@ INLINE Vec16s operator * (Vec16s a, Vec16s b)
     );
 }
 
-#endif /* !__aarch64__ */
+#endif
 
 INLINE Vec16s& operator += (Vec16s& a, Vec16s b)
 {
