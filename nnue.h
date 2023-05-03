@@ -175,33 +175,21 @@ namespace nnue
                         sum[k] += in * vw;
                     }
                 }
-                if constexpr (INPUTS == R + 1)
+                Vec16s sums(
+                    horizontal_add(sum[0]), horizontal_add(sum[1]), horizontal_add(sum[2]), horizontal_add(sum[3]),
+                    horizontal_add(sum[4]), horizontal_add(sum[5]), horizontal_add(sum[6]), horizontal_add(sum[7]),
+                    horizontal_add(sum[8]), horizontal_add(sum[9]), horizontal_add(sum[10]),horizontal_add(sum[11]),
+                    horizontal_add(sum[12]),horizontal_add(sum[13]),horizontal_add(sum[14]),horizontal_add(sum[15])
+                );
+                for (int i = R; i != INPUTS; ++i)
                 {
-                    Vec16s sums(
-                        horizontal_add(sum[0]), horizontal_add(sum[1]), horizontal_add(sum[2]), horizontal_add(sum[3]),
-                        horizontal_add(sum[4]), horizontal_add(sum[5]), horizontal_add(sum[6]), horizontal_add(sum[7]),
-                        horizontal_add(sum[8]), horizontal_add(sum[9]), horizontal_add(sum[10]),horizontal_add(sum[11]),
-                        horizontal_add(sum[12]),horizontal_add(sum[13]),horizontal_add(sum[14]),horizontal_add(sum[15])
-                    );
-                    in = input[R];
-                    vw.load_a(&w[R][j]);
+                    in = input[i];
+                    vw.load_a(&w[i][j]);
                     sums += in * vw;
-
-                    v_out.load_a(&b[j]);
-                    v_out += sums;
-                    v_out.store_a(&output[j]);
                 }
-                else
-                {
-                    for (int k = 0; k != N; ++k)
-                    {
-                        int16_t r = 0;
-                        for (int i = R; i != INPUTS; ++i)
-                            r += input[i] * wt[j + k][i];
-
-                        output[j + k] = b[j + k] + r + horizontal_add(sum[k]);
-                    }
-                }
+                v_out.load_a(&b[j]);
+                v_out += sums;
+                v_out.store_a(&output[j]);
             }
         #endif /* USE_VECTORCLASS */
         }
