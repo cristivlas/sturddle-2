@@ -46,11 +46,37 @@ namespace nnue
 #if USE_VECTORCLASS
     #if INSTRSET >= 9
         using Vector = Vec16f;
+
+        INLINE Vector horizontal_add(const Vector (&v)[16])
+        {
+            return Vector(
+                horizontal_add(v[0]), horizontal_add(v[1]), horizontal_add(v[2]), horizontal_add(v[3]),
+                horizontal_add(v[4]), horizontal_add(v[5]), horizontal_add(v[6]), horizontal_add(v[7]),
+                horizontal_add(v[8]), horizontal_add(v[9]), horizontal_add(v[10]),horizontal_add(v[11]),
+                horizontal_add(v[12]),horizontal_add(v[13]),horizontal_add(v[14]),horizontal_add(v[15]));
+        }
     #elif INSTRSET >= 8
         using Vector = Vec8f;
+
+        INLINE Vector horizontal_add(const Vector (&v)[8])
+        {
+            return Vector(
+                horizontal_add(v[0]), horizontal_add(v[1]), horizontal_add(v[2]), horizontal_add(v[3]),
+                horizontal_add(v[4]), horizontal_add(v[5]), horizontal_add(v[6]), horizontal_add(v[7]));
+        }
     #else
         using Vector = Vec4f;
+
+        INLINE Vector horizontal_add(const Vector (&v)[4])
+        {
+            return Vector(horizontal_add(v[0]), horizontal_add(v[1]), horizontal_add(v[2]), horizontal_add(v[3]));
+        }
     #endif /* INSTRSET */
+
+    INLINE Vector horizontal_add(const Vector (&v)[1])
+    {
+        return horizontal_add(v[0]);
+    }
 
     INLINE bool all_zero(const Vec16s& v)
     {
@@ -200,7 +226,7 @@ namespace nnue
             const float (&input)[INPUTS],
             float (&output)[OUTPUTS],
             const float(&b)[OUTPUTS],
-            const float(&w)[INPUTS][OUTPUTS],
+            const float(&)[INPUTS][OUTPUTS],
             const float(&wt)[OUTPUTS][INPUTS],
             F activate
         )
@@ -211,10 +237,10 @@ namespace nnue
 
             static_assert(INPUTS % N == 0);
 
+            Vector sum[Q], v_wt, v_in, v_out;
+
             for (int j = 0; j != OUTPUTS; j += Q)
             {
-                Vector sum[Q], v_wt, v_in;
-
                 for (int k = 0; k != Q; ++k)
                     sum[k] = Vector(0.0);
 
@@ -227,9 +253,10 @@ namespace nnue
                         sum[k] = mul_add(v_in, v_wt, sum[k]);
                     }
                 }
-                #pragma unroll Q
-                for (int k = 0; k != Q; ++k)
-                    output[j + k] = activate(b[j + k] + horizontal_add(sum[k]));
+
+                v_out.load_partial(Q, &b[j]);
+                v_out += horizontal_add(sum);
+                activate(v_out).store_partial(Q, &output[j]);
             }
         #else
             for (int j = 0; j != OUTPUTS; ++j)
@@ -246,7 +273,7 @@ namespace nnue
         template <size_t N, typename U, typename V>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS]) const
         {
-            dot(input, output, _b, _w, _wt, [](V v) { return v; });
+            dot(input, output, _b, _w, _wt, [](const Vector& v) { return v; });
         }
 
         template <size_t N, typename U, typename V, typename F>
@@ -547,8 +574,10 @@ namespace nnue
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float output[1];
 
+        static const Vector v_zero(0.0);
+
         activation(a._output_a, l2_in); // process output of hidden_1a
-        l2.dot(l2_in, l2_out, [](float v){ return std::max<float>(v, 0); });
+        l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
 
         activation(a._output_b, attn_in); // process output of hidden_1b
 
@@ -557,32 +586,24 @@ namespace nnue
          * are used to modulate the output of another
          * hidden layer (L2, aka hidden_2) through element-wise multiplication
          */
-    #if (INSTRSET > 0)
         attn.dot(attn_in, attn_out);
 
         static_assert(ATTN::OUTPUTS == L2::OUTPUTS);
-        static_assert(ATTN::OUTPUTS % Vec16f::size() == 0);
+        static_assert(ATTN::OUTPUTS % Vector::size() == 0);
 
-        Vec16f v1, v2;
-        for (int i = 0; i != L2::OUTPUTS; i += Vec16f::size())
+        Vector v1, v2;
+        for (int i = 0; i != L2::OUTPUTS; i += Vector::size())
         {
             v1.load_a(&l2_out[i]);
             v2.load_a(&attn_out[i]);
             (v1 * v2).store_a(&l2_out[i]);
         }
-    #else
-        int i = 0;
-        attn.dot(attn_in, attn_out, [&l2_out, &i](float v) {
-            l2_out[i++] *= v;
-            return v;
-        });
-    #endif /* USE_VECTORCLASS */
 
         out.dot(l2_out, output);
         return 100 * output[0];
     }
 
 
-    int eval_fen(const std::string&);
+    int eval_fen(const std::string&); /* testing */
 
 } /* namespace nnue */
