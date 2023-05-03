@@ -135,6 +135,7 @@ namespace nnue
             const input_t (&input)[S],
             int16_t (&output)[OUTPUTS],
             const int16_t(&b)[OUTPUTS],
+            const int16_t(&w)[INPUTS][OUTPUTS],
             const int16_t(&wt)[OUTPUTS][INPUTS],
             F /* activation applied separately */
         )
@@ -155,10 +156,10 @@ namespace nnue
 
             constexpr auto R = round_down<N>(INPUTS);
 
+            Vec16s in, vw, sum[N], v_out;
+
             for (int j = 0; j != OUTPUTS; j += N)
             {
-                Vec16s in, vw, sum[N];
-
                 for (int k = 0; k != N; ++k)
                     sum[k] = Vec16s(0);
 
@@ -174,14 +175,32 @@ namespace nnue
                         sum[k] += in * vw;
                     }
                 }
-
-                for (int k = 0; k != N; ++k)
+                if constexpr (INPUTS == R + 1)
                 {
-                    int16_t r = 0;
-                    for (int i = R; i != INPUTS; ++i)
-                        r += input[i] * wt[j + k][i];
+                    Vec16s sums(
+                        horizontal_add(sum[0]), horizontal_add(sum[1]), horizontal_add(sum[2]), horizontal_add(sum[3]),
+                        horizontal_add(sum[4]), horizontal_add(sum[5]), horizontal_add(sum[6]), horizontal_add(sum[7]),
+                        horizontal_add(sum[8]), horizontal_add(sum[9]), horizontal_add(sum[10]),horizontal_add(sum[11]),
+                        horizontal_add(sum[12]),horizontal_add(sum[13]),horizontal_add(sum[14]),horizontal_add(sum[15])
+                    );
+                    in = input[R];
+                    vw.load_a(&w[R][j]);
+                    sums += in * vw;
 
-                    output[j + k] = b[j + k] + r + horizontal_add(sum[k]);
+                    v_out.load_a(&b[j]);
+                    v_out += sums;
+                    v_out.store_a(&output[j]);
+                }
+                else
+                {
+                    for (int k = 0; k != N; ++k)
+                    {
+                        int16_t r = 0;
+                        for (int i = R; i != INPUTS; ++i)
+                            r += input[i] * wt[j + k][i];
+
+                        output[j + k] = b[j + k] + r + horizontal_add(sum[k]);
+                    }
                 }
             }
         #endif /* USE_VECTORCLASS */
@@ -193,6 +212,7 @@ namespace nnue
             const float (&input)[INPUTS],
             float (&output)[OUTPUTS],
             const float(&b)[OUTPUTS],
+            const float(&w)[INPUTS][OUTPUTS],
             const float(&wt)[OUTPUTS][INPUTS],
             F activate
         )
@@ -238,13 +258,13 @@ namespace nnue
         template <size_t N, typename U, typename V>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS]) const
         {
-            dot(input, output, _b, _wt, [](V v) { return v; });
+            dot(input, output, _b, _w, _wt, [](V v) { return v; });
         }
 
         template <size_t N, typename U, typename V, typename F>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], F activate) const
         {
-            dot(input, output, _b, _wt, activate);
+            dot(input, output, _b, _w, _wt, activate);
         }
     };
 
