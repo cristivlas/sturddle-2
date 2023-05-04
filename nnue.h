@@ -82,6 +82,38 @@ namespace nnue
     {
         return !horizontal_or(v);
     }
+
+    template <int N> INLINE void load_partial(Vector& v, const float* p)
+    {
+        if constexpr (N == 1)
+            #if INSTRSET >= 9
+                v.load_partial(1, p);
+            #elif INSTRSET >= 8
+                v = Vector(_mm_load_ss(p), _mm_setzero_ps());
+            #else
+                v = _mm_load_ss(p);
+            #endif
+        else if constexpr (N == Vector::size())
+            v.load_a(p);
+        else
+            ASSERT_ALWAYS(false);
+    }
+
+    template <int N> INLINE void store_partial(const Vector& v, float* p)
+    {
+        if constexpr (N == 1)
+            #if INSTRSET >= 9
+                v.store_partial(1, p);
+            #elif INSTRSET >= 8
+                _mm_store_ss(p, _mm256_castps256_ps128(v));
+            #else
+                _mm_store_ss(p, v);
+            #endif
+        else if constexpr (N == Vector::size())
+            v.store_a(p);
+        else
+            ASSERT_ALWAYS(false);
+    }
 #endif /* USE_VECTORCLASS */
 
     template<unsigned int N>
@@ -254,9 +286,9 @@ namespace nnue
                     }
                 }
 
-                v_out.load_partial(Q, &b[j]);
+                load_partial<Q>(v_out, &b[j]);
                 v_out += horizontal_add(sum);
-                activate(v_out).store_partial(Q, &output[j]);
+                store_partial<Q>(activate(v_out), &output[j]);
             }
         #else
             for (int j = 0; j != OUTPUTS; ++j)
@@ -372,6 +404,7 @@ namespace nnue
 
                 for (int i = 0; i != INPUTS; ++i)
                     ASSERT_ALWAYS(_input[i] == temp[i]);
+
             #endif /* DEBUG_INCREMENTAL */
 
                 if (state.turn)

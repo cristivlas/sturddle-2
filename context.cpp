@@ -232,9 +232,13 @@ void search::Context::update_root_accumulators()
     for (int i = 1; i != SMP_CORES; ++i)
     {
         auto& acc = NNUE_data[i][0];
+        acc._hash = root._hash;
         memcpy(acc._output_a, root._output_a, sizeof(acc._output_a));
         memcpy(acc._output_b, root._output_b, sizeof(acc._output_b));
-        acc._hash = root._hash;
+
+    #if DEBUG_INCREMENTAL
+        memcpy(acc._input, root._input, sizeof(acc._input));
+    #endif
     }
 }
 
