@@ -1,11 +1,16 @@
 #pragma once
 /*
- * Replicate parts of vectorclass to get nnue.h to compile on arm.
+ * Replicate vectorclass parts to get nnue.h to compile on ARM with vectorization.
  */
 #define SIMDE_ENABLE_NATIVE_ALIASES
+// #define INSTRSET 8 /* emulate AVX2 */
 
 #include "simde/x86/avx2.h"
 #include "simde/x86/fma.h"
+
+// Join two 128-bit vectors.
+#define set_m128r(lo,hi) _mm256_insertf128_ps(_mm256_castps128_ps256(lo),(hi),1)
+
 
 class Vec4f
 {
@@ -17,7 +22,9 @@ public:
     Vec4f() = default;
     Vec4f(float f) : xmm(_mm_set1_ps(f)) {}
     Vec4f(__m128 x) : xmm(x) {}
-
+    Vec4f(float f0, float f1, float f2, float f3) {
+        xmm = _mm_setr_ps(f0, f1, f2, f3);
+    }
     void load_a(const float* p) { xmm = _mm_load_ps(p); }
     void store_a(float* p) const { _mm_store_ps(p, xmm); }
 
@@ -38,21 +45,9 @@ INLINE Vec4f operator + (Vec4f a, Vec4f b)
     return _mm_add_ps(a, b);
 }
 
-INLINE Vec4f& operator += (Vec4f & a, Vec4f b)
-{
-    a = a + b;
-    return a;
-}
-
 INLINE Vec4f operator - (Vec4f a, Vec4f b)
 {
     return _mm_sub_ps(a, b);
-}
-
-INLINE Vec4f& operator -= (Vec4f & a, Vec4f b)
-{
-    a = a - b;
-    return a;
 }
 
 INLINE Vec4f operator * (Vec4f a, Vec4f b)
@@ -65,7 +60,68 @@ INLINE Vec4f mul_add(Vec4f a, Vec4f b, Vec4f c)
     return _mm_fmadd_ps(a, b, c);
 }
 
-#if true
+INLINE Vec4f max(Vec4f a, Vec4f b)
+{
+    return _mm_max_ps(a, b);
+}
+
+
+class Vec8f
+{
+    __m256 xmm;
+
+public:
+    static constexpr size_t size() { return 8; }
+
+    Vec8f() = default;
+    Vec8f(float f) : xmm(_mm256_set1_ps(f)) {}
+    Vec8f(__m256 x) : xmm(x) {}
+    Vec8f(Vec4f const a0, Vec4f const a1) {
+        xmm = set_m128r(a0, a1);
+    }
+    Vec8f(float f0, float f1, float f2, float f3, float f4, float f5, float f6, float f7) {
+        xmm = _mm256_setr_ps(f0, f1, f2, f3, f4, f5, f6, f7);
+    }
+
+    void load_a(const float* p) { xmm = _mm256_load_ps(p); }
+    void store_a(float* p) const { _mm256_store_ps(p, xmm); }
+
+    operator __m256() const { return xmm; }
+};
+
+INLINE float horizontal_add(Vec8f a)
+{
+    /* ( x3+x7, x2+x6, x1+x5, x0+x4 ) */
+    const __m128 x128 = _mm_add_ps(_mm256_extractf128_ps(a, 1), _mm256_castps256_ps128(a));
+    /* ( -, -, x1+x3+x5+x7, x0+x2+x4+x6 ) */
+    const __m128 x64 = _mm_add_ps(x128, _mm_movehl_ps(x128, x128));
+    /* ( -, -, -, x0+x1+x2+x3+x4+x5+x6+x7 ) */
+    const __m128 x32 = _mm_add_ss(x64, _mm_shuffle_ps(x64, x64, 0x55));
+    /* Conversion to float is a no-op on x86-64 */
+    return _mm_cvtss_f32(x32);
+}
+
+INLINE Vec8f operator + (Vec8f a, Vec8f b)
+{
+    return _mm256_add_ps(a, b);
+}
+
+INLINE Vec8f operator - (Vec8f a, Vec8f b)
+{
+    return _mm256_sub_ps(a, b);
+}
+
+INLINE Vec8f operator * (Vec8f a, Vec8f b)
+{
+    return _mm256_mul_ps(a, b);
+}
+
+INLINE Vec8f mul_add(Vec8f a, Vec8f b, Vec8f c)
+{
+    return _mm256_fmadd_ps(a, b, c);
+}
+
+
 class Vec16s
 {
     __m256i ymm;
@@ -76,6 +132,11 @@ public:
     Vec16s() = default;
     Vec16s(int16_t i) : ymm(_mm256_set1_epi16(i)) {}
     Vec16s(__m256i y) : ymm(y) {}
+
+    Vec16s(int16_t i0, int16_t i1, int16_t i2,  int16_t i3,  int16_t i4,  int16_t i5,  int16_t i6,  int16_t i7,
+           int16_t i8, int16_t i9, int16_t i10, int16_t i11, int16_t i12, int16_t i13, int16_t i14, int16_t i15) {
+        ymm = _mm256_setr_epi16(i0, i1, i2, i3, i4, i5, i6, i7, i8, i9, i10, i11, i12, i13, i14, i15 );
+    }
 
     void load(const int16_t* p)
     {
@@ -124,80 +185,18 @@ INLINE Vec16s operator * (Vec16s a, Vec16s b)
     return _mm256_mullo_epi16(a, b);
 }
 
-#else
-class Vec16s
+INLINE Vec8f max(Vec8f a, Vec8f b)
 {
-    __m128i y0; // low half
-    __m128i y1; // high half
-
-public:
-    static constexpr size_t size() { return 16; }
-
-    Vec16s() = default;
-    Vec16s(int16_t i) : y0(_mm_set1_epi16(i)), y1(_mm_set1_epi16(i)) {}
-    Vec16s(__m128i a0, __m128i a1) : y0(a0), y1(a1) {}
-
-    void load(const int16_t* p)
-    {
-        y0 = _mm_loadu_si128((__m128i const*)p);
-        y1 = _mm_loadu_si128((__m128i const*)p + 1);
-    }
-
-    void load_a(const int16_t* p)
-    {
-        y0 = _mm_load_si128((__m128i const*)p);
-        y1 = _mm_load_si128((__m128i const*)p + 1);
-    }
-
-    void store_a(int16_t* p) const
-    {
-        _mm_store_si128((__m128i*)p,     y0);
-        _mm_store_si128((__m128i*)p + 1, y1);
-    }
-
-    __m128i get_low() const { return y0; }
-    __m128i get_high() const { return y1; }
-};
-
-INLINE bool horizontal_or(const Vec16s a)
-{
-    auto b = _mm_or_si128(a.get_low(), a.get_high());
-    return !_mm_testz_si128(b, b);
+    return _mm256_max_ps(a, b);
 }
 
-INLINE Vec16s operator + (Vec16s a, Vec16s b)
-{
-    return Vec16s(
-        _mm_add_epi16(a.get_low(), b.get_low()),
-        _mm_add_epi16(a.get_high(), b.get_high())
-    );
-}
-
-INLINE Vec16s operator - (Vec16s a, Vec16s b)
-{
-    return Vec16s(
-        _mm_sub_epi16(a.get_low(), b.get_low()),
-        _mm_sub_epi16(a.get_high(), b.get_high())
-    );
-}
-
-INLINE Vec16s operator * (Vec16s a, Vec16s b)
-{
-    return Vec16s(
-        _mm_mullo_epi16(a.get_low(), b.get_low()),
-        _mm_mullo_epi16(a.get_high(), b.get_high())
-    );
-}
-
-#endif
-
-INLINE Vec16s& operator += (Vec16s& a, Vec16s b)
+template <typename V> INLINE V& operator += (V& a, V b)
 {
     a = a + b;
     return a;
 }
 
-INLINE Vec16s& operator -= (Vec16s& a, Vec16s b)
+template <typename V> INLINE V& operator -= (V& a, V b)
 {
     a = a - b;
     return a;
