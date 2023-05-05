@@ -21,11 +21,12 @@
 #pragma once
 
 #include "common.h"
-
 /*
  * Piece-square tables.
  * https://www.chessprogramming.org/Simplified_Evaluation_Function
  */
+#if !WITH_NNUE /* ignored when using NNUE-based evaluation */
+
 static constexpr int SQUARE_TABLE[][64] = {
     {/* NONE */
     },
@@ -126,3 +127,4 @@ static constexpr int square_indices[2][64] = {
          0,  1,  2,  3,  4,  5,  6,  7,
     }
 };
+#endif /* !WITH_NNUE */
