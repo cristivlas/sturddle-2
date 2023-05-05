@@ -24,10 +24,8 @@
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
-    #define USE_VECTORCLASS true
 #elif (__arm__) || (__aarch64__)
     #include "armvector.h"
-    #define USE_VECTORCLASS true
 #endif
 
 #define ALIGN alignas(32)
@@ -43,7 +41,6 @@ namespace nnue
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
 
-#if USE_VECTORCLASS
     #if INSTRSET >= 9
         using Vector = Vec16f;
 
@@ -114,7 +111,6 @@ namespace nnue
         else
             ASSERT_ALWAYS(false);
     }
-#endif /* USE_VECTORCLASS */
 
     template <unsigned int N>
     constexpr unsigned int round_down(unsigned int x)
@@ -200,7 +196,7 @@ namespace nnue
         {
             static_assert(S >= INPUTS);
 
-        #if !USE_VECTORCLASS
+        #if 0
             for (int j = 0; j != OUTPUTS; ++j)
             {
                 output[j] = b[j];
@@ -249,7 +245,7 @@ namespace nnue
                 v_out += sums;
                 v_out.store_a(&output[j]);
             }
-        #endif /* USE_VECTORCLASS */
+        #endif /* 0 */
         }
 
         /* output */
@@ -263,7 +259,6 @@ namespace nnue
             F activate
         )
         {
-        #if USE_VECTORCLASS
             constexpr int N = Vector::size();
             constexpr int Q = (OUTPUTS % N == 0) ? N : 1;
 
@@ -290,16 +285,6 @@ namespace nnue
                 v_out += horizontal_add(sum);
                 store_partial<Q>(activate(v_out), &output[j]);
             }
-        #else
-            for (int j = 0; j != OUTPUTS; ++j)
-            {
-                output[j] = b[j];
-                #pragma clang loop vectorize(enable)
-                for (int i = 0; i != INPUTS; ++i)
-                    output[j] += input[i] * wt[j][i];
-                output[j] = activate(output[j]);
-            }
-        #endif /* !USE_VECTORCLASS */
         }
 
         template <size_t N, typename U, typename V>
@@ -446,7 +431,6 @@ namespace nnue
             for (int i = 0; i < a_idx; ++i)
                 update_layer_b += add_inputs[i] < LB::INPUTS;
 
-        #if USE_VECTORCLASS
             static_assert(LA::OUTPUTS % Vec16s::size() == 0);
             static_assert(LB::OUTPUTS % Vec16s::size() == 0);
 
@@ -502,46 +486,6 @@ namespace nnue
                     vo.store_a(&_output_b[j]);
                 }
             }
-        #else
-            for (int j = 0; j != OUTPUTS_A; ++j)
-            {
-                for (int i = 0; i < r_idx; ++i)
-                {
-                    const auto index = remove_inputs[i];
-                    ASSERT(index < LA::INPUTS);
-                    _output_a[j] -= layer_a._w[index][j];
-                }
-
-                for (int i = 0; i < a_idx; ++i)
-                {
-                    const auto index = add_inputs[i];
-                    ASSERT(index < LA::INPUTS);
-                    _output_a[j] += layer_a._w[index][j];
-                }
-            }
-
-            if (update_layer_b)
-            {
-                for (int j = 0; j != OUTPUTS_B; ++j)
-                {
-                    for (int i = 0; i < r_idx; ++i)
-                    {
-                        const auto index = remove_inputs[i];
-                        if (index >= LB::INPUTS)
-                            continue;
-                        _output_b[j] -= layer_b._w[index][j];
-                    }
-
-                    for (int i = 0; i < a_idx; ++i)
-                    {
-                        const auto index = add_inputs[i];
-                        if (index >= LB::INPUTS)
-                            break;
-                        _output_b[j] += layer_b._w[index][j];
-                    }
-                }
-            }
-        #endif /* !USE_VECTORCLASS */
         }
 
         /** Incremental update of one-hot encoding */
