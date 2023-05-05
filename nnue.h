@@ -116,7 +116,7 @@ namespace nnue
     }
 #endif /* USE_VECTORCLASS */
 
-    template<unsigned int N>
+    template <unsigned int N>
     constexpr unsigned int round_down(unsigned int x)
     {
         return (x / N) * N;
@@ -253,7 +253,7 @@ namespace nnue
         }
 
         /* output */
-        template<typename F>
+        template <typename F>
         static INLINE void dot(
             const float (&input)[INPUTS],
             float (&output)[OUTPUTS],
