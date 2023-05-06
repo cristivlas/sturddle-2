@@ -157,9 +157,23 @@ namespace nnue
     template <int N>
     INLINE void activation(const int16_t (&input)[N], float (&output)[N])
     {
+        constexpr float QSCALE_RECIP = 1.0f / QSCALE;
+    #if 1
         #pragma clang loop vectorize(enable)
         for (int i = 0; i != N; ++i)
-            output[i] = std::max<float>(0, float(input[i]) / QSCALE);
+            output[i] = std::max<float>(0, float(input[i]) * QSCALE_RECIP);
+    #else
+        static_assert(N % Vec16s::size() == 0);
+        static const Vec16s vs_zero(0);
+
+        Vec16s v;
+        for (int i = 0; i != N; i += Vec16s::size())
+        {
+            v.load_a(&input[i]);
+            v = max(vs_zero, v);
+            (to_float(extend(v)) * QSCALE_RECIP).store_a(&output[i]);
+        }
+    #endif
     }
 
 
