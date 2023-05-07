@@ -439,11 +439,11 @@ namespace nnue
             static_assert(LA::OUTPUTS == OUTPUTS_A);
             static_assert(LB::OUTPUTS == OUTPUTS_B);
 
-            int update_layer_b = 0;
-            for (int i = 0; i < r_idx; ++i)
-                update_layer_b += remove_inputs[i] < LB::INPUTS;
-            for (int i = 0; i < a_idx; ++i)
-                update_layer_b += add_inputs[i] < LB::INPUTS;
+            const auto update_layer_b =
+                std::any_of(remove_inputs, remove_inputs + r_idx, [](int index)
+                            { return index < LB::INPUTS; }) ||
+                std::any_of(add_inputs, add_inputs + a_idx, [](int index)
+                            { return index < LB::INPUTS; });
 
             static_assert(LA::OUTPUTS % Vec16s::size() == 0);
             static_assert(LB::OUTPUTS % Vec16s::size() == 0);
