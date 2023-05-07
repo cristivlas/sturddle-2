@@ -1,6 +1,7 @@
-#! /usr/bin/env python3
+#!/usr/bin/env python3
 import argparse
-import sqlite3
+from dbutils.sqlite import SQLConn
+from tqdm import tqdm
 
 # Parse command line arguments
 parser = argparse.ArgumentParser()
@@ -9,36 +10,43 @@ parser.add_argument('-o', '--output', required=True, help='Output filename')
 parser.add_argument('-d', '--depth-min', type=int, help='Minimum depth')
 args = parser.parse_args()
 
-# Connect to the output database
-output_conn = sqlite3.connect(args.output)
-output_cursor = output_conn.cursor()
-
-# Create the output table if it doesn't exist
-output_cursor.execute('''CREATE TABLE IF NOT EXISTS position(
+create_table_query = '''
+CREATE TABLE IF NOT EXISTS position(
     epd text PRIMARY KEY,   -- Position
     depth integer,          -- Analysis Depth
     score integer           -- Score
-)''')
+)'''
+
+insert_query = '''INSERT OR IGNORE INTO position VALUES (?, ?, ?)'''
+
+total_records = 0
 
 # Iterate over the input filenames
 for filename in args.filenames:
     print(filename)
-    # Connect to the input database
-    input_conn = sqlite3.connect(filename)
-    input_cursor = input_conn.cursor()
 
-    # Select positions from the input database
-    if args.depth_min:
-        input_cursor.execute('''SELECT * FROM position WHERE depth >= ?''', (args.depth_min,))
-    else:
-        input_cursor.execute('''SELECT * FROM position''')
+    # Connect to the input database and count the number of records
+    with SQLConn(filename) as input_conn:
+        if args.depth_min is not None:
+            record_count = input_conn.exec('SELECT COUNT(*) FROM position WHERE depth >= ?', (args.depth_min,)).fetchone()[0]
+        else:
+            record_count = input_conn.exec('SELECT COUNT(*) FROM position').fetchone()[0]
 
-    # Insert the selected positions into the output database
-    output_cursor.executemany('''INSERT OR IGNORE INTO position VALUES (?, ?, ?)''', input_cursor)
+        total_records += record_count
 
-# Commit the changes to the output database
-output_conn.commit()
+# Iterate over the input filenames with a progress bar
+with tqdm(total=total_records, desc='Merging positions', unit='position') as progress_bar:
+    for filename in args.filenames:
+        # Connect to the input database and select positions
+        with SQLConn(filename) as input_conn:
+            if args.depth_min:
+                input_positions = input_conn.exec('SELECT * FROM position WHERE depth >= ?', (args.depth_min,))
+            else:
+                input_positions = input_conn.exec('SELECT * FROM position')
 
-# Close the connections
-output_conn.close()
-input_conn.close()
+            # Connect to the output database, create table if not exists and insert positions
+            with SQLConn(args.output) as output_conn:
+                output_conn.exec(create_table_query)
+                for position in input_positions:
+                    output_conn.exec(insert_query, position)
+                    progress_bar.update(1)
