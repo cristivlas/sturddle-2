@@ -171,7 +171,8 @@ cdef extern from 'chess.h' namespace 'chess':
         bool    equals(const State&) const
         score_t eval() const
         score_t eval_incremental(const BaseMove&) const
-        size_t  hash() const
+
+        uint64_t hash() const
         void    rehash()
 
         bool    has_connected_rooks(int) const

@@ -44,6 +44,10 @@ def test_castling():
         epd, castling_rights = board.epd(), board.castling_rights
 
         state.apply(move)
+        # z = state.zobrist()
+        # h = state.__hash__()
+        # print(f'applied {move} {hex(z & 0xFFFFFFFFFFFFFFFF)} / {hex(h & 0xFFFFFFFFFFFFFFFF)}')
+
         board.reset()
         assert board.fen() == chess.STARTING_FEN
 
