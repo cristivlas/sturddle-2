@@ -55,7 +55,7 @@ if __name__ == '__main__':
 
     ARCHS = ['AVX512', 'AVX2', ''] if platform.machine() in ['x86_64', 'AMD64'] else ['']
     if len(ARCHS) == 1 and not args.native_uci:
-        print('Python UCI implementation not support on this platform')
+        print('Python UCI implementation not supported on this platform')
         os._exit(-1)
 
     for arch in ARCHS:
