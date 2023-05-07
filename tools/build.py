@@ -38,7 +38,7 @@ def run_cmd(command):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='build all-in-one executable')
     parser.add_argument('-v', '--venv')
-    parser.add_argument('--native-uci', dest='native_uci', action='store_true', default=False)
+    parser.add_argument('--native-uci', dest='native_uci', action='store_true', default=True)
     parser.add_argument('--no-native-uci', dest='native_uci', action='store_false')
 
     args = parser.parse_args()
@@ -53,7 +53,12 @@ if __name__ == '__main__':
 
     exe = sys.executable # the Python interpreter
 
-    for arch in ['AVX512', 'AVX2', '']:
+    ARCHS = ['AVX512', 'AVX2', ''] if platform.machine() in ['x86_64', 'AMD64'] else ['']
+    if len(ARCHS) == 1 and not args.native_uci:
+        print('Python UCI implementation not support on this platform')
+        os._exit(-1)
+
+    for arch in ARCHS:
         delete(['uci.cpp', '__init__.cpp']) # force re-cythonize
         print('*********************************************************')
         print(f'Building {arch if arch else "generic"} module')
