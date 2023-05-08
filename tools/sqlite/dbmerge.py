@@ -39,7 +39,7 @@ with tqdm(total=total_records, desc='Merging positions', unit='position') as pro
     for filename in args.filenames:
         # Connect to the input database and select positions
         with SQLConn(filename) as input_conn:
-            if args.depth_min:
+            if args.depth_min is not None:
                 input_positions = input_conn.exec('SELECT * FROM position WHERE depth >= ?', (args.depth_min,))
             else:
                 input_positions = input_conn.exec('SELECT * FROM position')

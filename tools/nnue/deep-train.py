@@ -58,8 +58,8 @@ def make_deep_model(args, starting_units=8192):
     def create_dense_layer(inputs, units, activation, name):
         x = Dense(units,
             activation=activation,
-            kernel_regularizer=L1L2(l1=1e-5, l2=1e-4),
-            bias_regularizer=L1L2(l1=1e-5, l2=1e-4),
+            kernel_regularizer=L1L2(l1=1e-4, l2=1e-3),
+            bias_regularizer=L1L2(l1=1e-4, l2=1e-3),
             name=name
         )(inputs)
         return x
@@ -69,7 +69,7 @@ def make_deep_model(args, starting_units=8192):
     x = input_layer
     i = 1
     units = starting_units
-    while units >= 16:
+    while units >= 8:
         x = create_dense_layer(x, units, 'relu', f'dense_{i}')
         units //= 2
         i += 1
@@ -87,7 +87,7 @@ def make_deep_model(args, starting_units=8192):
     model.compile(loss=loss_function(args), optimizer=optimizer, metrics=[])
 
     total_params = sum([tf.reduce_prod(variable.shape).numpy() for variable in model.trainable_variables])
-    print(f'Trainable parameters in deep teacher model: {total_params:,}')
+    print(f'Trainable parameters in deep teacher model: {total_params:,} / {len(model.layers)} layers.')
 
     return model
 
@@ -409,7 +409,7 @@ def main(args):
             checkpoint.model = student
             callbacks.append(checkpoint)
 
-        stateful_metrics = ['loss', 'model', 'deep', 'dist']
+        stateful_metrics = []
         progbar = tf.keras.utils.Progbar(steps_per_epoch, stateful_metrics=stateful_metrics, width=20)
 
         for epoch in range(epochs):
@@ -440,7 +440,10 @@ def main(args):
                     ('deep', teacher_loss),
                     ('dist', distillation_loss)
                 ]
-                progbar.update(batch+1, progress_values)
+                try:
+                    progbar.update(batch+1, progress_values)
+                except:
+                    pass
 
             # Call custom callbacks and save teacher and student model checkpoints at the end of each epoch
             for callback in callbacks:
