@@ -472,21 +472,11 @@ def main(args):
         callbacks = []
         dataset, steps_per_epoch = dataset_from_file(args, args.input[0], args.clip, strategy, callbacks)
 
-        if args.schedule:
-            from keras.callbacks import ReduceLROnPlateau
-            lr = ReduceLROnPlateau(monitor='loss', factor=0.2, patience=5, min_lr=1e-9)
-            callbacks.append(lr)
-
         model.summary()
         if not args.model:
             print('*****************************************************************')
             print(' WARNING: checkpoint path not provided, model WILL NOT BE SAVED! ')
             print('*****************************************************************')
-
-        if args.tensorboard:
-            tensorboard_callback = tf.keras.callbacks.TensorBoard(
-                log_dir=args.logdir, profile_batch=(1, steps_per_epoch))
-            callbacks.append(tensorboard_callback)
 
         # Alpha is a hyperparameter that controls the trade-off between the student loss
         # (i.e., the loss computed using the ground truth labels) and the distillation loss
@@ -537,8 +527,6 @@ if __name__ == '__main__':
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
         parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad', help='optimization algorithm')
-        parser.add_argument('--tensorboard', '-t', action='store_true', help='enable TensorBoard')
-        parser.add_argument('--schedule', action='store_true', help='use learning rate schedule')
 
         args = parser.parse_args()
         if args.input[0] == 'export' and not args.export:
