@@ -419,10 +419,12 @@ def main(args):
                     break
 
                 # Call the train_step function
-                total_loss, student_loss, distillation_loss = train_step(inputs, labels, student, teacher, student.loss, alpha)
+                total_loss, student_loss, distillation_loss = train_step(
+                    inputs, labels, student, teacher, student.loss, alpha)
 
                 # Update progress bar with loss information
-                progress_values = [('loss', total_loss), ('student', student_loss), ('distil', distillation_loss)]
+                progress_values = [
+                    ('loss', total_loss), ('student', student_loss), ('distil', distillation_loss)]
                 progbar.update(batch+1, progress_values)
 
             # Call custom callbacks and save teacher and student model checkpoints at the end of each epoch
@@ -515,7 +517,6 @@ if __name__ == '__main__':
         parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad', help='optimization algorithm')
         parser.add_argument('--tensorboard', '-t', action='store_true', help='enable TensorBoard')
         parser.add_argument('--schedule', action='store_true', help='use learning rate schedule')
-        parser.add_argument('--use-multiprocessing', action='store_true')
 
         args = parser.parse_args()
         if args.input[0] == 'export' and not args.export:
