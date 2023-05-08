@@ -51,7 +51,7 @@ The deep model is used as a "teacher" for online distillation training.
 
 *****************************************************************************
 '''
-def make_deep_model(args, starting_units=2048):
+def make_deep_model(args, starting_units=4096):
     def create_dense_layer(inputs, units, activation, name):
         x = Dense(units, activation=activation, name=name)(inputs)
         x = BatchNormalization(name=f'bn_{name}')(x)
@@ -79,6 +79,10 @@ def make_deep_model(args, starting_units=2048):
         amsgrad=args.optimizer == 'amsgrad',
     )
     model.compile(loss=loss_function(args), optimizer=optimizer, metrics=[])
+
+    total_params = sum([tf.reduce_prod(variable.shape).numpy() for variable in model.trainable_variables])
+    print(f'Trainable parameters in deep teacher model: {total_params}')
+
     return model
 
 
