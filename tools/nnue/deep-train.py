@@ -173,7 +173,7 @@ def make_model(args):
             use_ema=args.ema,
             weight_decay=args.decay if args.decay else None)
     else:
-        assert False
+        assert False, 'unknown optimizer'
 
     model.compile(loss=loss_function(args), optimizer=optimizer, metrics=[])
     return model
@@ -339,13 +339,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         print(x.shape, y.shape)
     steps_per_epoch = None
 
-    if args.distribute and callbacks is not None:
-        dataset, steps_per_epoch = make_dataset(x, y)
-        # distribute data accross several GPUs
-        dataset = strategy.experimental_distribute_dataset(dataset)
-    else:
-        dataset, steps_per_epoch = make_dataset(x, y)
-    return dataset, steps_per_epoch
+    return make_dataset(x, y)
 
 
 '''
@@ -442,8 +436,11 @@ def main(args):
                 callback.on_epoch_end(epoch, {})
 
     if args.gpu:
-        strategy = tf.distribute.MirroredStrategy()
+        strategy = tf.distribute.OneDeviceStrategy(device='/gpu:0')
     else:
+        print('*****************************************************************')
+        print(' WARNING: Training on CPU')
+        print('*****************************************************************')
         strategy = tf.distribute.OneDeviceStrategy(device='/cpu:0')
 
     # Create models.
@@ -512,7 +509,7 @@ if __name__ == '__main__':
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
         parser.add_argument('-c', '--clip', type=int)
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
-        parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
+        parser.add_argument('--device', type=int)
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
@@ -543,6 +540,10 @@ if __name__ == '__main__':
         args = parser.parse_args()
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout
+
+        if args.device is not None:
+            # Filter out all devices, but the user-specified one
+            os.environ['CUDA_VISIBLE_DEVICES'] = f'{args.device}'
 
         log_level = configure_logging(args)
 
