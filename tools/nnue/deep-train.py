@@ -353,7 +353,7 @@ def main(args):
     '''
     @tf.function
     def train_step(inputs, labels, student, teacher, student_loss_fn, teacher_loss_fn, alpha):
-        mse_loss = tf.keras.losses.MeanSquaredError()
+        mse_loss = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
         with tf.GradientTape() as student_tape, tf.GradientTape() as teacher_tape:
             # Get model outputs
             student_outputs = student(inputs, training=True)
@@ -361,6 +361,7 @@ def main(args):
 
             # Compute distillation loss
             distillation_loss = mse_loss(teacher_outputs, student_outputs) * alpha
+            distillation_loss = distillation_loss / tf.cast(tf.shape(inputs)[0], distillation_loss.dtype)
 
             # Compute total loss as a weighted sum of the student loss and the distillation loss
             student_loss_weight = 1 - alpha
@@ -380,7 +381,6 @@ def main(args):
         teacher.optimizer.apply_gradients(zip(teacher_gradients, teacher.trainable_variables))
 
         return total_loss, student_loss, distillation_loss, teacher_loss
-
 
     def train_distillation(
             student,
@@ -411,17 +411,22 @@ def main(args):
 
         stateful_metrics = ['loss', 'student', 'teacher', 'distil']
         progbar = tf.keras.utils.Progbar(steps_per_epoch, stateful_metrics=stateful_metrics)
-
         for epoch in range(epochs):
-            print (f'Epoch {epoch+1}/{epochs}')
+            print (f'Epoch {epoch+1}/{epochs}', flush=True)
             for batch, (inputs, labels) in enumerate(train_dataset):
                 # Stop training after the specified number of steps per epoch, if provided
                 if steps_per_epoch is not None and batch >= steps_per_epoch:
                     break
 
-                # Call the train_step function
-                total_loss, student_loss, distillation_loss, teacher_loss = train_step(
-                    inputs, labels, student, teacher, student.loss, teacher.loss, alpha)
+                # Call the train_step function using strategy.run
+                total_loss, student_loss, distillation_loss, teacher_loss=strategy.run(
+                    train_step, args=(inputs, labels, student, teacher, student.loss, teacher.loss, alpha))
+
+                # Reduce the losses across all devices
+                total_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, total_loss, axis=None)
+                student_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, student_loss, axis=None)
+                distillation_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, distillation_loss, axis=None)
+                teacher_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, teacher_loss, axis=None)
 
                 # Update progress bar with loss information
                 progress_values = [
@@ -437,7 +442,7 @@ def main(args):
                 callback.on_epoch_end(epoch, {})
 
     if args.gpu:
-        strategy = tf.distribute.OneDeviceStrategy(device='/gpu:0')
+        strategy = tf.distribute.MirroredStrategy()
     else:
         print('*****************************************************************')
         print(' WARNING: Training on CPU')
@@ -510,7 +515,6 @@ if __name__ == '__main__':
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
         parser.add_argument('-c', '--clip', type=int)
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
-        parser.add_argument('--device', type=int)
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
@@ -541,10 +545,6 @@ if __name__ == '__main__':
         args = parser.parse_args()
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout
-
-        if args.device is not None:
-            # Filter out all devices, but the user-specified one
-            os.environ['CUDA_VISIBLE_DEVICES'] = f'{args.device}'
 
         log_level = configure_logging(args)
 
