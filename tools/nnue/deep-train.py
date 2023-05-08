@@ -301,7 +301,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
         if args.filter:
             dataset = dataset.filter(filter)
-        dataset = dataset.cache().prefetch(tf.data.AUTOTUNE).repeat()
+        dataset = dataset.prefetch(tf.data.AUTOTUNE).repeat()
 
         return dataset, steps_per_epoch
 
