@@ -51,7 +51,7 @@ The deep model is used as a "teacher" for online distillation training.
 
 *****************************************************************************
 '''
-def make_deep_model(args, starting_units=1024):
+def make_deep_model(args, starting_units=4096):
     def create_dense_layer(inputs, units, activation, name):
         x = Dense(units, activation=activation, name=name)(inputs)
         x = BatchNormalization(name=f'bn_{name}')(x)
@@ -383,6 +383,7 @@ def main(args):
 
         progbar = tf.keras.utils.Progbar(steps_per_epoch, stateful_metrics=['loss', 'student', 'distil'])
         for epoch in range(epochs):
+            print (f'Epoch {epoch+1}/{epochs}')
             for batch, (inputs, labels) in enumerate(train_dataset):
                 # Stop training after the specified number of steps per epoch, if provided
                 if steps_per_epoch is not None and batch >= steps_per_epoch:
@@ -427,18 +428,20 @@ def main(args):
     # Load or initialize models.
     teacher_model = f'{args.model}-deep'
     with strategy.scope():
-        if args.model and os.path.exists(args.model) and os.path.exists(teacher_model):
-            custom_objects={'_clipped_mae' : None}
-            # Load the student model
-            model = tf.keras.models.load_model(args.model, custom_objects=custom_objects)
-            print(f'Loaded model {os.path.abspath(args.model)}.')
+        model = make_model(args)
+        deep_model = make_deep_model(args)
 
-            # Load the teacher (deep) model
-            deep_model = tf.keras.models.load_model(teacher_model, custom_objects=custom_objects)
-            print(f'Loaded model {os.path.abspath(teacher_model)}.')
-        else:
-            model = make_model(args)
-            deep_model = make_deep_model(args)
+    if args.model and os.path.exists(args.model) and os.path.exists(teacher_model):
+        custom_objects={'_clipped_mae' : None}
+        # Load the student model
+        saved_model = tf.keras.models.load_model(args.model, custom_objects=custom_objects)
+        print(f'Loaded model {os.path.abspath(args.model)}.')
+        model.set_weights(saved_model.get_weights())
+
+        # Load the teacher (deep) model
+        saved_model = tf.keras.models.load_model(teacher_model, custom_objects=custom_objects)
+        print(f'Loaded model {os.path.abspath(teacher_model)}.')
+        deep_model.set_weights(saved_model.get_weights())
 
     if args.export:
         export_weights(args, model)
