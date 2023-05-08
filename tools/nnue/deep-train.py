@@ -352,25 +352,23 @@ def main(args):
     Training step for online distillation.
     '''
     @tf.function
-    def train_step(inputs, labels, student, teacher, student_loss_fn, teacher_loss_fn, alpha):
-        mse_loss = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
+    def train_step(inputs, labels, student, teacher, alpha):
         with tf.GradientTape() as student_tape, tf.GradientTape() as teacher_tape:
             # Get model outputs
             student_outputs = student(inputs, training=True)
             teacher_outputs = teacher(inputs, training=True)
 
             # Compute distillation loss
-            distillation_loss = mse_loss(teacher_outputs, student_outputs) * alpha
+            distillation_loss = tf.keras.losses.mae(teacher_outputs, student_outputs) * alpha
             distillation_loss = distillation_loss / tf.cast(tf.shape(inputs)[0], distillation_loss.dtype)
 
             # Compute total loss as a weighted sum of the student loss and the distillation loss
             student_loss_weight = 1 - alpha
-            distillation_loss_weight = alpha
-            student_loss = student_loss_weight * student_loss_fn(labels, student_outputs)
-            total_loss = student_loss + distillation_loss_weight * distillation_loss
+            student_loss = tf.keras.losses.mae(labels, student_outputs)
+            total_loss = student_loss_weight * student_loss + distillation_loss
 
             # Compute teacher loss
-            teacher_loss = teacher_loss_fn(labels, teacher_outputs)
+            teacher_loss = tf.keras.losses.mae(labels, teacher_outputs)
 
         # Compute gradients and update student model weights
         student_gradients = student_tape.gradient(total_loss, student.trainable_variables)
@@ -420,7 +418,7 @@ def main(args):
 
                 # Call the train_step function using strategy.run
                 total_loss, student_loss, distillation_loss, teacher_loss=strategy.run(
-                    train_step, args=(inputs, labels, student, teacher, student.loss, teacher.loss, alpha))
+                    train_step, args=(inputs, labels, student, teacher, alpha))
 
                 # Reduce the losses across all devices
                 total_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, total_loss, axis=None)
