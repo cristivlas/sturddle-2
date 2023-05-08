@@ -352,6 +352,33 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 '''
 def main(args):
 
+    @tf.function
+    def train_step(inputs, labels, student, teacher, student_loss_fn, alpha):
+        mse_loss = tf.keras.losses.MeanSquaredError()
+        with tf.GradientTape() as student_tape, tf.GradientTape() as teacher_tape:
+            # Get model outputs
+            student_outputs = student(inputs, training=True)
+            teacher_outputs = teacher(inputs, training=True)
+
+            # Compute distillation loss
+            distillation_loss = mse_loss(teacher_outputs, student_outputs) * alpha
+
+            # Compute total loss as a weighted sum of the student loss and the distillation loss
+            student_loss_weight = 1 - alpha
+            distillation_loss_weight = alpha
+            student_loss = student_loss_weight * student_loss_fn(labels, student_outputs)
+            total_loss = student_loss + distillation_loss_weight * distillation_loss
+
+        # Compute gradients and update student model weights
+        student_gradients = student_tape.gradient(total_loss, student.trainable_variables)
+        student.optimizer.apply_gradients(zip(student_gradients, student.trainable_variables))
+
+        # Compute gradients and update teacher model weights
+        teacher_gradients = teacher_tape.gradient(distillation_loss, teacher.trainable_variables)
+        teacher.optimizer.apply_gradients(zip(teacher_gradients, teacher.trainable_variables))
+
+        return total_loss, student_loss, distillation_loss
+
     def train_distillation(
             student,
             teacher,
@@ -362,12 +389,10 @@ def main(args):
             steps_per_epoch,
             callbacks,
             alpha=0.1):
-        # Loss function and optimizers
-        mse_loss = tf.keras.losses.MeanSquaredError()
-        teacher_optimizer = teacher.optimizer
-        student_optimizer = student.optimizer
-        student_loss_fn = student.loss
-
+        '''
+        Train a student model using knowledge distillation with a teacher model.
+        Both student and teacher models are trained simultaneously.
+        '''
         # Checkpoints
         if teacher_model_path is not None:
             os.makedirs(os.path.dirname(teacher_model_path), exist_ok=True)
@@ -389,36 +414,16 @@ def main(args):
                 if steps_per_epoch is not None and batch >= steps_per_epoch:
                     break
 
-                with tf.GradientTape() as student_tape, tf.GradientTape() as teacher_tape:
-                    # Get model outputs
-                    student_outputs = student(inputs, training=True)
-                    teacher_outputs = teacher(inputs, training=True)
-
-                    # Compute distillation loss
-                    distillation_loss = mse_loss(teacher_outputs, student_outputs) * alpha
-
-                    # Compute total loss as a weighted sum of the student loss and the distillation loss
-                    student_loss_weight = 1 - alpha
-                    distillation_loss_weight = alpha
-                    student_loss = student_loss_weight * student_loss_fn(labels, student_outputs)
-                    total_loss = student_loss + distillation_loss_weight * distillation_loss
-
-                # Compute gradients and update student model weights
-                student_gradients = student_tape.gradient(total_loss, student.trainable_variables)
-                student_optimizer.apply_gradients(zip(student_gradients, student.trainable_variables))
-
-                # Compute gradients and update teacher model weights
-                teacher_gradients = teacher_tape.gradient(distillation_loss, teacher.trainable_variables)
-                teacher_optimizer.apply_gradients(zip(teacher_gradients, teacher.trainable_variables))
+                # Call the train_step function
+                total_loss, student_loss, distillation_loss = train_step(inputs, labels, student, teacher, student.loss, alpha)
 
                 # Update progress bar with loss information
                 progress_values = [('loss', total_loss), ('student', student_loss), ('distil', distillation_loss)]
                 progbar.update(batch+1, progress_values)
 
             # Call custom callbacks and save teacher and student model checkpoints at the end of each epoch
-            logs = {}  # Assuming no logs are passed; modify this if required
             for callback in callbacks:
-                callback.on_epoch_end(epoch, logs)
+                callback.on_epoch_end(epoch, {})
 
     if args.gpu:
         strategy = tf.distribute.MirroredStrategy()
