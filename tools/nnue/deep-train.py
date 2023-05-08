@@ -40,13 +40,18 @@ def running_in_screen():
 
 def loss_function(args):
     @tf.function
-    def _clipped_mae(y_true, y_pred):
+    def _clipped_mae(y_true, y_pred, y_student_pred=None):
         y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
-        return tf.keras.losses.mean_absolute_error(y_true, y_pred)
+        if y_student_pred is not None:
+            return tf.keras.losses.mean_absolute_error(y_true, y_pred) * args.alpha
+        else:
+            return tf.keras.losses.mean_absolute_error(y_true, y_pred)
+
     if args.clip:
         return _clipped_mae
     else:
         return MeanAbsoluteError()
+
 
 '''
 *****************************************************************************
@@ -360,16 +365,23 @@ def main(args):
             teacher_outputs = teacher(inputs, training=True)
 
             # Compute distillation loss
-            distillation_loss = tf.keras.losses.mae(teacher_outputs, student_outputs) * alpha
+            distillation_loss = student.loss(labels, teacher_outputs, student_outputs) * alpha
             distillation_loss = distillation_loss / tf.cast(tf.shape(inputs)[0], distillation_loss.dtype)
 
             # Compute total loss as a weighted sum of the student loss and the distillation loss
             student_loss_weight = 1 - alpha
-            student_loss = tf.keras.losses.mae(labels, student_outputs)
+            student_loss = student.loss(labels, student_outputs)
+
+            # Check if data types of student_loss and distillation_loss are different
+            # This happens when using mixed-precision.
+            if student_loss.dtype != distillation_loss.dtype:
+                # Cast distillation_loss to the same data type as student_loss
+                distillation_loss = tf.cast(distillation_loss, student_loss.dtype)
+
             total_loss = student_loss_weight * student_loss + distillation_loss
 
             # Compute teacher loss
-            teacher_loss = tf.keras.losses.mae(labels, teacher_outputs)
+            teacher_loss = teacher.loss(labels, teacher_outputs)
 
         # Compute gradients and update student model weights
         student_gradients = student_tape.gradient(total_loss, student.trainable_variables)
@@ -380,7 +392,6 @@ def main(args):
         teacher.optimizer.apply_gradients(zip(teacher_gradients, teacher.trainable_variables))
 
         return total_loss, student_loss, distillation_loss, teacher_loss
-
 
     def train_distillation(
             student,
