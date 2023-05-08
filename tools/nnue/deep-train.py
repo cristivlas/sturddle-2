@@ -355,9 +355,11 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 *****************************************************************************
 '''
 def main(args):
-
+    '''
+    Training step for online distillation.
+    '''
     @tf.function
-    def train_step(inputs, labels, student, teacher, alpha):
+    def train_step(inputs, labels, student, teacher, student_loss_fn, teacher_loss_fn, alpha):
         mse_loss = tf.keras.losses.MeanSquaredError()
         with tf.GradientTape() as student_tape, tf.GradientTape() as teacher_tape:
             # Get model outputs
@@ -370,11 +372,11 @@ def main(args):
             # Compute total loss as a weighted sum of the student loss and the distillation loss
             student_loss_weight = 1 - alpha
             distillation_loss_weight = alpha
-            student_loss = student_loss_weight * student.compiled_loss(labels, student_outputs)
+            student_loss = student_loss_weight * student_loss_fn(labels, student_outputs)
             total_loss = student_loss + distillation_loss_weight * distillation_loss
 
             # Compute teacher loss
-            teacher_loss = teacher.compiled_loss(labels, teacher_outputs)
+            teacher_loss = teacher_loss_fn(labels, teacher_outputs)
 
         # Compute gradients and update student model weights
         student_gradients = student_tape.gradient(total_loss, student.trainable_variables)
@@ -385,6 +387,7 @@ def main(args):
         teacher.optimizer.apply_gradients(zip(teacher_gradients, teacher.trainable_variables))
 
         return total_loss, student_loss, distillation_loss, teacher_loss
+
 
     def train_distillation(
             student,
@@ -423,7 +426,7 @@ def main(args):
 
                 # Call the train_step function
                 total_loss, student_loss, distillation_loss, teacher_loss = train_step(
-                    inputs, labels, student, teacher, alpha)
+                    inputs, labels, student, teacher, student.loss, teacher.loss, alpha)
 
                 # Update progress bar with loss information
                 progress_values = [
@@ -555,6 +558,7 @@ if __name__ == '__main__':
         from tensorflow.keras.losses import MeanAbsoluteError
         from tensorflow.keras.regularizers import L1L2
 
+        print(f'TensorFlow version: {tf.__version__}')
         # Detect GPU presence and compute capability.
         compute = 0
 
