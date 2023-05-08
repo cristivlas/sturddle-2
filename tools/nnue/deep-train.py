@@ -357,7 +357,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 def main(args):
 
     @tf.function
-    def train_step(inputs, labels, student, teacher, student_loss_fn, alpha):
+    def train_step(inputs, labels, student, teacher, alpha):
         mse_loss = tf.keras.losses.MeanSquaredError()
         with tf.GradientTape() as student_tape, tf.GradientTape() as teacher_tape:
             # Get model outputs
@@ -370,8 +370,11 @@ def main(args):
             # Compute total loss as a weighted sum of the student loss and the distillation loss
             student_loss_weight = 1 - alpha
             distillation_loss_weight = alpha
-            student_loss = student_loss_weight * student_loss_fn(labels, student_outputs)
+            student_loss = student_loss_weight * student.compiled_loss(labels, student_outputs)
             total_loss = student_loss + distillation_loss_weight * distillation_loss
+
+            # Compute teacher loss
+            teacher_loss = teacher.compiled_loss(labels, teacher_outputs)
 
         # Compute gradients and update student model weights
         student_gradients = student_tape.gradient(total_loss, student.trainable_variables)
@@ -381,7 +384,7 @@ def main(args):
         teacher_gradients = teacher_tape.gradient(distillation_loss, teacher.trainable_variables)
         teacher.optimizer.apply_gradients(zip(teacher_gradients, teacher.trainable_variables))
 
-        return total_loss, student_loss, distillation_loss
+        return total_loss, student_loss, distillation_loss, teacher_loss
 
     def train_distillation(
             student,
@@ -410,7 +413,7 @@ def main(args):
             checkpoint.model = student
             callbacks.append(checkpoint)
 
-        progbar = tf.keras.utils.Progbar(steps_per_epoch, stateful_metrics=['loss', 'student', 'distil'])
+        progbar = tf.keras.utils.Progbar(steps_per_epoch)
         for epoch in range(epochs):
             print (f'Epoch {epoch+1}/{epochs}')
             for batch, (inputs, labels) in enumerate(train_dataset):
@@ -419,12 +422,16 @@ def main(args):
                     break
 
                 # Call the train_step function
-                total_loss, student_loss, distillation_loss = train_step(
-                    inputs, labels, student, teacher, student.loss, alpha)
+                total_loss, student_loss, distillation_loss, teacher_loss = train_step(
+                    inputs, labels, student, teacher, alpha)
 
                 # Update progress bar with loss information
                 progress_values = [
-                    ('loss', total_loss), ('student', student_loss), ('distil', distillation_loss)]
+                    ('loss', total_loss),
+                    ('student', student_loss),
+                    ('teacher', teacher_loss),
+                    ('distil', distillation_loss)
+                ]
                 progbar.update(batch+1, progress_values)
 
             # Call custom callbacks and save teacher and student model checkpoints at the end of each epoch
@@ -436,19 +443,20 @@ def main(args):
     else:
         strategy = tf.distribute.OneDeviceStrategy(device='/cpu:0')
 
-    # Load or initialize models.
-    teacher_model = f'{args.model}-deep'
+    # Create models.
     with strategy.scope():
         model = make_model(args)
         deep_model = make_deep_model(args)
 
-    if args.model and os.path.exists(args.model) and os.path.exists(teacher_model):
+    if args.model and os.path.exists(args.model):
         custom_objects={'_clipped_mae' : None}
         # Load the student model
         saved_model = tf.keras.models.load_model(args.model, custom_objects=custom_objects)
         print(f'Loaded model {os.path.abspath(args.model)}.')
         model.set_weights(saved_model.get_weights())
 
+    teacher_model = f'{args.model}-deep' if args.model else None
+    if teacher_model and os.path.exists(teacher_model):
         # Load the teacher (deep) model
         saved_model = tf.keras.models.load_model(teacher_model, custom_objects=custom_objects)
         print(f'Loaded model {os.path.abspath(teacher_model)}.')
