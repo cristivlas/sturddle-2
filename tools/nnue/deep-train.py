@@ -81,7 +81,7 @@ def make_deep_model(args, starting_units=4096):
     model.compile(loss=loss_function(args), optimizer=optimizer, metrics=[])
 
     total_params = sum([tf.reduce_prod(variable.shape).numpy() for variable in model.trainable_variables])
-    print(f'Trainable parameters in deep teacher model: {total_params}')
+    print(f'Trainable parameters in deep teacher model: {total_params:,}')
 
     return model
 
@@ -314,7 +314,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         dtype = data.dtype
         row_count = data.shape[0]
         assert data.shape[1] == args.hot_encoding + 1, data.shape[1]
-        print(f'{row_count} rows.')
+        print(f'{row_count:,} rows.')
 
         class LazyView:
             def __init__(self, data, slice_, rows):
@@ -392,7 +392,7 @@ def main(args):
             epochs,
             steps_per_epoch,
             callbacks,
-            alpha=0.1):
+            alpha):
         '''
         Train a student model using knowledge distillation with a teacher model.
         Both student and teacher models are trained simultaneously.
@@ -472,10 +472,20 @@ def main(args):
             print('*****************************************************************')
 
         if args.tensorboard:
-            tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=args.logdir, profile_batch=(1, steps_per_epoch))
+            tensorboard_callback = tf.keras.callbacks.TensorBoard(
+                log_dir=args.logdir, profile_batch=(1, steps_per_epoch))
             callbacks.append(tensorboard_callback)
 
-        train_distillation(model, deep_model, dataset, teacher_model, args.model, args.epochs, steps_per_epoch, callbacks)
+        # Alpha is a hyperparameter that controls the trade-off between the student loss
+        # (i.e., the loss computed using the ground truth labels) and the distillation loss
+        # Default is 0.1; with this value, the distillation loss will have a smaller weight
+        # (10%) in the total loss compared to the student loss, which will have a weight of
+        # 90% (1 - alpha). This means that the student model will focus more on fitting the
+        # ground truth labels while still learning from the teacher model to some extent.
+        args.alpha = max(0, min(1, args.alpha))
+        train_distillation(model, deep_model, dataset, teacher_model,
+                           args.model, args.epochs, steps_per_epoch, callbacks,
+                           args.alpha)
 
 
 if __name__ == '__main__':
@@ -487,6 +497,7 @@ if __name__ == '__main__':
             pass
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
+        parser.add_argument('-a', '--alpha', type=float, default=0.1, help='hyperparameter for distillation')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
         parser.add_argument('-c', '--clip', type=int)
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
