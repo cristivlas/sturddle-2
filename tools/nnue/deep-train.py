@@ -54,12 +54,12 @@ The deep model is used as a "teacher" for online distillation training.
 
 *****************************************************************************
 '''
-def make_deep_model(args, starting_units=8192):
+def make_deep_model(args, starting_units=4096):
     def create_dense_layer(inputs, units, activation, name):
         x = Dense(units,
             activation=activation,
-            kernel_regularizer=L1L2(l1=1e-4, l2=1e-3),
-            bias_regularizer=L1L2(l1=1e-4, l2=1e-3),
+            # kernel_regularizer=L1L2(l1=1e-4, l2=1e-3),
+            # bias_regularizer=L1L2(l1=1e-4, l2=1e-3),
             name=name
         )(inputs)
         return x
@@ -69,7 +69,7 @@ def make_deep_model(args, starting_units=8192):
     x = input_layer
     i = 1
     units = starting_units
-    while units >= 8:
+    while units >= 16:
         x = create_dense_layer(x, units, 'relu', f'dense_{i}')
         units //= 2
         i += 1
