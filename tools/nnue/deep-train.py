@@ -34,6 +34,10 @@ def configure_logging(args):
     return log_level
 
 
+def running_in_screen():
+    return 'STY' in os.environ
+
+
 def loss_function(args):
     @tf.function
     def _clipped_mae(y_true, y_pred):
@@ -50,10 +54,14 @@ The deep model is used as a "teacher" for online distillation training.
 
 *****************************************************************************
 '''
-def make_deep_model(args, starting_units=4096):
+def make_deep_model(args, starting_units=8192):
     def create_dense_layer(inputs, units, activation, name):
-        x = Dense(units, activation=activation, name=name)(inputs)
-        # x = Dropout(0.2, name=f'dropout_{name}')(x)
+        x = Dense(units,
+            activation=activation,
+            kernel_regularizer=L1L2(l1=1e-5, l2=1e-4),
+            bias_regularizer=L1L2(l1=1e-5, l2=1e-4),
+            name=name
+        )(inputs)
         return x
 
     input_layer = Input(shape=(args.hot_encoding,), name='input')
@@ -139,13 +147,7 @@ def make_model(args):
     )(input_1b)
 
     # Compute dynamic weights based on hidden_1b
-    dynamic_weights = Dense(
-        16,
-        activation=None,
-        name='dynamic_weights',
-        #kernel_regularizer=L1L2(l1=1e-5, l2=1e-4),
-        #bias_regularizer=L1L2(l1=1e-5, l2=1e-4),
-    )(hidden_1b)
+    dynamic_weights = Dense(16, activation=None, name='dynamic_weights')(hidden_1b)
 
     # Apply dynamic weights to hidden_2
     weighted_hidden_2 = Multiply(name='weighted_hidden_2')([hidden_2, dynamic_weights])
@@ -374,7 +376,7 @@ def main(args):
         student.optimizer.apply_gradients(zip(student_gradients, student.trainable_variables))
 
         # Compute gradients and update teacher model weights
-        teacher_gradients = teacher_tape.gradient(teacher_loss, teacher.trainable_variables) 
+        teacher_gradients = teacher_tape.gradient(teacher_loss, teacher.trainable_variables)
         teacher.optimizer.apply_gradients(zip(teacher_gradients, teacher.trainable_variables))
 
         return total_loss, student_loss, distillation_loss, teacher_loss
@@ -407,10 +409,15 @@ def main(args):
             checkpoint.model = student
             callbacks.append(checkpoint)
 
-        stateful_metrics = ['loss', 'student', 'teacher', 'distil']
-        progbar = tf.keras.utils.Progbar(steps_per_epoch, stateful_metrics=stateful_metrics)
+        stateful_metrics = ['loss', 'model', 'deep', 'dist']
+        progbar = tf.keras.utils.Progbar(steps_per_epoch, stateful_metrics=stateful_metrics, width=20)
+
         for epoch in range(epochs):
-            print (f'Epoch {epoch+1}/{epochs}', flush=True)
+            print (f'Epoch {epoch+1}/{epochs}')
+            # workaround finalize=True not working correctly inside SCREEN
+            if epoch and running_in_screen():
+                print()
+
             for batch, (inputs, labels) in enumerate(train_dataset):
                 # Stop training after the specified number of steps per epoch, if provided
                 if steps_per_epoch is not None and batch >= steps_per_epoch:
@@ -429,9 +436,9 @@ def main(args):
                 # Update progress bar with loss information
                 progress_values = [
                     ('loss', total_loss),
-                    ('student', student_loss),
-                    ('teacher', teacher_loss),
-                    ('distil', distillation_loss)
+                    ('model', student_loss),
+                    ('deep', teacher_loss),
+                    ('dist', distillation_loss)
                 ]
                 progbar.update(batch+1, progress_values)
 
