@@ -366,6 +366,7 @@ def main(args):
         mse_loss = tf.keras.losses.MeanSquaredError()
         teacher_optimizer = teacher.optimizer
         student_optimizer = student.optimizer
+        student_loss_fn = student.loss
 
         # Checkpoints
         if teacher_model_path is not None:
@@ -398,7 +399,8 @@ def main(args):
                     # Compute total loss as a weighted sum of the student loss and the distillation loss
                     student_loss_weight = 1 - alpha
                     distillation_loss_weight = alpha
-                    total_loss = student_loss_weight * mse_loss(labels, student_outputs) + distillation_loss_weight * distillation_loss
+                    student_loss = student_loss_weight * student_loss_fn(labels, student_outputs)
+                    total_loss = student_loss + distillation_loss_weight * distillation_loss
 
                 # Compute gradients and update student model weights
                 student_gradients = student_tape.gradient(total_loss, student.trainable_variables)
@@ -409,8 +411,8 @@ def main(args):
                 teacher_optimizer.apply_gradients(zip(teacher_gradients, teacher.trainable_variables))
 
                 # Update progress bar with loss information
-                progress_values = [('loss', total_loss), ('student', mse_loss(labels, student_outputs)), ('distil', distillation_loss)]
-                progbar.update(batch+1, values=progress_values)
+                progress_values = [('loss', total_loss), ('student', student_loss), ('distil', distillation_loss)]
+                progbar.update(batch+1, progress_values)
 
             # Call custom callbacks and save teacher and student model checkpoints at the end of each epoch
             logs = {}  # Assuming no logs are passed; modify this if required
