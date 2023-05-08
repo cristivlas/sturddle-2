@@ -374,10 +374,11 @@ def main(args):
         student.optimizer.apply_gradients(zip(student_gradients, student.trainable_variables))
 
         # Compute gradients and update teacher model weights
-        teacher_gradients = teacher_tape.gradient(distillation_loss, teacher.trainable_variables)
+        teacher_gradients = teacher_tape.gradient(teacher_loss, teacher.trainable_variables) 
         teacher.optimizer.apply_gradients(zip(teacher_gradients, teacher.trainable_variables))
 
         return total_loss, student_loss, distillation_loss, teacher_loss
+
 
     def train_distillation(
             student,
