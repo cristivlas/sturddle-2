@@ -53,8 +53,7 @@ The deep model is used as a "teacher" for online distillation training.
 def make_deep_model(args, starting_units=4096):
     def create_dense_layer(inputs, units, activation, name):
         x = Dense(units, activation=activation, name=name)(inputs)
-        x = BatchNormalization(name=f'bn_{name}')(x)
-        x = Dropout(0.2, name=f'dropout_{name}')(x)
+        # x = Dropout(0.2, name=f'dropout_{name}')(x)
         return x
 
     input_layer = Input(shape=(args.hot_encoding,), name='input')
