@@ -51,7 +51,7 @@ The deep model is used as a "teacher" for online distillation training.
 
 *****************************************************************************
 '''
-def make_deep_model(args, starting_units=4096):
+def make_deep_model(args, starting_units=2048):
     def create_dense_layer(inputs, units, activation, name):
         x = Dense(units, activation=activation, name=name)(inputs)
         x = BatchNormalization(name=f'bn_{name}')(x)
@@ -370,13 +370,13 @@ def main(args):
 
         # Checkpoints
         if teacher_model_path is not None:
-            os.makedirs(teacher_model_path, exist_ok=True)
+            os.makedirs(os.path.dirname(teacher_model_path), exist_ok=True)
             checkpoint = tf.keras.callbacks.ModelCheckpoint(teacher_model_path)
             checkpoint.model = teacher
             callbacks.append(checkpoint)
 
         if student_model_path is not None:
-            os.makedirs(student_model_path, exist_ok=True)
+            os.makedirs(os.path.dirname(student_model_path), exist_ok=True)
             checkpoint = tf.keras.callbacks.ModelCheckpoint(student_model_path)
             checkpoint.model = student
             callbacks.append(checkpoint)
