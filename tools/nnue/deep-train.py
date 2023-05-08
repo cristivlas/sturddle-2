@@ -40,7 +40,6 @@ def loss_function(args):
         y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
         return tf.keras.losses.mean_absolute_error(y_true, y_pred)
     if args.clip:
-        # tf.keras.utils.get_custom_objects().update({'_clipped_mae': _clipped_mae})
         return _clipped_mae
     else:
         return MeanAbsoluteError()
@@ -410,7 +409,9 @@ def main(args):
             checkpoint.model = student
             callbacks.append(checkpoint)
 
-        progbar = tf.keras.utils.Progbar(steps_per_epoch)
+        stateful_metrics = ['loss', 'student', 'teacher', 'distil']
+        progbar = tf.keras.utils.Progbar(steps_per_epoch, stateful_metrics=stateful_metrics)
+
         for epoch in range(epochs):
             print (f'Epoch {epoch+1}/{epochs}')
             for batch, (inputs, labels) in enumerate(train_dataset):
