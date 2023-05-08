@@ -13,7 +13,6 @@ from contextlib import redirect_stdout
 
 import h5py
 import numpy as np
-from tqdm import tqdm
 
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -381,10 +380,8 @@ def main(args):
             checkpoint.model = student
             callbacks.append(checkpoint)
 
+        progbar = tf.keras.utils.Progbar(steps_per_epoch, stateful_metrics=['loss', 'student', 'distil'])
         for epoch in range(epochs):
-            # print(f'Epoch {epoch + 1}/{epochs}')
-            progress_bar = tqdm(train_dataset, desc=f'Epoch {epoch + 1}/{epochs}', total=steps_per_epoch, ncols=140)
-
             for batch, (inputs, labels) in enumerate(train_dataset):
                 # Stop training after the specified number of steps per epoch, if provided
                 if steps_per_epoch is not None and batch >= steps_per_epoch:
@@ -411,13 +408,9 @@ def main(args):
                 teacher_gradients = teacher_tape.gradient(distillation_loss, teacher.trainable_variables)
                 teacher_optimizer.apply_gradients(zip(teacher_gradients, teacher.trainable_variables))
 
-                progress_bar.update(1)
                 # Update progress bar with loss information
-                progress_bar.set_postfix({
-                    'loss': f'{total_loss.numpy():.4f}',
-                    'student': f'{mse_loss(labels, student_outputs).numpy():.4f}',
-                    'distil': f'{distillation_loss.numpy():.4f}'
-                })
+                progress_values = [('loss', total_loss), ('student', mse_loss(labels, student_outputs)), ('distil', distillation_loss)]
+                progbar.update(batch+1, values=progress_values)
 
             # Call custom callbacks and save teacher and student model checkpoints at the end of each epoch
             logs = {}  # Assuming no logs are passed; modify this if required
@@ -431,25 +424,19 @@ def main(args):
 
     # Load or initialize models.
     teacher_model = f'{args.model}-deep'
-    if args.model and os.path.exists(args.model) and os.path.exists(teacher_model):
-        custom_objects={'_clipped_mae' : None}
-        # Load the student model
-        saved_model = tf.keras.models.load_model(args.model, custom_objects=custom_objects)
-        if not args.name:
-            args.name = saved_model.name
-        model = make_model(args)
-        model.set_weights(saved_model.get_weights())
-        print(f'Loaded model {os.path.abspath(args.model)}.')
+    with strategy.scope():
+        if args.model and os.path.exists(args.model) and os.path.exists(teacher_model):
+            custom_objects={'_clipped_mae' : None}
+            # Load the student model
+            model = tf.keras.models.load_model(args.model, custom_objects=custom_objects)
+            print(f'Loaded model {os.path.abspath(args.model)}.')
 
-        # Load the teacher (deep) model
-        saved_model = tf.keras.models.load_model(teacher_model, custom_objects=custom_objects)
-        deep_model = make_deep_model(args)
-        deep_model.set_weights(saved_model.get_weights())
-
-        print(f'Loaded model {os.path.abspath(teacher_model)}.')
-    else:
-        model = make_model(args)
-        deep_model = make_deep_model(args)
+            # Load the teacher (deep) model
+            deep_model = tf.keras.models.load_model(teacher_model, custom_objects=custom_objects)
+            print(f'Loaded model {os.path.abspath(teacher_model)}.')
+        else:
+            model = make_model(args)
+            deep_model = make_deep_model(args)
 
     if args.export:
         export_weights(args, model)
@@ -528,6 +515,7 @@ if __name__ == '__main__':
         import tensorflow as tf
         tf.get_logger().setLevel(log_level)
 
+        from tensorflow.keras.callbacks import ProgbarLogger
         from tensorflow.keras.constraints import MinMaxNorm
         from tensorflow.keras.layers import *
         from tensorflow.keras.losses import MeanAbsoluteError
