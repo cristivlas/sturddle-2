@@ -456,11 +456,7 @@ def main(args):
                 teacher_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, teacher_loss, axis=None)
 
                 # Update progress bar with loss information
-                progress_values = [
-                    ('model', student_loss),
-                    ('deep', teacher_loss),
-                    ('dist', distillation_loss)
-                ]
+                progress_values = [ ('student loss', student_loss), ('teacher loss', teacher_loss) ]
                 progbar.update(batch + 1, progress_values)
 
             # Call custom callbacks and save teacher and student model checkpoints at the end of each epoch
