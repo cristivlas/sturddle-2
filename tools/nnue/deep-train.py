@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 '''
-Trainer for the Sturddle Chess 2.0 engine's neural network.
+Alternative trainer for the Sturddle Chess 2.0 engine's neural network,
+using knowledge distillation (https://en.wikipedia.org/wiki/Knowledge_distillation).
+
 Copyright (c) 2023 Cristian Vlasceanu.
 
 Expects memmapped numpy arrays or H5 files as inputs.
