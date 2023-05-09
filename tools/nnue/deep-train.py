@@ -370,7 +370,9 @@ def main(args):
             teacher_outputs = teacher(inputs, training=online)
             student_loss = student.loss(labels, student_outputs)
             teacher_loss = teacher.loss(labels, teacher_outputs)
-            distillation_loss = student.loss(labels, teacher_outputs)
+            # distillation_loss = student.loss(labels, teacher_outputs)
+            # take advantage of teacher and student using the same loss function
+            distillation_loss = tf.identity(teacher_loss)
 
             result = student_loss, distillation_loss, teacher_loss
 
