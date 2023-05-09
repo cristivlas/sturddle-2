@@ -38,25 +38,11 @@ def running_in_screen():
     return 'STY' in os.environ
 
 
-'''
-The _clipped_mae function is used to compute both the student loss and the teacher loss.
-
-When calculating the student loss, y_student_pred is not needed, we pass None as its value.
-The function computes the MAE between y_true and y_pred (student predictions).
-
-When calculating the distillation loss, y_student_pred is not None. The function then computes
-the MAE between y_true and y_pred (teacher predictions) multiplied by args.alpha.
-The value of y_student_pred does not affect the loss calculation directly. It only serves as an
-indicator for whether to compute the regular loss (student loss) or the distillation loss.
-'''
 def loss_function(args):
     @tf.function
-    def _clipped_mae(y_true, y_pred, y_student_pred=None):
+    def _clipped_mae(y_true, y_pred):
         y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
-        if y_student_pred is not None:
-            return tf.keras.losses.mean_absolute_error(y_true, y_pred) * args.alpha
-        else:
-            return tf.keras.losses.mean_absolute_error(y_true, y_pred)
+        return tf.keras.losses.mean_absolute_error(y_true, y_pred)
 
     if args.clip:
         return _clipped_mae
@@ -377,45 +363,42 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 *****************************************************************************
 '''
 def main(args):
-    '''
-    Training step for online distillation.
-    '''
     @tf.function
-    def train_step(inputs, labels, student, teacher, alpha, online):
+    def train_step(inputs, labels, student, teacher, alpha, mixed, online):
         with tf.GradientTape() as student_tape, tf.GradientTape() as teacher_tape:
-            # Get model outputs
             student_outputs = student(inputs, training=True)
             teacher_outputs = teacher(inputs, training=online)
-
-            # Compute distillation loss
-            distillation_loss = student.loss(labels, teacher_outputs, student_outputs) * alpha
-            distillation_loss = distillation_loss / tf.cast(tf.shape(inputs)[0], distillation_loss.dtype)
-
-            # Compute total loss as a weighted sum of the student loss and the distillation loss
-            student_loss_weight = 1 - alpha
             student_loss = student.loss(labels, student_outputs)
+            teacher_loss = teacher.loss(labels, teacher_outputs)
+            distillation_loss = student.loss(labels, teacher_outputs)
 
-            # Check if data types of student_loss and distillation_loss are different
-            # This happens when using mixed-precision.
-            if student_loss.dtype != distillation_loss.dtype:
-                # Cast distillation_loss to the same data type as student_loss
+            result = student_loss, distillation_loss, teacher_loss
+
+            if mixed: # mixed-precision
+                student_loss = student.optimizer.get_scaled_loss(student_loss)
+                distillation_loss = student.optimizer.get_scaled_loss(distillation_loss)
                 distillation_loss = tf.cast(distillation_loss, student_loss.dtype)
 
-            total_loss = student_loss_weight * student_loss + distillation_loss
+                if online:
+                    teacher_loss = teacher.optimizer.get_scaled_loss(teacher_loss)
 
-            # Compute teacher loss
-            teacher_loss = teacher.loss(labels, teacher_outputs)
+            # Compute total loss as a weighted sum of the student loss and the distillation loss
+            total_loss = (1 - alpha) * student_loss + distillation_loss * alpha
 
         # Compute gradients and update student model weights
         student_gradients = student_tape.gradient(total_loss, student.trainable_variables)
+        if mixed:
+            student_gradients = student.optimizer.get_unscaled_gradients(student_gradients)
         student.optimizer.apply_gradients(zip(student_gradients, student.trainable_variables))
 
         # Compute gradients and update teacher model weights only if online training is enabled
         if online:
             teacher_gradients = teacher_tape.gradient(teacher_loss, teacher.trainable_variables)
+            if mixed:
+                teacher_gradients = teacher.optimizer.get_unscaled_gradients(teacher_gradients)
             teacher.optimizer.apply_gradients(zip(teacher_gradients, teacher.trainable_variables))
 
-        return total_loss, student_loss, distillation_loss, teacher_loss
+        return result
 
     '''
     Train a student model using knowledge distillation with a teacher model.
@@ -459,18 +442,17 @@ def main(args):
                 #     break
 
                 # Call the train_step function using strategy.run
-                total_loss, student_loss, distillation_loss, teacher_loss=strategy.run(
-                    train_step, args=(inputs, labels, student, teacher, args.alpha, args.online))
+                student_loss, distillation_loss, teacher_loss=strategy.run(
+                    train_step,
+                    args=(inputs, labels, student, teacher, args.alpha, args.mixed_precision, args.online))
 
                 # Reduce the losses across all devices
-                total_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, total_loss, axis=None)
                 student_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, student_loss, axis=None)
                 distillation_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, distillation_loss, axis=None)
                 teacher_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, teacher_loss, axis=None)
 
                 # Update progress bar with loss information
                 progress_values = [
-                    ('loss', total_loss),
                     ('model', student_loss),
                     ('deep', teacher_loss),
                     ('dist', distillation_loss)
