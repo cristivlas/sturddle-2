@@ -83,7 +83,7 @@ def make_deep_model(args, starting_units=4096):
         projection = Dense(layers[j + 2].shape[-1], name=f'projection_{j}')(layers[j])
         layers[j + 2] = Add(name=f'skip_connection_{j}')([layers[j + 2], projection])
 
-    output_layer = Dense(1, name='output')(layers[-1])
+    output_layer = Dense(1, name='output', dtype='float32')(layers[-1])
 
     model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer, name=args.name)
 
@@ -379,7 +379,7 @@ def main(args):
             if mixed: # mixed-precision
                 student_loss = student.optimizer.get_scaled_loss(student_loss)
                 distillation_loss = student.optimizer.get_scaled_loss(distillation_loss)
-                distillation_loss = tf.cast(distillation_loss, student_loss.dtype)
+                # distillation_loss = tf.cast(distillation_loss, student_loss.dtype)
 
                 if online:
                     teacher_loss = teacher.optimizer.get_scaled_loss(teacher_loss)
