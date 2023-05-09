@@ -267,7 +267,10 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             assert len(x) == len(y)
             self.x, self.y = x, y
             self.batch_size = args.batch_size if args.batch_size else 1
-            self.len = int(np.ceil(len(self.x) / self.batch_size))
+            # Avoid producing incomplete batches
+            # self.len = int(np.ceil(len(self.x) / self.batch_size))
+            self.len = len(self.x) // self.batch_size
+
             self.indices = np.arange(self.len)
             np.random.shuffle(self.indices)
             logging.info(f'using {self.len} batches.')
@@ -313,7 +316,9 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
         if args.filter:
             dataset = dataset.filter(filter)
-        dataset = dataset.prefetch(tf.data.AUTOTUNE).repeat()
+        # don't need to repeat with custom training function
+        # dataset = dataset.prefetch(tf.data.AUTOTUNE).repeat()
+        dataset = dataset.prefetch(tf.data.AUTOTUNE)
 
         return dataset, steps_per_epoch
 
@@ -436,9 +441,10 @@ def main(args):
                 print()
 
             for batch, (inputs, labels) in enumerate(train_dataset):
-                # Stop training after the specified number of steps per epoch, if provided
-                if steps_per_epoch is not None and batch >= steps_per_epoch:
-                    break
+                # Stop training after the specified number of steps per epoch, if provided.
+                # Not needed if the dataset is not repeated indefinitelly w/ dataset.repeat()
+                # if steps_per_epoch is not None and batch >= steps_per_epoch:
+                #     break
 
                 # Call the train_step function using strategy.run
                 total_loss, student_loss, distillation_loss, teacher_loss=strategy.run(
@@ -452,10 +458,10 @@ def main(args):
 
                 # Update progress bar with loss information
                 progress_values = [
-                    ('loss', tf.reduce_mean(total_loss)),
-                    ('model', tf.reduce_mean(student_loss)),
-                    ('deep', tf.reduce_mean(teacher_loss)),
-                    ('dist', tf.reduce_mean(distillation_loss))
+                    ('loss', total_loss),
+                    ('model', student_loss),
+                    ('deep', teacher_loss),
+                    ('dist', distillation_loss)
                 ]
                 progbar.update(batch + 1, progress_values)
 
