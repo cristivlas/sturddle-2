@@ -602,6 +602,8 @@ if __name__ == '__main__':
             else:
                 args.mixed_precision = False
                 mixed_precision.set_global_policy('float32')
+        else:
+            args.mixed_precision = False
 
         main(args)
 
