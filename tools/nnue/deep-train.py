@@ -62,11 +62,11 @@ The deep model is used as a "teacher" for online distillation training.
 def make_deep_model(args, starting_units=4096):
     def create_dense_layer(inputs, units, activation, name):
         x = Dense(units,
-            activation=activation,
-            # kernel_regularizer=L1L2(l1=1e-4, l2=1e-3),
-            # bias_regularizer=L1L2(l1=1e-4, l2=1e-3),
-            name=name
-        )(inputs)
+                  activation=activation,
+                  kernel_regularizer=L1L2(l1=1e-4, l2=1e-3),
+                  bias_regularizer=L1L2(l1=1e-4, l2=1e-3),
+                  name=name
+                  )(inputs)
         return x
 
     input_layer = Input(shape=(args.hot_encoding,), name='input')
@@ -74,12 +74,19 @@ def make_deep_model(args, starting_units=4096):
     x = input_layer
     i = 1
     units = starting_units
+    layers = []
     while units >= 16:
         x = create_dense_layer(x, units, 'relu', f'dense_{i}')
+        layers.append(x)
         units //= 2
         i += 1
 
-    output_layer = Dense(1, name='output')(x)
+    # Add skip connections
+    for j in range(len(layers) - 2):
+        projection = Dense(layers[j + 2].shape[-1], name=f'projection_{j}')(layers[j])
+        layers[j + 2] = Add(name=f'skip_connection_{j}')([layers[j + 2], projection])
+
+    output_layer = Dense(1, name='output')(layers[-1])
 
     model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer, name=args.name)
 
@@ -358,11 +365,11 @@ def main(args):
     Training step for online distillation.
     '''
     @tf.function
-    def train_step(inputs, labels, student, teacher, alpha):
+    def train_step(inputs, labels, student, teacher, alpha, online):
         with tf.GradientTape() as student_tape, tf.GradientTape() as teacher_tape:
             # Get model outputs
             student_outputs = student(inputs, training=True)
-            teacher_outputs = teacher(inputs, training=True)
+            teacher_outputs = teacher(inputs, training=online)
 
             # Compute distillation loss
             distillation_loss = student.loss(labels, teacher_outputs, student_outputs) * alpha
@@ -387,9 +394,10 @@ def main(args):
         student_gradients = student_tape.gradient(total_loss, student.trainable_variables)
         student.optimizer.apply_gradients(zip(student_gradients, student.trainable_variables))
 
-        # Compute gradients and update teacher model weights
-        teacher_gradients = teacher_tape.gradient(teacher_loss, teacher.trainable_variables)
-        teacher.optimizer.apply_gradients(zip(teacher_gradients, teacher.trainable_variables))
+        # Compute gradients and update teacher model weights only if online training is enabled
+        if online:
+            teacher_gradients = teacher_tape.gradient(teacher_loss, teacher.trainable_variables)
+            teacher.optimizer.apply_gradients(zip(teacher_gradients, teacher.trainable_variables))
 
         return total_loss, student_loss, distillation_loss, teacher_loss
 
@@ -401,8 +409,7 @@ def main(args):
             student_model_path,
             epochs,
             steps_per_epoch,
-            callbacks,
-            alpha):
+            callbacks):
         '''
         Train a student model using knowledge distillation with a teacher model.
         Both student and teacher models are trained simultaneously.
@@ -420,8 +427,7 @@ def main(args):
             checkpoint.model = student
             callbacks.append(checkpoint)
 
-        stateful_metrics = []
-        progbar = tf.keras.utils.Progbar(steps_per_epoch, stateful_metrics=stateful_metrics, width=20)
+        progbar = tf.keras.utils.Progbar(steps_per_epoch, width=20)
 
         for epoch in range(epochs):
             print (f'Epoch {epoch+1}/{epochs}')
@@ -436,7 +442,7 @@ def main(args):
 
                 # Call the train_step function using strategy.run
                 total_loss, student_loss, distillation_loss, teacher_loss=strategy.run(
-                    train_step, args=(inputs, labels, student, teacher, alpha))
+                    train_step, args=(inputs, labels, student, teacher, args.alpha, args.online))
 
                 # Reduce the losses across all devices
                 total_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, total_loss, axis=None)
@@ -446,15 +452,12 @@ def main(args):
 
                 # Update progress bar with loss information
                 progress_values = [
-                    ('loss', total_loss),
-                    ('model', student_loss),
-                    ('deep', teacher_loss),
-                    ('dist', distillation_loss)
+                    ('loss', tf.reduce_mean(total_loss)),
+                    ('model', tf.reduce_mean(student_loss)),
+                    ('deep', tf.reduce_mean(teacher_loss)),
+                    ('dist', tf.reduce_mean(distillation_loss))
                 ]
-                try:
-                    progbar.update(batch+1, progress_values)
-                except:
-                    pass
+                progbar.update(batch + 1, progress_values)
 
             # Call custom callbacks and save teacher and student model checkpoints at the end of each epoch
             for callback in callbacks:
@@ -487,6 +490,10 @@ def main(args):
         print(f'Loaded model {os.path.abspath(teacher_model)}.')
         deep_model.set_weights(saved_model.get_weights())
 
+    elif not args.online and not args.export:
+        print('Cannot train offline without a teacher model.')
+        return
+
     if args.export:
         export_weights(args, model)
     else:
@@ -507,8 +514,7 @@ def main(args):
         # ground truth labels while still learning from the teacher model to some extent.
         args.alpha = max(0, min(1, args.alpha))
         train_distillation(model, deep_model, dataset, teacher_model,
-                           args.model, args.epochs, steps_per_epoch, callbacks,
-                           args.alpha)
+                           args.model, args.epochs, steps_per_epoch, callbacks)
 
 
 if __name__ == '__main__':
@@ -534,7 +540,7 @@ if __name__ == '__main__':
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-4, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
-
+        parser.add_argument('--online', action='store_true', help='train the teacher together with the student')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
 
