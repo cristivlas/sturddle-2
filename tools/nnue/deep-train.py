@@ -417,6 +417,10 @@ def main(args):
 
         return total_loss, student_loss, distillation_loss, teacher_loss
 
+    '''
+    Train a student model using knowledge distillation with a teacher model.
+    Both student and teacher models are trained simultaneously when args.online is True
+    '''
     def train_distillation(
             student,
             teacher,
@@ -426,10 +430,7 @@ def main(args):
             epochs,
             steps_per_epoch,
             callbacks):
-        '''
-        Train a student model using knowledge distillation with a teacher model.
-        Both student and teacher models are trained simultaneously.
-        '''
+
         # Checkpoints
         if teacher_model_path is not None:
             os.makedirs(os.path.dirname(teacher_model_path), exist_ok=True)
@@ -617,6 +618,7 @@ if __name__ == '__main__':
                 mixed_precision.set_global_policy('mixed_float16')
                 logging.info('Using mixed_float16 policy')
             else:
+                args.mixed_precision = False
                 mixed_precision.set_global_policy('float32')
 
         main(args)
