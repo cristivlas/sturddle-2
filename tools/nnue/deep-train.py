@@ -38,6 +38,17 @@ def running_in_screen():
     return 'STY' in os.environ
 
 
+'''
+The _clipped_mae function is used to compute both the student loss and the teacher loss.
+
+When calculating the student loss, y_student_pred is not needed, we pass None as its value.
+The function computes the MAE between y_true and y_pred (student predictions).
+
+When calculating the distillation loss, y_student_pred is not None. The function then computes
+the MAE between y_true and y_pred (teacher predictions) multiplied by args.alpha.
+The value of y_student_pred does not affect the loss calculation directly. It only serves as an
+indicator for whether to compute the regular loss (student loss) or the distillation loss.
+'''
 def loss_function(args):
     @tf.function
     def _clipped_mae(y_true, y_pred, y_student_pred=None):
