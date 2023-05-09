@@ -372,7 +372,10 @@ def main(args):
             teacher_outputs = teacher(inputs, training=online)
             student_loss = student.loss(labels, student_outputs)
             teacher_loss = teacher.loss(labels, teacher_outputs)
+
             # distillation_loss = student.loss(labels, teacher_outputs)
+            # tf.debugging.assert_equal(teacher_loss, distillation_loss)
+
             # take advantage of teacher and student using the same loss function
             distillation_loss = tf.identity(teacher_loss)
 
@@ -381,7 +384,6 @@ def main(args):
             if mixed: # mixed-precision
                 student_loss = student.optimizer.get_scaled_loss(student_loss)
                 distillation_loss = student.optimizer.get_scaled_loss(distillation_loss)
-                # distillation_loss = tf.cast(distillation_loss, student_loss.dtype)
 
                 if online:
                     teacher_loss = teacher.optimizer.get_scaled_loss(teacher_loss)
