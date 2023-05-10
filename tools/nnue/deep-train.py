@@ -421,6 +421,8 @@ def main(args):
             steps_per_epoch,
             callbacks):
 
+        num_replicas = strategy.num_replicas_in_sync  # Get the number of replicas (GPUs)
+
         for epoch in range(epochs):
             print (f'Epoch {epoch+1}/{epochs}')
 
@@ -433,9 +435,9 @@ def main(args):
                     args=(inputs, labels, student, teacher, args.alpha, args.mixed_precision, args.online))
 
                 # Reduce the losses across all devices
-                student_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, student_loss, axis=None)
-                distillation_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, distillation_loss, axis=None)
-                teacher_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, teacher_loss, axis=None)
+                student_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, student_loss, axis=None) / num_replicas
+                teacher_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, teacher_loss, axis=None) / num_replicas
+                # distillation_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, distillation_loss, axis=None) / num_replicas
 
                 # Update progress bar with loss information
                 progress_values = [ ('student loss', student_loss), ('teacher loss', teacher_loss) ]
