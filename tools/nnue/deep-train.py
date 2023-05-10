@@ -54,7 +54,7 @@ The deep model is used as a "teacher" for online distillation training.
 
 *****************************************************************************
 '''
-def make_deep_model(args, starting_units=4096):
+def make_teacher_model(args, starting_units=4096):
     def create_dense_layer(inputs, units, activation, name):
         x = Dense(units,
                   activation=activation,
@@ -106,7 +106,7 @@ This is the "student" model.
 
 *****************************************************************************
 '''
-def make_model(args):
+def make_student_model(args):
     activation = tf.keras.activations.relu
 
     # Define the input layer
@@ -436,28 +436,29 @@ def main(args):
             for callback in callbacks:
                 callback.on_epoch_end(epoch, {})
 
+
     if args.gpu:
         strategy = tf.distribute.MirroredStrategy()
     else:
         print('*****************************************************************')
-        print(' WARNING: Training on CPU')
+        print(' WARNING: Running on CPU')
         print('*****************************************************************')
         strategy = tf.distribute.OneDeviceStrategy(device='/cpu:0')
 
     # Create models.
     with strategy.scope():
-        model = make_model(args)
-        deep_model = make_deep_model(args)
+        student = make_student_model(args)
+        teacher = make_teacher_model(args)
 
     if args.model_path and os.path.exists(args.model_path):
         custom_objects={'_clipped_mae' : None}
         # Load the student model
         saved_model = tf.keras.models.load_model(args.model_path, custom_objects=custom_objects)
         print(f'Loaded model {os.path.abspath(args.model_path)}.')
-        model.set_weights(saved_model.get_weights())
+        student.set_weights(saved_model.get_weights())
 
     if args.export:
-        export_weights(args, model)
+        export_weights(args, student)
         return
 
     teacher_model_path = f'{args.model_path}-deep' if args.model_path else None
@@ -465,7 +466,7 @@ def main(args):
         # Load the teacher (deep) model
         saved_model = tf.keras.models.load_model(teacher_model_path, custom_objects=custom_objects)
         print(f'Loaded model {os.path.abspath(teacher_model_path)}.')
-        deep_model.set_weights(saved_model.get_weights())
+        teacher.set_weights(saved_model.get_weights())
 
     elif not args.online and not args.export:
         print('Cannot train offline without a teacher model.')
@@ -474,7 +475,7 @@ def main(args):
     callbacks = []
     dataset, steps_per_epoch = dataset_from_file(args, args.input[0], args.clip, strategy, callbacks)
 
-    model.summary()
+    student.summary()
 
     if not args.model_path:
         print('*****************************************************************')
@@ -485,13 +486,13 @@ def main(args):
     if teacher_model_path is not None:
         os.makedirs(os.path.dirname(teacher_model_path), exist_ok=True)
         checkpoint = tf.keras.callbacks.ModelCheckpoint(teacher_model_path)
-        checkpoint.model = deep_model
+        checkpoint.model = teacher
         callbacks.append(checkpoint)
 
     if args.model_path is not None:
         os.makedirs(os.path.dirname(args.model_path), exist_ok=True)
         checkpoint = tf.keras.callbacks.ModelCheckpoint(args.model_path)
-        checkpoint.model = model
+        checkpoint.model = student
         callbacks.append(checkpoint)
 
     # Alpha is a hyperparameter that controls the trade-off between the student loss
@@ -501,7 +502,8 @@ def main(args):
     # 90% (1 - alpha). This means that the student model will focus more on fitting the
     # ground truth labels while still learning from the teacher model to some extent.
     args.alpha = max(0, min(1, args.alpha))
-    train_with_distillation(model, deep_model, dataset, args.epochs, steps_per_epoch, callbacks)
+
+    train_with_distillation(student, teacher, dataset, args.epochs, steps_per_epoch, callbacks)
 
 
 if __name__ == '__main__':
