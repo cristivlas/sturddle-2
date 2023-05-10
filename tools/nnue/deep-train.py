@@ -433,13 +433,13 @@ def main(args):
             checkpoint.model = student
             callbacks.append(checkpoint)
 
-        progbar = tf.keras.utils.Progbar(steps_per_epoch, width=20)
-
         for epoch in range(epochs):
             print (f'Epoch {epoch+1}/{epochs}')
             # workaround finalize=True not working correctly inside SCREEN
             if epoch and running_in_screen():
                 print()
+
+            progbar = tf.keras.utils.Progbar(steps_per_epoch, width=20)
 
             for batch, (inputs, labels) in enumerate(train_dataset):
                 # Stop training after the specified number of steps per epoch, if provided.
