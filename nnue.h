@@ -210,7 +210,7 @@ namespace nnue
         {
             static_assert(S >= INPUTS);
 
-        #if 0
+        #if 0 /* testing */
             for (int j = 0; j != OUTPUTS; ++j)
             {
                 output[j] = b[j];
@@ -262,7 +262,7 @@ namespace nnue
         #endif /* 0 */
         }
 
-        /* output */
+        /* hidden, output */
         template <typename F>
         static INLINE void dot(
             const float (&input)[INPUTS],
@@ -573,8 +573,8 @@ namespace nnue
 
         /*
          * The dynamic weights computed by the "attention" layer
-         * are used to modulate the output of another
-         * hidden layer (L2, aka hidden_2) through element-wise multiplication
+         * are used to modulate the output of another hidden layer
+         * (L2, aka hidden_2) through element-wise multiplication.
          */
         attn.dot(attn_in, attn_out);
 
