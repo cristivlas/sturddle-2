@@ -36,16 +36,25 @@ def configure_logging(args):
     return log_level
 
 
+'''
+loss function for BOTH student and teacher models.
+
+Clarification regarding Reduction.NONE:
+The TensorFlow documentation states that "when using a strategy like tf.distribute.MirroredStrategy
+which uses in-graph replication, the batch reduction is done by the strategy and the user should not
+use a reduction type that reduces across the batch, like Reduction.SUM."
+'''
 def loss_function(args):
     @tf.function
     def _clipped_mae(y_true, y_pred):
         y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
-        return tf.keras.losses.mean_absolute_error(y_true, y_pred)
+        mae = tf.keras.losses.MeanAbsoluteError(reduction=tf.keras.losses.Reduction.NONE)
+        return mae(y_true, y_pred)
 
     if args.clip:
         return _clipped_mae
     else:
-        return MeanAbsoluteError()
+        return tf.keras.losses.MeanAbsoluteError(reduction=tf.keras.losses.Reduction.NONE)
 
 
 '''
