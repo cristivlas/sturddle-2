@@ -404,7 +404,7 @@ def main(args):
     Train a student model using knowledge distillation with a teacher model.
     Both student and teacher models are trained simultaneously when args.online is True
     '''
-    def train_distillation(
+    def train_with_distillation(
             student,
             teacher,
             train_dataset,
@@ -456,6 +456,10 @@ def main(args):
         print(f'Loaded model {os.path.abspath(args.model_path)}.')
         model.set_weights(saved_model.get_weights())
 
+    if args.export:
+        export_weights(args, model)
+        return
+
     teacher_model_path = f'{args.model_path}-deep' if args.model_path else None
     if teacher_model_path and os.path.exists(teacher_model_path):
         # Load the teacher (deep) model
@@ -467,40 +471,37 @@ def main(args):
         print('Cannot train offline without a teacher model.')
         return
 
-    if args.export:
-        export_weights(args, model)
-    else:
-        callbacks = []
-        dataset, steps_per_epoch = dataset_from_file(args, args.input[0], args.clip, strategy, callbacks)
+    callbacks = []
+    dataset, steps_per_epoch = dataset_from_file(args, args.input[0], args.clip, strategy, callbacks)
 
-        model.summary()
+    model.summary()
 
-        if not args.model_path:
-            print('*****************************************************************')
-            print(' WARNING: checkpoint path not provided, model WILL NOT BE SAVED! ')
-            print('*****************************************************************')
+    if not args.model_path:
+        print('*****************************************************************')
+        print(' WARNING: checkpoint path not provided, model WILL NOT BE SAVED! ')
+        print('*****************************************************************')
 
-        # Checkpoints
-        if teacher_model_path is not None:
-            os.makedirs(os.path.dirname(teacher_model_path), exist_ok=True)
-            checkpoint = tf.keras.callbacks.ModelCheckpoint(teacher_model_path)
-            checkpoint.model = deep_model
-            callbacks.append(checkpoint)
+    # Checkpoints
+    if teacher_model_path is not None:
+        os.makedirs(os.path.dirname(teacher_model_path), exist_ok=True)
+        checkpoint = tf.keras.callbacks.ModelCheckpoint(teacher_model_path)
+        checkpoint.model = deep_model
+        callbacks.append(checkpoint)
 
-        if args.model_path is not None:
-            os.makedirs(os.path.dirname(args.model_path), exist_ok=True)
-            checkpoint = tf.keras.callbacks.ModelCheckpoint(args.model_path)
-            checkpoint.model = model
-            callbacks.append(checkpoint)
+    if args.model_path is not None:
+        os.makedirs(os.path.dirname(args.model_path), exist_ok=True)
+        checkpoint = tf.keras.callbacks.ModelCheckpoint(args.model_path)
+        checkpoint.model = model
+        callbacks.append(checkpoint)
 
-        # Alpha is a hyperparameter that controls the trade-off between the student loss
-        # (i.e., the loss computed using the ground truth labels) and the distillation loss
-        # Default is 0.1; with this value, the distillation loss will have a smaller weight
-        # (10%) in the total loss compared to the student loss, which will have a weight of
-        # 90% (1 - alpha). This means that the student model will focus more on fitting the
-        # ground truth labels while still learning from the teacher model to some extent.
-        args.alpha = max(0, min(1, args.alpha))
-        train_distillation(model, deep_model, dataset, args.epochs, steps_per_epoch, callbacks)
+    # Alpha is a hyperparameter that controls the trade-off between the student loss
+    # (i.e., the loss computed using the ground truth labels) and the distillation loss
+    # Default is 0.1; with this value, the distillation loss will have a smaller weight
+    # (10%) in the total loss compared to the student loss, which will have a weight of
+    # 90% (1 - alpha). This means that the student model will focus more on fitting the
+    # ground truth labels while still learning from the teacher model to some extent.
+    args.alpha = max(0, min(1, args.alpha))
+    train_with_distillation(model, deep_model, dataset, args.epochs, steps_per_epoch, callbacks)
 
 
 if __name__ == '__main__':
