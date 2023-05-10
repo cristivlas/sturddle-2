@@ -93,8 +93,9 @@ def make_deep_model(args, starting_units=4096):
     )
     model.compile(loss=loss_function(args), optimizer=optimizer, metrics=[])
 
-    total_params = sum([tf.reduce_prod(variable.shape).numpy() for variable in model.trainable_variables])
-    print(f'Trainable parameters in deep teacher model: {total_params:,} / {len(model.layers)} layers.')
+    nparam = sum([
+        tf.reduce_prod(variable.shape).numpy() for variable in model.trainable_variables])
+    print(f'Trainable parameters in teacher model: {nparam:,} / {len(model.layers)} layers.')
 
     return model
 
@@ -347,7 +348,6 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         x = data[:,:args.hot_encoding]
         y = data[:,args.hot_encoding:]
         print(x.shape, y.shape)
-    steps_per_epoch = None
 
     return make_dataset(x, y)
 
