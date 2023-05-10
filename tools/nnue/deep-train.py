@@ -408,24 +408,9 @@ def main(args):
             student,
             teacher,
             train_dataset,
-            teacher_model_path,
-            student_model_path,
             epochs,
             steps_per_epoch,
             callbacks):
-
-        # Checkpoints
-        if teacher_model_path is not None:
-            os.makedirs(os.path.dirname(teacher_model_path), exist_ok=True)
-            checkpoint = tf.keras.callbacks.ModelCheckpoint(teacher_model_path)
-            checkpoint.model = teacher
-            callbacks.append(checkpoint)
-
-        if student_model_path is not None:
-            os.makedirs(os.path.dirname(student_model_path), exist_ok=True)
-            checkpoint = tf.keras.callbacks.ModelCheckpoint(student_model_path)
-            checkpoint.model = student
-            callbacks.append(checkpoint)
 
         for epoch in range(epochs):
             print (f'Epoch {epoch+1}/{epochs}')
@@ -464,18 +449,18 @@ def main(args):
         model = make_model(args)
         deep_model = make_deep_model(args)
 
-    if args.model and os.path.exists(args.model):
+    if args.model_path and os.path.exists(args.model_path):
         custom_objects={'_clipped_mae' : None}
         # Load the student model
-        saved_model = tf.keras.models.load_model(args.model, custom_objects=custom_objects)
-        print(f'Loaded model {os.path.abspath(args.model)}.')
+        saved_model = tf.keras.models.load_model(args.model_path, custom_objects=custom_objects)
+        print(f'Loaded model {os.path.abspath(args.model_path)}.')
         model.set_weights(saved_model.get_weights())
 
-    teacher_model = f'{args.model}-deep' if args.model else None
-    if teacher_model and os.path.exists(teacher_model):
+    teacher_model_path = f'{args.model_path}-deep' if args.model_path else None
+    if teacher_model_path and os.path.exists(teacher_model_path):
         # Load the teacher (deep) model
-        saved_model = tf.keras.models.load_model(teacher_model, custom_objects=custom_objects)
-        print(f'Loaded model {os.path.abspath(teacher_model)}.')
+        saved_model = tf.keras.models.load_model(teacher_model_path, custom_objects=custom_objects)
+        print(f'Loaded model {os.path.abspath(teacher_model_path)}.')
         deep_model.set_weights(saved_model.get_weights())
 
     elif not args.online and not args.export:
@@ -489,10 +474,24 @@ def main(args):
         dataset, steps_per_epoch = dataset_from_file(args, args.input[0], args.clip, strategy, callbacks)
 
         model.summary()
-        if not args.model:
+
+        if not args.model_path:
             print('*****************************************************************')
             print(' WARNING: checkpoint path not provided, model WILL NOT BE SAVED! ')
             print('*****************************************************************')
+
+        # Checkpoints
+        if teacher_model_path is not None:
+            os.makedirs(os.path.dirname(teacher_model_path), exist_ok=True)
+            checkpoint = tf.keras.callbacks.ModelCheckpoint(teacher_model_path)
+            checkpoint.model = deep_model
+            callbacks.append(checkpoint)
+
+        if args.model_path is not None:
+            os.makedirs(os.path.dirname(args.model_path), exist_ok=True)
+            checkpoint = tf.keras.callbacks.ModelCheckpoint(args.model_path)
+            checkpoint.model = model
+            callbacks.append(checkpoint)
 
         # Alpha is a hyperparameter that controls the trade-off between the student loss
         # (i.e., the loss computed using the ground truth labels) and the distillation loss
@@ -501,8 +500,7 @@ def main(args):
         # 90% (1 - alpha). This means that the student model will focus more on fitting the
         # ground truth labels while still learning from the teacher model to some extent.
         args.alpha = max(0, min(1, args.alpha))
-        train_distillation(model, deep_model, dataset, teacher_model,
-                           args.model, args.epochs, steps_per_epoch, callbacks)
+        train_distillation(model, deep_model, dataset, args.epochs, steps_per_epoch, callbacks)
 
 
 if __name__ == '__main__':
@@ -524,7 +522,7 @@ if __name__ == '__main__':
         parser.add_argument('-F', '--filter', type=int)
         parser.add_argument('-H', '--half', action='store_true', help='treat input data as half-precision (float16)')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
-        parser.add_argument('-m', '--model', help='model checkpoint path')
+        parser.add_argument('-m', '--model-path', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-4, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
