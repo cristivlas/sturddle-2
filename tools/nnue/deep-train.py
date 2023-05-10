@@ -36,10 +36,6 @@ def configure_logging(args):
     return log_level
 
 
-def running_in_screen():
-    return 'STY' in os.environ
-
-
 def loss_function(args):
     @tf.function
     def _clipped_mae(y_true, y_pred):
@@ -315,8 +311,6 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
         if args.filter:
             dataset = dataset.filter(filter)
-        # don't need to repeat with custom training function
-        # dataset = dataset.prefetch(tf.data.AUTOTUNE).repeat()
         dataset = dataset.prefetch(tf.data.AUTOTUNE)
 
         return dataset, steps_per_epoch
@@ -435,18 +429,10 @@ def main(args):
 
         for epoch in range(epochs):
             print (f'Epoch {epoch+1}/{epochs}')
-            # workaround finalize=True not working correctly inside SCREEN
-            if epoch and running_in_screen():
-                print()
 
             progbar = tf.keras.utils.Progbar(steps_per_epoch, width=20)
 
             for batch, (inputs, labels) in enumerate(train_dataset):
-                # Stop training after the specified number of steps per epoch, if provided.
-                # Not needed if the dataset is not repeated indefinitelly w/ dataset.repeat()
-                # if steps_per_epoch is not None and batch >= steps_per_epoch:
-                #     break
-
                 # Call the train_step function using strategy.run
                 student_loss, distillation_loss, teacher_loss=strategy.run(
                     train_step,
