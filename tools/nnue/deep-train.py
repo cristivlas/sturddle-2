@@ -101,11 +101,6 @@ def make_teacher_model(args, starting_units=4096):
         amsgrad=args.optimizer == 'amsgrad',
     )
     model.compile(loss=loss_function(args), optimizer=optimizer, metrics=[])
-
-    nparam = sum([
-        tf.reduce_prod(variable.shape).numpy() for variable in model.trainable_variables])
-    print(f'Trainable parameters in teacher model: {nparam:,} / {len(model.layers)} layers.')
-
     return model
 
 
@@ -248,6 +243,7 @@ def export_weights(args, model, indent=2):
         with open(args.export, 'w+') as f:
             with redirect_stdout(f):
                 write_weigths(args, model, indent)
+            print(f'Exported weights: {args.export}')
 
 
 '''
@@ -480,13 +476,16 @@ def main(args):
         teacher.set_weights(saved_model.get_weights())
 
     elif not args.online and not args.export:
-        print('Cannot train offline without a teacher model.')
+        print(f'Cannot train offline: {teacher_model_path} not found.')
         return
+
+    nparam = sum([tf.reduce_prod(variable.shape).numpy() for variable in teacher.trainable_variables])
+    print(f'Trainable parameters in teacher model: {nparam:,} / {len(teacher.layers)} layers.')
+
+    student.summary()
 
     callbacks = []
     dataset, steps_per_epoch = dataset_from_file(args, args.input[0], args.clip, strategy, callbacks)
-
-    student.summary()
 
     if not args.model_path:
         print('*****************************************************************')
