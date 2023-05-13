@@ -22,7 +22,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 Q_MAX = 1.7777
 Q_MIN = -Q_MAX
 
-def _configure_logging(args):
+def configure_logging(args):
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(
         filename=args.logfile,
@@ -34,7 +34,7 @@ def _configure_logging(args):
     return log_level
 
 
-def _make_model(args, strategy):
+def make_model(args, strategy):
     @tf.function
     def _clipped_mae(y_true, y_pred):
         y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
@@ -281,7 +281,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         dtype = data.dtype
         row_count = data.shape[0]
         assert data.shape[1] == args.hot_encoding + 1, data.shape[1]
-        print(f'{row_count} rows.')
+        print(f'{row_count:,} rows.')
 
         class LazyView:
             def __init__(self, data, slice_, rows):
@@ -328,11 +328,11 @@ def main(args):
         saved_model = tf.keras.models.load_model(args.model, custom_objects={'_clipped_mae' : None})
         if not args.name:
             args.name = saved_model.name
-        model = _make_model(args, strategy)
+        model = make_model(args, strategy)
         model.set_weights(saved_model.get_weights())
         print(f'Loaded model {os.path.abspath(args.model)}.')
     else:
-        model = _make_model(args, strategy)
+        model = make_model(args, strategy)
 
     if args.export:
         export_weights(args, model)
@@ -468,7 +468,7 @@ if __name__ == '__main__':
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout
 
-        log_level = _configure_logging(args)
+        log_level = configure_logging(args)
 
         # delay tensorflow import so that --help does not have to wait
         print('Importing TensorFlow')
@@ -481,6 +481,7 @@ if __name__ == '__main__':
         from tensorflow.keras.losses import MeanAbsoluteError
         from tensorflow.keras.regularizers import L1L2
 
+        print(f'TensorFlow version: {tf.__version__}')
         # Detect GPU presence and compute capability.
         compute = 0
 
@@ -507,7 +508,10 @@ if __name__ == '__main__':
                 mixed_precision.set_global_policy('mixed_float16')
                 logging.info('Using mixed_float16 policy')
             else:
+                args.mixed_precision = False
                 mixed_precision.set_global_policy('float32')
+        else:
+            args.mixed_precision = False
 
         main(args)
 
