@@ -372,12 +372,8 @@ def main(args):
             student_loss = student.loss(labels, student_outputs)
             teacher_loss = teacher.loss(labels, teacher_outputs)
 
-            # distillation_loss = student.loss(labels, teacher_outputs)
-            # tf.debugging.assert_equal(teacher_loss, distillation_loss)
-
-            # take advantage of teacher and student using the same loss function
-            distillation_loss = tf.identity(teacher_loss)
-
+            # Distillation loss as a difference between student's and teacher's predictions
+            distillation_loss = student.loss(student_outputs, teacher_outputs)
             result = student_loss, distillation_loss, teacher_loss
 
             if mixed: # mixed-precision
@@ -433,10 +429,14 @@ def main(args):
                 # Reduce the losses across all devices
                 student_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, student_loss, axis=None) / num_replicas
                 teacher_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, teacher_loss, axis=None) / num_replicas
-                # distillation_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, distillation_loss, axis=None) / num_replicas
+                distillation_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, distillation_loss, axis=None) / num_replicas
 
                 # Update progress bar with loss information
-                progress_values = [ ('student loss', student_loss), ('teacher loss', teacher_loss) ]
+                progress_values = [
+                    ('student', student_loss),
+                    ('teacher', teacher_loss),
+                    ('dist. loss', distillation_loss),
+                ]
                 progbar.update(batch + 1, progress_values)
 
             # Call custom callbacks and save teacher and student model checkpoints at the end of each epoch
