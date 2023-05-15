@@ -373,8 +373,10 @@ def main(args):
             teacher_loss = teacher.loss(labels, teacher_outputs)
 
             # Distillation loss as a difference between student's and teacher's predictions
-            distillation_loss = student.loss(student_outputs, teacher_outputs)
-            result = student_loss, distillation_loss, teacher_loss
+            # distillation_loss = student.loss(student_outputs, teacher_outputs)
+            distillation_loss = tf.keras.losses.MeanSquaredError(
+                reduction=tf.keras.losses.Reduction.NONE)(teacher_outputs, student_outputs)
+            result = student_loss, teacher_loss, distillation_loss
 
             if mixed: # mixed-precision
                 student_loss = student.optimizer.get_scaled_loss(student_loss)
@@ -422,7 +424,7 @@ def main(args):
 
             for batch, (inputs, labels) in enumerate(train_dataset):
                 # Call the train_step function using strategy.run
-                student_loss, distillation_loss, teacher_loss=strategy.run(
+                student_loss, teacher_loss, distillation_loss = strategy.run(
                     train_step,
                     args=(inputs, labels, student, teacher, args.alpha, args.mixed_precision, args.online))
 
