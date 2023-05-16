@@ -374,7 +374,7 @@ def main(args):
 
             # Distillation loss as a difference between student's and teacher's predictions
             # distillation_loss = student.loss(student_outputs, teacher_outputs)
-            distillation_loss = tf.keras.losses.MeanSquaredError(
+            distillation_loss = tf.keras.losses.MeanAbsoluteError(
                 reduction=tf.keras.losses.Reduction.NONE)(teacher_outputs, student_outputs)
             result = student_loss, teacher_loss, distillation_loss
 
