@@ -385,8 +385,16 @@ def main(args):
                 if online:
                     teacher_loss = teacher.optimizer.get_scaled_loss(teacher_loss)
 
+            # --- V.1
             # Compute total loss as a weighted sum of the student loss and the distillation loss
-            total_loss = (1 - alpha) * student_loss + distillation_loss * alpha
+            # total_loss = (1 - alpha) * student_loss + distillation_loss * alpha
+
+            # --- V.2
+            # https://openaccess.thecvf.com/content_ICCV_2019/papers/Saputra_Distilling_Knowledge_From_a_Deep_Pose_Regressor_Network_ICCV_2019_paper.pdf
+            # Compute a "confidence" factor based on the teacher loss
+            teacher_confidence = 1 - (teacher_loss / tf.reduce_max(teacher_loss))
+            # Compute total loss as a weighted sum of the student loss and the distillation loss
+            total_loss = (1 - alpha) * student_loss + alpha * teacher_confidence * distillation_loss
 
         # Compute gradients and update student model weights
         student_gradients = student_tape.gradient(total_loss, student.trainable_variables)
