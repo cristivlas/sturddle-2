@@ -1,6 +1,6 @@
 #pragma once
 /*
- * Replicate vectorclass parts to get nnue.h to compile on ARM with vectorization.
+ * Replicate vectorclass parts to get nnue.h to compile on ARM.
  */
 #define SIMDE_ENABLE_NATIVE_ALIASES
 // #define INSTRSET 8 /* emulate AVX2 */
