@@ -1887,10 +1887,22 @@ namespace search
             {
                 if (make_move<true>(ctxt, move, futility))
                 {
-                    move._group = MoveOrder::LATE_MOVES;
-                    move._score =
-                        ctxt.history_score(move) / (1 + HISTORY_LOW)
-                        + eval_material_and_piece_squares(*move._state);
+                    if (!ctxt.is_root())
+                    {
+                        move._group = MoveOrder::LATE_MOVES;
+                        move._score =
+                            ctxt.history_score(move) / (1 + HISTORY_LOW)
+                            + eval_material_and_piece_squares(*move._state);
+                    }
+                    else /* order by NNUE eval at root */
+                    {
+                        auto& ctxt_acc = NNUE_data[ctxt.tid()][0];
+                        auto& move_acc = NNUE_data[ctxt.tid()][1];
+                        ASSERT(ctxt_acc._hash == ctxt.state().hash());
+                        move_acc.update(L1A, L1B, ctxt.state(), *move._state, move, ctxt_acc);
+                        move._score = -nnue::eval(move_acc, L2, L_DYN, L4);
+                        move._group = MoveOrder::ROOT_MOVES;
+                    }
                 }
             }
         }

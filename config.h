@@ -29,6 +29,7 @@
  *
  * To cherry-pick, replace DECLARE_VALUE with DECLARE_PARAM
  */
+
 #if REFCOUNT_PARAM
 /* Instrumentation & debug: count parameter usage */
 struct Val
