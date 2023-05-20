@@ -1887,7 +1887,7 @@ namespace search
             {
                 if (make_move<true>(ctxt, move, futility))
                 {
-                    if (!ctxt.is_root())
+                    if (!ctxt.is_root() || count < NNUE_ROOT_ORDER_THRESHOLD)
                     {
                         move._group = MoveOrder::LATE_MOVES;
                         move._score =
