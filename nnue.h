@@ -24,11 +24,21 @@
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
+    #define ARCH "/native"
 #elif (__arm__) || (__aarch64__)
     #include "armvector.h"
+    #if __aarch64__
+        #define ARCH "/emulated/ARM64"
+    #else
+        #define ARCH "/emulated/ARM"
+    #endif
 #endif
 
-#define ALIGN alignas(32)
+#if INSTRSET >= 9 /* AVX 512 */
+    #define ALIGN alignas(64)
+#else
+    #define ALIGN alignas(32)
+#endif /* INSTRSET >= 9 */
 #define DEBUG_INCREMENTAL false
 
 namespace nnue
@@ -43,6 +53,7 @@ namespace nnue
 
     #if INSTRSET >= 9
         using Vector = Vec16f;
+        static const std::string instrset = __FMA__ ? "AVX512/FMA" ARCH : "AVX512" ARCH;
 
         INLINE Vector horizontal_add(const Vector (&v)[16])
         {
@@ -54,6 +65,7 @@ namespace nnue
         }
     #elif INSTRSET >= 8
         using Vector = Vec8f;
+        static const std::string instrset = __FMA__ ? "AVX2/FMA" ARCH : "AVX2" ARCH;
 
         INLINE Vector horizontal_add(const Vector (&v)[8])
         {
@@ -63,6 +75,8 @@ namespace nnue
         }
     #else
         using Vector = Vec4f;
+
+        static const std::string instrset = "SSE2" ARCH;
 
         INLINE Vector horizontal_add(const Vector (&v)[4])
         {

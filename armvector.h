@@ -201,4 +201,3 @@ template <typename V> INLINE V& operator -= (V& a, V b)
     a = a - b;
     return a;
 }
-

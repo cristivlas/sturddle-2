@@ -3,6 +3,9 @@
 #include <iostream>
 #include <string_view>
 #include "context.h"
+#if WITH_NNUE
+    #include "nnue.h"
+#endif
 
 /** Raise RuntimeError, and let Python handle it... */
 static void raise_runtime_error(const char* err)
@@ -1017,7 +1020,11 @@ void UCI::uci()
 
 extern "C" void run_uci_loop(const char *name, const char *version, bool debug)
 {
+#if WITH_NNUE
+    output<false>(std::format("{}-{} {}", name, version, nnue::instrset));
+#else
     output<false>(std::format("{}-{}", name, version));
+#endif /* WITH_NNUE */
 
     _debug = debug;
     std::string err;
