@@ -51,7 +51,7 @@ if __name__ == '__main__':
     # cleanup
     delete(['*.spec', 'build', mods])
 
-    exe = sys.executable # the Python interpreter
+    exe = f'"{sys.executable}"' # the Python interpreter
 
     ARCHS = ['AVX512', 'AVX2', ''] if platform.machine() in ['x86_64', 'AMD64'] else ['']
     if len(ARCHS) == 1 and not args.native_uci:
