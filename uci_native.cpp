@@ -104,7 +104,7 @@ namespace
 
     /** Raise ValueError exception, and exit with error (see dtor of GIL_State) */
     template <typename... Args>
-#if _MSC_VER
+#if _MSC_VER && !__clang__
     void raise_value_error(std::_Fmt_string<Args...> fmt, Args&&... args)
 #else
     void raise_value_error(std::format_string<Args...> fmt, Args&&... args)
