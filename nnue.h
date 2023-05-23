@@ -107,7 +107,7 @@ namespace nnue
         else if constexpr (N == Vector::size())
             v.load_a(p);
         else
-            ASSERT_ALWAYS(false);
+            ASSERT(false);
     }
 
     template <int N> INLINE void store_partial(const Vector& v, float* p)
@@ -123,7 +123,7 @@ namespace nnue
         else if constexpr (N == Vector::size())
             v.store_a(p);
         else
-            ASSERT_ALWAYS(false);
+            ASSERT(false);
     }
 
     template <unsigned int N>
