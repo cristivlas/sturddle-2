@@ -1367,7 +1367,6 @@ namespace search
             _double_ext += extend > 1;
         }
 
-    #if !WITH_NNUE
         /* https://www.chessprogramming.org/Capture_Extensions */
         if (is_capture()
             && !is_extended()
@@ -1377,7 +1376,6 @@ namespace search
         {
             _max_depth += REBEL_EXTENSION;
         }
-    #endif /* !WITH_NNUE*/
     }
 
 

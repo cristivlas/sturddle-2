@@ -43,6 +43,11 @@ namespace std
     {
         return std::string(v);
     }
+
+#if defined(_MSVC_STL_VERSION) && __cpp_lib_format <= 202110L
+    template<typename... Args>
+    using format_string = _Fmt_string<Args...>;
+#endif
 }
 
 namespace
@@ -104,11 +109,7 @@ namespace
 
     /** Raise ValueError exception, and exit with error (see dtor of GIL_State) */
     template <typename... Args>
-#if _MSC_VER && !__clang__
-    void raise_value_error(std::_Fmt_string<Args...> fmt, Args&&... args)
-#else
     void raise_value_error(std::format_string<Args...> fmt, Args&&... args)
-#endif
     {
         const auto err = std::format(fmt, std::forward<Args>(args)...);
         cython_wrapper::GIL_State with_gil;
