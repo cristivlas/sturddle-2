@@ -99,6 +99,7 @@ def make_teacher_model(args, starting_units=4096):
         beta_1=0.9,
         beta_2=0.999,
         amsgrad=args.optimizer == 'amsgrad',
+        use_ema=args.ema,
     )
     model.compile(loss=loss_function(args), optimizer=optimizer, metrics=[])
     return model
