@@ -689,7 +689,9 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     #endif /* REVERSE_FUTILITY_PRUNING */
 
     #if RAZORING
-        if (ctxt.depth() > 0
+        if (   !ctxt.is_root()
+            && !ctxt._excluded
+            && ctxt.depth() > 0
             && eval > SCORE_MIN
             && eval < alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(ctxt.depth())
             && eval + eval_captures(ctxt) < alpha)
