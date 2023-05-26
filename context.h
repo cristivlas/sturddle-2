@@ -278,7 +278,7 @@ namespace search
         score_t     evaluate_end();
         score_t     evaluate_material(bool with_piece_squares = true) const;
 
-        template <bool Raw=false> void eval_nnue();
+        void        eval_nnue();
         score_t     eval_nnue_raw(bool update_only = false);
         void        update_root_accumulators();
 
@@ -687,49 +687,13 @@ namespace search
 
 
 #if WITH_NNUE
-    template <bool Raw> INLINE void search::Context::eval_nnue()
-    {
-        if constexpr (!Raw)
-        {
-            /* skip NNUE evaluation for large deltas in material */
-            /* if (state().is_endgame()) */
-            {
-                const auto eval = static_eval();
-                if (abs(eval) > MAX_NNUE_EVAL)
-                {
-                    eval_nnue_raw(true); /* update accumulator, do not evaluate */
-                    _eval = eval + eval_fuzz();
-                    return;
-                }
-            }
-        }
-
-        auto eval = eval_nnue_raw();
-
-        if constexpr (!Raw)
-        {
-            eval += eval_fuzz();
-            /* Make sure that insufficient material conditions are detected. */
-            eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
-
-            eval *= NNUE_EVAL_SCALE + evaluate_material() / 32;
-            eval /= 1024;
-        }
-    #if 0
-        _eval = std::max(-CHECKMATE, std::min(CHECKMATE, eval));
-    #else
-        _eval = eval;
-    #endif
-    }
-
-
     INLINE score_t Context::static_eval()
     {
         return _eval == SCORE_MIN ? evaluate_material() : _eval;
     }
 #else
-    template <bool Raw> INLINE void search::Context::eval_nnue() {}
-    void search::Context::update_root_accumulators() {}
+    INLINE void search::Context::eval_nnue() {}
+    INLINE void search::Context::update_root_accumulators() {}
 
     /* Use value from the TT if available, else do a quick material evaluation. */
     INLINE score_t Context::static_eval()

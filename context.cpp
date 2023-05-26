@@ -213,6 +213,42 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
 }
 
 
+void search::Context::eval_nnue()
+{
+    if (_eval == SCORE_MIN)
+    {
+        /* skip NNUE evaluation for large deltas in material */
+        /* if (state().is_endgame()) */
+        {
+            const auto eval = static_eval();
+            if (abs(eval) > MAX_NNUE_EVAL)
+            {
+                eval_nnue_raw(true); /* update accumulator, do not evaluate */
+                _eval = eval + eval_fuzz();
+                return;
+            }
+        }
+
+        auto eval = eval_nnue_raw() + eval_fuzz();
+
+        /* Make sure that insufficient material conditions are detected. */
+        eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
+
+        eval *= NNUE_EVAL_SCALE + evaluate_material() / 32;
+        eval /= 1024;
+    #if 0
+        _eval = std::max(-CHECKMATE, std::min(CHECKMATE, eval));
+    #else
+        _eval = eval;
+    #endif
+    }
+    else
+    {
+        ASSERT(state().hash() == NNUE_data[tid()][_ply]._hash);
+    }
+}
+
+
 int nnue::eval_fen(const std::string& fen)
 {
     auto ctxt = search::Context();
@@ -221,8 +257,7 @@ int nnue::eval_fen(const std::string& fen)
     ASSERT_ALWAYS(ctxt._ply == 0);
     ctxt._state = &state;
     chess::parse_fen(fen, state);
-    ctxt.eval_nnue<true>();
-    return ctxt._eval;
+    return ctxt.eval_nnue_raw();
 }
 
 void search::Context::update_root_accumulators()
