@@ -40,6 +40,10 @@
   #include <xmmintrin.h>
 #endif
 
+#if !defined(WITH_NNUE)
+  #define WITH_NNUE false
+#endif
+
 using namespace chess;
 using search::TranspositionTable;
 
@@ -249,17 +253,6 @@ void search::Context::eval_nnue()
 }
 
 
-int nnue::eval_fen(const std::string& fen)
-{
-    auto ctxt = search::Context();
-    chess::State state;
-    ASSERT_ALWAYS(ctxt.tid() == 0);
-    ASSERT_ALWAYS(ctxt._ply == 0);
-    ctxt._state = &state;
-    chess::parse_fen(fen, state);
-    return ctxt.eval_nnue_raw();
-}
-
 void search::Context::update_root_accumulators()
 {
     const auto& root = NNUE_data[0][0];
@@ -277,13 +270,17 @@ void search::Context::update_root_accumulators()
     }
 }
 
-#else
 
 int nnue::eval_fen(const std::string& fen)
 {
-    return 0;
+    auto ctxt = search::Context();
+    chess::State state;
+    ASSERT_ALWAYS(ctxt.tid() == 0);
+    ASSERT_ALWAYS(ctxt._ply == 0);
+    ctxt._state = &state;
+    chess::parse_fen(fen, state);
+    return ctxt.eval_nnue_raw();
 }
-
 #endif /* WITH_NNUE */
 
 
@@ -1920,13 +1917,14 @@ namespace search
             {
                 if (make_move<true>(ctxt, move, futility))
                 {
-                    if (!ctxt.is_root() || count < size_t(NNUE_ROOT_ORDER_THRESHOLD))
+                    if (!WITH_NNUE || !ctxt.is_root() || count < size_t(NNUE_ROOT_ORDER_THRESHOLD))
                     {
                         move._group = MoveOrder::LATE_MOVES;
                         move._score =
                             ctxt.history_score(move) / (1 + HISTORY_LOW)
                             + eval_material_and_piece_squares(*move._state);
                     }
+                #if WITH_NNUE
                     else /* order by NNUE eval at root */
                     {
                         auto& ctxt_acc = NNUE_data[ctxt.tid()][0];
@@ -1936,6 +1934,7 @@ namespace search
                         move._score = -nnue::eval(move_acc, L2, L_DYN, L4);
                         move._group = MoveOrder::ROOT_MOVES;
                     }
+                #endif /* WITH_NNUE */
                 }
             }
         }

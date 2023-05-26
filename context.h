@@ -693,6 +693,7 @@ namespace search
     }
 #else
     INLINE void search::Context::eval_nnue() {}
+    INLINE score_t search::Context::eval_nnue_raw(bool update_only) { return 0; }
     INLINE void search::Context::update_root_accumulators() {}
 
     /* Use value from the TT if available, else do a quick material evaluation. */
