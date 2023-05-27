@@ -13,7 +13,7 @@ scripts require a UCI engine for analysis (such Sturddle 1.xx, Stockfish, etc).
 tools/nnue/one-hot-encode.py (use --half for half precision if storage capacity is limited)
 5) Train the neural net running tools/nnue/train.py (requires Tensorflow and optionally cuda-toolkit)
 6) Generate weights.h by exporting model trained at step 5), running:
-./tools/nnue/train.py export -m <path-to-model> -w weights.h
+./tools/nnue/train.py export -m <path-to-model> -o weights.h
 7) Build engine (using tools/build.py, or by running "python3 setup.py build\_ext --inplace")
 
 For more details on tools usage, invoke any of the scripts with the "--help" option.
