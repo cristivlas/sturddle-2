@@ -610,4 +610,8 @@ namespace nnue
 
     int eval_fen(const std::string&); /* testing */
 
+#if !WITH_NNUE
+    INLINE int eval_fen(const std::string&) { return 0; }
+#endif
+
 } /* namespace nnue */
