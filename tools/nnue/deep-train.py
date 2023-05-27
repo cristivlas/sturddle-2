@@ -21,8 +21,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 # Quantization range: use int16_t with QSCALE of 1024, and need to add 18 values
 # (16 weights, 1 bias, 1 residual) w/o overflow, max representable value is 32767 / 18 / 1024
-Q_MAX = 1.7777
-Q_MIN = -Q_MAX
+Q_MAX = 32767 / 18 / 1024
+Q_MIN = 1 / 1024
 
 def configure_logging(args):
     log_level = logging.DEBUG if args.debug else logging.INFO
