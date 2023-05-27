@@ -659,55 +659,56 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     {
         ASSERT(ctxt._alpha < ctxt._beta);
 
-    #if WITH_NNUE
-        ctxt.eval_nnue();
-        const auto eval = ctxt._eval;
-    #else
-        const auto eval = ctxt._tt_entry._value;
-    #endif
-
-    #if REVERSE_FUTILITY_PRUNING
-        /*
-         * Reverse futility pruning: static eval stored in TT beats beta by a margin and
-         * not in check, and no move w/ scores above MATE_HIGH in the hash table? Prune.
-         */
-        if (   !ctxt.is_root()
-            && !ctxt._excluded /* no reverse pruning during singular extension */
-            && !ctxt.is_pv_node()
-            && ctxt.depth() > 0
-            && ctxt.depth() < 7
-            && eval < MATE_HIGH
-            && eval > ctxt._beta
-                + std::max<score_t>(REVERSE_FUTILITY_MARGIN * ctxt.depth(), ctxt.improvement())
-            && !ctxt.is_check())
+        if (!ctxt.is_root())
         {
+        #if WITH_NNUE
+            ctxt.eval_nnue();
+            const auto eval = ctxt._eval;
+        #else
+            const auto eval = ctxt._tt_entry._value;
+        #endif
             ASSERT(eval > SCORE_MIN);
             ASSERT(eval < SCORE_MAX);
 
-            return eval;
-        }
-    #endif /* REVERSE_FUTILITY_PRUNING */
+        #if REVERSE_FUTILITY_PRUNING
+            /*
+             * Reverse futility pruning: static eval stored in TT beats beta by a margin and
+             * not in check, and no move w/ scores above MATE_HIGH in the hash table? Prune.
+             */
+            if (   !ctxt._excluded /* no reverse pruning during singular extension */
+                && !ctxt.is_pv_node()
+                && ctxt.depth() > 0
+                && ctxt.depth() < 7
+                && eval < MATE_HIGH
+                && eval > ctxt._beta
+                    + std::max<score_t>(REVERSE_FUTILITY_MARGIN * ctxt.depth(), ctxt.improvement())
+                && !ctxt.is_check())
+            {
+                return eval;
+            }
+        #endif /* REVERSE_FUTILITY_PRUNING */
 
-    #if RAZORING
-        if (   !ctxt.is_root()
-            && !ctxt._excluded
-            && ctxt.depth() > 0
-            && eval > SCORE_MIN
-            && eval < alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(ctxt.depth())
-            && eval + eval_captures(ctxt) < alpha)
-        {
-            return alpha;
-        }
-    #endif /* RAZORING */
+        #if RAZORING
+            if (   !ctxt._excluded
+                && ctxt.depth() > 0
+                && eval > SCORE_MIN
+                && eval < alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(ctxt.depth())
+                && eval + eval_captures(ctxt) < alpha)
+            {
+                return alpha;
+            }
+        #endif /* RAZORING */
 
-        /* Reduce depth by 2 if PV node not found in the TT (idea from SF). */
-        if (ctxt._ply
-            && ctxt.is_pv_node()
-            && ctxt.depth() >= 6
-            && !ctxt._tt_entry.is_valid()
-            && ctxt.can_reduce()
-           )
-            ctxt._max_depth -= 2;
+            /* Reduce depth by 2 if PV node not found in the TT (idea from SF). */
+            if (   ctxt.is_pv_node()
+                && ctxt.depth() >= 6
+                && !ctxt._tt_entry.is_valid()
+                && ctxt.can_reduce()
+               )
+            {
+                ctxt._max_depth -= 2;
+            }
+        }
 
         bool null_move = ctxt.is_null_move_ok();
 
