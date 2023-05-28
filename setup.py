@@ -46,6 +46,7 @@ sourcefiles = [
 Compiler args.
 """
 inc_dirs = [
+    '-I./json/include',
     '-I./libpopcnt',
     '-I./magic-bits/include',
     '-I./version2',

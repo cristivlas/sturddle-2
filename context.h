@@ -323,6 +323,7 @@ namespace search
         LMRAction   late_move_reduce(int move_count);
         static int  late_move_reduction_count();
 
+        static void load_nnue_model(const std::string& json_file_path); /* no-op if !WITH_NNUE */
         static void log_message(LogLevel, const std::string&, bool force = true);
 
         int64_t     nanosleep(int nanosec);
@@ -694,6 +695,7 @@ namespace search
 #else
     INLINE void search::Context::eval_nnue() {}
     INLINE score_t search::Context::eval_nnue_raw(bool update_only) { return 0; }
+    INLINE void search::Context::load_nnue_model(const std::string&) {}
     INLINE void search::Context::update_root_accumulators() {}
 
     /* Use value from the TT if available, else do a quick material evaluation. */

@@ -203,12 +203,35 @@ namespace nnue
 
         Layer(const float(&w)[INPUTS][OUTPUTS], const float(&b)[OUTPUTS])
         {
+            set_weights(w, b);
+        }
+
+        void set_weights(const float(&w)[INPUTS][OUTPUTS], const float(&b)[OUTPUTS])
+        {
             for (int j = 0; j != OUTPUTS; ++j)
                 _b[j] = b[j] * Scale;
 
             for (int i = 0; i != INPUTS; ++i)
                 for (int j = 0; j != OUTPUTS; ++j)
                     _w[i][j] = _wt[j][i] = w[i][j] * Scale;
+        }
+
+        void set_weights(const std::vector<std::vector<float>>& w, const std::vector<float>& b)
+        {
+            if (w.size() != INPUTS || w[0].size() != OUTPUTS || b.size() != OUTPUTS)
+                throw std::invalid_argument("Input dimensions do not match layer dimensions");
+
+            float weights[INPUTS][OUTPUTS];
+            float biases[OUTPUTS];
+
+            for (int i = 0; i < INPUTS; ++i)
+                for (int j = 0; j < OUTPUTS; ++j)
+                    weights[i][j] = w[i][j];
+
+            for (int j = 0; j < OUTPUTS; ++j)
+                biases[j] = b[j];
+
+            set_weights(weights, biases);
         }
 
         /* input */

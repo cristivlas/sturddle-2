@@ -10,3 +10,6 @@
 [submodule "simde"]
 	path = simde
 	url = https://github.com/simd-everywhere/simde.git
+[submodule "json"]
+	path = json
+	url = https://github.com/nlohmann/json.git

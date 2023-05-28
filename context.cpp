@@ -28,9 +28,11 @@
 #include <iomanip>
 #include <iterator>
 #include <map>
+#include <fstream>
 #include <sstream>
 #include "chess.h"
 #include "weights.h"
+#include "nlohmann/json.hpp"
 
 #define CONFIG_IMPL
   #include "context.h"
@@ -203,6 +205,14 @@ static nnue::Layer<HIDDEN_1A, HIDDEN_2> L2(hidden_2_w, hidden_2_b);
 static nnue::Layer<HIDDEN_1B, HIDDEN_2> L_DYN(dynamic_weights_w, dynamic_weights_b);
 static nnue::Layer<HIDDEN_2, 1> L4(out_w, out_b);
 
+using WeightSetter = std::function<void(const std::vector<std::vector<float>>&, const std::vector<float>&)>;
+static std::unordered_map<std::string, WeightSetter> registry = {
+    { "hidden_1a", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L1A.set_weights(w, b); } },
+    { "hidden_1b", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L1B.set_weights(w, b); } },
+    { "hidden_2", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L2.set_weights(w, b); } },
+    { "dynamic_weights", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L_DYN.set_weights(w, b); } },
+    { "out", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L4.set_weights(w, b); } },
+};
 
 score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
 {
@@ -267,6 +277,34 @@ void search::Context::update_root_accumulators()
     #if DEBUG_INCREMENTAL
         memcpy(acc._input, root._input, sizeof(acc._input));
     #endif
+    }
+}
+
+
+void search::Context::load_nnue_model(const std::string& json_file_path)
+{
+    std::ifstream file(json_file_path);
+    nlohmann::json weights_json;
+    file >> weights_json;
+
+    for (auto& element : weights_json.items())
+    {
+        std::string layer_name = element.key();
+        auto weights_and_biases = element.value();
+
+        int input_dim = weights_and_biases["input_dim"];
+        int output_dim = weights_and_biases["output_dim"];
+
+        auto weights = weights_and_biases["weights"].get<std::vector<std::vector<float>>>();
+        auto biases = weights_and_biases["biases"].get<std::vector<float>>();
+
+        auto it = registry.find(layer_name);
+        if (it == registry.end())
+            throw std::runtime_error("no such layer: " + layer_name);
+        else
+            it->second(weights, biases);
+
+        log_message(LogLevel::INFO, layer_name + ": read from " + json_file_path);
     }
 }
 
