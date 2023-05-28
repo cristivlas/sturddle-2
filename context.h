@@ -689,7 +689,7 @@ namespace search
 #if WITH_NNUE
     INLINE score_t Context::static_eval()
     {
-        return _eval == SCORE_MIN ? evaluate_material() : _eval;
+        return is_valid(_eval) ? _eval : evaluate_material();
     }
 #else
     INLINE void search::Context::eval_nnue() {}
@@ -699,7 +699,7 @@ namespace search
     /* Use value from the TT if available, else do a quick material evaluation. */
     INLINE score_t Context::static_eval()
     {
-        return _tt_entry._value == SCORE_MIN ? evaluate_material() : _tt_entry._value;
+        return is_valid(_tt_entry._value) ? _tt_entry._value : evaluate_material();
     }
 #endif /* WITH_NNUE */
 

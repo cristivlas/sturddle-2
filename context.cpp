@@ -219,7 +219,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
 
 void search::Context::eval_nnue()
 {
-    if (_eval == SCORE_MIN)
+    if (!is_valid(_eval))
     {
         /* skip NNUE evaluation for large deltas in material */
         /* if (state().is_endgame()) */
@@ -1068,7 +1068,7 @@ namespace search
     {
         int& score = pawn_chain_evals[pawn];
 
-        if (score == SCORE_MIN)
+        if (!is_valid(score))
         {
             score = 0;
 
@@ -1331,7 +1331,7 @@ namespace search
     {
         _tt->_eval_depth = std::max(_ply, _tt->_eval_depth);
 
-        if (_eval == SCORE_MIN)
+        if (!is_valid(_eval))
         {
         #if WITH_NNUE
             eval_nnue();
@@ -1598,7 +1598,7 @@ namespace search
              * last move to search from current node, with score close to mate?
              * extend the search as to not miss a possible mate in the next move
              */
-            || (_parent->_score < MATE_LOW && _parent->_score > SCORE_MIN && is_last_move())
+            || (_parent->_score < MATE_LOW && is_valid(_parent->_score) && is_last_move())
            )
             return false;
 

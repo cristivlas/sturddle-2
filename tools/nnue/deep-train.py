@@ -21,8 +21,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 # Quantization range: use int16_t with QSCALE of 1024, and need to add 18 values
 # (16 weights, 1 bias, 1 residual) w/o overflow, max representable value is 32767 / 18 / 1024
-Q_MAX = 1.7777
-Q_MIN = -Q_MAX
+Q_MAX = 32767 / 18 / 1024
+Q_MIN = 1 / 1024
 
 def configure_logging(args):
     log_level = logging.DEBUG if args.debug else logging.INFO
@@ -365,6 +365,34 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 *****************************************************************************
 '''
 def main(args):
+    # Avoid bundling `apply_constraints()` within `train_step()` to prevent
+    # inconsistencies in a distributed setting.
+    #
+    # `tf.distribute.Strategy.run()` operates on a per-replica basis, causing
+    # `train_step()` to run independently on each replica.
+    #
+    # If `apply_constraints()` is inside `train_step()`, it will apply constraints
+    # to each replica's weights separately after every batch, which can lead to
+    # synchronization issues in a mirrored strategy.
+    #
+    # Due to non-guaranteed order of batch completion, weights on some replicas
+    # might have constraints applied multiple times before others.
+    #
+    # Therefore, it's best to apply constraints outside `train_step()` using
+    # `strategy.run()`, ensuring that constraints are applied consistently
+    # across all replicas.
+    @tf.function
+    def apply_constraints(model):
+        for layer in model.layers:
+            if hasattr(layer, 'kernel'):  # if layer has weights
+                kernel, bias = layer.kernel, layer.bias  # separate kernel and bias
+
+                if layer.kernel_constraint is not None:
+                    layer.kernel.assign(layer.kernel_constraint(kernel))
+
+                if layer.bias_constraint is not None and bias is not None:
+                    layer.bias.assign(layer.bias_constraint(bias))
+
     @tf.function
     def train_step(inputs, labels, student, teacher, alpha, mixed, online):
         with tf.GradientTape() as student_tape, tf.GradientTape() as teacher_tape:
@@ -422,12 +450,18 @@ def main(args):
             train_dataset,
             epochs,
             steps_per_epoch,
-            callbacks):
+            callbacks,
+            save_callback):
 
+        best_loss = float('inf')
+        mean_loss_metric = tf.keras.metrics.Mean()
         num_replicas = strategy.num_replicas_in_sync  # Get the number of replicas (GPUs)
 
         for epoch in range(epochs):
             print (f'Epoch {epoch+1}/{epochs}')
+
+            # Reset the mean loss metric at the start of each epoch
+            mean_loss_metric.reset_states()
 
             progbar = tf.keras.utils.Progbar(steps_per_epoch, width=20)
 
@@ -437,10 +471,15 @@ def main(args):
                     train_step,
                     args=(inputs, labels, student, teacher, args.alpha, args.mixed_precision, args.online))
 
+                strategy.run(apply_constraints, args=(student,))
+
                 # Reduce the losses across all devices
                 student_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, student_loss, axis=None) / num_replicas
                 teacher_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, teacher_loss, axis=None) / num_replicas
                 distillation_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, distillation_loss, axis=None) / num_replicas
+
+                # Add the current batch's loss to the running total
+                mean_loss_metric.update_state(student_loss)
 
                 # Update progress bar with loss information
                 progress_values = [
@@ -450,9 +489,18 @@ def main(args):
                 ]
                 progbar.update(batch + 1, progress_values)
 
-            # Call custom callbacks and save teacher and student model checkpoints at the end of each epoch
             for callback in callbacks:
                 callback.on_epoch_end(epoch, {})
+
+            if save_callback:
+                # Get the mean loss for this epoch
+                mean_loss = mean_loss_metric.result()
+
+                logging.info(f'best_loss={best_loss:.5f}, mean_loss={mean_loss:.5f}')
+                if mean_loss < best_loss:
+                    best_loss = mean_loss
+                    logging.info('Saving student model.')
+                    save_callback.on_epoch_end(epoch)
 
 
     if args.gpu:
@@ -504,17 +552,17 @@ def main(args):
         print('*****************************************************************')
 
     # Checkpoints
-    if teacher_model_path is not None:
+    if teacher_model_path is not None and args.online:
         os.makedirs(os.path.dirname(teacher_model_path), exist_ok=True)
         checkpoint = tf.keras.callbacks.ModelCheckpoint(teacher_model_path)
         checkpoint.model = teacher
         callbacks.append(checkpoint)
 
+    save_cb = None
     if args.model_path is not None:
         os.makedirs(os.path.dirname(args.model_path), exist_ok=True)
-        checkpoint = tf.keras.callbacks.ModelCheckpoint(args.model_path)
-        checkpoint.model = student
-        callbacks.append(checkpoint)
+        save_cb = tf.keras.callbacks.ModelCheckpoint(args.model_path)
+        save_cb.model = student
 
     # Alpha is a hyperparameter that controls the trade-off between the student loss
     # (i.e., the loss computed using the ground truth labels) and the distillation loss
@@ -522,9 +570,10 @@ def main(args):
     # (10%) in the total loss compared to the student loss, which will have a weight of
     # 90% (1 - alpha). This means that the student model will focus more on fitting the
     # ground truth labels while still learning from the teacher model to some extent.
+
     args.alpha = max(0, min(1, args.alpha))
 
-    train_with_distillation(student, teacher, dataset, args.epochs, steps_per_epoch, callbacks)
+    train_with_distillation(student, teacher, dataset, args.epochs, steps_per_epoch, callbacks, save_cb)
 
 
 if __name__ == '__main__':

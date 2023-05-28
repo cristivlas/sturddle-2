@@ -49,15 +49,21 @@ constexpr score_t MATE_LOW  = -MATE_HIGH;
 constexpr score_t HALF_WINDOW = chess::WEIGHT[chess::PieceType::PAWN] / 4;
 
 
-constexpr score_t checkmated(int ply)
+INLINE constexpr score_t checkmated(int ply)
 {
     return -CHECKMATE + ply;
 }
 
 
-constexpr score_t checkmating(int ply)
+INLINE constexpr score_t checkmating(int ply)
 {
     return CHECKMATE + ply;
+}
+
+
+INLINE constexpr bool is_valid(score_t score)
+{
+    return score > SCORE_MIN;
 }
 
 
