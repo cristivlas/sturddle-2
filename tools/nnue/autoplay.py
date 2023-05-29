@@ -148,27 +148,20 @@ def on_end_game(args, board, engines, engine1, engine2):
         logging.info(f'Reward: {reward}')
 
         replay = chess.Board()
-        positions = [encode(replay)]
+        white_positions = [encode(replay)]
         for move in board.move_stack:
             replay.push(move)
-            positions.append(encode(replay))
+            if board.turn:
+                white_positions.append(encode(replay))
 
-        X_train = np.array(positions[:-1])  # all positions except the last one
-        next_positions = np.array(positions[1:])  # all positions except the first one
+        X_train = np.array(white_positions[:-1])
+        next_positions = np.array(white_positions[1:])
 
         X_predict = model.predict(X_train, verbose=False)
         next_preds = model.predict(next_positions, verbose=False)
-
-        # Discount factor for future rewards
-        gamma = max(0, min(args.gamma, 1))
-        discounted_rewards = np.zeros_like(next_preds)
-        running_add = 0
-        for t in reversed(range(0, len(next_preds))):
-            running_add = running_add * gamma + next_preds[t]
-            discounted_rewards[t] = running_add
-
+        score_diffs = np.squeeze(next_preds - X_predict)
         # Use these differences as targets for learning, modulated by the game result
-        y_train = np.squeeze(X_predict) + reward * discounted_rewards
+        y_train = np.squeeze(X_predict) + reward * score_diffs
 
         # Train and save the model
         model.fit(X_train, y_train, epochs=args.epochs, verbose=True, batch_size=args.batch_size)
@@ -184,7 +177,6 @@ if __name__ == '__main__':
     parser.add_argument('-e', '--epochs', type=int, default=1, help='Number of epochs to train the model after each game')
     parser.add_argument('-e1', '--engine1', type=str, default='./main.py', help='Path to the first engine')
     parser.add_argument('-e2', '--engine2', type=str, default='./main.py', help='Path to the second engine')
-    parser.add_argument('-g', '--gamma', type=float, default=0.9, help='Discount for future rewards')
     parser.add_argument('--hash', type=int, default=512, help='Engine hash table size in MiB')
     parser.add_argument('-t', '--time-limit', type=float, default=0.1, help='Time limit for each move (in seconds)')
     parser.add_argument('--threads', type=int, default=4, help='Engine SMP threads')
