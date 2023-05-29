@@ -12,10 +12,7 @@ from keras.models import load_model
 from tensorflow import keras
 
 
-def serialize_weights(model_path, output_path):
-    # Load the model
-    model = load_model(model_path, custom_objects={'_clipped_mae' : None})
-
+def serialize_weights(model, output_path):
     # Prepare a dictionary to store weights and biases
     weights_dict = {}
 
@@ -46,7 +43,11 @@ def main():
     # Execute the parse_args() method
     args = parser.parse_args()
 
-    serialize_weights(args.ModelPath, args.output)
+    # Load the model
+    model = load_model(args.ModelPath, custom_objects={'_clipped_mae' : None})
+
+    # Write as JSON
+    serialize_weights(model, args.output)
 
 if __name__ == '__main__':
     main()
