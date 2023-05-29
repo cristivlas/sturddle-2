@@ -149,22 +149,28 @@ def on_end_game(args, board, engines, engine1, engine2):
 
         replay = chess.Board()
         white_positions = [encode(replay)]
+        black_positions = []
         for move in board.move_stack:
             replay.push(move)
             if replay.turn:
                 white_positions.append(encode(replay))
+            else:
+                black_positions.append(encode(replay))
 
-        X_train = np.array(white_positions[:-1])
-        next_positions = np.array(white_positions[1:])
+        for positions in (white_positions, black_positions):
+            X_train = np.array(positions[:-1])
+            next_positions = np.array(positions[1:])
 
-        X_predict = model.predict(X_train, verbose=False)
-        next_preds = model.predict(next_positions, verbose=False)
-        score_diffs = np.squeeze(next_preds - X_predict)
-        # Use these differences as targets for learning, modulated by the game result
-        y_train = np.squeeze(X_predict) + reward * score_diffs
+            X_predict = model.predict(X_train, verbose=False)
+            next_preds = model.predict(next_positions, verbose=False)
+            score_diffs = np.squeeze(next_preds - X_predict)
+            # Use these differences as targets for learning, modulated by the game result
+            y_train = np.squeeze(X_predict) + reward * score_diffs
 
-        # Train and save the model
-        model.fit(X_train, y_train, epochs=args.epochs, verbose=True, batch_size=args.batch_size)
+            # Train the model
+            model.fit(X_train, y_train, epochs=args.epochs, verbose=True, batch_size=args.batch_size)
+
+            reward = -reward
 
         model.save(args.model)
         serialize_weights(model, args.json_path)
@@ -174,7 +180,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Autoplay with Reinforcement Learning')
     parser.add_argument('--batch-size', '-b', type=int, default=1)
     parser.add_argument('--clip', '-c', type=int, default=5)
-    parser.add_argument('--epochs', '-e', type=int, default=10, help='Number of epochs to train the model after each game')
+    parser.add_argument('--epochs', '-e', type=int, default=10, help='Number of epochs to train the model for each side')
     parser.add_argument('--engine1', default='./main.py', help='Path to the first engine')
     parser.add_argument('--engine2', default='./main.py', help='Path to the second engine')
     parser.add_argument('--hash', type=int, default=512, help='Engine hash table size in MiB')
