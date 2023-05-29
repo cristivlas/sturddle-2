@@ -75,6 +75,9 @@ def append_pgn(board, file_path, game_num, names):
 
 def main(args):
     eco = EcoAPI(args.eco_path)
+    logging.info(f'Engine1: {os.path.abspath(args.engine1)}')
+    logging.info(f'Engine2: {os.path.abspath(args.engine2)}')
+    logging.info(f'Time Limit: {args.time_limit}')
 
     with closing(chess.engine.SimpleEngine.popen_uci(args.engine1)) as engine1, \
          closing(chess.engine.SimpleEngine.popen_uci(args.engine2)) as engine2:
