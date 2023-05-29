@@ -142,9 +142,9 @@ def on_end_game(args, board, engines, engine1, engine2):
         reward = 0
         result = board.result()
         if result == '1-0':
-            reward = 1 if engines[0] == engine1 else -1
+            reward = 1
         elif result == '0-1':
-            reward = -1 if engines[0] == engine1 else 1
+            reward = -1
         logging.info(f'Reward: {reward}')
 
         replay = chess.Board()
@@ -172,21 +172,21 @@ def on_end_game(args, board, engines, engine1, engine2):
 if __name__ == '__main__':
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Autoplay with Reinforcement Learning')
-    parser.add_argument('-b', '--batch-size', type=int, default=16)
-    parser.add_argument('-c', '--clip', type=int, default=5)
-    parser.add_argument('-e', '--epochs', type=int, default=1, help='Number of epochs to train the model after each game')
-    parser.add_argument('-e1', '--engine1', default='./main.py', help='Path to the first engine')
-    parser.add_argument('-e2', '--engine2', default='./main.py', help='Path to the second engine')
+    parser.add_argument('--batch-size', '-b', type=int, default=1)
+    parser.add_argument('--clip', '-c', type=int, default=5)
+    parser.add_argument('--epochs', '-e', type=int, default=10, help='Number of epochs to train the model after each game')
+    parser.add_argument('--engine1', default='./main.py', help='Path to the first engine')
+    parser.add_argument('--engine2', default='./main.py', help='Path to the second engine')
     parser.add_argument('--hash', type=int, default=512, help='Engine hash table size in MiB')
-    parser.add_argument('-t', '--time-limit', type=float, default=0.1, help='Time limit for each move (in seconds)')
-    parser.add_argument('--threads', type=int, default=4, help='Engine SMP threads')
+    parser.add_argument('--logfile', default='log.txt', help='Path to the logfile')
     parser.add_argument('--openings', help='Path to the PGN file with opening moves')
     parser.add_argument('--opening-offset', type=int, default=0, help='Offset for picking opening moves')
     parser.add_argument('--max-openings', type=int, default=2, help='Depth of opening moves to apply')
-    parser.add_argument('-m', '--model', help='Path to NNUE model')
-    parser.add_argument('-n', '--num-games', type=int, default=1, help='Number of games to play')
-    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose logging')
-    parser.add_argument('--logfile', default='log.txt', help='Path to the logfile')
+    parser.add_argument('--model', '-m', help='Path to NNUE model')
+    parser.add_argument('--num-games', '-n', type=int, default=1, help='Number of games to play')
+    parser.add_argument('--time-limit', type=float, default=0.1, help='Time limit for each move (in seconds)')
+    parser.add_argument('--threads', type=int, default=4, help='Engine SMP threads')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose logging')
     args = parser.parse_args()
 
     if args.model:
