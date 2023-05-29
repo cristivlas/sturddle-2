@@ -190,7 +190,7 @@ if __name__ == '__main__':
     parser.add_argument('--threads', type=int, default=4, help='Engine SMP threads')
     parser.add_argument('--openings', type=str, help='Path to the PGN file with opening moves')
     parser.add_argument('--max-openings', type=int, default=2, help='Depth of opening moves to apply')
-    parser.add_argument('--model', help='Path to NNUE model')
+    parser.add_argument('-m', '--model', help='Path to NNUE model')
     parser.add_argument('-n', '--num-games', type=int, default=1, help='Number of games to play')
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose logging')
     parser.add_argument('--logfile', type=str, help='Path to the logfile')
