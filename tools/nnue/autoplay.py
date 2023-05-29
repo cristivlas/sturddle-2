@@ -3,23 +3,29 @@
 import argparse
 import logging
 import os
+import sys
 from contextlib import closing
 
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+import absl.logging
+absl.logging.set_verbosity(absl.logging.ERROR) # silence off annoying warnings
+
 import chess.engine
 import chess.pgn
 import numpy as np
-
-import absl.logging
-absl.logging.set_verbosity(absl.logging.ERROR) # silence off annoying warnings
 
 import tensorflow as tf
 tf.get_logger().setLevel('ERROR')
 
 from keras.models import load_model
 from modeltojson import serialize_weights
+
+# use EcoAPI for logging openings by name
+chessutils_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'sqlite'))
+sys.path.append(chessutils_path)
+from chessutils.eco import EcoAPI
 
 
 def encode(board):
@@ -48,6 +54,8 @@ def parse_openings(openings_file):
     return openings
 
 def main(args):
+    eco = EcoAPI(args.eco_path)
+
     with closing(chess.engine.SimpleEngine.popen_uci(args.engine1)) as engine1, \
          closing(chess.engine.SimpleEngine.popen_uci(args.engine2)) as engine2:
 
@@ -63,8 +71,9 @@ def main(args):
             logging.warning('No openings file specified. Playing without openings.')
 
         num_openings = len(openings)
-        if num_openings == 0:
-            logging.warning('No valid openings found. Playing without openings.')
+        logging.info(f'Using {num_openings} openings from: {args.openings}')
+
+        opening_name = ''
 
         # Play the games
         for game_num in range(args.num_games):
@@ -97,19 +106,31 @@ def main(args):
             # Main game loop
             while not board.is_game_over():
                 engine = engines[not board.turn]
-                result = engine.play(board, chess.engine.Limit(args.time_limit))
+                try:
+                    result = engine.play(board, chess.engine.Limit(args.time_limit))
+                except KeyboardInterrupt:
+                    try:
+                        engine1.quit()
+                    except chess.engine.EngineTerminatedError:
+                        pass  # engine1 is already terminated
+                    try:
+                        engine2.quit()
+                    except chess.engine.EngineTerminatedError:
+                        pass  # engine2 is already terminated
+                    print('Terminated.')
+                    os._exit(0)
+
                 board.push(result.move)
+                if row := eco.lookup(board):
+                    opening_name = row['name']
 
             # Log the game result
             move_count = len(board.move_stack)
-            logging.info(f'Game {game_num+1}: {board.result()}, {move_count} moves')
+            logging.info(f'Game {game_num+1}: {opening_name} [{board.result()}], {move_count} moves')
             logging.info(f'Winner: {get_winner(board.result(), names)}')
 
             # Call on_end_game callback
             on_end_game(args, board, engines, engine1, engine2)
-
-            # Reset the board for the next game
-            board.reset()
 
 def get_winner(result, engines):
     if result == '1-0':
@@ -180,6 +201,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Autoplay with Reinforcement Learning')
     parser.add_argument('--batch-size', '-b', type=int, default=1)
     parser.add_argument('--clip', '-c', type=int, default=5)
+    parser.add_argument('--eco-path', help='Optional path to ECO data')
     parser.add_argument('--epochs', '-e', type=int, default=10, help='Number of epochs to train the model for each side')
     parser.add_argument('--engine1', default='./main.py', help='Path to the first engine')
     parser.add_argument('--engine2', default='./main.py', help='Path to the second engine')
@@ -191,7 +213,7 @@ if __name__ == '__main__':
     parser.add_argument('--model', '-m', help='Path to NNUE model')
     parser.add_argument('--num-games', '-n', type=int, default=1, help='Number of games to play')
     parser.add_argument('--time-limit', type=float, default=0.1, help='Time limit for each move (in seconds)')
-    parser.add_argument('--threads', type=int, default=4, help='Engine SMP threads')
+    parser.add_argument('--threads', type=int, default=1, help='Engine SMP threads')
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose logging')
     args = parser.parse_args()
 

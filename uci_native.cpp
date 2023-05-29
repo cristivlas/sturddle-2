@@ -628,7 +628,6 @@ void UCI::run()
         {
             _output_expected = false;
             stop();
-            output("info string good bye");
             break;
         }
         dispatch(cmd, args);
