@@ -79,6 +79,10 @@ def main(args):
     logging.info(f'Engine2: {os.path.abspath(args.engine2)}')
     logging.info(f'Time Limit: {args.time_limit}')
 
+    model = load_model(args.model, custom_objects={'_clipped_mae': None})
+    logging.info(f'Writing: {os.path.abspath(args.json_path)}')
+    serialize_weights(model, args.json_path)
+
     with closing(chess.engine.SimpleEngine.popen_uci(args.engine1)) as engine1, \
          closing(chess.engine.SimpleEngine.popen_uci(args.engine2)) as engine2:
 
@@ -96,24 +100,26 @@ def main(args):
         num_openings = len(openings)
         logging.info(f'Using {num_openings} openings from: {args.openings}')
 
-        opening_name = ''
+        opening_name = None, ''
 
         # Play the games
         for game_num in range(args.num_games):
             # Create the chess board
             board = chess.Board()
 
-            # Each opening is played twice, once for each engine as white
-            opening_game = openings[(game_num // 2 + args.opening_offset) % num_openings] if num_openings > 0 else None
+            if num_openings:
+                # Each opening is played twice, once for each engine as white
+                opening_idx = (game_num // 2 + args.opening_offset) % num_openings
+                opening_game = openings[opening_idx]
 
-            # Apply opening moves
-            if opening_game:
+                # Apply opening moves
                 for move in opening_game.mainline_moves():
                     move_count = len(board.move_stack)
                     if move_count >= args.max_openings:
                         break
-                    logging.info(f'{move_count+1}: {move}')
                     board.push(move)
+
+                logging.info(f'Opening {opening_idx}: {[move.uci() for move in board.move_stack]}')
 
             # Determine which engine plays as white and black
             if game_num % 2 == 0:
@@ -222,7 +228,7 @@ def on_end_game(args, board, engines, engine1, engine2):
 
         logging.info(f'Updating: {os.path.abspath(args.model)}')
         model.save(args.model)
-        logging.info(f'Saving: {os.path.abspath(args.json_path)}')
+        logging.info(f'Writing: {os.path.abspath(args.json_path)}')
         serialize_weights(model, args.json_path)
 
 if __name__ == '__main__':
