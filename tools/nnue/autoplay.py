@@ -72,7 +72,7 @@ def main(args):
             board = chess.Board()
 
             # Each opening is played twice, once for each engine as white
-            opening_game = openings[game_num // 2 % num_openings] if num_openings > 0 else None
+            opening_game = openings[(game_num // 2 + args.opening_offset) % num_openings] if num_openings > 0 else None
 
             # Apply opening moves
             if opening_game:
@@ -189,6 +189,7 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--time-limit', type=float, default=0.1, help='Time limit for each move (in seconds)')
     parser.add_argument('--threads', type=int, default=4, help='Engine SMP threads')
     parser.add_argument('--openings', type=str, help='Path to the PGN file with opening moves')
+    parser.add_argument('--opening-offset', type=int, default=0, help='Offset for picking opening moves')
     parser.add_argument('--max-openings', type=int, default=2, help='Depth of opening moves to apply')
     parser.add_argument('-m', '--model', help='Path to NNUE model')
     parser.add_argument('-n', '--num-games', type=int, default=1, help='Number of games to play')
