@@ -3,8 +3,10 @@
 import argparse
 import logging
 import os
+import socket
 import sys
 from contextlib import closing
+from datetime import datetime
 
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -15,8 +17,8 @@ absl.logging.set_verbosity(absl.logging.ERROR) # silence off annoying warnings
 import chess.engine
 import chess.pgn
 import numpy as np
-
 import tensorflow as tf
+
 tf.get_logger().setLevel('ERROR')
 
 from keras.models import load_model
@@ -29,6 +31,7 @@ from chessutils.eco import EcoAPI
 
 
 def encode(board):
+    # One-hot encode the chess board position, return numpy array expected by neural net model.
     mask_black = board.occupied_co[chess.BLACK]
     mask_white = board.occupied_co[chess.WHITE]
 
@@ -44,6 +47,7 @@ def encode(board):
     return np.append(f, [board.turn])
 
 def parse_openings(openings_file):
+    # Parse PGN file and return list of openings.
     openings = []
     with open(openings_file) as f:
         while True:
@@ -52,6 +56,22 @@ def parse_openings(openings_file):
                 break
             openings.append(game)
     return openings
+
+def append_pgn(board, file_path, game_num, names):
+    # Create a new game from the board
+    game = chess.pgn.Game().from_board(board)
+    game.headers['White'] = names[0]
+    game.headers['Black'] = names[1]
+    game.headers['Date'] = datetime.now().strftime('%Y.%m.%d')
+    game.headers['Event'] = 'AutoPlay'
+    game.headers['Site'] = socket.gethostname()
+    game.headers['Round'] = game_num
+
+    # Open the file in append mode
+    with open(file_path, 'a') as pgn_file:
+        # Write the game to the file
+        exporter = chess.pgn.FileExporter(pgn_file)
+        game.accept(exporter)
 
 def main(args):
     eco = EcoAPI(args.eco_path)
@@ -129,7 +149,10 @@ def main(args):
             logging.info(f'Game {game_num+1}: {opening_name} [{board.result()}], {move_count} moves')
             logging.info(f'Winner: {get_winner(board.result(), names)}')
 
-            # Call on_end_game callback
+            if args.pgn_path:
+                append_pgn(board, args.pgn_path, game_num, names)
+
+            # Call on_end_game callback for reinforcement learning
             on_end_game(args, board, engines, engine1, engine2)
 
 def get_winner(result, engines):
@@ -153,6 +176,7 @@ def on_begin_game(args, board, engine1, engine2):
             engine2.configure(config)
 
 def on_end_game(args, board, engines, engine1, engine2):
+    # Time difference reinforcement learning
     @tf.function
     def _clipped_mae(y_true, y_pred):
         y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
@@ -209,6 +233,7 @@ if __name__ == '__main__':
     parser.add_argument('--logfile', default='log.txt', help='Path to the logfile')
     parser.add_argument('--openings', help='Path to the PGN file with opening moves')
     parser.add_argument('--opening-offset', type=int, default=0, help='Offset for picking opening moves')
+    parser.add_argument('--pgn-path', default='out.pgn', help='Path to file where to save games')
     parser.add_argument('--max-openings', type=int, default=2, help='Depth of opening moves to apply')
     parser.add_argument('--model', '-m', help='Path to NNUE model')
     parser.add_argument('--num-games', '-n', type=int, default=1, help='Number of games to play')
