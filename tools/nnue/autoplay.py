@@ -149,7 +149,7 @@ def main(args):
 
             # Log the game result
             move_count = len(board.move_stack)
-            logging.info(f'Game {game_num+1}: {opening_name} [{board.result()}], {move_count} moves')
+            logging.info(f'Game {game_num+1}/{args.num_games}: {opening_name} [{board.result()}], {move_count} moves')
             logging.info(f'Winner: {get_winner(board.result(), names)}')
 
             if args.pgn_path:
@@ -220,7 +220,9 @@ def on_end_game(args, board, engines, engine1, engine2):
 
             reward = -reward
 
+        logging.info(f'Updating: {os.path.abspath(args.model)}')
         model.save(args.model)
+        logging.info(f'Saving: {os.path.abspath(args.json_path)}')
         serialize_weights(model, args.json_path)
 
 if __name__ == '__main__':
@@ -246,7 +248,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.model:
-        args.json_path = os.path.basename(args.model) + '.json'
+        args.json_path = os.path.abspath(os.path.basename(os.path.abspath(args.model)) + '.json')
 
     # Configure logging
     logging.basicConfig(
