@@ -71,7 +71,8 @@ def main(args):
             # Create the chess board
             board = chess.Board()
 
-            opening_game = openings[game_num % num_openings] if num_openings > 0 else None
+            # Each opening is played twice, once for each engine as white
+            opening_game = openings[game_num // 2 % num_openings] if num_openings > 0 else None
 
             # Apply opening moves
             if opening_game:
