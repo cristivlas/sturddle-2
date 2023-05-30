@@ -140,17 +140,18 @@ def main(args):
                 except KeyboardInterrupt:
                     try:
                         engine1.quit()
-                    except chess.engine.EngineTerminatedError:
+                    except:
                         pass  # engine1 is already terminated
                     try:
                         engine2.quit()
-                    except chess.engine.EngineTerminatedError:
+                    except:
                         pass  # engine2 is already terminated
                     print('Terminated.')
                     os._exit(0)
 
                 board.push(result.move)
-                if row := eco.lookup(board):
+                row = eco.lookup(board)
+                if row:
                     opening_name = row['name']
 
             # Log the game result
