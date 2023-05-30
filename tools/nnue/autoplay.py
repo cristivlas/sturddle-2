@@ -220,6 +220,10 @@ def on_end_game(args, board, engines, engine1, engine2):
             else:
                 black_positions.append(encode(replay))
 
+        # initialize empty lists to store training data for both players
+        X_train_all = []
+        y_train_all = []
+
         for positions in (white_positions, black_positions):
             X_train = np.array(positions[:-1])
             next_positions = np.array(positions[1:])
@@ -229,15 +233,22 @@ def on_end_game(args, board, engines, engine1, engine2):
             score_diffs = np.squeeze(next_preds - X_predict)
 
             # Apply discount factor
-            discount_factors = np.array([gamma ** i for i in range(len(score_diffs)-1, -1, -1)])
+            discount_factors = np.array([gamma ** i for i in range(len(score_diffs))][::-1])
             discounted_score_diffs = score_diffs * discount_factors
 
             y_train = np.squeeze(X_predict) + reward * discounted_score_diffs
 
-            # Train the model
-            model.fit(X_train, y_train, epochs=args.epochs, verbose=True, batch_size=args.batch_size)
+            X_train_all.append(X_train)
+            y_train_all.append(y_train)
 
             reward = -reward
+
+        # concatenate all training data
+        X_train_all = np.concatenate(X_train_all, axis=0)
+        y_train_all = np.concatenate(y_train_all, axis=0)
+
+        # Train the model on all data
+        model.fit(X_train_all, y_train_all, epochs=args.epochs, verbose=True, batch_size=args.batch_size)
 
         logging.info(f'Updating: {os.path.abspath(args.model)}')
         model.save(args.model)
@@ -250,7 +261,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', '-b', type=int, default=1)
     parser.add_argument('--clip', '-c', type=int, default=5)
     parser.add_argument('--eco-path', help='Optional path to ECO data')
-    parser.add_argument('--epochs', '-e', type=int, default=10, help='Number of epochs to train the model for each side')
+    parser.add_argument('--epochs', '-e', type=int, default=25, help='Number of epochs to train the model')
     parser.add_argument('--engine1', default='./main.py', help='Path to the first engine')
     parser.add_argument('--engine2', default='./main.py', help='Path to the second engine')
     parser.add_argument('--hash', type=int, default=512, help='Engine hash table size in MiB')
