@@ -100,7 +100,7 @@ def main(args):
         num_openings = len(openings)
         logging.info(f'Using {num_openings} openings from: {args.openings}')
 
-        opening_name = None, ''
+        opening_name = ''
 
         # Play the games
         for game_num in range(args.num_games):
