@@ -229,7 +229,7 @@ def on_end_game(args, board, engines, engine1, engine2):
             score_diffs = np.squeeze(next_preds - X_predict)
 
             # Apply discount factor
-            discount_factors = np.array([gamma ** i for i in range(len(score_diffs))])
+            discount_factors = np.array([gamma ** i for i in range(len(score_diffs)-1, -1, -1)])
             discounted_score_diffs = score_diffs * discount_factors
 
             y_train = np.squeeze(X_predict) + reward * discounted_score_diffs
