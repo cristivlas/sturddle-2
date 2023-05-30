@@ -405,14 +405,15 @@ def main(args):
             # distillation_loss = student.loss(student_outputs, teacher_outputs)
             distillation_loss = tf.keras.losses.MeanAbsoluteError(
                 reduction=tf.keras.losses.Reduction.NONE)(teacher_outputs, student_outputs)
-            result = student_loss, teacher_loss, distillation_loss
+            result = [student_loss, teacher_loss, distillation_loss]
 
             if mixed: # mixed-precision
                 student_loss = student.optimizer.get_scaled_loss(student_loss)
                 distillation_loss = student.optimizer.get_scaled_loss(distillation_loss)
 
-                if online:
-                    teacher_loss = teacher.optimizer.get_scaled_loss(teacher_loss)
+                # scale teacher_loss regardless of wether the teacher model is being trained
+                # or not, so that the teacher confidence tensor is computed correctly below.
+                teacher_loss = teacher.optimizer.get_scaled_loss(teacher_loss)
 
             # --- V.1
             # Compute total loss as a weighted sum of the student loss and the distillation loss
@@ -429,6 +430,7 @@ def main(args):
         student_gradients = student_tape.gradient(total_loss, student.trainable_variables)
         if mixed:
             student_gradients = student.optimizer.get_unscaled_gradients(student_gradients)
+            total_loss /= student.optimizer.loss_scale
         student.optimizer.apply_gradients(zip(student_gradients, student.trainable_variables))
 
         # Compute gradients and update teacher model weights only if online training is enabled
@@ -438,7 +440,7 @@ def main(args):
                 teacher_gradients = teacher.optimizer.get_unscaled_gradients(teacher_gradients)
             teacher.optimizer.apply_gradients(zip(teacher_gradients, teacher.trainable_variables))
 
-        return result
+        return result + [total_loss]
 
     '''
     Train a student model using knowledge distillation with a teacher model.
@@ -467,7 +469,7 @@ def main(args):
 
             for batch, (inputs, labels) in enumerate(train_dataset):
                 # Call the train_step function using strategy.run
-                student_loss, teacher_loss, distillation_loss = strategy.run(
+                student_loss, teacher_loss, distillation_loss, total_loss = strategy.run(
                     train_step,
                     args=(inputs, labels, student, teacher, args.alpha, args.mixed_precision, args.online))
 
@@ -479,6 +481,7 @@ def main(args):
                 distillation_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, distillation_loss, axis=None) / num_replicas
 
                 # Add the current batch's loss to the running total
+                # mean_loss_metric.update_state(total_loss)
                 mean_loss_metric.update_state(student_loss)
 
                 # Update progress bar with loss information
@@ -486,6 +489,7 @@ def main(args):
                     ('student', student_loss),
                     ('teacher', teacher_loss),
                     ('dist. loss', distillation_loss),
+                    ('total', total_loss)
                 ]
                 progbar.update(batch + 1, progress_values)
 
