@@ -197,6 +197,10 @@ def on_end_game(args, board, engines, engine1, engine2):
         return tf.keras.losses.mean_absolute_error(y_true, y_pred)
 
     if args.model:
+        # Discount factor: the rewards are discounted by multiplying
+        # each reward by gamma raised to the power of the time step.
+        gamma = max(0, min(1, args.gamma))
+
         model = load_model(args.model, custom_objects={'_clipped_mae': _clipped_mae })
         reward = 0
         result = board.result()
@@ -223,8 +227,12 @@ def on_end_game(args, board, engines, engine1, engine2):
             X_predict = model.predict(X_train, verbose=False)
             next_preds = model.predict(next_positions, verbose=False)
             score_diffs = np.squeeze(next_preds - X_predict)
-            # Use these differences as targets for learning, modulated by the game result
-            y_train = np.squeeze(X_predict) + reward * score_diffs
+
+            # Apply discount factor
+            discount_factors = np.array([gamma ** i for i in range(len(score_diffs))])
+            discounted_score_diffs = score_diffs * discount_factors
+
+            y_train = np.squeeze(X_predict) + reward * discounted_score_diffs
 
             # Train the model
             model.fit(X_train, y_train, epochs=args.epochs, verbose=True, batch_size=args.batch_size)
@@ -246,6 +254,7 @@ if __name__ == '__main__':
     parser.add_argument('--engine1', default='./main.py', help='Path to the first engine')
     parser.add_argument('--engine2', default='./main.py', help='Path to the second engine')
     parser.add_argument('--hash', type=int, default=512, help='Engine hash table size in MiB')
+    parser.add_argument('--gamma', '-g', type=float, default=0.9, help='Discount factor')
     parser.add_argument('--logfile', default='log.txt', help='Path to the logfile')
     parser.add_argument('--openings', help='Path to the PGN file with opening moves')
     parser.add_argument('--opening-offset', type=int, default=0, help='Offset for picking opening moves')
