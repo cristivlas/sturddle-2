@@ -3,8 +3,10 @@
 import argparse
 import logging
 import os
+import shutil
 import socket
 import sys
+import tempfile
 from contextlib import closing
 from datetime import datetime
 
@@ -12,6 +14,7 @@ from datetime import datetime
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 import absl.logging
+
 absl.logging.set_verbosity(absl.logging.ERROR) # silence off annoying warnings
 
 import chess.engine
@@ -180,14 +183,14 @@ def get_winner(result, engines):
         return 'Unknown'
 
 def on_begin_game(args, board, engine1, engine2):
-    # Custom engine configurations before each game
-    config = {}
+    # Force engine(s) to reload the model.
     if os.path.exists(args.json_path):
-        config['NNUEModel'] = args.json_path
-        engine1.configure(config)
+        with tempfile.NamedTemporaryFile() as temp_file:
+            shutil.copy2(args.json_path, temp_file.name)
+            engine1.configure({'NNUEModel': temp_file.name})
 
-        if args.engine1 == args.engine2: # self-play?
-            engine2.configure(config)
+            if args.engine1 == args.engine2:
+                engine2.configure({'NNUEModel': temp_file.name})
 
 def on_end_game(args, board, engines, engine1, engine2):
     # Time difference reinforcement learning
