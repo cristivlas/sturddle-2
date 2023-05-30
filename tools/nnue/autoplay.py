@@ -205,6 +205,14 @@ def on_end_game(args, board, engines, engine1, engine2):
         gamma = max(0, min(1, args.gamma))
 
         model = load_model(args.model, custom_objects={'_clipped_mae': _clipped_mae })
+        optimizer=tf.keras.optimizers.Adam(
+            amsgrad=True,
+            beta_1=0.99,
+            beta_2=0.995,
+            learning_rate=args.learn_rate
+        )
+        model.compile(loss=_clipped_mae, optimizer=optimizer)
+
         reward = 0
         result = board.result()
         if result == '1-0':
@@ -261,7 +269,7 @@ def on_end_game(args, board, engines, engine1, engine2):
 if __name__ == '__main__':
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Autoplay with Reinforcement Learning')
-    parser.add_argument('--batch-size', '-b', type=int, default=1)
+    parser.add_argument('--batch-size', '-b', type=int, default=4)
     parser.add_argument('--clip', '-c', type=int, default=5)
     parser.add_argument('--eco-path', help='Optional path to ECO data')
     parser.add_argument('--epochs', '-e', type=int, default=25, help='Number of epochs to train the model')
@@ -269,6 +277,7 @@ if __name__ == '__main__':
     parser.add_argument('--engine2', default='./main.py', help='Path to the second engine')
     parser.add_argument('--hash', type=int, default=512, help='Engine hash table size in MiB')
     parser.add_argument('--gamma', '-g', type=float, default=0.9, help='Discount factor')
+    parser.add_argument('--learn-rate', '-r', type=float, default=1e-5, help='Learning rate')
     parser.add_argument('--logfile', default='log.txt', help='Path to the logfile')
     parser.add_argument('--openings', help='Path to the PGN file with opening moves')
     parser.add_argument('--opening-offset', type=int, default=0, help='Offset for picking opening moves')
