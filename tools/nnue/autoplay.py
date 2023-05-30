@@ -86,7 +86,7 @@ def main(args):
     with closing(chess.engine.SimpleEngine.popen_uci(args.engine1)) as engine1, \
          closing(chess.engine.SimpleEngine.popen_uci(args.engine2)) as engine2:
 
-        config = { 'Threads': args.threads, 'Hash': args.hash }
+        config = { 'Threads': args.threads, 'Hash': args.hash, 'OwnBook': False }
         engine1.configure(config)
         engine2.configure(config)
 
