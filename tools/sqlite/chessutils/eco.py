@@ -32,24 +32,8 @@ class EcoAPI:
                 self.by_fen[row['epd']] = row
 
 
-    def lookup(self, board, transpose=True):
+    def lookup(self, board):
         '''
         Lookup by board position (FEN)
         '''
-        row = self.by_fen.get(board.epd(), None)
-        if row is None and board._stack:
-            prev = chess.Board()
-            board._stack[-1].restore(prev)
-            row = self.by_fen.get(prev.epd(), None)
-
-        if row and not transpose:
-            pgn = chess.pgn.read_game(io.StringIO(row['pgn']))
-            for i, move in enumerate(pgn.mainline_moves()):
-                if i >= len(board.move_stack) or move != board.move_stack[i]:
-                    return None
-        return row
-
-
-    def openings(self):
-        for _, v in self.by_fen.items():
-            yield v
+        return self.by_fen.get(board.epd(), None)

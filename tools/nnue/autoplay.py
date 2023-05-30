@@ -118,6 +118,10 @@ def main(args):
                     if move_count >= args.max_openings:
                         break
                     board.push(move)
+                    row = eco.lookup(board)
+                    if row:
+                        opening_name = row['name']
+
 
                 logging.info(f'Opening {opening_idx}: {[move.uci() for move in board.move_stack]}')
 
