@@ -194,24 +194,26 @@ def on_begin_game(args, board, engine1, engine2):
 
 def on_end_game(args, board, engines, engine1, engine2):
     # Time difference reinforcement learning
-    @tf.function
-    def _clipped_mae(y_true, y_pred):
-        y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
-        return tf.keras.losses.mean_absolute_error(y_true, y_pred)
+    #@tf.function
+    #def _clipped_mae(y_true, y_pred):
+    #    y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
+    #    return tf.keras.losses.mean_absolute_error(y_true, y_pred)
 
     if args.model:
         # Discount factor: the rewards are discounted by multiplying
         # each reward by gamma raised to the power of the time step.
         gamma = max(0, min(1, args.gamma))
 
-        model = load_model(args.model, custom_objects={'_clipped_mae': _clipped_mae })
+        # model = load_model(args.model, custom_objects={'_clipped_mae': _clipped_mae })
+        model = load_model(args.model, custom_objects={'_clipped_mae': None })
         optimizer=tf.keras.optimizers.Adam(
             amsgrad=True,
             beta_1=0.99,
             beta_2=0.995,
             learning_rate=args.learn_rate
         )
-        model.compile(loss=_clipped_mae, optimizer=optimizer)
+        # model.compile(loss=_clipped_mae, optimizer=optimizer)
+        model.compile(loss='mse', optimizer=optimizer)
 
         reward = 0
         result = board.result()
@@ -221,46 +223,39 @@ def on_end_game(args, board, engines, engine1, engine2):
             reward = -1
         logging.info(f'Reward: {reward}')
 
+        if reward == 0:
+            return
+
         replay = chess.Board()
-        white_positions = [encode(replay)]
-        black_positions = []
+        positions = [encode(replay)]
         for move in board.move_stack:
             replay.push(move)
-            if replay.turn:
-                white_positions.append(encode(replay))
-            else:
-                black_positions.append(encode(replay))
+            positions.append(encode(replay))
 
-        # initialize empty lists to store training data for both players
-        X_train_all = []
-        y_train_all = []
+        X_train = np.array(positions[:-1])
+        next_positions = np.array(positions[1:])
 
-        for positions in (white_positions, black_positions):
-            X_train = np.array(positions[:-1])
-            next_positions = np.array(positions[1:])
+        X_predict = model.predict(X_train, verbose=False)
+        next_preds = model.predict(next_positions, verbose=False)
+        score_diffs = np.squeeze(-next_preds - X_predict)
 
-            X_predict = model.predict(X_train, verbose=False)
-            next_preds = model.predict(next_positions, verbose=False)
-            score_diffs = np.squeeze(next_preds - X_predict)
+        signs = np.ones_like(score_diffs)
+        signs[1::2] = -1  # Negative for even-indexed elements starting from 0
+        signs *= reward   # Apply the reward's sign
 
-            # Apply discount factor
-            discount_factors = np.array([gamma ** i for i in range(len(score_diffs))][::-1])
-            discounted_score_diffs = score_diffs * discount_factors
+        mask_same_sign = np.sign(score_diffs) == np.sign(signs)
+        score_diffs *= mask_same_sign
 
-            y_train = np.squeeze(X_predict) + reward * discounted_score_diffs
+        # Apply discount factor
+        score_diffs *= np.array([gamma ** i for i in range(len(score_diffs))][::-1])
 
-            X_train_all.append(X_train)
-            y_train_all.append(y_train)
+        # Construct training targets
+        y_train = np.squeeze(X_predict) + score_diffs
 
-            reward = -reward
+        # Train the model
+        model.fit(X_train, y_train, epochs=args.epochs, verbose=True, batch_size=args.batch_size)
 
-        # concatenate all training data
-        X_train_all = np.concatenate(X_train_all, axis=0)
-        y_train_all = np.concatenate(y_train_all, axis=0)
-
-        # Train the model on all data
-        model.fit(X_train_all, y_train_all, epochs=args.epochs, verbose=True, batch_size=args.batch_size)
-
+        # Save the model
         logging.info(f'Updating: {os.path.abspath(args.model)}')
         model.save(args.model)
         logging.info(f'Writing: {os.path.abspath(args.json_path)}')
@@ -270,13 +265,13 @@ if __name__ == '__main__':
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Autoplay with Reinforcement Learning')
     parser.add_argument('--batch-size', '-b', type=int, default=4)
-    parser.add_argument('--clip', '-c', type=int, default=5)
+    # parser.add_argument('--clip', '-c', type=int, default=5)
     parser.add_argument('--eco-path', help='Optional path to ECO data')
-    parser.add_argument('--epochs', '-e', type=int, default=25, help='Number of epochs to train the model')
+    parser.add_argument('--epochs', '-e', type=int, default=30, help='Number of epochs to train the model')
     parser.add_argument('--engine1', default='./main.py', help='Path to the first engine')
     parser.add_argument('--engine2', default='./main.py', help='Path to the second engine')
     parser.add_argument('--hash', type=int, default=512, help='Engine hash table size in MiB')
-    parser.add_argument('--gamma', '-g', type=float, default=0.9, help='Discount factor')
+    parser.add_argument('--gamma', '-g', type=float, default=0.98, help='Discount factor')
     parser.add_argument('--learn-rate', '-r', type=float, default=1e-5, help='Learning rate')
     parser.add_argument('--logfile', default='log.txt', help='Path to the logfile')
     parser.add_argument('--openings', help='Path to the PGN file with opening moves')
