@@ -14,6 +14,7 @@ import absl.logging
 import chess.engine
 import chess.pgn
 import numpy as np
+import portalocker
 import requests
 
 absl.logging.set_verbosity(absl.logging.ERROR) # silence off annoying warnings
@@ -310,8 +311,11 @@ if __name__ == '__main__':
     # Force TensorFlow to place all operations on the CPU
     if args.no_gpu:
         tf.config.set_soft_device_placement(True)
+
+    lock_file = os.path.join(args.model, 'lockfile')
     # Play the games
     try:
-        main(args)
+        with portalocker.Lock(lock_file, 'a'):
+            main(args)
     except KeyboardInterrupt:
         pass
