@@ -1,30 +1,32 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import logging
 import os
-import shutil
 import socket
 import sys
 import tempfile
 from contextlib import closing
 from datetime import datetime
 
-# https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-
 import absl.logging
-absl.logging.set_verbosity(absl.logging.ERROR) # silence off annoying warnings
-
 import chess.engine
 import chess.pgn
 import numpy as np
+import requests
+
+absl.logging.set_verbosity(absl.logging.ERROR) # silence off annoying warnings
+
+# https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 import tensorflow as tf
 
 tf.get_logger().setLevel('ERROR')
 
 from keras.models import load_model
-from modeltojson import serialize_weights
+from modeltojson import deserialize_weights, serialize_weights
 
 # use EcoAPI for logging openings by name
 chessutils_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'sqlite'))
@@ -51,6 +53,7 @@ def encode(board):
 def parse_openings(openings_file):
     # Parse PGN file and return list of openings.
     openings = []
+    logging.info(f'Parsing opening file: {openings_file}')
     with open(openings_file) as f:
         while True:
             game = chess.pgn.read_game(f)
@@ -60,7 +63,7 @@ def parse_openings(openings_file):
     return openings
 
 def append_pgn(board, file_path, game_num, names):
-    # Create a new game from the board
+    # Save game in PGN format
     game = chess.pgn.Game().from_board(board)
     game.headers['White'] = names[0]
     game.headers['Black'] = names[1]
@@ -75,15 +78,34 @@ def append_pgn(board, file_path, game_num, names):
         exporter = chess.pgn.FileExporter(pgn_file)
         game.accept(exporter)
 
+def download_model(args, file_path):
+    url = f'http://{args.server}:{args.port}/get-model'
+    logging.info(f'Downloading model from: {url} to: {file_path}')
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise RuntimeError(f'Server error: {response}')
+    data = response.json()
+    with open(file_path, 'w') as f:
+        json.dump(data['model'], f)
+
+def upload_model(args, model):
+    url = f'http://{args.server}:{args.port}/put-model'
+    logging.info(f'Updating: {os.path.abspath(args.model)}')
+    model.save(args.model)
+
+    with tempfile.NamedTemporaryFile() as temp_file:
+        serialize_weights(model, temp_file.name)
+        logging.info(f'Uploading model to: {url}')
+        response = requests.post(url, files={'model': open(temp_file.name, 'rb')})
+        if response.status_code != 200:
+            raise RuntimeError(f'Server error: {response}')
+        logging.info(response)
+
 def main(args):
     eco = EcoAPI(args.eco_path)
     logging.info(f'Engine1: {os.path.abspath(args.engine1)}')
     logging.info(f'Engine2: {os.path.abspath(args.engine2)}')
     logging.info(f'Time Limit: {args.time_limit}')
-
-    model = load_model(args.model, custom_objects={'_clipped_mae': None})
-    logging.info(f'Writing: {os.path.abspath(args.json_path)}')
-    serialize_weights(model, args.json_path)
 
     with closing(chess.engine.SimpleEngine.popen_uci(args.engine1)) as engine1, \
          closing(chess.engine.SimpleEngine.popen_uci(args.engine2)) as engine2:
@@ -124,7 +146,6 @@ def main(args):
                     if row:
                         opening_name = row['name']
 
-
                 logging.info(f'Opening {opening_idx}: {[move.uci() for move in board.move_stack]}')
 
             # Determine which engine plays as white and black
@@ -147,11 +168,11 @@ def main(args):
                     try:
                         engine1.quit()
                     except:
-                        pass  # engine1 is already terminated
+                        pass
                     try:
                         engine2.quit()
                     except:
-                        pass  # engine2 is already terminated
+                        pass
                     print('Terminated.')
                     os._exit(0)
 
@@ -183,38 +204,16 @@ def get_winner(result, engines):
 
 def on_begin_game(args, board, engine1, engine2):
     # Force engine(s) to reload the model.
-    if os.path.exists(args.json_path):
-        with tempfile.NamedTemporaryFile() as temp_file:
-            shutil.copy2(args.json_path, temp_file.name)
-            engine1.configure({'NNUEModel': temp_file.name})
+    with tempfile.NamedTemporaryFile() as temp_file:
+        download_model(args, temp_file.name)
+        engine1.configure({'NNUEModel': temp_file.name})
 
-            if args.engine1 == args.engine2:
-                engine2.configure({'NNUEModel': temp_file.name})
+        if args.engine1 == args.engine2:
+            engine2.configure({'NNUEModel': temp_file.name})
 
 def on_end_game(args, board, engines, engine1, engine2):
     # Time difference reinforcement learning
-
-    #@tf.function
-    #def _clipped_mae(y_true, y_pred):
-    #    y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
-    #    return tf.keras.losses.mean_absolute_error(y_true, y_pred)
-
     if args.model:
-        # Discount factor: the rewards are discounted by multiplying
-        # each reward by gamma raised to the power of the time step.
-        gamma = max(0, min(1, args.gamma))
-
-        # model = load_model(args.model, custom_objects={'_clipped_mae': _clipped_mae })
-        model = load_model(args.model, custom_objects={'_clipped_mae': None })
-        optimizer=tf.keras.optimizers.Adam(
-            amsgrad=True,
-            beta_1=0.99,
-            beta_2=0.995,
-            learning_rate=args.learn_rate
-        )
-        # model.compile(loss=_clipped_mae, optimizer=optimizer)
-        model.compile(loss='mse', optimizer=optimizer)
-
         reward = 0
         result = board.result()
         if result == '1-0':
@@ -225,6 +224,22 @@ def on_end_game(args, board, engines, engine1, engine2):
 
         if reward == 0:
             return
+
+        # Discount factor: the rewards are discounted by multiplying
+        # each reward by gamma raised to the power of the time step.
+        gamma = max(0, min(1, args.gamma))
+
+        model = load_model(args.model, custom_objects={'_clipped_mae': None })
+        optimizer=tf.keras.optimizers.Adam(
+            amsgrad=True,
+            beta_1=0.99,
+            beta_2=0.995,
+            learning_rate=args.learn_rate
+        )
+        model.compile(loss='mse', optimizer=optimizer)
+        with tempfile.NamedTemporaryFile() as temp_file:
+            download_model(args, temp_file.name)
+            deserialize_weights(model, temp_file.name)
 
         replay = chess.Board()
         positions = [encode(replay)]
@@ -255,11 +270,7 @@ def on_end_game(args, board, engines, engine1, engine2):
         # Train the model
         model.fit(X_train, y_train, epochs=args.epochs, verbose=True, batch_size=args.batch_size)
 
-        # Save the model
-        logging.info(f'Updating: {os.path.abspath(args.model)}')
-        model.save(args.model)
-        logging.info(f'Writing: {os.path.abspath(args.json_path)}')
-        serialize_weights(model, args.json_path)
+        upload_model(args, model)
 
 if __name__ == '__main__':
     # Parse command line arguments
@@ -279,14 +290,14 @@ if __name__ == '__main__':
     parser.add_argument('--pgn-path', default='out.pgn', help='Path to file where to save games')
     parser.add_argument('--max-openings', type=int, default=2, help='Depth of opening moves to apply')
     parser.add_argument('--model', '-m', help='Path to NNUE model')
+    parser.add_argument('--no-gpu', action='store_true')
     parser.add_argument('--num-games', '-n', type=int, default=1, help='Number of games to play')
+    parser.add_argument('--port', '-p', type=int, default=5000)
+    parser.add_argument('--server', '-s', default='localhost')
     parser.add_argument('--time-limit', type=float, default=0.1, help='Time limit for each move (in seconds)')
     parser.add_argument('--threads', type=int, default=1, help='Engine SMP threads')
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose logging')
     args = parser.parse_args()
-
-    if args.model:
-        args.json_path = os.path.abspath(os.path.basename(os.path.abspath(args.model)) + '.json')
 
     # Configure logging
     logging.basicConfig(
@@ -296,7 +307,9 @@ if __name__ == '__main__':
             logging.FileHandler(args.logfile),
             logging.StreamHandler()
         ])
-
+    # Force TensorFlow to place all operations on the CPU
+    if args.no_gpu:
+        tf.config.set_soft_device_placement(True)
     # Play the games
     try:
         main(args)
