@@ -60,11 +60,12 @@ def deserialize_weights(model, input_path):
 
 def main():
     # Create the parser
-    parser = argparse.ArgumentParser(description='Serialize Keras model weights to json')
+    parser = argparse.ArgumentParser(description='Serialize Keras model weights to JSON')
 
     # Add the arguments
     parser.add_argument('ModelPath', metavar='modelpath', type=str, help='Path to the Keras model')
     parser.add_argument('-o', '--output', help='Output JSON file', default='weights.json')
+    parser.add_argument('-r', '--reverse', action='store_true', help='Reverse operation (JSON to model)')
     parser.add_argument('--test', action='store_true')
 
     # Execute the parse_args() method
@@ -73,15 +74,19 @@ def main():
     # Load the model
     model = load_model(args.ModelPath, custom_objects={'_clipped_mae' : None})
 
-    # Write as JSON
-    serialize_weights(model, args.output)
-
-    if args.test:
+    if args.reverse:
         deserialize_weights(model, args.output)
-        with tempfile.NamedTemporaryFile() as temp_file:
-            serialize_weights(model, temp_file.name)
-            with open(temp_file.name, 'rb') as f1, open(args.output, 'rb') as f2:
-                assert f1.read() == f2.read()
+        model.save(args.ModelPath)
+    else:
+        # Write as JSON
+        serialize_weights(model, args.output)
+
+        if args.test:
+            deserialize_weights(model, args.output)
+            with tempfile.NamedTemporaryFile() as temp_file:
+                serialize_weights(model, temp_file.name)
+                with open(temp_file.name, 'rb') as f1, open(args.output, 'rb') as f2:
+                    assert f1.read() == f2.read()
 
 if __name__ == '__main__':
     main()
