@@ -14,7 +14,6 @@ from datetime import datetime
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 import absl.logging
-
 absl.logging.set_verbosity(absl.logging.ERROR) # silence off annoying warnings
 
 import chess.engine
@@ -194,6 +193,7 @@ def on_begin_game(args, board, engine1, engine2):
 
 def on_end_game(args, board, engines, engine1, engine2):
     # Time difference reinforcement learning
+
     #@tf.function
     #def _clipped_mae(y_true, y_pred):
     #    y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
