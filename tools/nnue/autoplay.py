@@ -85,6 +85,7 @@ def download_model(args, file_path):
     response = requests.get(url)
     if response.status_code != 200:
         raise RuntimeError(f'Server error: {response}')
+    logging.info(response)
     data = response.json()
     with open(file_path, 'w') as f:
         json.dump(data['model'], f)
@@ -230,48 +231,51 @@ def on_end_game(args, board, engines, engine1, engine2):
         # each reward by gamma raised to the power of the time step.
         gamma = max(0, min(1, args.gamma))
 
-        model = load_model(args.model, custom_objects={'_clipped_mae': None })
-        optimizer=tf.keras.optimizers.Adam(
-            amsgrad=True,
-            beta_1=0.99,
-            beta_2=0.995,
-            learning_rate=args.learn_rate
-        )
-        model.compile(loss='mse', optimizer=optimizer)
-        with tempfile.NamedTemporaryFile() as temp_file:
-            download_model(args, temp_file.name)
-            deserialize_weights(model, temp_file.name)
+        device = '/cpu:0' if args.no_gpu else '/gpu:0'
+        with tf.device(device):
+            model = load_model(args.model, custom_objects={'_clipped_mae': None })
+            optimizer=tf.keras.optimizers.Adam(
+                amsgrad=True,
+                beta_1=0.99,
+                beta_2=0.995,
+                learning_rate=args.learn_rate
+            )
+            model.compile(loss='mse', optimizer=optimizer)
 
-        replay = chess.Board()
-        positions = [encode(replay)]
-        for move in board.move_stack:
-            replay.push(move)
-            positions.append(encode(replay))
+            with tempfile.NamedTemporaryFile() as temp_file:
+                download_model(args, temp_file.name)
+                deserialize_weights(model, temp_file.name)
 
-        X_train = np.array(positions[:-1])
-        next_positions = np.array(positions[1:])
+            replay = chess.Board()
+            positions = [encode(replay)]
+            for move in board.move_stack:
+                replay.push(move)
+                positions.append(encode(replay))
 
-        X_predict = model.predict(X_train, verbose=False)
-        next_preds = model.predict(next_positions, verbose=False)
-        score_diffs = np.squeeze(-next_preds - X_predict)
+            X_train = np.array(positions[:-1])
+            next_positions = np.array(positions[1:])
 
-        signs = np.ones_like(score_diffs)
-        signs[1::2] = -1  # Negative for even-indexed elements starting from 0
-        signs *= reward   # Apply the reward's sign
+            X_predict = model.predict(X_train, verbose=False)
+            next_preds = model.predict(next_positions, verbose=False)
+            score_diffs = np.squeeze(-next_preds - X_predict)
 
-        mask_same_sign = np.sign(score_diffs) == np.sign(signs)
-        score_diffs *= mask_same_sign
+            signs = np.ones_like(score_diffs)
+            signs[1::2] = -1  # Negative for even-indexed elements starting from 0
+            signs *= reward   # Apply the reward's sign
 
-        # Apply discount factor
-        score_diffs *= np.array([gamma ** i for i in range(len(score_diffs))][::-1])
+            mask_same_sign = np.sign(score_diffs) == np.sign(signs)
+            score_diffs *= mask_same_sign
 
-        # Construct training targets
-        y_train = np.squeeze(X_predict) + score_diffs
+            # Apply discount factor
+            score_diffs *= np.array([gamma ** i for i in range(len(score_diffs))][::-1])
 
-        # Train the model
-        model.fit(X_train, y_train, epochs=args.epochs, verbose=True, batch_size=args.batch_size)
+            # Construct training targets
+            y_train = np.squeeze(X_predict) + score_diffs
 
-        upload_model(args, model)
+            # Train the model
+            model.fit(X_train, y_train, epochs=args.epochs, verbose=True, batch_size=args.batch_size)
+
+            upload_model(args, model)
 
 if __name__ == '__main__':
     # Parse command line arguments
