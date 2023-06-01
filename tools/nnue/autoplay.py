@@ -214,7 +214,6 @@ def on_begin_game(args, board, engine1, engine2):
             engine2.configure({'NNUEModel': temp_file.name})
 
 def on_end_game(args, board, engines, engine1, engine2):
-    # Time difference reinforcement learning
     if args.model:
         reward = 0
         result = board.result()
@@ -252,42 +251,34 @@ def on_end_game(args, board, engines, engine1, engine2):
                 replay.push(move)
                 positions.append(encode(replay))
 
-            X_train = np.array(positions[:-1])
-            next_positions = np.array(positions[1:])
-
+            X_train = np.array(positions)
             X_predict = model.predict(X_train, verbose=False)
-            next_preds = model.predict(next_positions, verbose=False)
-            score_diffs = np.squeeze(-next_preds - X_predict)
 
-            signs = np.ones_like(score_diffs)
-            signs[1::2] = -1  # Negative for even-indexed elements starting from 0
+            signs = np.ones_like(np.squeeze(X_predict))
+            signs[1::2] = -1  # Negative for odd-indexed elements
             signs *= reward   # Apply the reward's sign
 
-            mask_same_sign = np.sign(score_diffs) == np.sign(signs)
-            score_diffs *= mask_same_sign
+            deltas = signs * args.scale
 
             # Apply discount factor
-            score_diffs *= np.array([gamma ** i for i in range(len(score_diffs))][::-1])
+            deltas *= np.array([gamma ** i for i in range(len(deltas))][::-1])
 
             # Construct training targets
-            y_train = np.squeeze(X_predict) + score_diffs
+            y_train = np.squeeze(X_predict) + deltas
 
-            # Train the model
             model.fit(X_train, y_train, epochs=args.epochs, verbose=True, batch_size=args.batch_size)
-
             upload_model(args, model)
 
 if __name__ == '__main__':
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Autoplay with Reinforcement Learning')
     parser.add_argument('--batch-size', '-b', type=int, default=4)
-    # parser.add_argument('--clip', '-c', type=int, default=5)
     parser.add_argument('--eco-path', help='Optional path to ECO data')
     parser.add_argument('--epochs', '-e', type=int, default=30, help='Number of epochs to train the model')
     parser.add_argument('--engine1', default='./main.py', help='Path to the first engine')
     parser.add_argument('--engine2', default='./main.py', help='Path to the second engine')
     parser.add_argument('--hash', type=int, default=512, help='Engine hash table size in MiB')
-    parser.add_argument('--gamma', '-g', type=float, default=0.98, help='Discount factor')
+    parser.add_argument('--gamma', '-g', type=float, default=0.9, help='Discount factor')
     parser.add_argument('--learn-rate', '-r', type=float, default=1e-5, help='Learning rate')
     parser.add_argument('--logfile', default='log.txt', help='Path to the logfile')
     parser.add_argument('--openings', help='Path to the PGN file with opening moves')
@@ -298,6 +289,7 @@ if __name__ == '__main__':
     parser.add_argument('--no-gpu', action='store_true')
     parser.add_argument('--num-games', '-n', type=int, default=1, help='Number of games to play')
     parser.add_argument('--port', '-p', type=int, default=5000)
+    parser.add_argument('--scale', type=float, default=0.1)
     parser.add_argument('--server', '-s', default='localhost')
     parser.add_argument('--time-limit', type=float, default=0.1, help='Time limit for each move (in seconds)')
     parser.add_argument('--threads', type=int, default=1, help='Engine SMP threads')
