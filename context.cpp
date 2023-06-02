@@ -304,8 +304,12 @@ void search::Context::load_nnue_model(const std::string& json_file_path)
         else
             it->second(weights, biases);
 
-        log_message(LogLevel::INFO, layer_name + ": read from " + json_file_path);
+        log_message(LogLevel::INFO, json_file_path + ": " + layer_name);
     }
+
+    for (int i = 0; i != SMP_CORES; ++i)
+        for (size_t j = 0; j != NNUE_data[i].size(); ++j)
+            NNUE_data[i][j]._hash = 0;
 }
 
 
