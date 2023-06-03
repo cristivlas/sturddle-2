@@ -8,6 +8,7 @@ Expects memmapped numpy arrays or H5 files as inputs.
 import argparse
 import logging
 import os
+import re
 import sys
 from contextlib import redirect_stdout
 
@@ -35,12 +36,21 @@ def configure_logging(args):
 
 
 def make_model(args, strategy):
-    @tf.function
-    def _clipped_mae(y_true, y_pred):
-        y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
-        return tf.keras.losses.mean_absolute_error(y_true, y_pred)
-
-    tf.keras.utils.get_custom_objects().update({'_clipped_mae': _clipped_mae})
+    def loss():
+        # return loss function
+        if args.loss == 'mae':
+            @tf.function
+            def clipped_loss(y_true, y_pred):
+                y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
+                return tf.keras.losses.mean_absolute_error(y_true, y_pred)
+            return clipped_loss if args.clip else MeanAbsoluteError()
+        else:
+            assert args.loss == 'mse'
+            @tf.function
+            def clipped_loss(y_true, y_pred):
+                y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
+                return tf.keras.losses.mean_squared_error(y_true, y_pred)
+            return clipped_loss if args.clip else MeanSquaredError()
 
     with strategy.scope():
         activation = tf.keras.activations.relu
@@ -108,11 +118,6 @@ def make_model(args, strategy):
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer, name=args.name)
 
-        if args.clip:
-            loss = _clipped_mae
-        else:
-            loss = MeanAbsoluteError()
-
         if args.optimizer in ['adam', 'amsgrad']:
             optimizer=tf.keras.optimizers.Adam(
                 amsgrad=args.optimizer=='amsgrad',
@@ -130,7 +135,7 @@ def make_model(args, strategy):
         else:
             assert False
 
-        model.compile(loss=loss, optimizer=optimizer, metrics=[])
+        model.compile(loss=loss(), optimizer=optimizer, metrics=[])
 
     return model
 
@@ -318,6 +323,21 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
     return dataset, steps_per_epoch
 
 
+def load_model(path):
+    ''' Load model ignoring missing loss functions. '''
+    custom_objects = {}
+    while True:
+        try:
+            return tf.keras.models.load_model(path, custom_objects=custom_objects)
+        except ValueError as e:
+            match = re.search(r'Unknown loss function: \'(\w+)\'.*', str(e))
+            if match:
+                missing_object = match.group(1)
+                custom_objects[missing_object.strip()] = None
+                continue
+            raise
+
+
 def main(args):
     if args.gpu:
         strategy = tf.distribute.MirroredStrategy()
@@ -325,7 +345,7 @@ def main(args):
         strategy = tf.distribute.OneDeviceStrategy(device='/cpu:0')
 
     if args.model and os.path.exists(args.model):
-        saved_model = tf.keras.models.load_model(args.model, custom_objects={'_clipped_mae' : None})
+        saved_model = load_model(args.model)
         if not args.name:
             args.name = saved_model.name
         model = make_model(args, strategy)
@@ -448,6 +468,7 @@ if __name__ == '__main__':
         parser.add_argument('--hot-encoding', choices=(769,), type=int, default=769, help=argparse.SUPPRESS)
 
         parser.add_argument('--logdir', default='/tmp/logs', help='tensorboard log dir')
+        parser.add_argument('--loss', choices=['mae', 'mse'], default='mae', help='loss function')
         parser.add_argument('--macro-batch-size', type=int, default=0)
         parser.add_argument('--macro-epochs', type=int, default=1, help='epochs per macro-batch')
         parser.add_argument('--max-queue-size', type=int, default=10000, help='max size for queue that holds batches')
@@ -478,7 +499,7 @@ if __name__ == '__main__':
 
         from tensorflow.keras.constraints import MinMaxNorm
         from tensorflow.keras.layers import *
-        from tensorflow.keras.losses import MeanAbsoluteError
+        from tensorflow.keras.losses import MeanAbsoluteError, MeanSquaredError
         from tensorflow.keras.regularizers import L1L2
 
         print(f'TensorFlow version: {tf.__version__}')
