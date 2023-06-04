@@ -1,27 +1,29 @@
 #!/usr/bin/env python3
 import argparse
+import mmap
 import os
 import sys
+
 from tqdm import tqdm
 
+
 def split_pgn_file(input_file, output_prefix, n):
-    lines = []
     file_size = os.path.getsize(input_file)
 
     with open(input_file, 'r', encoding='latin1') as pgn_file:
+        mmapped_file = mmap.mmap(pgn_file.fileno(), 0, access=mmap.ACCESS_READ)
+        lines = mmapped_file.read().decode('latin1').splitlines()
         pbar = tqdm(total=file_size, unit='B', unit_scale=True, desc='Reading file')
-        for line in pgn_file:
-            lines.append(line)
+        for line in lines:
             delta = len(line.encode('latin1')) + 1
             pbar.update(min(delta, file_size - pbar.n))
-
         pbar.close()
 
-    event_indices = [i for i, line in tqdm(enumerate(lines), total=len(lines), unit=' game', desc='Counting games') if line.startswith('[Event ')]
+    event_indices = [i for i, line in tqdm(enumerate(lines), total=len(lines), unit='game', desc='Counting games') if line.startswith('[Event ')]
     num_games = len(event_indices)
     games_per_file = num_games // n
 
-    for i in tqdm(range(n), total=n, unit=' file', desc='Splitting files'):
+    for i in tqdm(range(n), total=n, unit='file', desc='Splitting files'):
         start_index = i * games_per_file
         if i == n - 1:
             end_index = num_games
