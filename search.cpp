@@ -476,7 +476,7 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
      */
     const auto min_cutoffs = MULTICUT_C - (ctxt.depth() > 5
         && ctxt._tt_entry.is_lower()
-        && ctxt._tt_entry._value + MULTICUT_MARGIN >= ctxt._beta);
+        && ctxt._tt_entry._value + MULTICUT_MARGIN >= ctxt._beta + pow2(ctxt.depth()));
 
     while (auto next_ctxt = ctxt.next(false, 0, move_count))
     {
