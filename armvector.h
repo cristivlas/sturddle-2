@@ -3,7 +3,6 @@
  * Replicate vectorclass parts to get nnue.h to compile on ARM.
  */
 #define SIMDE_ENABLE_NATIVE_ALIASES
-// #define INSTRSET 8 /* emulate AVX2 */
 
 #include "simde/x86/avx2.h"
 #include "simde/x86/fma.h"
@@ -12,6 +11,7 @@
 #define set_m128r(lo,hi) _mm256_insertf128_ps(_mm256_castps128_ps256(lo),(hi),1)
 
 
+#if 0 /* emulate with SIMDE */
 class Vec4f
 {
     __m128 xmm;
@@ -64,6 +64,70 @@ INLINE Vec4f max(Vec4f a, Vec4f b)
 {
     return _mm_max_ps(a, b);
 }
+
+#else /* NEON */
+
+class Vec4f
+{
+    float32x4_t v;
+
+public:
+    static constexpr size_t size() { return 4; }
+
+    Vec4f() = default;
+    Vec4f(float f) : v(vdupq_n_f32(f)) {}
+    Vec4f(float32x4_t x) : v(x) {}
+    Vec4f(float f0, float f1, float f2, float f3) {
+        float f[4] = { f0, f1, f2, f3 };
+        load_a(f);
+    }
+    void load_a(const float* p) { v = vld1q_f32(p); }
+    void store_a(float* p) const { vst1q_f32(p, v); }
+
+    operator float32x4_t() const { return v; }
+};
+
+INLINE float horizontal_add(Vec4f a)
+{
+#if (__aarch64__)
+    return vaddvq_f32(a);
+#else
+    // Pairwise add the elements, reducing the vector to half its original size
+    float32x2_t vsum = vadd_f32(vget_high_f32(a), vget_low_f32(a));
+
+    // Use the vpadd instruction to add the remaining elements
+    vsum = vpadd_f32(vsum, vsum);
+
+    // Extract the sum from the vector
+    return vget_lane_f32(vsum, 0);
+#endif
+}
+
+INLINE Vec4f operator + (Vec4f a, Vec4f b)
+{
+    return vaddq_f32(a, b);
+}
+
+INLINE Vec4f operator - (Vec4f a, Vec4f b)
+{
+    return vsubq_f32(a, b);
+}
+
+INLINE Vec4f operator * (Vec4f a, Vec4f b)
+{
+    return vmulq_f32(a, b);
+}
+
+INLINE Vec4f mul_add(Vec4f a, Vec4f b, Vec4f c)
+{
+    return vfmaq_f32(c, a, b);
+}
+
+INLINE Vec4f max(Vec4f a, Vec4f b)
+{
+    return vmaxq_f32(a, b);
+}
+#endif /* NEON */
 
 
 class Vec8f
