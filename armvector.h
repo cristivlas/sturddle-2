@@ -130,6 +130,7 @@ INLINE Vec4f max(Vec4f a, Vec4f b)
 #endif /* NEON */
 
 
+#if 0
 class Vec8f
 {
     __m256 xmm;
@@ -180,10 +181,16 @@ INLINE Vec8f operator * (Vec8f a, Vec8f b)
     return _mm256_mul_ps(a, b);
 }
 
+INLINE Vec8f max(Vec8f a, Vec8f b)
+{
+    return _mm256_max_ps(a, b);
+}
+
 INLINE Vec8f mul_add(Vec8f a, Vec8f b, Vec8f c)
 {
     return _mm256_fmadd_ps(a, b, c);
 }
+#endif /* 0 */
 
 
 class Vec16s
@@ -247,11 +254,6 @@ INLINE Vec16s operator - (Vec16s a, Vec16s b)
 INLINE Vec16s operator * (Vec16s a, Vec16s b)
 {
     return _mm256_mullo_epi16(a, b);
-}
-
-INLINE Vec8f max(Vec8f a, Vec8f b)
-{
-    return _mm256_max_ps(a, b);
 }
 
 template <typename V> INLINE V& operator += (V& a, V b)
