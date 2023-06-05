@@ -10,6 +10,10 @@
 // Join two 128-bit vectors.
 #define set_m128r(lo,hi) _mm256_insertf128_ps(_mm256_castps128_ps256(lo),(hi),1)
 
+#if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+  #define INSTRSET 8
+#endif
+#define __FMA__ true
 
 #if 0 /* emulate with SIMDE */
 class Vec4f
@@ -130,67 +134,82 @@ INLINE Vec4f max(Vec4f a, Vec4f b)
 #endif /* NEON */
 
 
-#if 0
+#if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+/* Implement Vec8f using half precision */
 class Vec8f
 {
-    __m256 xmm;
+    float16x8_t v;
 
 public:
     static constexpr size_t size() { return 8; }
 
     Vec8f() = default;
-    Vec8f(float f) : xmm(_mm256_set1_ps(f)) {}
-    Vec8f(__m256 x) : xmm(x) {}
-    Vec8f(Vec4f const a0, Vec4f const a1) {
-        xmm = set_m128r(a0, a1);
-    }
+    Vec8f(float f) : v(vdupq_n_f16(f)) {}
+    Vec8f(float16x8_t x) : v(x) {}
+    Vec8f(float32x4_t v1, float32x4_t v2) : v(vcombine_f16(vcvt_f16_f32(v1), vcvt_f16_f32(v2))) {}
     Vec8f(float f0, float f1, float f2, float f3, float f4, float f5, float f6, float f7) {
-        xmm = _mm256_setr_ps(f0, f1, f2, f3, f4, f5, f6, f7);
+        const float f[8] = { f0, f1, f2, f3, f4, f5, f6, f7 };
+        load_a(f);
     }
 
-    void load_a(const float* p) { xmm = _mm256_load_ps(p); }
-    void store_a(float* p) const { _mm256_store_ps(p, xmm); }
+    INLINE void load_a(const float* p)
+    {
+        const float32x4_t v1(vld1q_f32(p));
+        const float32x4_t v2(vld1q_f32(p + 4));
+        v = vcombine_f16(vcvt_f16_f32(v1), vcvt_f16_f32(v2));
+    }
 
-    operator __m256() const { return xmm; }
+    INLINE void store_a(float* p) const
+    {
+        float32x4_t v1(vcvt_f32_f16(vget_high_f16(v)));
+        float32x4_t v2(vcvt_f32_f16(vget_low_f16(v)));
+        vst1q_f32(p, v1);
+        vst1q_f32(p + 4, v2);
+    }
+
+    INLINE float operator[](int n) const { return v[n]; }
+
+    INLINE operator float16x8_t() const { return v; }
 };
 
-INLINE float horizontal_add(Vec8f a)
+INLINE float horizontal_add(Vec8f x)
 {
-    /* ( x3+x7, x2+x6, x1+x5, x0+x4 ) */
-    const __m128 x128 = _mm_add_ps(_mm256_extractf128_ps(a, 1), _mm256_castps256_ps128(a));
-    /* ( -, -, x1+x3+x5+x7, x0+x2+x4+x6 ) */
-    const __m128 x64 = _mm_add_ps(x128, _mm_movehl_ps(x128, x128));
-    /* ( -, -, -, x0+x1+x2+x3+x4+x5+x6+x7 ) */
-    const __m128 x32 = _mm_add_ss(x64, _mm_shuffle_ps(x64, x64, 0x55));
-    /* Conversion to float is a no-op on x86-64 */
-    return _mm_cvtss_f32(x32);
+    // Split and add
+    float16x4_t a = vadd_f16(vget_high_f16(x), vget_low_f16(x));
+
+    // Split and add again
+    float16x4_t b = vdup_n_f16(vget_lane_f16(a, 0) + vget_lane_f16(a, 1) +
+                               vget_lane_f16(a, 2) + vget_lane_f16(a, 3));
+
+    // Return the result (all lanes are the same)
+    return vget_lane_f16(b, 0);
 }
 
 INLINE Vec8f operator + (Vec8f a, Vec8f b)
 {
-    return _mm256_add_ps(a, b);
+    return vaddq_f16(a, b);
 }
 
 INLINE Vec8f operator - (Vec8f a, Vec8f b)
 {
-    return _mm256_sub_ps(a, b);
+    return vsubq_f16(a, b);
 }
 
 INLINE Vec8f operator * (Vec8f a, Vec8f b)
 {
-    return _mm256_mul_ps(a, b);
+    return vmulq_f16(a, b);
 }
 
 INLINE Vec8f max(Vec8f a, Vec8f b)
 {
-    return _mm256_max_ps(a, b);
+    return vmaxq_f16(a, b);
 }
 
 INLINE Vec8f mul_add(Vec8f a, Vec8f b, Vec8f c)
 {
-    return _mm256_fmadd_ps(a, b, c);
+    return vfmaq_f16(c, a, b);
 }
-#endif /* 0 */
+#endif /* __ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
 
 
 class Vec16s
