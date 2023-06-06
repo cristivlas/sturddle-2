@@ -188,6 +188,8 @@ def export_weights(args, model, indent=2):
     else:
         with open(args.export, 'w+') as f:
             with redirect_stdout(f):
+                print('#pragma once')
+                print(f'// Generated from {args.model}')
                 write_weigths(args, model, indent)
 
 
