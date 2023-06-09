@@ -1177,7 +1177,9 @@ namespace chess
 
         pushed_pawns_score = score_pushed_pawns(*this, move);
 
-        _endgame = ENDGAME_UNKNOWN; /* recalculate lazily */
+        if (_endgame == ENDGAME_FALSE)
+            _endgame = ENDGAME_UNKNOWN; /* recalculate lazily */
+
         _hash = 0; /* invalidate */
     }
 
