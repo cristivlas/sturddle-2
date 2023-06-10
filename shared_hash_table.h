@@ -381,7 +381,7 @@ namespace search
                     return p;
                 }
 
-                if (p->_age != _clock)
+                if (p->_age != _clock || p->_hash == h)
                     return p;
 
                 if (depth >= p->_depth)
