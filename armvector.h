@@ -7,13 +7,11 @@
 #include "simde/x86/avx2.h"
 #include "simde/x86/fma.h"
 
-// Join two 128-bit vectors.
-#define set_m128r(lo,hi) _mm256_insertf128_ps(_mm256_castps128_ps256(lo),(hi),1)
-
 #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
   #define INSTRSET 8
 #endif
 #define __FMA__ true
+
 
 #if 0 /* emulate with SIMDE */
 class Vec4f
