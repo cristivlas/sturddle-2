@@ -142,12 +142,6 @@ namespace search
         static constexpr auto bucket_size = 5 * CACHE_LINE_SIZE;
         static constexpr auto entries_per_bucket = bucket_size / sizeof(entry_t);
 
-        static INLINE lock_t* get_lock(entry_t* e)
-        {
-            static_assert(sizeof(lock_t) == sizeof(e->_lock));
-            return reinterpret_cast<lock_t*>(&e->_lock);
-        }
-
     public:
         class SpinLock
         {
@@ -155,7 +149,11 @@ namespace search
             bool _locked = false;
 
     #if SMP
-            INLINE lock_t* lock_p() { return get_lock(entry()); }
+            INLINE lock_t* lock_p()
+            {
+                static_assert(sizeof(lock_t) == sizeof(key_t));
+                return reinterpret_cast<lock_t*>(&entry()->_lock);
+            }
 
             template<bool strong=false>
             static bool try_lock(lock_t* lock, uint64_t hash)
@@ -359,12 +357,9 @@ namespace search
             {
                 ASSERT((const uint8_t*)(e + 1) <= &_data.back());
 
-                if (get_lock(e)->load(std::memory_order_relaxed) != LOCKED)
-                {
-                    Proxy p(e, h); /* try to acquire lock */
-                    if (p)
-                        return p;
-                }
+                Proxy q(e, h); /* try non-blocking locking 1st */
+                if (q)
+                    return q;
 
                 Proxy p(e);
                 ASSERT(p);
@@ -381,7 +376,10 @@ namespace search
                     return p;
                 }
 
-                if (p->_age != _clock || p->_hash == h)
+                if (p->_hash == h)
+                    return p;
+
+                if (p->_age != _clock)
                     return p;
 
                 if (depth >= p->_depth)
@@ -392,7 +390,6 @@ namespace search
             }
             return Proxy(entry);
         }
-
 
         INLINE size_t byte_capacity() const { return _data.size(); }
         INLINE size_t capacity() const { return _buckets * entries_per_bucket; }
