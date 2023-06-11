@@ -28,7 +28,11 @@
 #elif (__arm__) || (__aarch64__)
     #include "armvector.h"
     #if __aarch64__
-        #define ARCH "/emulated/ARM64"
+        #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+            #define ARCH "/emulated/ARM64/FP16"
+        #else
+            #define ARCH "/emulated/ARM64"
+        #endif
     #else
         #define ARCH "/emulated/ARM"
     #endif
