@@ -1035,11 +1035,7 @@ namespace chess
 
         void generate_moves(MovesList& out, MovesList& buffer) const;
 
-        void generate_castling_moves(MovesList& moves, Bitboard to_mask, Bitboard occupied) const;
-        void generate_castling_moves(MovesList& moves)
-        {
-            generate_castling_moves(moves, BB_ALL, occupied());
-        }
+        void generate_castling_moves(MovesList& moves, Bitboard to_mask = BB_ALL) const;
 
         /*
          * Apply incremental material and piece squares evaluation.
@@ -1075,7 +1071,7 @@ namespace chess
         mutable uint64_t _hash = 0;
 
     private:
-        void ep_moves(MovesList& moves, Bitboard to_mask, Bitboard occupied) const;
+        void ep_moves(MovesList& moves, Bitboard to_mask) const;
 
         /*
          * Evaluate the incremental change of a move.
@@ -1181,9 +1177,7 @@ namespace chess
 
         pushed_pawns_score = score_pushed_pawns(*this, move);
 
-        if (_endgame == ENDGAME_FALSE)
-            _endgame = ENDGAME_UNKNOWN; /* recalculate lazily */
-
+        _endgame = ENDGAME_UNKNOWN; /* recalculate lazily */
         _hash = 0; /* invalidate */
     }
 

@@ -409,7 +409,7 @@ namespace chess
             });
 
         if (castling_rights && (kings & from_mask) != BB_EMPTY)
-            generate_castling_moves(moves_list, to_mask, occupied);
+            generate_castling_moves(moves_list, to_mask);
 
         /* Pawn moves */
         if (const auto our_pawns = our_pieces & pawns & from_mask)
@@ -455,14 +455,14 @@ namespace chess
             });
 
             if (en_passant_square != Square::UNDEFINED)
-                ep_moves(moves_list, to_mask, occupied);
+                ep_moves(moves_list, to_mask);
         }
 
         return moves_list;
     }
 
 
-    void State::generate_castling_moves(MovesList& moves, Bitboard to_mask, Bitboard occupied) const
+    void State::generate_castling_moves(MovesList& moves, Bitboard to_mask) const
     {
         const auto king_square = king(turn);
         const auto backrank = (turn == WHITE) ? BB_RANK_1 : BB_RANK_8;
@@ -470,6 +470,8 @@ namespace chess
         /* king not on the back rank? */
         if ((BB_SQUARES[king_square] & backrank & BB_FILE_E) == 0)
             return;
+
+        const auto occupied = this->occupied();
 
         if (is_check())
             return;
@@ -501,12 +503,12 @@ namespace chess
     }
 
 
-    void State::ep_moves(MovesList& moves, Bitboard to_mask, Bitboard occupied) const
+    void State::ep_moves(MovesList& moves, Bitboard to_mask) const
     {
         if (en_passant_square < 0 || (BB_SQUARES[en_passant_square] & to_mask)==0)
             return;
 
-        if (BB_SQUARES[en_passant_square] & occupied)
+        if (BB_SQUARES[en_passant_square] & occupied())
             return;
 
         auto capturers = pawns & occupied_co(turn) &
