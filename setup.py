@@ -33,8 +33,8 @@ else:
 
 
 def get_compiler_major_version():
-    # Get the compiler from the CC environment variable, default to gcc if not defined
-    compiler = environ.get('CC', 'gcc')
+    # Get the compiler from the CC environment variable
+    compiler = environ.get('CC', 'clang')
 
     version_string = subprocess.check_output([compiler, '--version']).decode('utf-8')
 
