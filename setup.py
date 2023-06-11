@@ -1,3 +1,5 @@
+import re
+import subprocess
 import sysconfig
 from datetime import datetime
 from os import environ, pathsep
@@ -9,7 +11,7 @@ from setuptools.command.build_ext import build_ext
 '''
 Monkey-patch MSVCCompiler to use clang-cl.exe on Windows.
 '''
-cl_exe=environ.get('CL_EXE', '')
+cl_exe = environ.get('CL_EXE', '')
 if cl_exe:
     from setuptools._distutils._msvccompiler import MSVCCompiler, _find_exe
 
@@ -28,6 +30,23 @@ if cl_exe:
 else:
     class BuildExt(build_ext):
         pass
+
+
+def get_compiler_major_version():
+    # Get the compiler from the CC environment variable, default to gcc if not defined
+    compiler = environ.get('CC', 'gcc')
+
+    version_string = subprocess.check_output([compiler, '--version']).decode('utf-8')
+
+    # This pattern looks for the first digit(s), followed by a dot, followed by any digit(s) and then a dash or space.
+    # That should match the major.minor part of the version.
+    version_pattern = re.compile(r'(\d+)\.\d+\.\d+')
+    version = version_pattern.search(version_string)
+    if version:
+        # The major version number is before the first dot
+        return int(version.group(1).split('.')[0])
+    else:
+        raise ValueError('Could not parse ' + compiler + ' version from string: ' + version_string)
 
 
 build_stamp = datetime.now().strftime('%m%d%y.%H%M')
@@ -125,6 +144,8 @@ else:
         '-Wno-empty-body',
         '-Wno-int-in-bool-context',
     ]
+
+    # Note: NATIVE_UCI assumes building with clang. And who gives a ... about gcc anyway?
     if NATIVE_UCI:
         args += [
             '-stdlib=libc++',
@@ -133,7 +154,7 @@ else:
         ]
         link += [
             '-fuse-ld=lld',
-            '-L/usr/lib/llvm-15/lib/',
+            f'-L/usr/lib/llvm-{get_compiler_major_version()}/lib/',
             '-L/usr/local/opt/llvm/lib/c++',
             '-lc++',
             '-lc++experimental',
