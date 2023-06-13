@@ -358,10 +358,9 @@ namespace chess
     {
         while (bb)
         {
-            const auto temp = bb & -bb;
             if (auto r = f(static_cast<Square>(lsb(bb))))
                 return r;
-            bb ^= temp;
+            bb &= bb - 1;
         }
         return result_type<F>{};
     }
@@ -372,9 +371,8 @@ namespace chess
     {
         while (bb)
         {
-            const auto temp = bb & -bb;
             f(static_cast<Square>(lsb(bb)));
-            bb ^= temp;
+            bb &= bb - 1;
         }
     }
 
