@@ -64,7 +64,6 @@ namespace
             std::vector<std::string> _init_funcs;
             std::vector<uint64_t> _mul;
             std::vector<size_t> _shift;
-            std::vector<size_t> _tblmask;
         };
 
     public:
@@ -81,7 +80,6 @@ namespace
             g._hash_funcs.emplace_back(hf);
             g._mul.emplace_back(m);
             g._shift.emplace_back(s);
-            g._tblmask.emplace_back(pow(2, ceil(log2(data.size()))) - 1);
 
             _hash_funcs.emplace(hf, _hash_funcs.size());
             _hash_funcs_index.emplace(_hash_funcs[hf], hf);
@@ -118,37 +116,39 @@ namespace
             os << "class AttackTable\n";
             os << "{\n";
         #if VARIABLE_STRATEGY
+            os << "    const uint64_t* const _data;\n";
             os << "    const int _strategy = -1;\n";
             os << "    const uint64_t _pcsmask;\n";
         #else
+            os << "    alignas(64) uint64_t _data[512];\n";
             os << "    const uint64_t _pcsmask;\n";
             os << "    const uint64_t _mul;\n";
             os << "    const size_t _shift;\n";
-            os << "    const size_t _tblmask;\n";
         #endif /* VARIABLE_STRATEGY */
-            os << "    const uint64_t* const _data;\n";
             os << "\n";
             os << "public:\n";
         #if VARIABLE_STRATEGY
             os << "    AttackTable(int s, uint64_t mask, const uint64_t* data)\n";
-            os << "        : _strategy(s)\n";
+            os << "        : _data(data)\n";
+            os << "        , _strategy(s)\n";
             os << "        , _pcsmask(mask)\n";
+            os << "    {\n";
+            os << "    }\n\n";
         #else
-            os << "    AttackTable(uint64_t mask, uint64_t mul, size_t shift, size_t tblmask, const uint64_t* data)\n";
+            os << "    AttackTable(uint64_t mask, uint64_t mul, size_t shift, const uint64_t* const data)\n";
             os << "        : _pcsmask(mask)\n";
             os << "        , _mul(mul)\n";
             os << "        , _shift(shift)\n";
-            os << "        , _tblmask(tblmask)\n";
-        #endif /* VARIABLE_STRATEGY */
-            os << "        , _data(data)\n";
             os << "    {\n";
+            os << "        memcpy(_data, data, sizeof(_data));\n";
             os << "    }\n\n";
+        #endif /* VARIABLE_STRATEGY */
             os << "    INLINE uint64_t operator[] (uint64_t occupancy) const\n";
             os << "    {\n";
         #if VARIABLE_STRATEGY
             os << "        return _data[chess::impl::hash(_strategy, occupancy & _pcsmask)];\n";
         #else
-            os << "        return _data[(((occupancy & _pcsmask) * _mul) >> _shift) & _tblmask];\n";
+            os << "        return _data[(((occupancy & _pcsmask) * _mul) >> _shift) & 511];\n";
         #endif /* VARIABLE_STRATEGY */
             os << "    }\n";
             os << "};\n\n";
@@ -246,7 +246,7 @@ namespace
             #else
                 os << "    AttackTable(" << (*mask.at(name))[i] << "ULL, ";
                 os << g._mul[i] << "ULL, " << g._shift[i] << ", ";
-                os << g._tblmask[i] << ", " << g._init_funcs[i] << "),\n\n";
+                os << g._init_funcs[i] << "),\n\n";
             #endif
             }
         }
@@ -256,7 +256,7 @@ namespace
             std::ostringstream os;
 
             os << "[]()->const uint64_t* {\n";
-            os << "        alignas(8) static constexpr uint64_t d[] = {";
+            os << "        static constexpr uint64_t d[512] = {";
             for (size_t i = 0; i != data.size(); ++i)
             {
                 if ((i + 1) % 4 == 1)
@@ -499,7 +499,11 @@ namespace
 
     public:
         explicit MixinHashBuilder(size_t max_table_size)
+    #if VARIABLE_STRATEGY
             : _max_table_size(max_table_size)
+    #else
+            : _max_table_size(512)
+    #endif
         {
             _name << Mixin::name() << "_" << _max_table_size;
         }
@@ -617,24 +621,6 @@ namespace
                 0x40018020120220,
                 0x2002000420842000,
                 0x8824200910800,
-#if 0
-                0x2010000e00b20060,
-                0x2223440021040c00,
-                0x1011090400801,
-                0x400084048001000,
-                0x80021081010102,
-                0x3404102090c20200,
-                0x4001020080006403,
-                0x41108881004a0100,
-                0x4900011016100900,
-                0x4a48000408480040,
-                0x14840004802000,
-                0x54c77c86f6913e45,
-                0x884029888090060,
-                0x1010082a4020221,
-                0x6841020d30461020,
-                0x20021200451400,
-#endif
                 0x20242038024080,
                 0x8040000802080628,
                 0x210c0420814205,

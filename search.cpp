@@ -609,15 +609,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         && !ctxt.is_null_move()
         && (ctxt.is_leftmost() || ctxt._alpha + 1 < ctxt._beta);
 
-    /* reduce by one ply at expected cut nodes */
-    if (!ctxt.is_pv_node()
-        && !ctxt.is_null_move()
-        && ctxt.depth() > 7
-        && ctxt.can_reduce())
-    {
-        --ctxt._max_depth;
-    }
-
     if (ctxt._alpha + 1 < ctxt._beta)
     {
         ASSERT(ctxt._algorithm != NEGASCOUT || ctxt.is_leftmost() || ctxt.is_retry());
@@ -669,6 +660,16 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         #endif
             ASSERT(eval > SCORE_MIN);
             ASSERT(eval < SCORE_MAX);
+
+            /* reduce by one ply at expected cut nodes */
+            if (abs(eval) >= 100
+                && !ctxt.is_pv_node()
+                && !ctxt.is_null_move()
+                && ctxt.depth() > 7
+                && ctxt.can_reduce())
+            {
+                --ctxt._max_depth;
+            }
 
         #if REVERSE_FUTILITY_PRUNING
             /*

@@ -143,8 +143,7 @@ namespace nnue
     template <typename T>
     INLINE void one_hot_encode(const State& board, T (&encoding)[897])
     {
-        const uint64_t color_masks[2] = { board.occupied_co(BLACK), board.occupied_co(WHITE) };
-
+        const auto& color_masks = board._occupied_co;
         int i = 63;
         #pragma unroll 6
         for (const auto bb : {
