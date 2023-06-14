@@ -476,7 +476,7 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
      */
     const auto min_cutoffs = MULTICUT_C - (ctxt.depth() > 5
         && ctxt._tt_entry.is_lower()
-        && ctxt._tt_entry._value + MULTICUT_MARGIN >= ctxt._beta + pow2(ctxt.depth()));
+        && ctxt._tt_entry._value + MULTICUT_MARGIN >= ctxt._beta);
 
     while (auto next_ctxt = ctxt.next(false, 0, move_count))
     {
@@ -609,6 +609,15 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         && !ctxt.is_null_move()
         && (ctxt.is_leftmost() || ctxt._alpha + 1 < ctxt._beta);
 
+    /* reduce by one ply at expected cut nodes */
+    if (!ctxt.is_pv_node()
+        && !ctxt.is_null_move()
+        && ctxt.depth() > 7
+        && ctxt.can_reduce())
+    {
+        --ctxt._max_depth;
+    }
+
     if (ctxt._alpha + 1 < ctxt._beta)
     {
         ASSERT(ctxt._algorithm != NEGASCOUT || ctxt.is_leftmost() || ctxt.is_retry());
@@ -650,66 +659,53 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     {
         ASSERT(ctxt._alpha < ctxt._beta);
 
-        if (!ctxt.is_root())
+    #if WITH_NNUE
+        ctxt.eval_nnue();
+        const auto eval = ctxt._eval;
+    #else
+        const auto eval = ctxt._tt_entry._value;
+    #endif
+
+    #if REVERSE_FUTILITY_PRUNING
+        /*
+         * Reverse futility pruning: static eval stored in TT beats beta by a margin and
+         * not in check, and no move w/ scores above MATE_HIGH in the hash table? Prune.
+         */
+        if (   !ctxt.is_root()
+            && !ctxt._excluded /* no reverse pruning during singular extension */
+            && !ctxt.is_pv_node()
+            && ctxt.depth() > 0
+            && ctxt.depth() < 7
+            && eval < MATE_HIGH
+            && eval > ctxt._beta
+                + std::max<score_t>(REVERSE_FUTILITY_MARGIN * ctxt.depth(), ctxt.improvement())
+            && !ctxt.is_check())
         {
-        #if WITH_NNUE
-            ctxt.eval_nnue();
-            const auto eval = ctxt._eval;
-        #else
-            const auto eval = ctxt._tt_entry._value;
-        #endif
             ASSERT(eval > SCORE_MIN);
             ASSERT(eval < SCORE_MAX);
 
-            /* reduce by one ply at expected cut nodes */
-            if (abs(eval) >= 100
-                && !ctxt.is_pv_node()
-                && !ctxt.is_null_move()
-                && ctxt.depth() > 7
-                && ctxt.can_reduce())
-            {
-                --ctxt._max_depth;
-            }
-
-        #if REVERSE_FUTILITY_PRUNING
-            /*
-             * Reverse futility pruning: static eval stored in TT beats beta by a margin and
-             * not in check, and no move w/ scores above MATE_HIGH in the hash table? Prune.
-             */
-            if (   !ctxt._excluded /* no reverse pruning during singular extension */
-                && !ctxt.is_pv_node()
-                && ctxt.depth() > 0
-                && ctxt.depth() < 7
-                && eval < MATE_HIGH
-                && eval > ctxt._beta
-                    + std::max<score_t>(REVERSE_FUTILITY_MARGIN * ctxt.depth(), ctxt.improvement())
-                && !ctxt.is_check())
-            {
-                return eval;
-            }
-        #endif /* REVERSE_FUTILITY_PRUNING */
-
-        #if RAZORING
-            if (   !ctxt._excluded
-                && ctxt.depth() > 0
-                && eval > SCORE_MIN
-                && eval < alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(ctxt.depth())
-                && eval + eval_captures(ctxt) < alpha)
-            {
-                return alpha;
-            }
-        #endif /* RAZORING */
-
-            /* Reduce depth by 2 if PV node not found in the TT (idea from SF). */
-            if (   ctxt.is_pv_node()
-                && ctxt.depth() >= 6
-                && !ctxt._tt_entry.is_valid()
-                && ctxt.can_reduce()
-               )
-            {
-                ctxt._max_depth -= 2;
-            }
+            return eval;
         }
+    #endif /* REVERSE_FUTILITY_PRUNING */
+
+    #if RAZORING
+        if (ctxt.depth() > 0
+            && eval > SCORE_MIN
+            && eval < alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(ctxt.depth())
+            && eval + eval_captures(ctxt) < alpha)
+        {
+            return alpha;
+        }
+    #endif /* RAZORING */
+
+        /* Reduce depth by 2 if PV node not found in the TT (idea from SF). */
+        if (ctxt._ply
+            && ctxt.is_pv_node()
+            && ctxt.depth() >= 6
+            && !ctxt._tt_entry.is_valid()
+            && ctxt.can_reduce()
+           )
+            ctxt._max_depth -= 2;
 
         bool null_move = ctxt.is_null_move_ok();
 
