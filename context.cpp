@@ -281,7 +281,18 @@ void search::Context::update_root_accumulators()
 }
 
 
-void search::Context::load_nnue_model(const std::string& json_file_path)
+static void set_default_model()
+{
+    L1A.set_weights(hidden_1a_w, hidden_1a_b);
+    L1B.set_weights(hidden_1b_w, hidden_1b_b);
+
+    L2.set_weights(hidden_2_w, hidden_2_b);
+    L_DYN.set_weights(dynamic_weights_w, dynamic_weights_b);
+    L4.set_weights(out_w, out_b);
+}
+
+
+static void load_model(const std::string& json_file_path)
 {
     std::ifstream file(json_file_path);
     nlohmann::json weights_json;
@@ -292,11 +303,12 @@ void search::Context::load_nnue_model(const std::string& json_file_path)
         std::string layer_name = element.key();
         auto weights_and_biases = element.value();
 
-        int input_dim = weights_and_biases["input_dim"];
-        int output_dim = weights_and_biases["output_dim"];
+        // TODO: validate
+        // const int input_dim = weights_and_biases["input_dim"];
+        // const int output_dim = weights_and_biases["output_dim"];
 
-        auto weights = weights_and_biases["weights"].get<std::vector<std::vector<float>>>();
-        auto biases = weights_and_biases["biases"].get<std::vector<float>>();
+        const auto weights = weights_and_biases["weights"].get<std::vector<std::vector<float>>>();
+        const auto biases = weights_and_biases["biases"].get<std::vector<float>>();
 
         auto it = registry.find(layer_name);
         if (it == registry.end())
@@ -304,9 +316,27 @@ void search::Context::load_nnue_model(const std::string& json_file_path)
         else
             it->second(weights, biases);
 
-        log_message(LogLevel::INFO, json_file_path + ": " + layer_name);
+        search::Context::log_message(LogLevel::INFO, json_file_path + ": " + layer_name);
     }
 
+}
+
+
+void search::Context::load_nnue_model(const std::string& json_file_path)
+{
+    try
+    {
+        load_model(json_file_path);
+    }
+    catch(const std::exception& e)
+    {
+        std::cerr << e.what() << std::endl;
+        log_message(LogLevel::ERROR, e.what());
+
+        set_default_model();
+    }
+
+    /* reset accumulators */
     for (int i = 0; i != SMP_CORES; ++i)
         for (size_t j = 0; j != NNUE_data[i].size(); ++j)
             NNUE_data[i][j]._hash = 0;
