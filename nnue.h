@@ -272,6 +272,7 @@ namespace nnue
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
+                #pragma unroll N
                 for (int k = 0; k != N; ++k)
                     sum[k] = Vec16s(0);
 
@@ -326,6 +327,7 @@ namespace nnue
 
             for (int j = 0; j != OUTPUTS; j += Q)
             {
+                #pragma unroll Q
                 for (int k = 0; k != Q; ++k)
                     sum[k] = Vector(0.0);
 
