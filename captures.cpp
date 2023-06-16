@@ -51,7 +51,7 @@ namespace chess
             return attackers_mask;
         }
 
-        for_each_square(attackers_mask, [&](Square square)
+        for_each_square_r(attackers_mask, [&](Square square)
         {
             auto pin_mask = board.pin_mask(color, square);
 
@@ -163,7 +163,7 @@ namespace chess
 
             mask &= ~(attackers_mask | board.pawns | board.kings);
 
-            for_each_square(attackers_mask, [&] (Square square)
+            for_each_square_r(attackers_mask, [&] (Square square)
             {
                 attacks.emplace_back(square, board.piece_type_at(square));
 
