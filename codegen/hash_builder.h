@@ -335,6 +335,7 @@ namespace
         virtual bool build(
             CodeGenerator&  code,
             const char*     name,
+            uint64_t        mask,
             const Input&    data) = 0;
 
         virtual void write_hash_template(CodeGenerator&) const = 0;
@@ -350,11 +351,11 @@ namespace
     {
     protected:
         virtual size_t hash(uint64_t) const = 0;
-        virtual bool build_impl(const Input& input) = 0;
+        virtual bool build_impl(uint64_t mask, const Input& input) = 0;
 
-        bool build(CodeGenerator& code, const char* name, const Input& input) override final
+        bool build(CodeGenerator& code, const char* name, uint64_t mask, const Input& input) override final
         {
-            if (build_impl(input))
+            if (build_impl(mask, input))
             {
                 write_hash_template(code);
                 write_instance(code, name, input);
@@ -389,13 +390,13 @@ namespace
     protected:
         size_t _max_hash = 0;
 
-        bool build_impl(const Input& input) override
+        bool build_impl(uint64_t mask, const Input& input) override
         {
             std::unordered_map<size_t, uint64_t> mapping;
 
             for (const auto& elem : input)
             {
-                const auto hval = hash(elem.first);
+                const auto hval = hash(mask & elem.first);
                 _max_hash = std::max(_max_hash, hval);
 
                 auto iter = mapping.find(hval);
@@ -509,9 +510,9 @@ namespace
         }
 
     private:
-        bool build_impl(const Input& input) override
+        bool build_impl(uint64_t mask, const Input& input) override
         {
-            return Hash64Builder::build_impl(input) && (_max_hash < _max_table_size);
+            return Hash64Builder::build_impl(mask, input) && (_max_hash < _max_table_size);
         }
 
         std::string strategy() const override
@@ -649,12 +650,12 @@ namespace
             return _name;
         }
 
-        bool build(CodeGenerator& code, const char* name, const Input& input) override
+        bool build(CodeGenerator& code, const char* name, uint64_t mask, const Input& input) override
         {
             _name = "composite";
             for (auto& builder : _builders)
             {
-                if (builder->build(code, name, input))
+                if (builder->build(code, name, mask, input))
                 {
                     _name = builder->strategy();
                     return true;

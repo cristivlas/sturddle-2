@@ -35,12 +35,12 @@ static bool build_attack_tables(
     {
         std::unordered_map<Bitboard, Bitboard> attacks;
 
-        auto mask = sliding_attacks(square, 0, deltas) & ~edges(square);
+        const auto mask = sliding_attacks(square, 0, deltas) & ~edges(square);
         for_each_subset(mask, [&](Bitboard subset) {
             attacks.emplace(subset, sliding_attacks(square, subset, deltas));
         });
 
-        if (!builder.build(code, name, attacks))
+        if (!builder.build(code, name, mask, attacks))
         {
             std::cerr << "Could not build hash function: " << name << "[" << square << "]\n";
             return false;
