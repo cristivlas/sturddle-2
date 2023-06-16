@@ -3,12 +3,14 @@
 #include <unordered_map>
 
 #include "chess.h"
+#include "attack_tables.h"
 
 using namespace chess;
 
 namespace chess
 {
     AttackMasks BB_FILE_MASKS, BB_RANK_MASKS, BB_DIAG_MASKS;
+    const AttackTable attack_table;
 }
 
 template<typename T>

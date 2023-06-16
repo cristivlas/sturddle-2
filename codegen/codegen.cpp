@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2023 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,51 +20,20 @@
  */
 /* Generates the attacks.h file */
 
-#include "chess.h"
 #include "hash_builder.h"
-
-using namespace chess;
-
-static bool build_attack_tables(
-    const char*             name,
-    const std::vector<int>& deltas,
-    HashBuilder&            builder,
-    CodeGenerator&          code)
-{
-    for (int square = 0; square < 64; ++square)
-    {
-        std::unordered_map<Bitboard, Bitboard> attacks;
-
-        const auto mask = sliding_attacks(square, 0, deltas) & ~edges(square);
-        for_each_subset(mask, [&](Bitboard subset) {
-            attacks.emplace(subset, sliding_attacks(square, subset, deltas));
-        });
-
-        if (!builder.build(code, name, mask, attacks))
-        {
-            std::cerr << "Could not build hash function: " << name << "[" << square << "]\n";
-            return false;
-        }
-
-        std::clog << name << "[" << square << "]: " << builder.strategy() << "\n";
-    }
-
-    return true;
-}
-
 
 int main(int argc, const char* argv[])
 {
-    CodeGenerator code;
-    CompositeHashBuilder builder;
+    HashBuilder builder;
 
     chess::_init();
 
-    if (build_attack_tables("_DIAG_ATTACKS", {-9, -7, 7, 9}, builder, code)
-     && build_attack_tables("_FILE_ATTACKS", {-8, 8}, builder, code)
-     && build_attack_tables("_RANK_ATTACKS", {-1, 1}, builder, code))
+    if (builder.build_group(AttacksType::Diag, {-9, -7, 7, 9})
+     && builder.build_group(AttacksType::File, {-8, 8})
+     && builder.build_group(AttacksType::Rank, {-1, 1})
+     && builder.build_group(AttacksType::Rook, {-8, -1, 1, 8}))
     {
-        code.write(std::cout);
+        builder.write(std::cout);
         return 0;
     }
     return -1;

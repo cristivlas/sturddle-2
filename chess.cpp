@@ -35,6 +35,8 @@ const magic_bits::Attacks magic_bits_attacks;
 
 namespace chess
 {
+    const AttackTable attack_table;
+
 #if MOBILITY_TUNING_ENABLED
 
     int MOBILITY[] = DEFAULT_MOBILITY_WEIGHTS;
