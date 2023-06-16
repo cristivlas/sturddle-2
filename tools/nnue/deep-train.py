@@ -611,6 +611,8 @@ if __name__ == '__main__':
         parser.add_argument('--hot-encoding', choices=(769,), type=int, default=769, help=argparse.SUPPRESS)
 
         parser.add_argument('--logdir', default='/tmp/logs', help='tensorboard log dir')
+        parser.add_argument('--mem-growth', action='store_true')
+        parser.add_argument('--mem-limit', type=int, default=0, help='GPU memory limit in MB')
         parser.add_argument('--mixed-precision', dest='mixed_precision', action='store_true', default=True, help='enable mixed precision')
         parser.add_argument('--name', help='optional model name')
         parser.add_argument('--nesterov', dest='nesterov', action='store_true', default=False, help='use Nesterov momentum (SGD only)')
@@ -647,6 +649,13 @@ if __name__ == '__main__':
             if gpus := tf.config.list_physical_devices('GPU'):
                 for gpu in gpus:
                     print(gpu)
+                    if args.mem_growth:
+                        tf.config.experimental.set_memory_growth(gpu, True)
+                    if args.mem_limit > 0:
+                        tf.config.set_logical_device_configuration(
+                            gpu,
+                            [tf.config.LogicalDeviceConfiguration(memory_limit=args.mem_limit)]
+                        )
                     cap = tf.config.experimental.get_device_details(gpu).get('compute_capability', None)
                     if cap != None:
                         logging.info(f'{gpu}: {cap}')

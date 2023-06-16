@@ -474,6 +474,8 @@ if __name__ == '__main__':
         parser.add_argument('--macro-batch-size', type=int, default=0)
         parser.add_argument('--macro-epochs', type=int, default=1, help='epochs per macro-batch')
         parser.add_argument('--max-queue-size', type=int, default=10000, help='max size for queue that holds batches')
+        parser.add_argument('--mem-growth', action='store_true')
+        parser.add_argument('--mem-limit', type=int, default=0, help='GPU memory limit in MB')
         parser.add_argument('--mixed-precision', dest='mixed_precision', action='store_true', default=True, help='enable mixed precision')
         parser.add_argument('--name', help='optional model name')
         parser.add_argument('--nesterov', dest='nesterov', action='store_true', default=False, help='use Nesterov momentum (SGD only)')
@@ -515,6 +517,13 @@ if __name__ == '__main__':
             if gpus := tf.config.list_physical_devices('GPU'):
                 for gpu in gpus:
                     print(gpu)
+                    if args.mem_growth:
+                        tf.config.experimental.set_memory_growth(gpu, True)
+                    if args.mem_limit > 0:
+                        tf.config.set_logical_device_configuration(
+                            gpu,
+                            [tf.config.LogicalDeviceConfiguration(memory_limit=args.mem_limit)]
+                        )
                     cap = tf.config.experimental.get_device_details(gpu).get('compute_capability', None)
                     if cap != None:
                         logging.info(f'{gpu}: {cap}')
