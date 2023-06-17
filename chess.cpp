@@ -26,6 +26,8 @@
  */
 #include <algorithm>
 #include <iomanip>
+
+#define DEFINE_ATTACK_TABLE_CTOR
 #include "chess.h"
 
 #if USE_MAGIC_BITS

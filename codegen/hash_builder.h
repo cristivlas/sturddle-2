@@ -141,6 +141,7 @@ public:
         out << " ********************************************************/\n";
         out << "struct AttackTable {\n";
         out << "    uint64_t _data[" << _groups.size() * group_table_size << "];\n\n";
+        out << "#ifdef DEFINE_ATTACK_TABLE_CTOR\n";
         out << "    AttackTable() {\n";
         out << "        memset(_data, 0, sizeof(_data));\n";
         for (const auto& group : _groups)
@@ -164,6 +165,9 @@ public:
         out << "    #endif\n";
     #endif /* LOCK_TABLE_DATA */
         out << "    }\n\n";
+        out << "#else\n";
+        out << "    AttackTable();\n";
+        out << "#endif /* DEFINE_ATTACK_TABLE_CTOR */\n";
         out << "    template <int Group>\n";
         out << "    INLINE uint64_t hash(int square, uint64_t occupancy_mask) const\n";
         out << "    {\n";

@@ -2,8 +2,8 @@
 #include <chrono>
 #include <unordered_map>
 
+#define DEFINE_ATTACK_TABLE_CTOR
 #include "chess.h"
-#include "attack_tables.h"
 
 using namespace chess;
 
