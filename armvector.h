@@ -8,12 +8,13 @@
 #include "simde/x86/fma.h"
 
 #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
-  #define INSTRSET 8
+#define INSTRSET 8 /* use Vec8f */
 #endif
 #define __FMA__ true
 
+#if SIMD_EMULATION /* emulate with SIMDE */
+#define ARM_EMULATION "/emulated"
 
-#if 0 /* emulate with SIMDE */
 class Vec4f
 {
     __m128 xmm;
@@ -33,7 +34,7 @@ public:
     operator __m128() const { return xmm; }
 };
 
-INLINE float horizontal_add(Vec4f a)
+INLINE float horizontal_add(const Vec4f& a)
 {
     __m128 t1 = _mm_movehl_ps(a, a);
     __m128 t2 = _mm_add_ps(a, t1);
@@ -42,32 +43,33 @@ INLINE float horizontal_add(Vec4f a)
     return _mm_cvtss_f32(t4);
 }
 
-INLINE Vec4f operator + (Vec4f a, Vec4f b)
+INLINE Vec4f operator + (const Vec4f& a, const Vec4f& b)
 {
     return _mm_add_ps(a, b);
 }
 
-INLINE Vec4f operator - (Vec4f a, Vec4f b)
+INLINE Vec4f operator - (const Vec4f& a, const Vec4f& b)
 {
     return _mm_sub_ps(a, b);
 }
 
-INLINE Vec4f operator * (Vec4f a, Vec4f b)
+INLINE Vec4f operator * (const Vec4f& a, const Vec4f& b)
 {
     return _mm_mul_ps(a, b);
 }
 
-INLINE Vec4f mul_add(Vec4f a, Vec4f b, Vec4f c)
+INLINE Vec4f mul_add(const Vec4f& a, const Vec4f& b, const Vec4f& c)
 {
     return _mm_fmadd_ps(a, b, c);
 }
 
-INLINE Vec4f max(Vec4f a, Vec4f b)
+INLINE Vec4f max(const Vec4f& a, const Vec4f& b)
 {
     return _mm_max_ps(a, b);
 }
 
 #else /* NEON */
+#define ARM_EMULATION ""
 
 class Vec4f
 {
@@ -89,7 +91,7 @@ public:
     operator float32x4_t() const { return v; }
 };
 
-INLINE float horizontal_add(Vec4f a)
+INLINE float horizontal_add(const Vec4f& a)
 {
 #if (__aarch64__)
     return vaddvq_f32(a);
@@ -105,27 +107,27 @@ INLINE float horizontal_add(Vec4f a)
 #endif
 }
 
-INLINE Vec4f operator + (Vec4f a, Vec4f b)
+INLINE Vec4f operator + (const Vec4f& a, const Vec4f& b)
 {
     return vaddq_f32(a, b);
 }
 
-INLINE Vec4f operator - (Vec4f a, Vec4f b)
+INLINE Vec4f operator - (const Vec4f& a, const Vec4f& b)
 {
     return vsubq_f32(a, b);
 }
 
-INLINE Vec4f operator * (Vec4f a, Vec4f b)
+INLINE Vec4f operator * (const Vec4f& a, const Vec4f& b)
 {
     return vmulq_f32(a, b);
 }
 
-INLINE Vec4f mul_add(Vec4f a, Vec4f b, Vec4f c)
+INLINE Vec4f mul_add(const Vec4f& a, const Vec4f& b, const Vec4f& c)
 {
     return vfmaq_f32(c, a, b);
 }
 
-INLINE Vec4f max(Vec4f a, Vec4f b)
+INLINE Vec4f max(const Vec4f& a, const Vec4f& b)
 {
     return vmaxq_f32(a, b);
 }
@@ -133,6 +135,9 @@ INLINE Vec4f max(Vec4f a, Vec4f b)
 
 
 #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+#undef ARM_EMULATION
+#define ARM_EMULATION ""
+
 /* Implement Vec8f using half precision */
 class Vec8f
 {
@@ -170,7 +175,7 @@ public:
     INLINE operator float16x8_t() const { return v; }
 };
 
-INLINE float horizontal_add(Vec8f x)
+INLINE float horizontal_add(const Vec8f& x)
 {
     // Split and add
     float16x4_t a = vadd_f16(vget_high_f16(x), vget_low_f16(x));
@@ -183,27 +188,27 @@ INLINE float horizontal_add(Vec8f x)
     return vget_lane_f16(b, 0);
 }
 
-INLINE Vec8f operator + (Vec8f a, Vec8f b)
+INLINE Vec8f operator + (const Vec8f& a, const Vec8f& b)
 {
     return vaddq_f16(a, b);
 }
 
-INLINE Vec8f operator - (Vec8f a, Vec8f b)
+INLINE Vec8f operator - (const Vec8f& a, const Vec8f& b)
 {
     return vsubq_f16(a, b);
 }
 
-INLINE Vec8f operator * (Vec8f a, Vec8f b)
+INLINE Vec8f operator * (const Vec8f& a, const Vec8f& b)
 {
     return vmulq_f16(a, b);
 }
 
-INLINE Vec8f max(Vec8f a, Vec8f b)
+INLINE Vec8f max(const Vec8f& a, const Vec8f& b)
 {
     return vmaxq_f16(a, b);
 }
 
-INLINE Vec8f mul_add(Vec8f a, Vec8f b, Vec8f c)
+INLINE Vec8f mul_add(const Vec8f& a, const Vec8f& b, const Vec8f& c)
 {
     return vfmaq_f16(c, a, b);
 }
