@@ -141,7 +141,7 @@ public:
         out << " *\n";
         out << " ********************************************************/\n";
         out << "struct AttackTable {\n";
-        out << "    uint64_t _data[" << _groups.size() * group_table_size << "];\n\n";
+        out << "    alignas(64) uint64_t _data[" << _groups.size() * group_table_size << "];\n\n";
         out << "#ifdef DEFINE_ATTACK_TABLE_CTOR\n";
         out << "    AttackTable() {\n";
         out << "        memset(_data, 0, sizeof(_data));\n";
@@ -170,16 +170,20 @@ public:
         out << "    AttackTable();\n";
         out << "#endif /* DEFINE_ATTACK_TABLE_CTOR */\n\n";
         out << "    template <int Group>\n";
-        out << "    INLINE uint64_t hash(int square, uint64_t occupancy_mask) const\n";
+        out << "    INLINE size_t hash(int square, uint64_t occupancy_mask) const\n";
         out << "    {\n";
         out << "        const auto& hi = hash_info[Group * 64 + square];\n";
         out << "        occupancy_mask &= hi.mask;\n";
         out << "        occupancy_mask *= hi.mul;\n";
         out << "        occupancy_mask >>= hi.shift;\n";
         out << "        occupancy_mask &= 0x" << std::hex << square_table_size - 1 << std::dec << ";\n";
-        out << "        const size_t index = Group * " << group_table_size << " + square * "
+        out << "        return Group * " << group_table_size << " + square * "
             << square_table_size << " + occupancy_mask;\n";
-        out << "        return _data[index];\n";
+        out << "    }\n\n";
+        out << "    template <int Group>\n";
+        out << "    INLINE uint64_t get(int square, uint64_t occupancy_mask) const\n";
+        out << "    {\n";
+        out << "        return _data[hash<Group>(square, occupancy_mask)];\n";
         out << "    }\n";
         out << "};\n\n";
         out << "extern const AttackTable attack_table;\n";
@@ -197,7 +201,7 @@ public:
             out << "{\n";
             out << "    INLINE static uint64_t get(int square, uint64_t mask)\n";
             out << "    {\n";
-            out << "        return attack_table.hash<" << group._index << ">(square, mask);\n";
+            out << "        return attack_table.get<" << group._index << ">(square, mask);\n";
             out << "    }\n";
             out << "};\n";
         }
@@ -208,7 +212,7 @@ public:
             out << "{\n";
             out << "    INLINE static uint64_t get(int square, uint64_t mask)\n";
             out << "    {\n";
-            out << "        return attack_table.hash<1>(square, mask) | attack_table.hash<2>(square, mask);\n";
+            out << "        return attack_table.get<1>(square, mask) | attack_table.get<2>(square, mask);\n";
             out << "    }\n";
             out << "};\n";
         }
