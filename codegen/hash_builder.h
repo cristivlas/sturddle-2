@@ -31,6 +31,7 @@
 #include "attack_tables.h"
 
 using namespace chess;
+
 using HashTable = std::unordered_map<Bitboard, Bitboard>;
 using PerfectHash = std::map<uint16_t, Bitboard>;
 
@@ -42,12 +43,50 @@ struct HashParam
     PerfectHash table;
 };
 
+template <AttacksType> struct TableSize
+{
+    static constexpr size_t value = 1UL << 11;
+};
+
+template <> struct TableSize<AttacksType::File>
+{
+    static constexpr size_t value = 1UL << 7;
+};
+
+template <> struct TableSize<AttacksType::Rank>
+{
+    static constexpr size_t value = 1UL << 6;
+};
+
+template <> struct TableSize<AttacksType::Rook>
+{
+    static constexpr size_t value = 1UL << 14;
+};
+
+template <AttacksType T> struct Offset
+{
+    static constexpr AttacksType prev_type = AttacksType(static_cast<int>(T) - 1);
+    static constexpr size_t value = Offset<prev_type>::value + TableSize<prev_type>::value * 64;
+};
+
+template <> struct Offset<AttacksType::Diag>
+{
+    static constexpr size_t value = 0;
+};
+
 struct Group
 {
     const size_t _index;
+    const size_t _offset;
+    const size_t _table_size;
+
     std::array<HashParam, 64> _hash_info;
 
-    explicit Group(size_t index) : _index(index) {}
+    Group(size_t index, size_t offset, size_t table_size)
+        : _index(index)
+        , _offset(offset)
+        , _table_size(table_size)
+    {}
 
     void set_hash_info(Square square, uint64_t mask, uint64_t mul, unsigned shift, const PerfectHash& table)
     {
@@ -80,16 +119,16 @@ uint64_t random_uint64()
 
 class HashBuilder
 {
-    static constexpr size_t square_table_size = 1UL << 14;
-    static constexpr size_t group_table_size = square_table_size * 64;
-
     std::vector<Group> _groups;
 
 public:
-    bool build_group(AttacksType type, const std::vector<int>& deltas)
+    template <AttacksType type>
+    bool build_group(const std::vector<int>& deltas)
     {
-        Group group(_groups.size());
-        ASSERT_ALWAYS(size_t(type) == group._index); // caller must build groups in type order
+        Group group(_groups.size(), Offset<type>::value, TableSize<type>::value);
+
+        // Caller must build groups in type order.
+        ASSERT_ALWAYS(size_t(type) == group._index);
 
         for (int square = 0; square < 64; ++square)
         {
@@ -100,7 +139,7 @@ public:
                 attacks.emplace(subset, sliding_attacks(square, subset, deltas));
             });
 
-            if (!build(Square(square), mask, attacks, group))
+            if (!build<type>(Square(square), mask, attacks, group))
             {
                 std::cerr << "Could not build hash for: " << square << std::endl;
                 return false;
@@ -112,7 +151,13 @@ public:
 
     void write(std::ostream& out) const
     {
-        ASSERT_ALWAYS(_groups.size() <= 4);
+        ASSERT_ALWAYS(_groups.size() == 4);
+
+        constexpr size_t total_table_size =
+            TableSize<AttacksType::Diag>::value * 64 +
+            TableSize<AttacksType::File>::value * 64 +
+            TableSize<AttacksType::Rank>::value * 64 +
+            TableSize<AttacksType::Rook>::value * 64;
 
         out << "#pragma once\n";
         out << "/*\n";
@@ -130,30 +175,38 @@ public:
         out << "constexpr struct HashInfo {\n";
         out << "    uint64_t mask;\n";
         out << "    uint64_t mul;\n";
-        out << "    unsigned shift;\n";
+        out << "    uint32_t shift;\n";
         out << "} hash_info[" << _groups.size() * 64 << "] = {\n";
         for (const auto& group : _groups)
             for (const auto& h : group._hash_info)
                 out << "    { 0x" << std::hex << h.mask << ", 0x"
                     << h.mul << std::dec << ", " << h.shift << " },\n";
         out << "};\n\n";
+        out << "template <int> struct GroupInfo;\n\n";
+        for (const auto& group : _groups)
+        {
+            out << "template <> struct GroupInfo<" << group._index << "> {\n";
+            out << "    static constexpr size_t offset = " << group._offset << "UL;\n";
+            out << "    static constexpr size_t table_size = " << group._table_size << "UL;\n";
+            out << "};\n";
+        };
+        out << "\n";
         out << "/********************************************************\n";
         out << " *\n";
         out << " ********************************************************/\n";
         out << "struct AttackTable {\n";
-        out << "    alignas(64) uint64_t _data[" << _groups.size() * group_table_size << "];\n\n";
+        out << "    alignas(64) uint64_t _data[" << total_table_size << "];\n\n";
         out << "#ifdef DEFINE_ATTACK_TABLE_CTOR\n";
         out << "    AttackTable() {\n";
         out << "        memset(_data, 0, sizeof(_data));\n";
         for (const auto& group : _groups)
         {
-            const auto group_offset = group._index * group_table_size;
             for (size_t i = 0; i < 64; ++i) // iterate over squares
             {
                 for (const auto& hash : group._hash_info[i].table)
                 {
                     out << "        _data[";
-                    out << group_offset + i * square_table_size + hash.first << "] = 0x";
+                    out << group._offset + i * group._table_size + hash.first << "] = 0x";
                     out << std::hex << hash.second << std::dec << ";\n";
                 }
             }
@@ -176,9 +229,8 @@ public:
         out << "        occupancy_mask &= hi.mask;\n";
         out << "        occupancy_mask *= hi.mul;\n";
         out << "        occupancy_mask >>= hi.shift;\n";
-        out << "        occupancy_mask &= 0x" << std::hex << square_table_size - 1 << std::dec << ";\n";
-        out << "        return Group * " << group_table_size << " + square * "
-            << square_table_size << " + occupancy_mask;\n";
+        out << "        occupancy_mask &= GroupInfo<Group>::table_size - 1;\n";
+        out << "        return GroupInfo<Group>::offset + square * GroupInfo<Group>::table_size + occupancy_mask;\n";
         out << "    }\n\n";
         out << "    template <int Group>\n";
         out << "    INLINE uint64_t get(int square, uint64_t occupancy_mask) const\n";
@@ -205,30 +257,21 @@ public:
             out << "    }\n";
             out << "};\n";
         }
-        if (_groups.size() < 4)
-        {
-            /* Synthesize BB_ROOK_ATTACKS */
-            out << "\ntemplate<> struct Attacks<AttacksType::Rook>\n";
-            out << "{\n";
-            out << "    INLINE static uint64_t get(int square, uint64_t mask)\n";
-            out << "    {\n";
-            out << "        return attack_table.get<1>(square, mask) | attack_table.get<2>(square, mask);\n";
-            out << "    }\n";
-            out << "};\n";
-        }
         out << "} /* namespace chess */\n";
     }
 
 private:
+    template <AttacksType type>
     bool build(Square square, Bitboard mask, const HashTable& attacks, Group& group)
     {
         PerfectHash table;
+
         for (size_t n = 0; n != 1000; ++n)
         {
             const uint64_t mul = random_uint64();
             for (unsigned shift = 1; shift < 64; ++shift)
             {
-                if (try_hash(mask, attacks, mul, shift, table))
+                if (try_hash<type>(mask, attacks, mul, shift, table))
                 {
                     group.set_hash_info(square, mask, mul, shift, table);
                     return true;
@@ -238,10 +281,11 @@ private:
         return false;
     }
 
-    bool try_hash(Bitboard mask, const HashTable& attacks, uint64_t mul, unsigned shift, PerfectHash& table)
+    template <AttacksType type>
+    bool try_hash(Bitboard mask, const HashTable& attacks, uint64_t mul, uint32_t shift, PerfectHash& table)
     {
         auto hash = [mask, mul, shift](Bitboard val) -> size_t {
-            return (((mask & val) * mul) >> shift) & (square_table_size - 1);
+            return (((mask & val) * mul) >> shift) & (TableSize<type>::value - 1);
         };
         table.clear();
 
