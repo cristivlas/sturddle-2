@@ -45,12 +45,12 @@ struct HashParam
 
 template <AttacksType> struct TableSize
 {
-    static constexpr size_t value = 1UL << 11;
+    static constexpr size_t value = 1UL << 10;
 };
 
 template <> struct TableSize<AttacksType::File>
 {
-    static constexpr size_t value = 1UL << 7;
+    static constexpr size_t value = 1UL << 6;
 };
 
 template <> struct TableSize<AttacksType::Rank>
@@ -60,7 +60,7 @@ template <> struct TableSize<AttacksType::Rank>
 
 template <> struct TableSize<AttacksType::Rook>
 {
-    static constexpr size_t value = 1UL << 14;
+    static constexpr size_t value = 1UL << 13;
 };
 
 template <AttacksType T> struct Offset
@@ -114,7 +114,7 @@ uint64_t random_uint64()
     static std::uniform_int_distribution<uint64_t> dist(0, UINT64_MAX);
 
     // Generate and return a random number
-    return dist(engine);
+    return dist(engine) | dist(engine) | dist(engine) | dist(engine);
 }
 
 class HashBuilder
@@ -266,7 +266,7 @@ private:
     {
         PerfectHash table;
 
-        for (size_t n = 0; n != 1000; ++n)
+        for (size_t n = 0; n != 10000; ++n)
         {
             const uint64_t mul = random_uint64();
             for (unsigned shift = 1; shift < 64; ++shift)
