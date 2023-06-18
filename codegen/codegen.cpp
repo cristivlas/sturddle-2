@@ -29,9 +29,9 @@ int main(int argc, const char* argv[])
     chess::_init();
 
     if (builder.build_group<AttacksType::Diag>({-9, -7, 7, 9})
+     && builder.build_group<AttacksType::Rook>({-8, -1, 1, 8})
      && builder.build_group<AttacksType::File>({-8, 8})
-     && builder.build_group<AttacksType::Rank>({-1, 1})
-     && builder.build_group<AttacksType::Rook>({-8, -1, 1, 8}))
+     && builder.build_group<AttacksType::Rank>({-1, 1}))
     {
         builder.write(std::cout);
         return 0;
