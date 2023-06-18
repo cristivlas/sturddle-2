@@ -24,26 +24,29 @@
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
-    #define ARCH "/native"
 #elif (__arm__) || (__aarch64__)
     #include "armvector.h"
-    #if __aarch64__
-        #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC && (INSTRSET >= 8)
-            #define ARCH ARM_EMULATION "/ARM64/FP16"
-        #else
-            #define ARCH ARM_EMULATION "/ARM64"
-        #endif
-    #else
-        #define ARCH ARM_EMULATION "/ARM"
-    #endif
 #endif
 
 #if INSTRSET >= 9 /* AVX 512 */
     #define ALIGN alignas(64)
+    #ifndef ARCH
+        #define ARCH "AVX512"
+    #endif
 #else
     #define ALIGN alignas(32)
+    #ifndef ARCH
+        #if INSTRSET >= 8
+            #define ARCH "AVX2"
+        #else
+            #define ARCH "SSE2"
+        #endif
+    #endif /* ARCH */
 #endif /* INSTRSET >= 9 */
+
+
 #define DEBUG_INCREMENTAL false
+
 
 namespace nnue
 {
@@ -57,7 +60,6 @@ namespace nnue
 
     #if INSTRSET >= 9
         using Vector = Vec16f;
-        static const std::string instrset = __FMA__ ? "AVX512/FMA" ARCH : "AVX512" ARCH;
 
         INLINE Vector horizontal_add(const Vector (&v)[16])
         {
@@ -69,7 +71,6 @@ namespace nnue
         }
     #elif INSTRSET >= 8
         using Vector = Vec8f;
-        static const std::string instrset = __FMA__ ? "AVX2/FMA" ARCH : "AVX2" ARCH;
 
         INLINE Vector horizontal_add(const Vector (&v)[8])
         {
@@ -80,13 +81,18 @@ namespace nnue
     #else
         using Vector = Vec4f;
 
-        static const std::string instrset = "SSE2" ARCH;
-
         INLINE Vector horizontal_add(const Vector (&v)[4])
         {
             return Vector(horizontal_add(v[0]), horizontal_add(v[1]), horizontal_add(v[2]), horizontal_add(v[3]));
         }
     #endif /* INSTRSET */
+
+#ifdef __FMA__  /* support fused multiply+add? */
+    static const std::string instrset = ARCH "/FMA";
+#else
+    static const std::string instrset = ARCH;
+#endif /* __FMA__ */
+
 
     INLINE Vector horizontal_add(const Vector (&v)[1])
     {

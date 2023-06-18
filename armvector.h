@@ -7,13 +7,18 @@
 #include "simde/x86/avx2.h"
 #include "simde/x86/fma.h"
 
-#if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
-#define INSTRSET 8 /* use Vec8f */
+#if __aarch64__
+    #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+    #define INSTRSET 8 /* use Vec8f */
+        #define ARCH "ARM64+FP16"
+    #else
+        #define ARCH "ARM64"
+    #endif
+#else
+    #define ARCH "ARM"
 #endif
-#define __FMA__ true
 
 #if SIMD_EMULATION /* emulate with SIMDE */
-#define ARM_EMULATION "/emulated"
 
 class Vec4f
 {
@@ -69,7 +74,6 @@ INLINE Vec4f max(const Vec4f& a, const Vec4f& b)
 }
 
 #else /* NEON */
-#define ARM_EMULATION ""
 
 class Vec4f
 {
@@ -135,8 +139,6 @@ INLINE Vec4f max(const Vec4f& a, const Vec4f& b)
 
 
 #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
-#undef ARM_EMULATION
-#define ARM_EMULATION ""
 
 /* Implement Vec8f using half precision */
 class Vec8f
@@ -249,7 +251,7 @@ public:
     operator __m256i() const { return ymm; }
 };
 
-INLINE int16_t horizontal_add(Vec16s a)
+INLINE int16_t horizontal_add(const Vec16s& a)
 {
     __m128i sum1  = _mm_add_epi16(_mm256_extracti128_si256(a,1),_mm256_castsi256_si128(a));
     __m128i sum2  = _mm_add_epi16(sum1,_mm_unpackhi_epi64(sum1,sum1));
@@ -258,22 +260,22 @@ INLINE int16_t horizontal_add(Vec16s a)
     return (int16_t)_mm_cvtsi128_si32(sum4);
 }
 
-INLINE bool horizontal_or(Vec16s a)
+INLINE bool horizontal_or(const Vec16s& a)
 {
     return !_mm256_testz_si256(a, a);
 }
 
-INLINE Vec16s operator + (Vec16s a, Vec16s b)
+INLINE Vec16s operator + (const Vec16s& a, const Vec16s& b)
 {
     return _mm256_add_epi16(a, b);
 }
 
-INLINE Vec16s operator - (Vec16s a, Vec16s b)
+INLINE Vec16s operator - (const Vec16s& a, const Vec16s& b)
 {
     return _mm256_sub_epi16(a, b);
 }
 
-INLINE Vec16s operator * (Vec16s a, Vec16s b)
+INLINE Vec16s operator * (const Vec16s& a, const Vec16s& b)
 {
     return _mm256_mullo_epi16(a, b);
 }
