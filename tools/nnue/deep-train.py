@@ -10,6 +10,7 @@ Expects memmapped numpy arrays or H5 files as inputs.
 import argparse
 import logging
 import os
+import re
 import sys
 from contextlib import redirect_stdout
 
@@ -365,6 +366,20 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 *****************************************************************************
 '''
 def main(args):
+    def load_model(path):
+        ''' Load model ignoring missing loss functions. '''
+        custom_objects = {}
+        while True:
+            try:
+                return tf.keras.models.load_model(path, custom_objects=custom_objects)
+            except ValueError as e:
+                match = re.search(r'Unknown loss function: \'(\w+)\'.*', str(e))
+                if match:
+                    missing_object = match.group(1)
+                    custom_objects[missing_object.strip()] = None
+                    continue
+                raise
+
     # Avoid bundling `apply_constraints()` within `train_step()` to prevent
     # inconsistencies in a distributed setting.
     #
@@ -521,9 +536,8 @@ def main(args):
         teacher = make_teacher_model(args)
 
     if args.model_path and os.path.exists(args.model_path):
-        custom_objects={'_clipped_mae' : None}
         # Load the student model
-        saved_model = tf.keras.models.load_model(args.model_path, custom_objects=custom_objects)
+        saved_model = load_model(args.model_path)
         print(f'Loaded model {os.path.abspath(args.model_path)}.')
         student.set_weights(saved_model.get_weights())
 
@@ -534,7 +548,7 @@ def main(args):
     teacher_model_path = f'{args.model_path}-deep' if args.model_path else None
     if teacher_model_path and os.path.exists(teacher_model_path):
         # Load the teacher (deep) model
-        saved_model = tf.keras.models.load_model(teacher_model_path, custom_objects=custom_objects)
+        saved_model = load_model(teacher_model_path)
         print(f'Loaded model {os.path.abspath(teacher_model_path)}.')
         teacher.set_weights(saved_model.get_weights())
 
