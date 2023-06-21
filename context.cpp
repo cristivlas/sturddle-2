@@ -322,6 +322,11 @@ static void load_model(const std::string& json_file_path)
 }
 
 
+/*
+ * Load neural net model from JSON.
+ *
+ * (tools/nnue/modeltojson saves TensorFlow model params as JSON)
+ */
 void search::Context::load_nnue_model(const std::string& json_file_path)
 {
     try
