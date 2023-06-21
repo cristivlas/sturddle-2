@@ -28,7 +28,6 @@
 #include <unordered_map>
 #include <vector>
 #include "chess.h"
-#include "attack_tables.h"
 
 using namespace chess;
 
@@ -39,7 +38,7 @@ struct HashParam
 {
     uint64_t mask;
     uint64_t mul;
-    unsigned shift;
+    uint16_t shift;
     PerfectHash table;
 };
 
@@ -88,7 +87,7 @@ struct Group
         , _table_size(table_size)
     {}
 
-    void set_hash_info(Square square, uint64_t mask, uint64_t mul, unsigned shift, const PerfectHash& table)
+    void set_hash_info(Square square, uint64_t mask, uint64_t mul, uint16_t shift, const PerfectHash& table)
     {
         ASSERT_ALWAYS(square != Square::UNDEFINED);
         _hash_info[square].mask = mask;
@@ -223,7 +222,7 @@ public:
         out << "    AttackTable();\n";
         out << "#endif /* DEFINE_ATTACK_TABLE_CTOR */\n\n";
         out << "    template <int Group>\n";
-        out << "    INLINE size_t hash(int square, uint64_t occupancy_mask) const\n";
+        out << "    INLINE size_t hash(unsigned square, uint64_t occupancy_mask) const\n";
         out << "    {\n";
         out << "        const auto& hi = hash_info[Group * 64 + square];\n";
         out << "        occupancy_mask &= hi.mask;\n";
@@ -269,7 +268,7 @@ private:
         for (size_t n = 0; n != 10000; ++n)
         {
             const uint64_t mul = random_uint64();
-            for (unsigned shift = 1; shift < 64; ++shift)
+            for (uint16_t shift = 1; shift < 64; ++shift)
             {
                 if (try_hash<type>(mask, attacks, mul, shift, table))
                 {
@@ -282,7 +281,7 @@ private:
     }
 
     template <AttacksType type>
-    bool try_hash(Bitboard mask, const HashTable& attacks, uint64_t mul, uint32_t shift, PerfectHash& table)
+    bool try_hash(Bitboard mask, const HashTable& attacks, uint64_t mul, uint16_t shift, PerfectHash& table)
     {
         auto hash = [mask, mul, shift](Bitboard val) -> size_t {
             return (((mask & val) * mul) >> shift) & (TableSize<type>::value - 1);
