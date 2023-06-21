@@ -10,6 +10,7 @@ Expects memmapped numpy arrays or H5 files as inputs.
 import argparse
 import logging
 import os
+import re
 import sys
 from contextlib import redirect_stdout
 
@@ -365,6 +366,20 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 *****************************************************************************
 '''
 def main(args):
+    def load_model(path):
+        ''' Load model ignoring missing loss functions. '''
+        custom_objects = {}
+        while True:
+            try:
+                return tf.keras.models.load_model(path, custom_objects=custom_objects)
+            except ValueError as e:
+                match = re.search(r'Unknown loss function: \'(\w+)\'.*', str(e))
+                if match:
+                    missing_object = match.group(1)
+                    custom_objects[missing_object.strip()] = None
+                    continue
+                raise
+
     # Avoid bundling `apply_constraints()` within `train_step()` to prevent
     # inconsistencies in a distributed setting.
     #
@@ -521,9 +536,8 @@ def main(args):
         teacher = make_teacher_model(args)
 
     if args.model_path and os.path.exists(args.model_path):
-        custom_objects={'_clipped_mae' : None}
         # Load the student model
-        saved_model = tf.keras.models.load_model(args.model_path, custom_objects=custom_objects)
+        saved_model = load_model(args.model_path)
         print(f'Loaded model {os.path.abspath(args.model_path)}.')
         student.set_weights(saved_model.get_weights())
 
@@ -534,7 +548,7 @@ def main(args):
     teacher_model_path = f'{args.model_path}-deep' if args.model_path else None
     if teacher_model_path and os.path.exists(teacher_model_path):
         # Load the teacher (deep) model
-        saved_model = tf.keras.models.load_model(teacher_model_path, custom_objects=custom_objects)
+        saved_model = load_model(teacher_model_path)
         print(f'Loaded model {os.path.abspath(teacher_model_path)}.')
         teacher.set_weights(saved_model.get_weights())
 
@@ -611,6 +625,8 @@ if __name__ == '__main__':
         parser.add_argument('--hot-encoding', choices=(769,), type=int, default=769, help=argparse.SUPPRESS)
 
         parser.add_argument('--logdir', default='/tmp/logs', help='tensorboard log dir')
+        parser.add_argument('--mem-growth', action='store_true')
+        parser.add_argument('--mem-limit', type=int, default=0, help='GPU memory limit in MB')
         parser.add_argument('--mixed-precision', dest='mixed_precision', action='store_true', default=True, help='enable mixed precision')
         parser.add_argument('--name', help='optional model name')
         parser.add_argument('--nesterov', dest='nesterov', action='store_true', default=False, help='use Nesterov momentum (SGD only)')
@@ -647,6 +663,13 @@ if __name__ == '__main__':
             if gpus := tf.config.list_physical_devices('GPU'):
                 for gpu in gpus:
                     print(gpu)
+                    if args.mem_growth:
+                        tf.config.experimental.set_memory_growth(gpu, True)
+                    if args.mem_limit > 0:
+                        tf.config.set_logical_device_configuration(
+                            gpu,
+                            [tf.config.LogicalDeviceConfiguration(memory_limit=args.mem_limit)]
+                        )
                     cap = tf.config.experimental.get_device_details(gpu).get('compute_capability', None)
                     if cap != None:
                         logging.info(f'{gpu}: {cap}')
