@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import mmap
+import sys
 
 from dbutils.sqlite import SQLConn
 from tqdm import tqdm
@@ -37,18 +38,24 @@ def process_file(file_path, db_path):
         fen = b''
         depth = 0
         score = 0
+        processed_records = 0
 
-        for line in iter(map_file.readline, b''):
-            if line.startswith(b'fen'):
-                fen = line[4:].strip()
-            elif line.startswith(b'score'):
-                score = int(line[6:])
-            elif line.startswith(b'ply'):
-                depth = int(line[4:])
-            elif line.startswith(b'e'):
-                conn.exec('INSERT OR IGNORE INTO position VALUES (?, ?, ?)', (fen.decode('utf-8'), depth, score))
-                conn.commit()
-                progress_bar.update()
+        try:
+            for line in iter(map_file.readline, b''):
+                if line.startswith(b'fen'):
+                    fen = line[4:].strip()
+                elif line.startswith(b'score'):
+                    score = int(line[6:])
+                elif line.startswith(b'ply'):
+                    depth = int(line[4:])
+                elif line.startswith(b'e'):
+                    conn.exec('INSERT OR IGNORE INTO position VALUES (?, ?, ?)', (fen.decode('utf-8'), depth, score))
+                    processed_records += 1
+                    if processed_records % 1000 == 0:
+                        conn.commit()
+                    progress_bar.update()
+        except KeyboardInterrupt:
+            print('\nInterrupted')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Convert text file to SQLite3 database.')
