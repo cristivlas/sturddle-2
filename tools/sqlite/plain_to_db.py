@@ -26,11 +26,10 @@ def process_file(file_path, db_path):
         with open(file_path, 'r') as file:
             map_file = mmap.mmap(file.fileno(), length=0, access=mmap.ACCESS_READ)
 
-        record_count = 0
-        for line in iter(map_file.readline, b''):
-            if line.startswith(b'e'):
-                record_count += 1
-
+        line_count = 0
+        for _ in iter(map_file.readline, b''):
+            line_count += 1
+        record_count = line_count // 6
         map_file.seek(0)  # Reset the mmap object to start of file
 
         progress_bar = tqdm(total=record_count)
