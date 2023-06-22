@@ -50,7 +50,7 @@ def process_file(file_path, db_path):
                 elif line.startswith(b'e'):
                     conn.exec('INSERT OR IGNORE INTO position VALUES (?, ?, ?)', (fen.decode('utf-8'), depth, score))
                     processed_records += 1
-                    if processed_records % 1000 == 0:
+                    if processed_records % 10000 == 0:
                         conn.commit()
                     progress_bar.update()
         except KeyboardInterrupt:
