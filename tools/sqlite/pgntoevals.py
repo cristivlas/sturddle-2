@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Construct training DBs from PGNs that contain evaluations.
 import argparse
 import os
 
