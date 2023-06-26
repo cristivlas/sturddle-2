@@ -39,7 +39,7 @@ def get_engine(args):
     engine = chess.engine.SimpleEngine.popen_uci(args.engine)
     config = {'Threads': args.threads, 'Hash': args.hash}
     if 'Use NNUE' in engine.options:
-        config['Use NNUE'] = args.nnue
+        config['Use NNUE'] = 'true'
 
     engine.configure(config)
     return engine
@@ -50,6 +50,7 @@ def main(args):
         sql_out.exec(_create_table)
 
         for filepath in args.input:
+            print(filepath)
             with open(filepath, 'r') as f:
                 lines = f.readlines()
 
@@ -79,7 +80,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('input', nargs=1, help='text file')
+    parser.add_argument('input', nargs='+', help='text file')
     parser.add_argument('--depth', '-d', type=int)
     parser.add_argument('--delimiter', default='bm')
     parser.add_argument('--engine', '-e', default='stockfish')
