@@ -39,7 +39,7 @@ def get_engine(args):
     engine = chess.engine.SimpleEngine.popen_uci(args.engine)
     config = {'Threads': args.threads, 'Hash': args.hash}
     if 'Use NNUE' in engine.options:
-        config['Use NNUE'] = 'true'
+        config['Use NNUE'] = 'true' if args.nnue else 'false'
 
     engine.configure(config)
     return engine
