@@ -61,6 +61,10 @@ def main(args):
                         continue
 
                     epd = cols[args.epd_index].strip()
+                    res = sql_out.exec(f'''SELECT EXISTS(SELECT (epd) FROM position WHERE epd="{epd}")''')
+                    # skip over existing rows
+                    if res.fetchone()[0]:
+                        continue
                     try:
                         analyse(args, sql_out, engine, epd)
                     except KeyboardInterrupt:
