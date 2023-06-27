@@ -94,7 +94,6 @@ if __name__ == '__main__':
     parser.add_argument('--output', '-o', required=True)
     parser.add_argument('--time-limit', '-t', type=float, default=0.1)
     parser.add_argument('--threads', type=int, default=1)
-    parser.add_argument('--no-skip-existing', action='store_true')
     parser.add_argument('--nnue', dest='nnue', action='store_true', default=True)
     parser.add_argument('--no-nnue', dest='nnue', action='store_false')
 
