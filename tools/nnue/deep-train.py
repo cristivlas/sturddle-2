@@ -506,11 +506,23 @@ def main(args):
                     ('dist. loss', distillation_loss),
                     ('total', total_loss)
                 ]
-                progbar.update(batch + 1, progress_values)
+                progbar.update(batch + 1, progress_values, finalize=False if args.schedule else None)
 
             for callback in callbacks:
-                callback.on_epoch_end(epoch, {})
+                callback.on_epoch_end(epoch, {'loss': mean_loss_metric.result()})
 
+            if args.schedule:
+                progress_values = [
+                    ('student', student_loss),
+                    ('teacher', teacher_loss),
+                    ('dist. loss', distillation_loss),
+                    ('total', total_loss),
+                    ('LR', student.optimizer.lr),
+                ]
+                progbar.update(batch + 1, progress_values, finalize=True)
+
+            # Handle the student model checkpoint callback separately,
+            # to save only when the loss function improves.
             if save_callback:
                 # Get the mean loss for this epoch
                 mean_loss = mean_loss_metric.result()
@@ -520,7 +532,6 @@ def main(args):
                     best_loss = mean_loss
                     logging.info('Saving student model.')
                     save_callback.on_epoch_end(epoch)
-
 
     if args.gpu:
         strategy = tf.distribute.MirroredStrategy()
@@ -582,6 +593,12 @@ def main(args):
         save_cb = tf.keras.callbacks.ModelCheckpoint(args.model_path)
         save_cb.model = student
 
+    if args.schedule:
+        from keras.callbacks import ReduceLROnPlateau
+        lr = ReduceLROnPlateau(monitor='loss', factor=0.2, patience=5, min_lr=1e-9)
+        lr.model = student
+        callbacks.append(lr)
+
     # Alpha is a hyperparameter that controls the trade-off between the student loss
     # (i.e., the loss computed using the ground truth labels) and the distillation loss
     # Default is 0.1; with this value, the distillation loss will have a smaller weight
@@ -633,6 +650,7 @@ if __name__ == '__main__':
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
         parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad', help='optimization algorithm')
+        parser.add_argument('--schedule', action='store_true', help='apply learning rate schedule')
 
         args = parser.parse_args()
         if args.input[0] == 'export' and not args.export:
