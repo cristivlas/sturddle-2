@@ -10,7 +10,7 @@ import chess
 import chess.engine
 import chess.pgn
 from dbutils.sqlite import SQLConn
-from tqdm.contrib import tenumerate
+from tqdm import tqdm
 
 _create_table = '''CREATE TABLE IF NOT EXISTS position(
     epd text PRIMARY KEY,   -- Position
@@ -54,7 +54,8 @@ def main(args):
             with open(filepath, 'r') as f:
                 lines = f.readlines()
 
-                for i, row in tenumerate(lines, desc='Analysing'):
+                for i in tqdm(range(len(lines)), maxinterval=1, desc='Analysing', dynamic_ncols=True):
+                    row = lines[i]
                     cols = row.split(args.delimiter)
 
                     if len(cols) <= args.epd_index:
