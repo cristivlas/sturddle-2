@@ -93,7 +93,7 @@ def make_teacher_model(args, starting_units=4096):
 
     output_layer = Dense(1, name='output', dtype='float32')(layers[-1])
 
-    model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer, name=args.name)
+    model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer)
 
     optimizer = tf.keras.optimizers.Adam(
         learning_rate=args.learn_rate,
@@ -543,14 +543,20 @@ def main(args):
 
     # Create models.
     with strategy.scope():
-        student = make_student_model(args)
         teacher = make_teacher_model(args)
 
     if args.model_path and os.path.exists(args.model_path):
         # Load the student model
         saved_model = load_model(args.model_path)
         print(f'Loaded model {os.path.abspath(args.model_path)}.')
+        if not args.name:
+            args.name = saved_model.name
+        with strategy.scope():
+            student = make_student_model(args)
         student.set_weights(saved_model.get_weights())
+    else:
+        with strategy.scope():
+            student = make_student_model(args)
 
     if args.export:
         export_weights(args, student)
