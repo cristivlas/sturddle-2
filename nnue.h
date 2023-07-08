@@ -627,19 +627,24 @@ namespace nnue
         attn.dot(attn_in, attn_out);
 
         static_assert(L2::INPUTS % Vector::size() == 0);
-        static_assert(L2::INPUTS % ATTN::OUTPUTS == 0);
+        static_assert(ATTN::OUTPUTS % Vector::size() == 0);
 
     #if true
-        Vector v1, v2;
+        Vector v1;
         for (int i = 0; i != L2::INPUTS; i += Vector::size())
         {
             v1.load_a(&l2_in[i]);
-            v2.load_a(&attn_out[i % ATTN::OUTPUTS]);
+
+            // Load the repeated value of attn_out to v2
+            Vector v2(attn_out[i * ATTN::OUTPUTS / L2::INPUTS]);
+
             (v1 * v2).store_a(&l2_in[i]);
         }
     #else
-        for (int i = 0; i != L2::INPUTS; ++i)
-            l2_in[i] *= attn_out[i % ATTN::OUTPUTS];
+        for (int i = 0; i < L2::INPUTS; ++i)
+        {
+            l2_in[i] *= attn_out[i * ATTN::OUTPUTS / L2::INPUTS];
+        }
     #endif
 
         static const Vector v_zero(0.0);
