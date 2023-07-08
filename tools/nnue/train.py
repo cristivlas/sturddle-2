@@ -72,7 +72,6 @@ def make_model(args, strategy):
 
         # Extracting black occupation mask (summing black pieces' bitboards)
         black_occupied = Lambda(black_occupied_mask)(input_layer)
-
         # Extracting white occupation mask (summing white pieces' bitboards)
         white_occupied = Lambda(white_occupied_mask)(input_layer)
 
@@ -87,9 +86,7 @@ def make_model(args, strategy):
             bias_constraint=MinMaxNorm(min_value=Q_MIN, max_value=Q_MAX),
         )(concat)
 
-        # Add 2nd hidden layer
-        hidden_2 = Dense(16, activation=activation, name='hidden_2')(hidden_1a)
-
+        ###########################################################################
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
         input_1b = Lambda(lambda x: x[:, :256], name='slice_input_1b')(input_layer)
         hidden_1b = Dense(
@@ -101,19 +98,18 @@ def make_model(args, strategy):
         )(input_1b)
 
         # Compute dynamic weights based on hidden_1b
-        dynamic_weights = Dense(
-            16,
-            activation=None,
-            name='dynamic_weights',
-            #kernel_regularizer=L1L2(l1=1e-5, l2=1e-4),
-            #bias_regularizer=L1L2(l1=1e-5, l2=1e-4),
-        )(hidden_1b)
+        dynamic_weights = Dense(16, activation=None, name='dynamic_weights')(hidden_1b)
+        attn_weights = Lambda(lambda x: tf.repeat(x, repeats=512 // 16, axis=1))(dynamic_weights)
+        ###########################################################################
 
-        # Apply dynamic weights to hidden_2
-        weighted_hidden_2 = Multiply(name='weighted_hidden_2')([hidden_2, dynamic_weights])
+        # Apply weights to hidden_1a
+        weighted = Multiply(name='weighted_hidden_2')([hidden_1a, attn_weights])
+
+        # Add 2nd hidden layer
+        hidden_2 = Dense(16, activation=activation, name='hidden_2')(weighted)
 
         # Define the output layer
-        output_layer = Dense(1, name='out', dtype='float32')(weighted_hidden_2)
+        output_layer = Dense(1, name='out', dtype='float32')(hidden_2)
 
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer, name=args.name)
@@ -449,7 +445,7 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
-        parser.add_argument('-c', '--clip', type=int)
+        parser.add_argument('-c', '--clip', type=float)
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
         parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')

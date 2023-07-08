@@ -616,30 +616,34 @@ namespace nnue
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float output[1];
 
-        static const Vector v_zero(0.0);
-
         activation(a._output_a, l2_in); // process output of hidden_1a
-        l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
-
         activation(a._output_b, attn_in); // process output of hidden_1b
 
         /*
          * The dynamic weights computed by the "attention" layer
          * are used to modulate the output of another hidden layer
-         * (L2, aka hidden_2) through element-wise multiplication.
+         * through element-wise multiplication.
          */
         attn.dot(attn_in, attn_out);
 
-        static_assert(ATTN::OUTPUTS == L2::OUTPUTS);
-        static_assert(ATTN::OUTPUTS % Vector::size() == 0);
+        static_assert(L2::INPUTS % Vector::size() == 0);
+        static_assert(L2::INPUTS % ATTN::OUTPUTS == 0);
 
+    #if true
         Vector v1, v2;
-        for (int i = 0; i != L2::OUTPUTS; i += Vector::size())
+        for (int i = 0; i != L2::INPUTS; i += Vector::size())
         {
-            v1.load_a(&l2_out[i]);
-            v2.load_a(&attn_out[i]);
-            (v1 * v2).store_a(&l2_out[i]);
+            v1.load_a(&l2_in[i]);
+            v2.load_a(&attn_out[i % ATTN::OUTPUTS]);
+            (v1 * v2).store_a(&l2_in[i]);
         }
+    #else
+        for (int i = 0; i != L2::INPUTS; ++i)
+            l2_in[i] *= attn_out[i % ATTN::OUTPUTS];
+    #endif
+
+        static const Vector v_zero(0.0);
+        l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
 
         out.dot(l2_out, output);
         return 100 * output[0];
