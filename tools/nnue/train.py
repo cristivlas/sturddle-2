@@ -86,7 +86,6 @@ def make_model(args, strategy):
             bias_constraint=MinMaxNorm(min_value=Q_MIN, max_value=Q_MAX),
         )(concat)
 
-        ###########################################################################
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
         input_1b = Lambda(lambda x: x[:, :256], name='slice_input_1b')(input_layer)
         hidden_1b = Dense(
@@ -99,8 +98,10 @@ def make_model(args, strategy):
 
         # Compute dynamic weights based on hidden_1b
         dynamic_weights = Dense(16, activation=None, name='dynamic_weights')(hidden_1b)
-        attn_weights = Lambda(lambda x: tf.repeat(x, repeats=512 // 16, axis=1))(dynamic_weights)
-        ###########################################################################
+        if args.tiled:
+            attn_weights = Lambda(lambda x: tf.tile(x, tf.constant([1, 512 // 16])))(dynamic_weights)
+        else:
+            attn_weights = Lambda(lambda x: tf.repeat(x, repeats=512 // 16, axis=1))(dynamic_weights)
 
         # Apply weights to hidden_1a
         weighted = Multiply(name='weighted_hidden_2')([hidden_1a, attn_weights])
@@ -478,6 +479,7 @@ if __name__ == '__main__':
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
         parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad', help='optimization algorithm')
+        parser.add_argument('--tiled', action='store_true')
         parser.add_argument('--tensorboard', '-t', action='store_true', help='enable TensorBoard')
         parser.add_argument('--schedule', action='store_true', help='use learning rate schedule')
         parser.add_argument('--validation', help='validation data filepath')

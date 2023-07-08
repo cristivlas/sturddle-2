@@ -629,7 +629,23 @@ namespace nnue
         static_assert(L2::INPUTS % Vector::size() == 0);
         static_assert(ATTN::OUTPUTS % Vector::size() == 0);
 
-    #if true
+#if TILED /* (see args.tiled in train.py) */
+    #if true /* vectorized */
+        Vector v1, v2;
+        for (int i = 0; i != L2::INPUTS; i += Vector::size())
+        {
+            v1.load_a(&l2_in[i]);
+            v2.load_a(&attn_out[i % ATTN::OUTPUTS]);
+            (v1 * v2).store_a(&l2_in[i]);
+        }
+    #else
+        for (int i = 0; i < L2::INPUTS; ++i)
+        {
+            l2_in[i] *= attn_out[i % ATTN::OUTPUTS];
+        }
+    #endif /* !vectorized */
+#else
+    #if true /* vectorized */
         Vector v1;
         for (int i = 0; i != L2::INPUTS; i += Vector::size())
         {
@@ -645,7 +661,8 @@ namespace nnue
         {
             l2_in[i] *= attn_out[i * ATTN::OUTPUTS / L2::INPUTS];
         }
-    #endif
+    #endif /* !vectorized */
+#endif /* !TILED */
 
         static const Vector v_zero(0.0);
         l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
