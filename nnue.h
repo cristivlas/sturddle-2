@@ -24,7 +24,7 @@
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
-#elif (__arm__) || (__aarch64__)
+#elif (__arm__) || (__arm64__) || (__aarch64__)
     #include "armvector.h"
 #endif
 

@@ -7,7 +7,7 @@
 #include "simde/x86/avx2.h"
 #include "simde/x86/fma.h"
 
-#if __aarch64__
+#if (__arm64__) || (__aarch64__)
     #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
     #define INSTRSET 8 /* use Vec8f */
         #define ARCH "ARM64+FP16"
@@ -97,7 +97,7 @@ public:
 
 INLINE float horizontal_add(const Vec4f& a)
 {
-#if (__aarch64__)
+#if (__arm64__) || (__aarch64__)
     return vaddvq_f32(a);
 #else
     // Pairwise add the elements, reducing the vector to half its original size

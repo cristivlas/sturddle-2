@@ -8,6 +8,8 @@ from Cython.Build import cythonize
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
+import armcpu
+
 '''
 Monkey-patch MSVCCompiler to use clang-cl.exe on Windows.
 '''
@@ -98,10 +100,11 @@ args.append('-DBUILD_STAMP=' + build_stamp)
 args += environ.get("CXXFLAGS", '').split()
 
 
-# Emulate SSE on ARM using: https://github.com/simd-everywhere/simde
-if any(('arm' in platform, 'aarch64' in platform)):
+arm_arch = armcpu.get_arch()
+if not arm_arch is None:
+    # Emulate SSE on ARM using: https://github.com/simd-everywhere/simde
     args += [ '-I./simde', '-Wno-bitwise-instead-of-logical' ]
-    if 'armv7' in platform:
+    if arm_arch == 'armv7':
         args += [ '-mfpu=neon-vfpv4', '-mfloat-abi=hard' ]
 
 if platform.startswith('win'):
@@ -180,7 +183,12 @@ extensions = [
         extra_link_args=link
     )]
 if not NATIVE_UCI:
-    extensions.append(Extension(name='uci', sources=['uci.pyx']))
+    extensions.append(Extension(
+        name='uci',
+        sources=['uci.pyx'],
+        extra_compile_args=args + inc_dirs,
+        extra_link_args=link
+    ))
 
 
 setup(ext_modules=cythonize(extensions), cmdclass={'build_ext': BuildExt})
