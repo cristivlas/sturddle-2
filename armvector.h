@@ -166,8 +166,8 @@ public:
 
     INLINE void store_a(float* p) const
     {
-        float32x4_t v1(vcvt_f32_f16(vget_high_f16(v)));
-        float32x4_t v2(vcvt_f32_f16(vget_low_f16(v)));
+        float32x4_t v1(vcvt_f32_f16(vget_low_f16(v)));
+        float32x4_t v2(vcvt_f32_f16(vget_high_f16(v)));
         vst1q_f32(p, v1);
         vst1q_f32(p + 4, v2);
     }
