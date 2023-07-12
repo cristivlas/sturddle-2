@@ -196,7 +196,7 @@ static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
  * 128 inputs, which correspond to kings and pawns. The output of L1B is
  * processed by the dynamic weights layer (attention layer). The outputs
  * of the dynamic weights (attention) layer are multiplied element-wise
- * with the result of the L2 (hidden_2) layer.
+ * with the result of the L1A layer.
  */
 static nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE> L1A(hidden_1a_w, hidden_1a_b);
 static nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE> L1B(hidden_1b_w, hidden_1b_b);

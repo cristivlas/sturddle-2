@@ -578,7 +578,7 @@ namespace nnue
                 const auto ptype = from_pos.piece_type_at(move.from_square());
 
                 delta(remove, r_idx, ptype, color, move.from_square());
-                delta(add, a_idx, ptype, color, move.to_square());;
+                delta(add, a_idx, ptype, color, move.to_square());
 
                 if (to_pos.is_castle)
                 {
