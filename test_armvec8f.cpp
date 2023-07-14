@@ -1,4 +1,5 @@
 #include "common.h"
+#if __arm__ || __arm64__ || __aarch64__
 #include "armvector.h"
 #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
 
@@ -162,3 +163,7 @@ int main()
     std::cout << "__ARM_FEATURE_FP16_VECTOR_ARITHMETIC not supported\n";
 }
 #endif /* __ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
+#else
+    #error Target arch is not ARM.
+#endif /* __arm__ || __arm64__ || __aarch64__ */
+
