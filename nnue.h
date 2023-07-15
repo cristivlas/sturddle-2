@@ -629,7 +629,7 @@ namespace nnue
         static_assert(L2::INPUTS % Vector::size() == 0);
         static_assert(ATTN::OUTPUTS % Vector::size() == 0);
 
-#if TILED /* (see args.tiled in train.py) */
+#if true /* (see args.tiled in train.py) */
     #if true /* vectorized */
         Vector v1, v2;
         for (int i = 0; i != L2::INPUTS; i += Vector::size())
