@@ -384,7 +384,7 @@ namespace nnue
         template <typename LA, typename LB>
         INLINE void update(const LA& layer_1a, const LB& layer_1b, const State& state)
         {
-            if (state.hash() != _hash)
+            if (needs_update(state))
             {
                 _hash = state.hash();
 
@@ -407,6 +407,11 @@ namespace nnue
             d[idx++] = mask_index(col, sq);
         }
 
+        INLINE bool needs_update(const State& state) const
+        {
+            return state.hash() != _hash;
+        }
+
         /** Update 1st layer output incrementally, based on a previous state */
         template <typename LA, typename LB, typename A>
         INLINE void update(
@@ -415,9 +420,9 @@ namespace nnue
             const State& prev,
             const State& state,
             const Move& move,
-            const A& ancestor)
+            A& ancestor)
         {
-            if (state.hash() != _hash)
+            if (needs_update(state))
             {
                 _hash = state.hash();
 

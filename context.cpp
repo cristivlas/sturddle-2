@@ -214,14 +214,24 @@ static std::unordered_map<std::string, WeightSetter> registry = {
     { "out", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L4.set_weights(w, b); } },
 };
 
+
 score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
 {
     auto& acc = NNUE_data[tid()][_ply];
 
     if (is_root() || _update_nnue)
+    {
         acc.update(L1A, L1B, state());
+    }
     else
-        acc.update(L1A, L1B, _parent->state(), state(), _move, NNUE_data[tid()][_ply - 1]);
+    {
+        auto& prev = NNUE_data[tid()][_ply - 1];
+        if (prev.needs_update(_parent->state()))
+        {
+            _parent->eval_nnue_raw(true);
+        }
+        acc.update(L1A, L1B, _parent->state(), state(), _move, prev);
+    }
 
     return update_only ? SCORE_MIN : nnue::eval(acc, L2, L_DYN, L4);
 }
