@@ -894,6 +894,7 @@ namespace search
         return static_eval() >= _beta
             - NULL_MOVE_DEPTH_WEIGHT * depth()
             - improvement() / NULL_MOVE_IMPROVEMENT_DIV
+            - abs(state().eval_mobility())
             + NULL_MOVE_MARGIN;
     }
 

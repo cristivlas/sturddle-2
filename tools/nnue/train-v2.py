@@ -19,9 +19,7 @@ import numpy as np
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 Q_SCALE = 1024
-# Quantization range: use int16_t with QSCALE of 1024, and need to add 18 values
-# (16 weights, 1 bias, 1 residual) w/o overflow, max representable value is 32767 / 18 / 1024
-Q_MAX = 32767 / 18 / 1024
+Q_MAX = 32767 / 18 / Q_SCALE
 Q_MIN = -Q_MAX
 
 def configure_logging(args):
@@ -42,21 +40,26 @@ def make_model(args, strategy):
             w = tf.round(w * Q_SCALE) * (1.0 / Q_SCALE)
             return tf.clip_by_value(w, Q_MIN, Q_MAX)
 
+    class QuantizationLayer(tf.keras.layers.Layer):
+        def __init__(self, **kwargs):
+            super(QuantizationLayer, self).__init__(**kwargs)
+
+        @tf.function
+        def call(self, inputs):
+            return tf.round(inputs * Q_SCALE) * (1.0 / Q_SCALE)
+
+    @tf.function
+    def soft_clip(x, clip_value, alpha=0.1):
+        return (2 * tf.math.sigmoid(.5 * x) - 1) * clip_value + x * alpha
+
     def loss():
-        # return loss function
-        if args.loss == 'mae':
-            @tf.function
-            def clipped_loss(y_true, y_pred):
-                y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
-                return tf.keras.losses.mean_absolute_error(y_true, y_pred)
-            return clipped_loss if args.clip else MeanAbsoluteError()
-        else:
-            assert args.loss == 'mse'
-            @tf.function
-            def clipped_loss(y_true, y_pred):
-                y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
-                return tf.keras.losses.mean_squared_error(y_true, y_pred)
-            return clipped_loss if args.clip else MeanSquaredError()
+        @tf.function
+        def clipped_loss(y_true, y_pred, delta=args.clip):
+            error = soft_clip(y_true - y_pred, delta)
+            squared_loss = 0.5 * tf.square(error)
+            linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
+            return tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
+        return clipped_loss
 
     with strategy.scope():
         activation = tf.keras.activations.relu
@@ -83,16 +86,14 @@ def make_model(args, strategy):
 
         concat = Concatenate()([input_layer, black_occupied, white_occupied])
 
-        # Simulate quantization effects
-        contraint = CustomConstraint() if args.quantization else None
-
+        constraint = CustomConstraint() if args.quantization else None
         # Define layer 1a
         hidden_1a = Dense(
             512,
             activation=activation,
             name='hidden_1a',
-            kernel_constraint=contraint,
-            bias_constraint=contraint,
+            kernel_constraint=constraint,
+            bias_constraint=constraint,
         )(concat)
 
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
@@ -101,19 +102,28 @@ def make_model(args, strategy):
             64,
             activation=activation,
             name='hidden_1b',
-            kernel_constraint=contraint,
-            bias_constraint=contraint,
+            kernel_constraint=constraint,
+            bias_constraint=constraint,
         )(input_1b)
 
         # Compute dynamic weights based on hidden_1b
-        dynamic_weights = Dense(16, activation=None, name='dynamic_weights')(hidden_1b)
+        if args.quantization:
+            hidden_1b_quantized = QuantizationLayer(name='hidden_bq')(hidden_1b)
+            dynamic_weights = Dense(16, activation=None, name='dynamic_weights')(hidden_1b_quantized)
+        else:
+            dynamic_weights = Dense(16, activation=None, name='dynamic_weights')(hidden_1b)
+
         if args.tiled:
             attn_weights = Lambda(lambda x: tf.tile(x, tf.constant([1, 512 // 16])))(dynamic_weights)
         else:
             attn_weights = Lambda(lambda x: tf.repeat(x, repeats=512 // 16, axis=1))(dynamic_weights)
 
         # Apply weights to hidden_1a
-        weighted = Multiply(name='weighted_hidden_2')([hidden_1a, attn_weights])
+        if args.quantization:
+            hidden_1a_quantized = QuantizationLayer(name='hidden_aq')(hidden_1a)
+            weighted = Multiply(name='weighted_hidden_2')([hidden_1a_quantized, attn_weights])
+        else:
+            weighted = Multiply(name='weighted_hidden_2')([hidden_1a, attn_weights])
 
         # Add 2nd hidden layer
         hidden_2 = Dense(16, activation=activation, name='hidden_2')(weighted)
@@ -155,11 +165,16 @@ the maximum number of decimal digits of precision that can be
 represented by a numpy.float32 value is 7.
 '''
 def write_weigths(args, model, indent):
+    e = 1 / Q_SCALE
     for layer in model.layers:
         params = layer.get_weights()
         if not params:
             continue
         weights, biases = params
+        if layer.name.startswith('hidden_1'):
+            assert np.all(weights >= Q_MIN - e) and np.all(weights <= Q_MAX + e), layer.name
+            assert np.all(biases >= Q_MIN - e) and np.all(biases <= Q_MAX + e), layer.name
+
         rows, cols = weights.shape
         print(f'constexpr float {layer.name}_w[{rows}][{cols}] = {{')
         for i in range(rows):
@@ -473,7 +488,7 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
-        parser.add_argument('-c', '--clip', type=float)
+        parser.add_argument('-c', '--clip', type=float, default=5.0)
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
         parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
@@ -494,7 +509,6 @@ if __name__ == '__main__':
         parser.add_argument('--hot-encoding', choices=(769,), type=int, default=769, help=argparse.SUPPRESS)
 
         parser.add_argument('--logdir', default='/tmp/logs', help='tensorboard log dir')
-        parser.add_argument('--loss', choices=['mae', 'mse'], default='mae', help='loss function')
         parser.add_argument('--macro-batch-size', type=int, default=0)
         parser.add_argument('--macro-epochs', type=int, default=1, help='epochs per macro-batch')
         parser.add_argument('--max-queue-size', type=int, default=10000, help='max size for queue that holds batches')
@@ -527,6 +541,7 @@ if __name__ == '__main__':
         print('Importing TensorFlow')
 
         import tensorflow as tf
+
         tf.get_logger().setLevel(log_level)
 
         from tensorflow.keras.constraints import Constraint
@@ -535,6 +550,7 @@ if __name__ == '__main__':
         from tensorflow.keras.regularizers import L1L2
 
         print(f'TensorFlow version: {tf.__version__}')
+
         # Detect GPU presence and compute capability.
         compute = 0
 
