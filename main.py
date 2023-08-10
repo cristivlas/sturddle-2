@@ -17,12 +17,29 @@ import chess.polyglot
 import chess.syzygy
 import psutil
 
+import armcpu
+
 '''
 Import the chess engine module flavor that best matches the CPU capabilities.
 '''
-platform = sysconfig.get_platform()
-if any(('arm' in platform, 'aarch64' in platform)):
-    flavors = { 'chess_engine': lambda *_: True }
+if armcpu.get_arch() is not None:
+    # ARM
+    def _is_fp16_supported():
+        cpuinfo = {}
+        try:
+            with open('/proc/cpuinfo', 'r') as f:
+                for line in f:
+                    if ':' in line:
+                        key, value = map(str.strip, line.split(':', 1))
+                        cpuinfo[key] = value
+        except FileNotFoundError:
+            pass
+        return 'Features' in cpuinfo and 'asimdhp' in cpuinfo['Features']
+
+    flavors = {
+        'chess_engine_armv8_2': _is_fp16_supported,
+        'chess_engine': lambda *_: True
+    }
 else:
     # Select AVX2 or AVX512 on x86/AMD64
     import cpufeature

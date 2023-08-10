@@ -26,6 +26,8 @@
  */
 #include <algorithm>
 #include <iomanip>
+
+#define DEFINE_ATTACK_TABLE_CTOR
 #include "chess.h"
 
 #if USE_MAGIC_BITS
@@ -35,6 +37,8 @@ const magic_bits::Attacks magic_bits_attacks;
 
 namespace chess
 {
+    const AttackTable attack_table;
+
 #if MOBILITY_TUNING_ENABLED
 
     int MOBILITY[] = DEFAULT_MOBILITY_WEIGHTS;
@@ -144,8 +148,6 @@ namespace chess
         return rays;
     }
 
-
-    using AttackTable = impl::AttackTable;
 
     template<typename T> static void
     init_attack_masks(AttackMasks& mask_table, const T& tables, const std::vector<int>& deltas)
@@ -394,15 +396,15 @@ namespace chess
     {
         moves_list.clear();
 
-        to_mask &= ~kings;
-
         const auto our_pieces = this->occupied_co(turn);
         const auto occupied = this->occupied();
+
+        to_mask &= ~(kings | our_pieces);
 
         /* Piece moves. */
         if (const auto non_pawns = our_pieces & ~pawns & from_mask)
             for_each_square(non_pawns, [&](Square from_square) {
-                const auto moves = attacks_mask(from_square, occupied) & ~our_pieces & to_mask;
+                const auto moves = attacks_mask(from_square, occupied) & to_mask;
                 for_each_square(moves, [&](Square to_square) {
                     add_move(moves_list, from_square, to_square);
                 });

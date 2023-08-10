@@ -1,3 +1,5 @@
+import re
+import subprocess
 import sysconfig
 from datetime import datetime
 from os import environ, pathsep
@@ -6,10 +8,12 @@ from Cython.Build import cythonize
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
+import armcpu
+
 '''
 Monkey-patch MSVCCompiler to use clang-cl.exe on Windows.
 '''
-cl_exe=environ.get('CL_EXE', '')
+cl_exe = environ.get('CL_EXE', '')
 if cl_exe:
     from setuptools._distutils._msvccompiler import MSVCCompiler, _find_exe
 
@@ -30,6 +34,23 @@ else:
         pass
 
 
+def get_compiler_major_version():
+    # Get the compiler from the CC environment variable
+    compiler = environ.get('CC', 'clang')
+
+    version_string = subprocess.check_output([compiler, '--version']).decode('utf-8')
+
+    # This pattern looks for the first digit(s), followed by a dot, followed by any digit(s) and then a dash or space.
+    # That should match the major.minor part of the version.
+    version_pattern = re.compile(r'(\d+)\.\d+\.\d+')
+    version = version_pattern.search(version_string)
+    if version:
+        # The major version number is before the first dot
+        return int(version.group(1).split('.')[0])
+    else:
+        raise ValueError('Could not parse ' + compiler + ' version from string: ' + version_string)
+
+
 build_stamp = datetime.now().strftime('%m%d%y.%H%M')
 
 sourcefiles = [
@@ -46,6 +67,7 @@ sourcefiles = [
 Compiler args.
 """
 inc_dirs = [
+    '-I./json/include',
     '-I./libpopcnt',
     '-I./magic-bits/include',
     '-I./version2',
@@ -78,10 +100,11 @@ args.append('-DBUILD_STAMP=' + build_stamp)
 args += environ.get("CXXFLAGS", '').split()
 
 
-# Emulate SSE on ARM using: https://github.com/simd-everywhere/simde
-if any(('arm' in platform, 'aarch64' in platform)):
+arm_arch = armcpu.get_arch()
+if not arm_arch is None:
+    # Emulate SSE on ARM using: https://github.com/simd-everywhere/simde
     args += [ '-I./simde', '-Wno-bitwise-instead-of-logical' ]
-    if 'armv7' in platform:
+    if arm_arch == 'armv7':
         args += [ '-mfpu=neon-vfpv4', '-mfloat-abi=hard' ]
 
 if platform.startswith('win'):
@@ -124,6 +147,8 @@ else:
         '-Wno-empty-body',
         '-Wno-int-in-bool-context',
     ]
+
+    # Note: NATIVE_UCI assumes building with clang. And who gives a ... about gcc anyway?
     if NATIVE_UCI:
         args += [
             '-stdlib=libc++',
@@ -132,7 +157,7 @@ else:
         ]
         link += [
             '-fuse-ld=lld',
-            '-L/usr/lib/llvm-15/lib/',
+            f'-L/usr/lib/llvm-{get_compiler_major_version()}/lib/',
             '-L/usr/local/opt/llvm/lib/c++',
             '-lc++',
             '-lc++experimental',
@@ -158,7 +183,12 @@ extensions = [
         extra_link_args=link
     )]
 if not NATIVE_UCI:
-    extensions.append(Extension(name='uci', sources=['uci.pyx']))
+    extensions.append(Extension(
+        name='uci',
+        sources=['uci.pyx'],
+        extra_compile_args=args + inc_dirs,
+        extra_link_args=link
+    ))
 
 
 setup(ext_modules=cythonize(extensions), cmdclass={'build_ext': BuildExt})

@@ -24,22 +24,29 @@
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
-    #define ARCH "/native"
-#elif (__arm__) || (__aarch64__)
+#elif (__arm__) || (__arm64__) || (__aarch64__)
     #include "armvector.h"
-    #if __aarch64__
-        #define ARCH "/emulated/ARM64"
-    #else
-        #define ARCH "/emulated/ARM"
-    #endif
 #endif
 
 #if INSTRSET >= 9 /* AVX 512 */
     #define ALIGN alignas(64)
+    #ifndef ARCH
+        #define ARCH "AVX512"
+    #endif
 #else
     #define ALIGN alignas(32)
+    #ifndef ARCH
+        #if INSTRSET >= 8
+            #define ARCH "AVX2"
+        #else
+            #define ARCH "SSE2"
+        #endif
+    #endif /* ARCH */
 #endif /* INSTRSET >= 9 */
+
+
 #define DEBUG_INCREMENTAL false
+
 
 namespace nnue
 {
@@ -53,7 +60,6 @@ namespace nnue
 
     #if INSTRSET >= 9
         using Vector = Vec16f;
-        static const std::string instrset = __FMA__ ? "AVX512/FMA" ARCH : "AVX512" ARCH;
 
         INLINE Vector horizontal_add(const Vector (&v)[16])
         {
@@ -65,7 +71,6 @@ namespace nnue
         }
     #elif INSTRSET >= 8
         using Vector = Vec8f;
-        static const std::string instrset = __FMA__ ? "AVX2/FMA" ARCH : "AVX2" ARCH;
 
         INLINE Vector horizontal_add(const Vector (&v)[8])
         {
@@ -76,13 +81,18 @@ namespace nnue
     #else
         using Vector = Vec4f;
 
-        static const std::string instrset = "SSE2" ARCH;
-
         INLINE Vector horizontal_add(const Vector (&v)[4])
         {
             return Vector(horizontal_add(v[0]), horizontal_add(v[1]), horizontal_add(v[2]), horizontal_add(v[3]));
         }
     #endif /* INSTRSET */
+
+#ifdef __FMA__  /* support fused multiply+add? */
+    static const std::string instrset = ARCH "/FMA";
+#else
+    static const std::string instrset = ARCH;
+#endif /* __FMA__ */
+
 
     INLINE Vector horizontal_add(const Vector (&v)[1])
     {
@@ -116,7 +126,11 @@ namespace nnue
             #if INSTRSET >= 9
                 v.store_partial(1, p);
             #elif INSTRSET >= 8
+            #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+                *p = v[0];
+            #else
                 _mm_store_ss(p, _mm256_castps256_ps128(v));
+            #endif
             #else
                 _mm_store_ss(p, v);
             #endif
@@ -135,8 +149,7 @@ namespace nnue
     template <typename T>
     INLINE void one_hot_encode(const State& board, T (&encoding)[897])
     {
-        const uint64_t color_masks[2] = { board.occupied_co(BLACK), board.occupied_co(WHITE) };
-
+        const auto& color_masks = board._occupied_co;
         int i = 63;
         #pragma unroll 6
         for (const auto bb : {
@@ -203,12 +216,35 @@ namespace nnue
 
         Layer(const float(&w)[INPUTS][OUTPUTS], const float(&b)[OUTPUTS])
         {
+            set_weights(w, b);
+        }
+
+        void set_weights(const float(&w)[INPUTS][OUTPUTS], const float(&b)[OUTPUTS])
+        {
             for (int j = 0; j != OUTPUTS; ++j)
                 _b[j] = b[j] * Scale;
 
             for (int i = 0; i != INPUTS; ++i)
                 for (int j = 0; j != OUTPUTS; ++j)
                     _w[i][j] = _wt[j][i] = w[i][j] * Scale;
+        }
+
+        void set_weights(const std::vector<std::vector<float>>& w, const std::vector<float>& b)
+        {
+            if (w.size() != INPUTS || w[0].size() != OUTPUTS || b.size() != OUTPUTS)
+                throw std::invalid_argument("Input dimensions do not match layer dimensions");
+
+            float weights[INPUTS][OUTPUTS];
+            float biases[OUTPUTS];
+
+            for (int i = 0; i < INPUTS; ++i)
+                for (int j = 0; j < OUTPUTS; ++j)
+                    weights[i][j] = w[i][j];
+
+            for (int j = 0; j < OUTPUTS; ++j)
+                biases[j] = b[j];
+
+            set_weights(weights, biases);
         }
 
         /* input */
@@ -242,6 +278,7 @@ namespace nnue
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
+                #pragma unroll N
                 for (int k = 0; k != N; ++k)
                     sum[k] = Vec16s(0);
 
@@ -296,6 +333,7 @@ namespace nnue
 
             for (int j = 0; j != OUTPUTS; j += Q)
             {
+                #pragma unroll Q
                 for (int k = 0; k != Q; ++k)
                     sum[k] = Vector(0.0);
 
@@ -346,7 +384,7 @@ namespace nnue
         template <typename LA, typename LB>
         INLINE void update(const LA& layer_1a, const LB& layer_1b, const State& state)
         {
-            if (state.hash() != _hash)
+            if (needs_update(state))
             {
                 _hash = state.hash();
 
@@ -369,6 +407,11 @@ namespace nnue
             d[idx++] = mask_index(col, sq);
         }
 
+        INLINE bool needs_update(const State& state) const
+        {
+            return state.hash() != _hash;
+        }
+
         /** Update 1st layer output incrementally, based on a previous state */
         template <typename LA, typename LB, typename A>
         INLINE void update(
@@ -377,9 +420,9 @@ namespace nnue
             const State& prev,
             const State& state,
             const Move& move,
-            const A& ancestor)
+            A& ancestor)
         {
-            if (state.hash() != _hash)
+            if (needs_update(state))
             {
                 _hash = state.hash();
 
@@ -540,7 +583,7 @@ namespace nnue
                 const auto ptype = from_pos.piece_type_at(move.from_square());
 
                 delta(remove, r_idx, ptype, color, move.from_square());
-                delta(add, a_idx, ptype, color, move.to_square());;
+                delta(add, a_idx, ptype, color, move.to_square());
 
                 if (to_pos.is_castle)
                 {
@@ -578,30 +621,56 @@ namespace nnue
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float output[1];
 
-        static const Vector v_zero(0.0);
-
         activation(a._output_a, l2_in); // process output of hidden_1a
-        l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
-
         activation(a._output_b, attn_in); // process output of hidden_1b
 
         /*
          * The dynamic weights computed by the "attention" layer
          * are used to modulate the output of another hidden layer
-         * (L2, aka hidden_2) through element-wise multiplication.
+         * through element-wise multiplication.
          */
         attn.dot(attn_in, attn_out);
 
-        static_assert(ATTN::OUTPUTS == L2::OUTPUTS);
+        static_assert(L2::INPUTS % Vector::size() == 0);
         static_assert(ATTN::OUTPUTS % Vector::size() == 0);
 
+#if true /* (see args.tiled in train.py) */
+    #if true /* vectorized */
         Vector v1, v2;
-        for (int i = 0; i != L2::OUTPUTS; i += Vector::size())
+        for (int i = 0; i != L2::INPUTS; i += Vector::size())
         {
-            v1.load_a(&l2_out[i]);
-            v2.load_a(&attn_out[i]);
-            (v1 * v2).store_a(&l2_out[i]);
+            v1.load_a(&l2_in[i]);
+            v2.load_a(&attn_out[i % ATTN::OUTPUTS]);
+            (v1 * v2).store_a(&l2_in[i]);
         }
+    #else
+        for (int i = 0; i < L2::INPUTS; ++i)
+        {
+            l2_in[i] *= attn_out[i % ATTN::OUTPUTS];
+        }
+    #endif /* !vectorized */
+#else
+    #if true /* vectorized */
+        Vector v1;
+        for (int i = 0; i != L2::INPUTS; i += Vector::size())
+        {
+            v1.load_a(&l2_in[i]);
+
+            // Load the repeated value of attn_out to v2
+            Vector v2(attn_out[i * ATTN::OUTPUTS / L2::INPUTS]);
+
+            (v1 * v2).store_a(&l2_in[i]);
+        }
+    #else
+        for (int i = 0; i < L2::INPUTS; ++i)
+        {
+            l2_in[i] *= attn_out[i * ATTN::OUTPUTS / L2::INPUTS];
+        }
+    #endif /* !vectorized */
+#endif /* !TILED */
+
+        static const Vector v_zero(0.0);
+        l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
 
         out.dot(l2_out, output);
         return 100 * output[0];

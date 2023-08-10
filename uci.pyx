@@ -38,30 +38,38 @@ import time
 from math import copysign
 
 import chess
-import cpufeature
 import importlib
 
 from os import environ, path
 from psutil import Process
 from worker import WorkerThread
 
-'''
-Import the chess engine module flavor that best matches the CPU capabilities.
-'''
-def _is_avx512_supported():
-    for f in cpufeature.extension.CPUFeature:
-        if (f.startswith('AVX512') and cpufeature.extension.CPUFeature[f]):
-            return True
-    return False
 
-def _is_avx2_supported():
-    return cpufeature.extension.CPUFeature['AVX2']
+from libcpp.string cimport string
+cdef extern from 'nnue.h' namespace 'nnue':
+    string instrset
 
-flavors = {
-    'chess_engine_avx512': _is_avx512_supported,
-    'chess_engine_avx2': _is_avx2_supported,
-    'chess_engine': lambda *_: True,
-}
+try:
+    import cpufeature
+    '''
+    Import the chess engine module flavor that best matches the CPU capabilities.
+    '''
+    def _is_avx512_supported():
+        for f in cpufeature.extension.CPUFeature:
+            if (f.startswith('AVX512') and cpufeature.extension.CPUFeature[f]):
+                return True
+        return False
+
+    def _is_avx2_supported():
+        return cpufeature.extension.CPUFeature['AVX2']
+
+    flavors = {
+        'chess_engine_avx512': _is_avx512_supported,
+        'chess_engine_avx2': _is_avx2_supported,
+        'chess_engine': lambda *_: True,
+    }
+except ModuleNotFoundError:
+    flavors = { 'chess_engine': lambda *_: True }
 
 for eng in flavors:
     if not flavors[eng]():
@@ -506,7 +514,7 @@ class UCI:
 
 
 cdef void _main(args):
-    print(f'{NAME}-{engine.version()} UCI')
+    print(f'{NAME}-{engine.version()} UCI {instrset.decode()}')
     try:
         UCI(args).run()
     except:

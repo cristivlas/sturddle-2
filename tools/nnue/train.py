@@ -8,6 +8,7 @@ Expects memmapped numpy arrays or H5 files as inputs.
 import argparse
 import logging
 import os
+import re
 import sys
 from contextlib import redirect_stdout
 
@@ -17,10 +18,11 @@ import numpy as np
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+Q_SCALE = 1024
 # Quantization range: use int16_t with QSCALE of 1024, and need to add 18 values
 # (16 weights, 1 bias, 1 residual) w/o overflow, max representable value is 32767 / 18 / 1024
 Q_MAX = 32767 / 18 / 1024
-Q_MIN = 1 / 1024
+Q_MIN = -Q_MAX
 
 def configure_logging(args):
     log_level = logging.DEBUG if args.debug else logging.INFO
@@ -35,12 +37,26 @@ def configure_logging(args):
 
 
 def make_model(args, strategy):
-    @tf.function
-    def _clipped_mae(y_true, y_pred):
-        y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
-        return tf.keras.losses.mean_absolute_error(y_true, y_pred)
+    class CustomConstraint(Constraint):
+        def __call__(self, w):
+            w = tf.round(w * Q_SCALE) * (1.0 / Q_SCALE)
+            return tf.clip_by_value(w, Q_MIN, Q_MAX)
 
-    tf.keras.utils.get_custom_objects().update({'_clipped_mae': _clipped_mae})
+    def loss():
+        # return loss function
+        if args.loss == 'mae':
+            @tf.function
+            def clipped_loss(y_true, y_pred):
+                y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
+                return tf.keras.losses.mean_absolute_error(y_true, y_pred)
+            return clipped_loss if args.clip else MeanAbsoluteError()
+        else:
+            assert args.loss == 'mse'
+            @tf.function
+            def clipped_loss(y_true, y_pred):
+                y_true = tf.clip_by_value(y_true, -args.clip, args.clip)
+                return tf.keras.losses.mean_squared_error(y_true, y_pred)
+            return clipped_loss if args.clip else MeanSquaredError()
 
     with strategy.scope():
         activation = tf.keras.activations.relu
@@ -62,23 +78,22 @@ def make_model(args, strategy):
 
         # Extracting black occupation mask (summing black pieces' bitboards)
         black_occupied = Lambda(black_occupied_mask)(input_layer)
-
         # Extracting white occupation mask (summing white pieces' bitboards)
         white_occupied = Lambda(white_occupied_mask)(input_layer)
 
         concat = Concatenate()([input_layer, black_occupied, white_occupied])
+
+        # Simulate quantization effects
+        contraint = CustomConstraint() if args.quantization else None
 
         # Define layer 1a
         hidden_1a = Dense(
             512,
             activation=activation,
             name='hidden_1a',
-            kernel_constraint=MinMaxNorm(min_value=Q_MIN, max_value=Q_MAX),
-            bias_constraint=MinMaxNorm(min_value=Q_MIN, max_value=Q_MAX),
+            kernel_constraint=contraint,
+            bias_constraint=contraint,
         )(concat)
-
-        # Add 2nd hidden layer
-        hidden_2 = Dense(16, activation=activation, name='hidden_2')(hidden_1a)
 
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
         input_1b = Lambda(lambda x: x[:, :256], name='slice_input_1b')(input_layer)
@@ -86,32 +101,28 @@ def make_model(args, strategy):
             64,
             activation=activation,
             name='hidden_1b',
-            kernel_constraint=MinMaxNorm(min_value=Q_MIN, max_value=Q_MAX),
-            bias_constraint=MinMaxNorm(min_value=Q_MIN, max_value=Q_MAX),
+            kernel_constraint=contraint,
+            bias_constraint=contraint,
         )(input_1b)
 
         # Compute dynamic weights based on hidden_1b
-        dynamic_weights = Dense(
-            16,
-            activation=None,
-            name='dynamic_weights',
-            #kernel_regularizer=L1L2(l1=1e-5, l2=1e-4),
-            #bias_regularizer=L1L2(l1=1e-5, l2=1e-4),
-        )(hidden_1b)
+        dynamic_weights = Dense(16, activation=None, name='dynamic_weights')(hidden_1b)
+        if args.tiled:
+            attn_weights = Lambda(lambda x: tf.tile(x, tf.constant([1, 512 // 16])))(dynamic_weights)
+        else:
+            attn_weights = Lambda(lambda x: tf.repeat(x, repeats=512 // 16, axis=1))(dynamic_weights)
 
-        # Apply dynamic weights to hidden_2
-        weighted_hidden_2 = Multiply(name='weighted_hidden_2')([hidden_2, dynamic_weights])
+        # Apply weights to hidden_1a
+        weighted = Multiply(name='weighted_hidden_2')([hidden_1a, attn_weights])
+
+        # Add 2nd hidden layer
+        hidden_2 = Dense(16, activation=activation, name='hidden_2')(weighted)
 
         # Define the output layer
-        output_layer = Dense(1, name='out', dtype='float32')(weighted_hidden_2)
+        output_layer = Dense(1, name='out', dtype='float32')(hidden_2)
 
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer, name=args.name)
-
-        if args.clip:
-            loss = _clipped_mae
-        else:
-            loss = MeanAbsoluteError()
 
         if args.optimizer in ['adam', 'amsgrad']:
             optimizer=tf.keras.optimizers.Adam(
@@ -130,7 +141,7 @@ def make_model(args, strategy):
         else:
             assert False
 
-        model.compile(loss=loss, optimizer=optimizer, metrics=[])
+        model.compile(loss=loss(), optimizer=optimizer, metrics=[])
 
     return model
 
@@ -183,6 +194,8 @@ def export_weights(args, model, indent=2):
     else:
         with open(args.export, 'w+') as f:
             with redirect_stdout(f):
+                print('#pragma once')
+                print(f'// Generated from {args.model}')
                 write_weigths(args, model, indent)
 
 
@@ -318,6 +331,30 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
     return dataset, steps_per_epoch
 
 
+def load_model(path):
+    ''' Load model ignoring missing loss functions. '''
+    custom_objects = {}
+    while True:
+        try:
+            return tf.keras.models.load_model(path, custom_objects=custom_objects)
+        except ValueError as e:
+            match = re.search(r'Unknown loss function: \'(\w+)\'.*', str(e))
+            if match:
+                missing_object = match.group(1)
+                custom_objects[missing_object.strip()] = None
+                continue
+            raise
+
+
+def set_weights(from_model, to_model):
+    for layer in from_model.layers:
+        params = layer.get_weights()
+        if not params:
+            continue
+        to_layer = to_model.get_layer(layer.name)
+        to_layer.set_weights(params)
+
+
 def main(args):
     if args.gpu:
         strategy = tf.distribute.MirroredStrategy()
@@ -325,16 +362,25 @@ def main(args):
         strategy = tf.distribute.OneDeviceStrategy(device='/cpu:0')
 
     if args.model and os.path.exists(args.model):
-        saved_model = tf.keras.models.load_model(args.model, custom_objects={'_clipped_mae' : None})
+        saved_model = load_model(args.model)
         if not args.name:
             args.name = saved_model.name
         model = make_model(args, strategy)
-        model.set_weights(saved_model.get_weights())
+        set_weights(saved_model, model)
         print(f'Loaded model {os.path.abspath(args.model)}.')
     else:
         model = make_model(args, strategy)
 
-    if args.export:
+    if args.plot_file:
+        # Display the model architecture
+        tf.keras.utils.plot_model(
+            model,
+            to_file=args.plot_file,
+            show_shapes=True,
+            show_layer_names=True,
+            show_layer_activations=True,
+        )
+    elif args.export:
         export_weights(args, model)
     else:
         callbacks = []
@@ -342,7 +388,7 @@ def main(args):
 
         if args.schedule:
             from keras.callbacks import ReduceLROnPlateau
-            lr = ReduceLROnPlateau(monitor='loss', factor=0.2, patience=5, min_lr=1e-9)
+            lr = ReduceLROnPlateau(monitor='loss', factor=0.2, patience=3, min_lr=1e-7)
             callbacks.append(lr)
 
         if args.model is not None:
@@ -427,7 +473,7 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
-        parser.add_argument('-c', '--clip', type=int)
+        parser.add_argument('-c', '--clip', type=float)
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
         parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
@@ -448,15 +494,22 @@ if __name__ == '__main__':
         parser.add_argument('--hot-encoding', choices=(769,), type=int, default=769, help=argparse.SUPPRESS)
 
         parser.add_argument('--logdir', default='/tmp/logs', help='tensorboard log dir')
+        parser.add_argument('--loss', choices=['mae', 'mse'], default='mae', help='loss function')
         parser.add_argument('--macro-batch-size', type=int, default=0)
         parser.add_argument('--macro-epochs', type=int, default=1, help='epochs per macro-batch')
         parser.add_argument('--max-queue-size', type=int, default=10000, help='max size for queue that holds batches')
+        parser.add_argument('--mem-growth', action='store_true')
+        parser.add_argument('--mem-limit', type=int, default=0, help='GPU memory limit in MB')
         parser.add_argument('--mixed-precision', dest='mixed_precision', action='store_true', default=True, help='enable mixed precision')
         parser.add_argument('--name', help='optional model name')
         parser.add_argument('--nesterov', dest='nesterov', action='store_true', default=False, help='use Nesterov momentum (SGD only)')
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
         parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad', help='optimization algorithm')
+        parser.add_argument('--plot-file', help='plot model architecture to file')
+        parser.add_argument('--quantization', '-q', action='store_true', help='simulate quantization effects during training')
+        parser.add_argument('--tiled', action='store_true', default=True)
+        parser.add_argument('--no-tiled', dest='tiled', action='store_false')
         parser.add_argument('--tensorboard', '-t', action='store_true', help='enable TensorBoard')
         parser.add_argument('--schedule', action='store_true', help='use learning rate schedule')
         parser.add_argument('--validation', help='validation data filepath')
@@ -476,9 +529,9 @@ if __name__ == '__main__':
         import tensorflow as tf
         tf.get_logger().setLevel(log_level)
 
-        from tensorflow.keras.constraints import MinMaxNorm
+        from tensorflow.keras.constraints import Constraint
         from tensorflow.keras.layers import *
-        from tensorflow.keras.losses import MeanAbsoluteError
+        from tensorflow.keras.losses import MeanAbsoluteError, MeanSquaredError
         from tensorflow.keras.regularizers import L1L2
 
         print(f'TensorFlow version: {tf.__version__}')
@@ -492,6 +545,13 @@ if __name__ == '__main__':
             if gpus := tf.config.list_physical_devices('GPU'):
                 for gpu in gpus:
                     print(gpu)
+                    if args.mem_growth:
+                        tf.config.experimental.set_memory_growth(gpu, True)
+                    if args.mem_limit > 0:
+                        tf.config.set_logical_device_configuration(
+                            gpu,
+                            [tf.config.LogicalDeviceConfiguration(memory_limit=args.mem_limit)]
+                        )
                     cap = tf.config.experimental.get_device_details(gpu).get('compute_capability', None)
                     if cap != None:
                         logging.info(f'{gpu}: {cap}')

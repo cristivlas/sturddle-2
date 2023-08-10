@@ -28,9 +28,11 @@
 #include <iomanip>
 #include <iterator>
 #include <map>
+#include <fstream>
 #include <sstream>
 #include "chess.h"
 #include "weights.h"
+#include "nlohmann/json.hpp"
 
 #define CONFIG_IMPL
   #include "context.h"
@@ -194,7 +196,7 @@ static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
  * 128 inputs, which correspond to kings and pawns. The output of L1B is
  * processed by the dynamic weights layer (attention layer). The outputs
  * of the dynamic weights (attention) layer are multiplied element-wise
- * with the result of the L2 (hidden_2) layer.
+ * with the result of the L1A layer.
  */
 static nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE> L1A(hidden_1a_w, hidden_1a_b);
 static nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE> L1B(hidden_1b_w, hidden_1b_b);
@@ -203,15 +205,33 @@ static nnue::Layer<HIDDEN_1A, HIDDEN_2> L2(hidden_2_w, hidden_2_b);
 static nnue::Layer<HIDDEN_1B, HIDDEN_2> L_DYN(dynamic_weights_w, dynamic_weights_b);
 static nnue::Layer<HIDDEN_2, 1> L4(out_w, out_b);
 
+using WeightSetter = std::function<void(const std::vector<std::vector<float>>&, const std::vector<float>&)>;
+static std::unordered_map<std::string, WeightSetter> registry = {
+    { "hidden_1a", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L1A.set_weights(w, b); } },
+    { "hidden_1b", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L1B.set_weights(w, b); } },
+    { "hidden_2", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L2.set_weights(w, b); } },
+    { "dynamic_weights", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L_DYN.set_weights(w, b); } },
+    { "out", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L4.set_weights(w, b); } },
+};
+
 
 score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
 {
     auto& acc = NNUE_data[tid()][_ply];
 
     if (is_root() || _update_nnue)
+    {
         acc.update(L1A, L1B, state());
+    }
     else
-        acc.update(L1A, L1B, _parent->state(), state(), _move, NNUE_data[tid()][_ply - 1]);
+    {
+        auto& prev = NNUE_data[tid()][_ply - 1];
+        if (prev.needs_update(_parent->state()))
+        {
+            _parent->eval_nnue_raw(true);
+        }
+        acc.update(L1A, L1B, _parent->state(), state(), _move, prev);
+    }
 
     return update_only ? SCORE_MIN : nnue::eval(acc, L2, L_DYN, L4);
 }
@@ -268,6 +288,73 @@ void search::Context::update_root_accumulators()
         memcpy(acc._input, root._input, sizeof(acc._input));
     #endif
     }
+}
+
+
+static void set_default_model()
+{
+    L1A.set_weights(hidden_1a_w, hidden_1a_b);
+    L1B.set_weights(hidden_1b_w, hidden_1b_b);
+
+    L2.set_weights(hidden_2_w, hidden_2_b);
+    L_DYN.set_weights(dynamic_weights_w, dynamic_weights_b);
+    L4.set_weights(out_w, out_b);
+}
+
+
+static void load_model(const std::string& json_file_path)
+{
+    std::ifstream file(json_file_path);
+    nlohmann::json weights_json;
+    file >> weights_json;
+
+    for (auto& element : weights_json.items())
+    {
+        std::string layer_name = element.key();
+        auto weights_and_biases = element.value();
+
+        // TODO: validate
+        // const int input_dim = weights_and_biases["input_dim"];
+        // const int output_dim = weights_and_biases["output_dim"];
+
+        const auto weights = weights_and_biases["weights"].get<std::vector<std::vector<float>>>();
+        const auto biases = weights_and_biases["biases"].get<std::vector<float>>();
+
+        auto it = registry.find(layer_name);
+        if (it == registry.end())
+            throw std::runtime_error("no such layer: " + layer_name);
+        else
+            it->second(weights, biases);
+
+        search::Context::log_message(LogLevel::INFO, json_file_path + ": " + layer_name);
+    }
+
+}
+
+
+/*
+ * Load neural net model from JSON.
+ *
+ * (tools/nnue/modeltojson saves TensorFlow model params as JSON)
+ */
+void search::Context::load_nnue_model(const std::string& json_file_path)
+{
+    try
+    {
+        load_model(json_file_path);
+    }
+    catch(const std::exception& e)
+    {
+        std::cerr << e.what() << std::endl;
+        log_message(LogLevel::ERROR, e.what());
+
+        set_default_model();
+    }
+
+    /* reset accumulators */
+    for (int i = 0; i != SMP_CORES; ++i)
+        for (size_t j = 0; j != NNUE_data[i].size(); ++j)
+            NNUE_data[i][j]._hash = 0;
 }
 
 

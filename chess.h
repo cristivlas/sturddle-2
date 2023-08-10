@@ -358,10 +358,9 @@ namespace chess
     {
         while (bb)
         {
-            const auto temp = bb & -bb;
             if (auto r = f(static_cast<Square>(lsb(bb))))
                 return r;
-            bb ^= temp;
+            bb &= bb - 1;
         }
         return result_type<F>{};
     }
@@ -372,9 +371,8 @@ namespace chess
     {
         while (bb)
         {
-            const auto temp = bb & -bb;
             f(static_cast<Square>(lsb(bb)));
-            bb ^= temp;
+            bb &= bb - 1;
         }
     }
 
@@ -730,7 +728,7 @@ namespace chess
 #if USE_MAGIC_BITS
         return magic_bits_attacks.Rook(mask, square);
 #else
-        return BB_RANK_ATTACKS.get(square, mask) | BB_FILE_ATTACKS.get(square, mask);
+        return BB_ROOK_ATTACKS.get(square, mask);
 #endif /* !USE_MAGIC_BITS */
     }
 

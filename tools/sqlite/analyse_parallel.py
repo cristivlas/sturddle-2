@@ -129,7 +129,7 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--depth', type=int)
     parser.add_argument('-e', '--engine', default='stockfish')
     parser.add_argument('--hash', type=int, default=1024, help='engine hashtable size in MB')
-    parser.add_argument('-m', '--mate-score', type=int)
+    parser.add_argument('-m', '--mate-score', type=int, default=29999)
     parser.add_argument('-n', '--num_workers', type=int, default=1)
     parser.add_argument('-o', '--output', required=True)
     parser.add_argument('-t', '--time-limit', type=float, default=0.1)

@@ -53,7 +53,13 @@ if __name__ == '__main__':
 
     exe = f'"{sys.executable}"' # the Python interpreter
 
-    ARCHS = ['AVX512', 'AVX2', ''] if platform.machine() in ['x86_64', 'AMD64'] else ['']
+    ARCHS = [''] # default
+
+    if platform.machine() in ['x86_64', 'AMD64']:
+        ARCHS = ['AVX512', 'AVX2', '']
+    elif platform.machine() == 'aarch64':
+        ARCHS = ['ARMv8_2', '']
+
     if len(ARCHS) == 1 and not args.native_uci:
         print('Python UCI implementation not supported on this platform')
         os._exit(-1)
@@ -73,6 +79,8 @@ if __name__ == '__main__':
             arch_flags = '-march=core-avx2 -mtune=core-avx2' # '-DUSE_AVX2'
         elif arch == 'AVX512':
             arch_flags = '-march=skylake-avx512 -mtune=skylake-avx512' # '-DUSE_AVX512'
+        elif arch == 'ARMv8_2':
+            arch_flags = '-march=armv8.2-a+fp16'
 
         os.environ['CXXFLAGS'] = arch_flags
         arch = arch.lower()

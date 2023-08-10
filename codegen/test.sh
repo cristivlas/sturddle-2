@@ -6,7 +6,7 @@
 
 # build test program
 CC=${CC:-clang++}
-CARGS="-std=c++17 -march=native -O3 -I.. -I../libpopcnt -I../magic-bits/include -DTESTGEN"
+CARGS="-std=c++20 -march=native -O3 -I.. -I../libpopcnt -I../magic-bits/include -DTESTGEN"
 
 CMD="${CC} ${CARGS} testgen.cpp -g -o testgen"
 echo $CMD
