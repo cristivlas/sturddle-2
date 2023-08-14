@@ -335,6 +335,8 @@ namespace search
         INLINE int  next_move_index() { return _move_maker.current(*this); }
 
         bool        on_next();
+        INLINE int  piece_count() const { return chess::popcount(state().occupied()); }
+
         void        reinitialize();
         int         rewind(int where = 0, bool reorder = false);
         INLINE void set_counter_move(const BaseMove& move) { _counter_move = move; }
@@ -625,7 +627,9 @@ namespace search
             && (PruneCaptures || move._state->capture_value == 0)
             && (move.promotion() == chess::PieceType::NONE)
             && (move.from_square() != _capture_square)
+        #if 0
             && !is_counter_move(move)
+        #endif
             && can_forward_prune()
             && !move._state->is_check();
     }
@@ -894,6 +898,9 @@ namespace search
         return static_eval() >= _beta
             - NULL_MOVE_DEPTH_WEIGHT * depth()
             - improvement() / NULL_MOVE_IMPROVEMENT_DIV
+        #if 0
+            + NULL_MOVE_COMPLEXITY * _parent->_move_maker.count() / _parent->piece_count()
+        #endif
             + NULL_MOVE_MARGIN;
     }
 
