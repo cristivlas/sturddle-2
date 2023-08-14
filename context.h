@@ -627,9 +627,6 @@ namespace search
             && (PruneCaptures || move._state->capture_value == 0)
             && (move.promotion() == chess::PieceType::NONE)
             && (move.from_square() != _capture_square)
-        #if 0
-            && !is_counter_move(move)
-        #endif
             && can_forward_prune()
             && !move._state->is_check();
     }
@@ -898,9 +895,6 @@ namespace search
         return static_eval() >= _beta
             - NULL_MOVE_DEPTH_WEIGHT * depth()
             - improvement() / NULL_MOVE_IMPROVEMENT_DIV
-        #if 0
-            + NULL_MOVE_COMPLEXITY * _parent->_move_maker.count() / _parent->piece_count()
-        #endif
             + NULL_MOVE_MARGIN;
     }
 
@@ -972,8 +966,8 @@ namespace search
     INLINE int null_move_reduction(Context& ctxt)
     {
         return NULL_MOVE_REDUCTION
-            + ctxt.depth() / NULL_MOVE_DEPTH_DIV
-            + std::min(int(NULL_MOVE_MIN), (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_DIV);
+            + std::max(0, ctxt.depth()) / NULL_MOVE_DEPTH_DIV
+            + std::min(NULL_MOVE_MAX, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_DIV);
     }
 
 
@@ -1064,7 +1058,11 @@ namespace search
 
         #if ADAPTIVE_NULL_MOVE
             ASSERT(depth() >= 0);
-            ctxt->_max_depth -= std::min(depth(), null_move_reduction(*this));
+
+            const auto reduction = std::min(depth(), std::max(null_move_reduction(*this), 0));
+            ASSERT(reduction >= 0);
+
+            ctxt->_max_depth -= reduction;
 
             /*
              * Allow the null-move to descend one ply into qsearch, to get the

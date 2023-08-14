@@ -371,6 +371,15 @@ def set_weights(from_model, to_model):
 
 
 def main(args):
+    # Apply constraints explicitly
+    class ConstraintCallback(tf.keras.callbacks.Callback):
+        def on_batch_end(self, batch, logs=None):
+            for layer in self.model.layers:
+                if hasattr(layer, 'kernel') and layer.kernel.constraint:
+                    layer.kernel.assign(layer.kernel.constraint(layer.kernel))
+                if hasattr(layer, 'bias') and layer.bias.constraint:
+                    layer.bias.assign(layer.bias.constraint(layer.bias))
+
     if args.gpu:
         strategy = tf.distribute.MirroredStrategy()
     else:
@@ -400,6 +409,9 @@ def main(args):
     else:
         callbacks = []
         dataset, steps_per_epoch = dataset_from_file(args, args.input[0], args.clip, strategy, callbacks)
+
+        if args.quantization:
+            callbacks.append(ConstraintCallback())
 
         if args.schedule:
             from keras.callbacks import ReduceLROnPlateau
