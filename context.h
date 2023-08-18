@@ -693,12 +693,12 @@ namespace search
      */
     INLINE score_t Context::static_eval()
     {
-        if (is_valid(_tt_entry._value) && _tt_entry._depth >= depth())
-            return _tt_entry._value;
-
     #if WITH_NNUE
         if (is_valid(_eval))
             return _eval;
+    #else
+        if (is_valid(_tt_entry._value) && _tt_entry._depth >= depth())
+            return _tt_entry._value;
     #endif /* WITH_NNUE */
 
         return evaluate_material();
