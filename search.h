@@ -512,6 +512,7 @@ namespace search
     template<typename C>
     INLINE const int16_t* TranspositionTable::lookup(C& ctxt)
     {
+        ctxt._tt_entry = TT_Entry();
         if (ctxt._ply == 0 || ctxt._excluded)
             return nullptr;
 

@@ -688,23 +688,28 @@ namespace search
     }
 
 
-#if WITH_NNUE
+    /*
+     * Use value from the TT if available, else use material evaluation.
+     */
     INLINE score_t Context::static_eval()
     {
-        return is_valid(_eval) ? _eval : evaluate_material();
+        if (is_valid(_tt_entry._value) && _tt_entry._depth >= depth())
+            return _tt_entry._value;
+
+    #if WITH_NNUE
+        if (is_valid(_eval))
+            return _eval;
+    #endif /* WITH_NNUE */
+
+        return evaluate_material();
     }
-#else
+
+#if !WITH_NNUE
     INLINE void search::Context::eval_nnue() {}
     INLINE score_t search::Context::eval_nnue_raw(bool update_only) { return 0; }
     INLINE void search::Context::load_nnue_model(const std::string&) {}
     INLINE void search::Context::update_root_accumulators() {}
-
-    /* Use value from the TT if available, else do a quick material evaluation. */
-    INLINE score_t Context::static_eval()
-    {
-        return is_valid(_tt_entry._value) ? _tt_entry._value : evaluate_material();
-    }
-#endif /* WITH_NNUE */
+#endif /* !WITH_NNUE */
 
 
     template<bool EvalCaptures> INLINE score_t Context::evaluate()
