@@ -780,7 +780,9 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         && next_ctxt->_move._group == MoveOrder::HASH_MOVES
                         && abs(ctxt._tt_entry._value) < MATE_HIGH
                         && !ctxt._excluded
-                        && ctxt._tt_entry._depth >= ctxt.depth() - 3)
+                        && ctxt._tt_entry._depth >= ctxt.depth() - 3
+                        && abs(ctxt._eval - ctxt._tt_entry._value) <= SINGULAR_ACCURACY_MARGIN
+                       )
                     {
                         const auto s_beta = std::max(int(ctxt._tt_entry._value) - ctxt.singular_margin(), MATE_LOW);
                         /*
