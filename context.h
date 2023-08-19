@@ -896,7 +896,15 @@ namespace search
             return false;
 
         ASSERT(depth() >= 0);
-
+    #if 0
+        if (   depth() < NULL_MOVE_MIN_VERIFICATION_DEPTH
+            && is_valid(_eval)
+            && abs(_tt_entry._value) < MATE_HIGH
+            && _tt_entry._depth >= depth()
+            && abs(_eval - _tt_entry._value) > ACCURACY_MARGIN
+           )
+            return false;
+    #endif
         return static_eval() >= _beta
             - NULL_MOVE_DEPTH_WEIGHT * depth()
             - improvement() / NULL_MOVE_IMPROVEMENT_DIV
@@ -971,7 +979,7 @@ namespace search
     INLINE int null_move_reduction(Context& ctxt)
     {
         return NULL_MOVE_REDUCTION
-            + std::max(0, ctxt.depth()) / NULL_MOVE_DEPTH_DIV
+            + ctxt.depth() / NULL_MOVE_DEPTH_DIV
             + std::min(NULL_MOVE_MAX, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_DIV);
     }
 

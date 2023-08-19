@@ -1545,6 +1545,12 @@ namespace search
     }
 
 
+    static INLINE int window_delta(int iteration, int depth, double score)
+    {
+        return HALF_WINDOW * pow2(iteration) + WINDOW_COEFF * depth * log(0.001 + abs(score) / WINDOW_DIV);
+    }
+
+
     void Context::set_search_window(score_t score, score_t& prev_score)
     {
         if (!ASPIRATION_WINDOW || iteration() == 1)
@@ -1564,13 +1570,13 @@ namespace search
         }
         else if (score <= _tt->_w_alpha)
         {
-            _alpha = std::max<score_t>(SCORE_MIN, score - HALF_WINDOW * pow2(iteration()));
+            _alpha = std::max<score_t>(SCORE_MIN, score - window_delta(iteration(), _tt->_eval_depth, score));
             _beta = _tt->_w_beta;
         }
         else if (score >= _tt->_w_beta)
         {
             _alpha = _tt->_w_alpha;
-            _beta = std::min<score_t>(SCORE_MAX, score + HALF_WINDOW * pow2(iteration()));
+            _beta = std::min<score_t>(SCORE_MAX, score + window_delta(iteration(), _tt->_eval_depth, score));
         }
         else
         {
