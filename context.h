@@ -724,7 +724,6 @@ namespace search
         ASSERT(score > SCORE_MIN);
         ASSERT(score < SCORE_MAX);
 
-    #if 0
         if constexpr(EvalCaptures)
         {
             if (abs(score) < MATE_HIGH)
@@ -743,7 +742,6 @@ namespace search
                 ASSERT(score < SCORE_MAX);
             }
         }
-    #endif /* 0 */
         return score;
     }
 
