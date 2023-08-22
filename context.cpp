@@ -1628,12 +1628,13 @@ namespace search
 
         if (is_capture() || (_move.from_square() == _parent->_capture_square))
             --reduction;
-
+    #if 1
         reduction = std::max(1, reduction);
-
         if (reduction > depth && can_prune())
             return LMRAction::Prune;
-
+    #else
+         reduction = std::max(1, std::min(depth, reduction));
+    #endif
         ASSERT(reduction > 0);
         _max_depth -= reduction;
 
@@ -1681,6 +1682,9 @@ namespace search
             ASSERT(_ply == 1);
             return true;
         }
+
+        if (WEIGHT[_parent->state().piece_type_at(_move.from_square())] <= state().capture_value)
+            return false;
 
         if (depth() > 0
             || is_null_move()

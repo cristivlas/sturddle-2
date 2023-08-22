@@ -804,10 +804,14 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                         if (eval < s_beta)
                         {
-                            next_ctxt->_extension += ONE_PLY;
+                            const auto ext = (SINGULAR_ACCURACY_MARGIN - abs(ctxt._eval - ctxt._tt_entry._value))
+                                * ONE_PLY / SINGULAR_ACCURACY_MARGIN;
+                            ASSERT(ext >= 0);
+
+                            next_ctxt->_extension += ext; /* extend once */
                             if (!ctxt.is_pv_node() && eval + DOUBLE_EXT_MARGIN < s_beta)
                             {
-                                next_ctxt->_extension += ONE_PLY;
+                                next_ctxt->_extension += ext; /* extend more */
                             }
                         }
                         /*

@@ -724,6 +724,7 @@ namespace search
         ASSERT(score > SCORE_MIN);
         ASSERT(score < SCORE_MAX);
 
+    #if 0
         if constexpr(EvalCaptures)
         {
             if (abs(score) < MATE_HIGH)
@@ -742,6 +743,7 @@ namespace search
                 ASSERT(score < SCORE_MAX);
             }
         }
+    #endif /* 0 */
         return score;
     }
 
@@ -886,7 +888,9 @@ namespace search
             || _null_move_allowed[turn()] == false
             || _excluded
             || is_null_move() /* consecutive null moves are not allowed */
+        #if 0
             || is_qsearch()
+        #endif
             || is_pv_node()
             || is_mate_bound()
             || is_repeated()
@@ -896,15 +900,6 @@ namespace search
             return false;
 
         ASSERT(depth() >= 0);
-    #if 0
-        if (   depth() < NULL_MOVE_MIN_VERIFICATION_DEPTH
-            && is_valid(_eval)
-            && abs(_tt_entry._value) < MATE_HIGH
-            && _tt_entry._depth >= depth()
-            && abs(_eval - _tt_entry._value) > ACCURACY_MARGIN
-           )
-            return false;
-    #endif
         return static_eval() >= _beta
             - NULL_MOVE_DEPTH_WEIGHT * depth()
             - improvement() / NULL_MOVE_IMPROVEMENT_DIV
@@ -1223,15 +1218,18 @@ namespace search
 
     INLINE void Context::set_time_ctrl(const TimeControl& ctrl, score_t delta)
     {
-        int time_limit = 0;
         const auto side_to_move = turn();
         const auto millisec = ctrl.millisec[side_to_move];
-        const auto moves = ctrl.moves;
+        auto moves = ctrl.moves;
 
         if (delta < TIME_CTRL_EVAL_THRESHOLD)
-            time_limit = millisec / std::min(10, moves); /* take more time */
-        else
-            time_limit = millisec / moves;
+            moves = std::min(10, moves); /* take more time */
+
+        int time_limit = millisec / moves;
+
+        /* have more time than the opponent? spend some of it. */
+        auto extra = std::max(0, millisec - ctrl.millisec[!side_to_move] - 1) / moves;
+        time_limit += extra * (time_limit + extra < millisec);
 
         _time_limit.store(std::max(1, time_limit), std::memory_order_relaxed);
     }
