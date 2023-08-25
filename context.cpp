@@ -239,11 +239,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
 
 void search::Context::eval_nnue()
 {
-    if (is_valid(_eval))
-    {
-        ASSERT(!NNUE_data[tid()][_ply].needs_update());
-    }
-    else
+    if (!is_valid(_eval))
     {
         auto eval = evaluate_material();
 
@@ -365,7 +361,6 @@ namespace search
      * Context
      *---------------------------------------------------------------------*/
     atomic_bool Context::_cancel(false);
-    atomic_bool Context::_singleton(false);
     atomic_int  Context::_tb_cardinality(6);
     atomic_int  Context::_time_limit(-1); /* milliseconds */
     atomic_time Context::_time_start;
@@ -1505,7 +1500,7 @@ namespace search
         ASSERT(is_root());
         ASSERT(!_is_null_move);
         ASSERT(_tt->_w_alpha <= _alpha);
-        ASSERT(iteration());
+
         ASSERT(_retry_above_alpha == RETRY::None);
 
         _cancel = false;
@@ -1529,8 +1524,6 @@ namespace search
 
         _retry_next = false;
         _retry_beta = SCORE_MAX;
-
-        _singleton = false;
 
         rewind(0, true);
     }
@@ -1668,7 +1661,7 @@ namespace search
             return true;
 
         /* the only available move? */
-        if (is_singleton())
+        if (_is_singleton)
         {
             ASSERT(_ply == 1);
             return true;
@@ -2017,6 +2010,8 @@ namespace search
                     {
                         auto& ctxt_acc = NNUE_data[ctxt.tid()][0];
                         auto& move_acc = NNUE_data[ctxt.tid()][1];
+                        if (ctxt_acc.needs_update(ctxt.state()))
+                            ctxt_acc.update(L1A, L1B, ctxt.state());
                         ASSERT(ctxt_acc._hash == ctxt.state().hash());
                         move_acc.update(L1A, L1B, ctxt.state(), *move._state, move, ctxt_acc);
                         move._score = -nnue::eval(move_acc, L2, L_DYN, L4);

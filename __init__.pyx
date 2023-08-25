@@ -486,6 +486,7 @@ cdef extern from 'context.h' namespace 'search':
         bool            is_repeated() const
         int             iteration() const
         int             rewind(int where, bool reorder)
+        void            reinitialize()
 
         @staticmethod
         void set_time_limit_ms(int millisec) nogil
@@ -1032,6 +1033,7 @@ cdef class SearchAlgorithm:
         self._table.init()
         self.set_context_callbacks()
         self.context._ctxt.set_tt(address(self._table))
+        self.context._ctxt.reinitialize()
         self.context._ctxt._max_depth = self.depth
         self.context._ctxt._prev = BaseMove()
 

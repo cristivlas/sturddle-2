@@ -1280,6 +1280,8 @@ std::vector<TaskData> SMPTasks::_tables;
  */
 score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter_count)
 {
+    ASSERT(ctxt.is_root());
+
     score_t score = 0, prev_score = 0;
     max_iter_count = std::min(PLY_MAX, max_iter_count);
 
@@ -1334,7 +1336,7 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
             (*Context::_on_iter)(Context::_engine, &ctxt, &info);
         }
 
-        if (Context::is_singleton())
+        if (ctxt.move_count() == 1)
             break;
 
         if (i++ == 1)

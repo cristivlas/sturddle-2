@@ -224,6 +224,7 @@ namespace search
         bool        _is_null_move = false; /* for null-move pruning */
         bool        _is_pv = false;
         bool        _is_retry = false;
+        bool        _is_singleton = false;
         bool        _multicut_allowed = true;
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
@@ -316,7 +317,6 @@ namespace search
         int         is_repeated() const;
         INLINE bool is_retry() const { return _is_retry; }
         INLINE bool is_root() const { return _ply == 0; }
-        static bool is_singleton() { return _singleton.load(std::memory_order_relaxed); }
 
         INLINE int  iteration() const { ASSERT(_tt); return _tt->_iteration; }
 
@@ -326,6 +326,7 @@ namespace search
         static void load_nnue_model(const std::string& json_file_path); /* no-op if !WITH_NNUE */
         static void log_message(LogLevel, const std::string&, bool force = true);
 
+        int         move_count() const { return _move_maker.count(); }
         int64_t     nanosleep(int nanosec);
 
         Context*    next(bool null_move, score_t, int move_count);
@@ -408,7 +409,6 @@ namespace search
         static atomic_bool  _cancel;
 
         static size_t       _callback_count;
-        static atomic_bool  _singleton;  /* there's only one legal move */
         static atomic_int   _time_limit; /* milliseconds */
         static atomic_time  _time_start;
         static std::string  _syzygy_path;
@@ -983,6 +983,7 @@ namespace search
     INLINE Context* Context::next(bool null_move, score_t futility, int move_count)
     {
         ASSERT(_alpha < _beta);
+        ASSERT(!_is_singleton);
 
         const bool retry = _retry_next;
         _retry_next = false;
@@ -1045,10 +1046,7 @@ namespace search
         ctxt->_extension = _extension;
         ctxt->_is_retry = retry;
         if (is_root())
-        {
-            ASSERT(!is_singleton());
-            _singleton = !ctxt->is_null_move() && _move_maker.is_singleton(*this);
-        }
+            ctxt->_is_singleton = !ctxt->is_null_move() && _move_maker.is_singleton(*this);
         ctxt->_futility_pruning = _futility_pruning && FUTILITY_PRUNING;
         ctxt->_multicut_allowed = _multicut_allowed && MULTICUT;
 
