@@ -1562,6 +1562,7 @@ namespace search
 
     INLINE void MoveMaker::mark_as_pruned(Context& ctxt, Move& move)
     {
+        ASSERT(!ctxt.is_root());
         move._group = MoveOrder::PRUNED_MOVES;
         _have_pruned_moves = true;
         ++ctxt._pruned_count;

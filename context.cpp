@@ -558,7 +558,6 @@ namespace search
 
         if (_pruned_count || _move_maker.have_skipped_moves())
         {
-            ASSERT(_ply > 0);
             ASSERT(!is_check());
 
             return evaluate();

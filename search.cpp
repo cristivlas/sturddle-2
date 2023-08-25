@@ -523,6 +523,7 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
 
 static INLINE void update_pruned(Context& ctxt, const Context& next, size_t& count)
 {
+    ASSERT(!ctxt.is_root());
     ++ctxt._pruned_count;
 
     if constexpr(EXTRA_STATS)
