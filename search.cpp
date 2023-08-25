@@ -1318,9 +1318,6 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
         }   /* SMP scope end */
 
-        if (i == 1)
-            ctxt.update_root_accumulators();
-
         ASSERT(ctxt.iteration() == ctxt._max_depth);
 
         /* post iteration info to Cython */
@@ -1336,7 +1333,12 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
             (*Context::_on_iter)(Context::_engine, &ctxt, &info);
         }
-        ++i;
+
+        if (Context::is_singleton())
+            break;
+
+        if (i++ == 1)
+            ctxt.update_root_accumulators();
     }
 
     return score;

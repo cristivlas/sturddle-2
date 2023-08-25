@@ -365,6 +365,7 @@ namespace search
      * Context
      *---------------------------------------------------------------------*/
     atomic_bool Context::_cancel(false);
+    atomic_bool Context::_singleton(false);
     atomic_int  Context::_tb_cardinality(6);
     atomic_int  Context::_time_limit(-1); /* milliseconds */
     atomic_time Context::_time_start;
@@ -1529,6 +1530,8 @@ namespace search
         _retry_next = false;
         _retry_beta = SCORE_MAX;
 
+        _singleton = false;
+
         rewind(0, true);
     }
 
@@ -1665,7 +1668,7 @@ namespace search
             return true;
 
         /* the only available move? */
-        if (_is_singleton)
+        if (is_singleton())
         {
             ASSERT(_ply == 1);
             return true;
