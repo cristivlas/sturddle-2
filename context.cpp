@@ -558,6 +558,7 @@ namespace search
 
         if (_pruned_count || _move_maker.have_skipped_moves())
         {
+            ASSERT(_ply > 0);
             ASSERT(!is_check());
 
             return evaluate();
@@ -1860,7 +1861,7 @@ namespace search
          * If in check, no need to determine "quieteness", since
          * all legal moves are about getting out of check.
          */
-        _group_quiet_moves = (ctxt.depth() <= 0 && !ctxt.is_check());
+        _group_quiet_moves = (ctxt.depth() <= 0 && !ctxt.is_root() && !ctxt.is_check());
 
         if (ctxt._ply * !ctxt.is_null_move() * !ctxt._excluded)
         {
