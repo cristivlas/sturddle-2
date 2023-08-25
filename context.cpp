@@ -239,36 +239,24 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
 
 void search::Context::eval_nnue()
 {
-    if (!is_valid(_eval))
+    if (is_valid(_eval))
     {
-        /* skip NNUE evaluation for large deltas in material */
-        /* if (state().is_endgame()) */
-        {
-            const auto eval = static_eval();
-            if (abs(eval) > MAX_NNUE_EVAL)
-            {
-                eval_nnue_raw(true); /* update accumulator, do not evaluate */
-                _eval = eval + eval_fuzz();
-                return;
-            }
-        }
-
-        auto eval = eval_nnue_raw() + eval_fuzz();
-
-        /* Make sure that insufficient material conditions are detected. */
-        eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
-
-        eval *= NNUE_EVAL_SCALE + evaluate_material() / 32;
-        eval /= 1024;
-    #if 0
-        _eval = std::max(-CHECKMATE, std::min(CHECKMATE, eval));
-    #else
-        _eval = eval;
-    #endif
+        ASSERT(!NNUE_data[tid()][_ply].needs_update());
     }
     else
     {
-        ASSERT(state().hash() == NNUE_data[tid()][_ply]._hash);
+        auto eval = evaluate_material();
+
+        /* stick with material eval if in quiescent search, or if heavily imbalanced */
+        if (!is_qsearch() && abs(eval) <= MAX_NNUE_EVAL)
+        {
+            eval = eval_nnue_raw() * (NNUE_EVAL_SCALE + eval / 32) / 1024;
+        }
+
+        eval += eval_fuzz();
+
+        /* Make sure that insufficient material conditions are detected. */
+        _eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
     }
 }
 
@@ -1684,7 +1672,7 @@ namespace search
         }
     #if 0
         if (WEIGHT[_parent->state().piece_type_at(_move.from_square())] <= state().capture_value)
-            return false;
+            return false;  /* descend into quiescent search */
     #endif
         if (depth() > 0
             || is_null_move()

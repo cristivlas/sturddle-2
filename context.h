@@ -726,6 +726,7 @@ namespace search
 
         if constexpr(EvalCaptures)
         {
+            /* if either side is close to mate, captures may not make a diff. */
             if (abs(score) < MATE_HIGH)
             {
                 /* 3. Captures */
@@ -886,9 +887,7 @@ namespace search
             || _null_move_allowed[turn()] == false
             || _excluded
             || is_null_move() /* consecutive null moves are not allowed */
-        #if 0
             || is_qsearch()
-        #endif
             || is_pv_node()
             || is_mate_bound()
             || is_repeated()
@@ -1218,16 +1217,20 @@ namespace search
     {
         const auto side_to_move = turn();
         const auto millisec = ctrl.millisec[side_to_move];
-        auto moves = ctrl.moves;
+        auto moves = ctrl.moves; /* number of moves till next time control */
 
         if (delta < TIME_CTRL_EVAL_THRESHOLD)
-            moves = std::min(10, moves); /* take more time */
+            moves = std::min(10, moves); /* score worsened, take more time */
 
         int time_limit = millisec / moves;
 
+        const auto t_diff = (millisec - ctrl.millisec[!side_to_move] - 1) / moves;
         /* have more time than the opponent? spend some of it. */
-        auto extra = std::max(0, millisec - ctrl.millisec[!side_to_move] - 1) / moves;
-        time_limit += extra * (time_limit + extra < millisec);
+        if (t_diff > 0 && time_limit + t_diff < millisec)
+            time_limit += t_diff;
+        /* if there's a time deficit, and search improved: lower the time limit. */
+        else if (delta >=0 && t_diff < 0 && time_limit + t_diff > 0)
+            time_limit += t_diff;
 
         _time_limit.store(std::max(1, time_limit), std::memory_order_relaxed);
     }
