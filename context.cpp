@@ -1502,6 +1502,7 @@ namespace search
 
         ASSERT(_retry_above_alpha == RETRY::None);
 
+        _best_move = BaseMove();
         _cancel = false;
         _can_prune = -1;
 
