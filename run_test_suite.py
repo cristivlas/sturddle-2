@@ -103,8 +103,9 @@ def search(algo_class, name, board, expected, depths, **kwargs):
 
     print (f'{timer.info}', end=' | ')
     uci = move.uci() if move else None
-    san = board.san_and_push(move) if move else None
-    assert board.is_valid()
+    new_board = board.copy()
+    san = new_board.san_and_push(move) if move else None
+    assert new_board.is_valid(), (board, move)
 
     depths[0] += algo.current_depth
 

@@ -1451,6 +1451,11 @@ namespace search
 
             move._state = &Context::states(ctxt.tid(), ctxt._ply)[_state_index++];
         }
+        else if (move._state->is_check(!move._state->turn))
+        {
+            mark_as_illegal(move);
+            return false;
+        }
         else
         {
             return (_have_move = true);
