@@ -2,9 +2,14 @@
 /** http://wbec-ridderkerk.nl/html/UCIProtocol.html */
 #include <iostream>
 #include <string_view>
+#include <tuple>
+#include <unordered_map>
 #include "context.h"
 #if WITH_NNUE
     #include "nnue.h"
+#endif
+#if DATAGEN
+    #include <sqlite3.h>
 #endif
 
 /** Raise RuntimeError, and let Python handle it... */
@@ -259,7 +264,6 @@ namespace
             OptionBase::print(out);
             out << "type string default " << _json_file_path;
         }
-
         void set(std::string_view value) override
         {
             search::Context::load_nnue_model(std::string(value));
@@ -267,6 +271,119 @@ namespace
         }
     };
 
+#if DATAGEN
+    /* Collect data to use for training a neural net. */
+    struct Database
+    {
+        std::string _filename;
+        sqlite3* _handle = nullptr;
+
+        static constexpr const char* SCHEMA =
+            "CREATE TABLE IF NOT EXISTS position(epd text PRIMARY KEY, depth integer, score integer)";
+
+        Database(std::string_view filename) : _filename(filename)
+        {
+            if (sqlite3_open(_filename.c_str(), &_handle) != SQLITE_OK)
+            {
+                throw std::runtime_error(errmsg("sqlite3_open"));
+            }
+
+            if (sqlite3_exec(_handle, SCHEMA, nullptr, nullptr, nullptr) != SQLITE_OK)
+            {
+                throw std::runtime_error(errmsg("sqlite3_exec"));
+            }
+        }
+
+        ~Database() { sqlite3_close(_handle); }
+
+        std::string errmsg(const char* op) const
+        {
+            return std::format("{}({}): {}", _filename, op, sqlite3_errmsg(_handle));
+        }
+    };
+
+    std::unique_ptr<Database> g_db;
+    std::unordered_map<std::string, std::tuple<search::BaseMove, int, score_t>> g_data;
+
+
+    struct OptionDB : public OptionBase
+    {
+        OptionDB() : OptionBase("DB") {}
+
+        void print(std::ostream& out) const override
+        {
+            OptionBase::print(out);
+            out << "type string default " << (g_db ? g_db->_filename : std::string());
+        }
+
+        void set(std::string_view value) override
+        {
+            g_db = std::make_unique<Database>(value);
+        }
+    };
+
+
+    static void data_collect_move(const search::Context& ctxt, const search::BaseMove& move)
+    {
+        if (g_db)
+        {
+            ASSERT(ctxt.get_tt());
+
+            LOG_DEBUG(std::format("data_collect_move[{}]: {} {} {}",
+                ctxt.iteration(), ctxt.epd(), move.uci(), ctxt._eval));
+
+            g_data.emplace(ctxt.epd(), std::make_tuple(move, ctxt.iteration(), ctxt._eval));
+        }
+    }
+
+    static void data_flush(const search::Context& ctxt)
+    {
+        static const char* INSERT_OR_REPLACE = R"(
+            INSERT OR REPLACE INTO position (epd, depth, score)
+            SELECT
+                ?1,
+                ?2,
+                ?3
+            WHERE
+                NOT EXISTS (SELECT 1 FROM position WHERE epd = ?1)
+                OR ?2 > (SELECT depth FROM position WHERE epd = ?1);
+            )";
+
+        if (g_db /* && ctxt._score > 550 */)
+        {
+            search::Context::log_message(LogLevel::INFO, std::format("data_flush: score={}", ctxt._score));
+
+            sqlite3_stmt* stmt = nullptr;
+            if (sqlite3_prepare_v2(g_db->_handle, INSERT_OR_REPLACE, -1, &stmt, nullptr) != SQLITE_OK)
+            {
+                search::Context::log_message(LogLevel::ERROR, g_db->errmsg("sqlite3_prepare"));
+            }
+            else
+            {
+                for (auto i = g_data.begin(); i != g_data.end(); ++i)
+                {
+                    sqlite3_bind_text(stmt, 1, i->first.c_str(), -1, SQLITE_STATIC);
+                    sqlite3_bind_int(stmt, 2, std::get<1>(i->second));
+                    sqlite3_bind_int(stmt, 3, std::get<2>(i->second));
+
+                    if (sqlite3_step(stmt) != SQLITE_DONE)
+                    {
+                        search::Context::log_message(LogLevel::ERROR, g_db->errmsg("sqlite3_step"));
+                        break;
+                    }
+                    sqlite3_reset(stmt);
+                }
+                sqlite3_finalize(stmt);
+            }
+            g_data.clear();
+        }
+    }
+#else
+
+    static void data_collect_move(const search::Context&, const search::BaseMove&) {}
+    static void data_flush(const search::Context&) {}
+
+#endif /* DATAGEN */
 }
 
 using ThreadPool = thread_pool<>;
@@ -301,6 +418,9 @@ public:
         _options.emplace("ownbook", std::make_shared<OptionBool>("OwnBook", _use_opening_book));
         _options.emplace("ponder", std::make_shared<OptionBool>("Ponder", _ponder));
         _options.emplace("syzygypath", std::make_shared<OptionSyzygy>());
+    #if DATAGEN
+        _options.emplace("db", std::make_shared<OptionDB>());
+    #endif
     }
 
     static bool output_expected() { return _output_expected.load(std::memory_order_relaxed); }
@@ -411,6 +531,8 @@ private:
             }
             std::format_to(std::back_inserter(g_out), "bestmove {}", move.uci());
             output(g_out);
+
+            data_collect_move(context(), move);
         }
     }
 
@@ -628,6 +750,7 @@ void UCI::run()
         {
             _output_expected = false;
             stop();
+            data_flush(context());
             break;
         }
         dispatch(cmd, args);
@@ -870,6 +993,7 @@ INLINE void UCI::isready()
 void UCI::newgame()
 {
     stop();
+    data_flush(context());
     search::TranspositionTable::clear_shared_hashtable();
     set_start_position();
     _book_depth = max_depth;
