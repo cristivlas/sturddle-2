@@ -669,6 +669,7 @@ namespace search
     template <typename F>
     INLINE score_t eval_insufficient_material(const State& state, score_t eval, F f)
     {
+    #if !WITH_NNUE /* assume NNUE eval already accounts for insufficient material */
         if (state.is_endgame() && state.has_insufficient_material(state.turn))
         {
             if (state.has_insufficient_material(!state.turn))
@@ -684,7 +685,7 @@ namespace search
         {
             eval = f();
         }
-
+    #endif /* !WITH_NNUE */
         return eval;
     }
 
