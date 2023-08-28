@@ -738,7 +738,7 @@ namespace search
                 if (capt >= MATE_HIGH)
                     score = capt - 1;
                 else
-                    score += capt;
+                    score += capt * CAPTURES_SCALE / 100;
 
                 ASSERT(score > SCORE_MIN);
                 ASSERT(score < SCORE_MAX);

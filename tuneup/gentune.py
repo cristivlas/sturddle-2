@@ -68,7 +68,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    args.concurrency //= args.smp_cores
+    args.concurrency = max(1, args.concurrency // args.smp_cores)
 
     # strip 'all'
     _, *tunable = tunable

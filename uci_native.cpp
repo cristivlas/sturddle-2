@@ -303,7 +303,8 @@ namespace
     };
 
     std::unique_ptr<Database> g_db;
-    std::unordered_map<std::string, std::tuple<search::BaseMove, int, score_t>> g_data;
+    using EvalData = std::unordered_map<std::string, std::tuple<search::BaseMove, int, score_t>>;
+    EvalData g_data, g_dataDefer;
 
 
     struct OptionDB : public OptionBase
@@ -318,7 +319,20 @@ namespace
 
         void set(std::string_view value) override
         {
-            g_db = std::make_unique<Database>(value);
+            try
+            {
+                g_db = std::make_unique<Database>(value);
+            }
+            catch (const std::exception& e)
+            {
+                ASSERT_ALWAYS(!g_db);
+                search::Context::log_message(LogLevel::WARN, e.what());
+            }
+            catch (...)
+            {
+                ASSERT_ALWAYS(!g_db);
+                throw;
+            }
         }
     };
 
@@ -349,9 +363,17 @@ namespace
                 OR ?2 > (SELECT depth FROM position WHERE epd = ?1);
             )";
 
-        if (g_db /* && ctxt._score > 550 */)
-        {
+        if (ctxt._score < DATAGEN_SCORE_THRESHOLD)
+            g_data.clear();
+        else
             search::Context::log_message(LogLevel::INFO, std::format("data_flush: score={}", ctxt._score));
+
+        g_data.insert(g_dataDefer.begin(), g_dataDefer.end());
+        g_dataDefer.clear();
+
+        if (!g_data.empty())
+        {
+            ASSERT_ALWAYS(g_db);
 
             sqlite3_stmt* stmt = nullptr;
             if (sqlite3_prepare_v2(g_db->_handle, INSERT_OR_REPLACE, -1, &stmt, nullptr) != SQLITE_OK)
@@ -360,8 +382,9 @@ namespace
             }
             else
             {
-                for (auto i = g_data.begin(); i != g_data.end(); ++i)
+                while (!g_data.empty())
                 {
+                    auto i = g_data.begin();
                     sqlite3_bind_text(stmt, 1, i->first.c_str(), -1, SQLITE_STATIC);
                     sqlite3_bind_int(stmt, 2, std::get<1>(i->second));
                     sqlite3_bind_int(stmt, 3, std::get<2>(i->second));
@@ -369,8 +392,11 @@ namespace
                     if (sqlite3_step(stmt) != SQLITE_DONE)
                     {
                         search::Context::log_message(LogLevel::ERROR, g_db->errmsg("sqlite3_step"));
+                        search::Context::log_message(LogLevel::INFO, std::format("defer {} data points", g_data.size()));
+                        g_dataDefer.insert(g_data.begin(), g_data.end());
                         break;
                     }
+                    g_data.erase(i);
                     sqlite3_reset(stmt);
                 }
                 sqlite3_finalize(stmt);
