@@ -339,14 +339,14 @@ namespace
 
     static void data_collect_move(const search::Context& ctxt, const search::BaseMove& move)
     {
-        if (g_db)
+        if (g_db && is_valid(ctxt._eval_raw))
         {
             ASSERT(ctxt.get_tt());
 
             LOG_DEBUG(std::format("data_collect_move[{}]: {} {} {}",
                 ctxt.iteration(), ctxt.epd(), move.uci(), ctxt._eval));
 
-            g_data.emplace(ctxt.epd(), std::make_tuple(move, ctxt.iteration(), ctxt._eval));
+            g_data.emplace(ctxt.epd(), std::make_tuple(move, ctxt.iteration(), ctxt._eval_raw));
         }
     }
 

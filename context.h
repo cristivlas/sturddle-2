@@ -233,6 +233,8 @@ namespace search
 
         int         _double_ext = 0;
         score_t     _eval = SCORE_MIN; /* static eval */
+        score_t     _eval_raw = SCORE_MIN; /* unscaled _eval */
+
         int         _extension = 0; /* count pending fractional extensions */
         int         _fifty = 0;
         int         _full_depth_count = late_move_reduction_count();

@@ -233,7 +233,12 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
         acc.update(L1A, L1B, _parent->state(), state(), _move, prev);
     }
 
-    return update_only ? SCORE_MIN : nnue::eval(acc, L2, L_DYN, L4);
+    if (update_only)
+        _eval_raw = SCORE_MIN;
+    else
+        _eval_raw = nnue::eval(acc, L2, L_DYN, L4);
+
+    return _eval_raw;
 }
 
 
