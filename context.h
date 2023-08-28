@@ -233,6 +233,8 @@ namespace search
 
         int         _double_ext = 0;
         score_t     _eval = SCORE_MIN; /* static eval */
+        score_t     _eval_raw = SCORE_MIN; /* unscaled _eval */
+
         int         _extension = 0; /* count pending fractional extensions */
         int         _fifty = 0;
         int         _full_depth_count = late_move_reduction_count();
@@ -739,7 +741,7 @@ namespace search
                 if (capt >= MATE_HIGH)
                     score = capt - 1;
                 else
-                    score += capt;
+                    score += capt * CAPTURES_SCALE / 100;
 
                 ASSERT(score > SCORE_MIN);
                 ASSERT(score < SCORE_MAX);

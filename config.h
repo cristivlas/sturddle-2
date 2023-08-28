@@ -144,7 +144,9 @@ DECLARE_CONST(  FIFTY_MOVES_RULE,                     1,    0,       1)
 DECLARE_VALUE(  FUTILITY_PRUNING,                     1,    0,       1)
 DECLARE_VALUE(  MULTICUT,                             1,    0,       1)
 DECLARE_CONST(  PREALLOCATE_MOVE_COUNT,             192,    0,     512)
-
+#if DATAGEN
+DECLARE_PARAM(  DATAGEN_SCORE_THRESHOLD,            550,    0,   30000)
+#endif
 /* SEE */
 /* -1 disables pin awareness */
 DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
@@ -153,7 +155,8 @@ DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 DECLARE_ALIAS(  SMP_CORES, Threads,                   1,    1, THREAD_MAX)
 
 GROUP(Search)
-DECLARE_VALUE(  DOUBLE_EXT_MARGIN,                 1000,    0,    2000)
+DECLARE_VALUE(  CAPTURES_SCALE,                     100,    0,     150)
+DECLARE_VALUE(  DOUBLE_EXT_MARGIN,                 1354,    0,    2000)
 DECLARE_VALUE(  DOUBLE_EXT_MAX,                      12,    0,     100)
 DECLARE_VALUE(  LMP_BASE,                             2,    2,     100)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
