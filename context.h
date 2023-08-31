@@ -976,7 +976,7 @@ namespace search
     {
         return NULL_MOVE_REDUCTION
             + ctxt.depth() / NULL_MOVE_DEPTH_DIV
-            + std::min(NULL_MOVE_MAX, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_DIV);
+            + std::min(ctxt.depth() / 2, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_DIV);
     }
 
 
