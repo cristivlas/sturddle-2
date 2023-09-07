@@ -256,7 +256,7 @@ void search::Context::eval_nnue()
 
         eval += eval_fuzz();
 
-    #if WITH_NNUE
+    #if WITH_NNUE && !DATAGEN
         /* assume NNUE eval already accounts for insufficient material */
         _eval = eval;
     #else
