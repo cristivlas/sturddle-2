@@ -161,6 +161,7 @@ else:
             '-L/usr/local/opt/llvm/lib/c++',
             '-lc++',
             '-lc++experimental',
+            '-lsqlite3',
         ]
     # Silence off Py_DEPRECATED warnings for clang;
     # clang is the default compiler on macosx.

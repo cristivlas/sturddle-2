@@ -41,9 +41,6 @@ def make_model(args, strategy):
             return tf.clip_by_value(w, Q_MIN, Q_MAX)
 
     class QuantizationLayer(tf.keras.layers.Layer):
-        def __init__(self, **kwargs):
-            super(QuantizationLayer, self).__init__(**kwargs)
-
         @tf.function
         def call(self, inputs):
             return tf.round(inputs * Q_SCALE) * (1.0 / Q_SCALE)
@@ -59,6 +56,7 @@ def make_model(args, strategy):
             squared_loss = 0.5 * tf.square(error)
             linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
             return tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
+
         return clipped_loss
 
     with strategy.scope():
@@ -85,6 +83,7 @@ def make_model(args, strategy):
         white_occupied = Lambda(white_occupied_mask)(input_layer)
 
         concat = Concatenate()([input_layer, black_occupied, white_occupied])
+        drop_in = Dropout(rate=args.drop, name='drop_in')(concat)
 
         constraint = CustomConstraint() if args.quantization else None
         # Define layer 1a
@@ -94,7 +93,7 @@ def make_model(args, strategy):
             name='hidden_1a',
             kernel_constraint=constraint,
             bias_constraint=constraint,
-        )(concat)
+        )(drop_in)
 
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
         input_1b = Lambda(lambda x: x[:, :256], name='slice_input_1b')(input_layer)
@@ -106,17 +105,18 @@ def make_model(args, strategy):
             bias_constraint=constraint,
         )(input_1b)
 
+        fan_out = 16
         # Compute dynamic weights based on hidden_1b
         if args.quantization:
             hidden_1b_quantized = QuantizationLayer(name='hidden_bq')(hidden_1b)
-            dynamic_weights = Dense(16, activation=None, name='dynamic_weights')(hidden_1b_quantized)
+            dynamic_weights = Dense(fan_out, activation=None, name='dynamic_weights')(hidden_1b_quantized)
         else:
-            dynamic_weights = Dense(16, activation=None, name='dynamic_weights')(hidden_1b)
+            dynamic_weights = Dense(fan_out, activation=None, name='dynamic_weights')(hidden_1b)
 
         if args.tiled:
-            attn_weights = Lambda(lambda x: tf.tile(x, tf.constant([1, 512 // 16])))(dynamic_weights)
+            attn_weights = Lambda(lambda x: tf.tile(x, tf.constant([1, 512 // fan_out])))(dynamic_weights)
         else:
-            attn_weights = Lambda(lambda x: tf.repeat(x, repeats=512 // 16, axis=1))(dynamic_weights)
+            attn_weights = Lambda(lambda x: tf.repeat(x, repeats=512 // fan_out, axis=1))(dynamic_weights)
 
         # Apply weights to hidden_1a
         if args.quantization:
@@ -126,7 +126,8 @@ def make_model(args, strategy):
             weighted = Multiply(name='weighted_hidden_2')([hidden_1a, attn_weights])
 
         # Add 2nd hidden layer
-        hidden_2 = Dense(16, activation=activation, name='hidden_2')(weighted)
+        drop_out = Dropout(rate=args.drop, name='drop_out')(weighted)
+        hidden_2 = Dense(16, activation=activation, name='hidden_2')(drop_out)
 
         # Define the output layer
         output_layer = Dense(1, name='out', dtype='float32')(hidden_2)
@@ -371,6 +372,15 @@ def set_weights(from_model, to_model):
 
 
 def main(args):
+    # Apply constraints explicitly
+    class ConstraintCallback(tf.keras.callbacks.Callback):
+        def on_batch_end(self, batch, logs=None):
+            for layer in self.model.layers:
+                if hasattr(layer, 'kernel') and layer.kernel.constraint:
+                    layer.kernel.assign(layer.kernel.constraint(layer.kernel))
+                if hasattr(layer, 'bias') and layer.bias.constraint:
+                    layer.bias.assign(layer.bias.constraint(layer.bias))
+
     if args.gpu:
         strategy = tf.distribute.MirroredStrategy()
     else:
@@ -401,9 +411,12 @@ def main(args):
         callbacks = []
         dataset, steps_per_epoch = dataset_from_file(args, args.input[0], args.clip, strategy, callbacks)
 
+        if args.quantization:
+            callbacks.append(ConstraintCallback())
+
         if args.schedule:
             from keras.callbacks import ReduceLROnPlateau
-            lr = ReduceLROnPlateau(monitor='loss', factor=0.2, patience=3, min_lr=1e-7)
+            lr = ReduceLROnPlateau(monitor='loss', factor=0.2, patience=3, min_lr=1e-12)
             callbacks.append(lr)
 
         if args.model is not None:
@@ -502,6 +515,7 @@ if __name__ == '__main__':
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
 
+        parser.add_argument('--drop', type=float, default=0, help='drop rate')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
 
@@ -532,6 +546,8 @@ if __name__ == '__main__':
         parser.add_argument('--workers', '-w', type=int, default=4)
 
         args = parser.parse_args()
+        args.drop = max(0, min(0.5, args.drop))
+
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout
 

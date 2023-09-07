@@ -64,6 +64,9 @@ using score_t = int;
  */
 #define COUNT_VALID_MOVES_AS_NODES          true
 
+/* Collect and generate moves data */
+#define DATAGEN                             false
+
 /* NOTE: this setting has no effect when using SEE */
 #define EXCHANGES_DETECT_CHECKMATE          false
 

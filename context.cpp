@@ -233,7 +233,12 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
         acc.update(L1A, L1B, _parent->state(), state(), _move, prev);
     }
 
-    return update_only ? SCORE_MIN : nnue::eval(acc, L2, L_DYN, L4);
+    if (update_only)
+        _eval_raw = SCORE_MIN;
+    else
+        _eval_raw = nnue::eval(acc, L2, L_DYN, L4);
+
+    return _eval_raw;
 }
 
 
@@ -241,34 +246,23 @@ void search::Context::eval_nnue()
 {
     if (!is_valid(_eval))
     {
-        /* skip NNUE evaluation for large deltas in material */
-        /* if (state().is_endgame()) */
+        auto eval = evaluate_material();
+
+        /* stick with material eval if in quiescent search, or if heavily imbalanced */
+        if (!is_qsearch() && abs(eval) <= MAX_NNUE_EVAL)
         {
-            const auto eval = static_eval();
-            if (abs(eval) > MAX_NNUE_EVAL)
-            {
-                eval_nnue_raw(true); /* update accumulator, do not evaluate */
-                _eval = eval + eval_fuzz();
-                return;
-            }
+            eval = eval_nnue_raw() * (NNUE_EVAL_SCALE + eval / 32) / 1024;
         }
 
-        auto eval = eval_nnue_raw() + eval_fuzz();
+        eval += eval_fuzz();
 
-        /* Make sure that insufficient material conditions are detected. */
-        eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
-
-        eval *= NNUE_EVAL_SCALE + evaluate_material() / 32;
-        eval /= 1024;
-    #if 0
-        _eval = std::max(-CHECKMATE, std::min(CHECKMATE, eval));
-    #else
+    #if WITH_NNUE && !DATAGEN
+        /* assume NNUE eval already accounts for insufficient material */
         _eval = eval;
-    #endif
-    }
-    else
-    {
-        ASSERT(state().hash() == NNUE_data[tid()][_ply]._hash);
+    #else
+        /* Make sure that insufficient material conditions are detected. */
+        _eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
+    #endif /* !WITH_NNUE */
     }
 }
 
@@ -401,7 +395,7 @@ namespace search
     std::string(*Context::_pgn)(Context*) = nullptr;
     void (*Context::_print_state)(const State&, bool) = nullptr;
     void (*Context::_report)(PyObject*, std::vector<Context*>&) = nullptr;
-
+    void (*Context::_set_syzygy_path)(const std::string&) = nullptr;
     bool (*Context::_tb_probe_wdl)(const State&, int*) = nullptr;
     size_t (*Context::_vmem_avail)() = nullptr;
 
@@ -574,7 +568,6 @@ namespace search
 
         if (_pruned_count || _move_maker.have_skipped_moves())
         {
-            ASSERT(_ply > 0);
             ASSERT(!is_check());
 
             return evaluate();
@@ -1516,9 +1509,10 @@ namespace search
         ASSERT(is_root());
         ASSERT(!_is_null_move);
         ASSERT(_tt->_w_alpha <= _alpha);
-        ASSERT(iteration());
+
         ASSERT(_retry_above_alpha == RETRY::None);
 
+        _best_move = BaseMove();
         _cancel = false;
         _can_prune = -1;
 
@@ -1545,6 +1539,12 @@ namespace search
     }
 
 
+    static INLINE int window_delta(int iteration, int depth, double score)
+    {
+        return HALF_WINDOW * pow2(iteration) + WINDOW_COEFF * depth * log(0.001 + abs(score) / WINDOW_DIV);
+    }
+
+
     void Context::set_search_window(score_t score, score_t& prev_score)
     {
         if (!ASPIRATION_WINDOW || iteration() == 1)
@@ -1564,13 +1564,13 @@ namespace search
         }
         else if (score <= _tt->_w_alpha)
         {
-            _alpha = std::max<score_t>(SCORE_MIN, score - HALF_WINDOW * pow2(iteration()));
+            _alpha = std::max<score_t>(SCORE_MIN, score - window_delta(iteration(), _tt->_eval_depth, score));
             _beta = _tt->_w_beta;
         }
         else if (score >= _tt->_w_beta)
         {
             _alpha = _tt->_w_alpha;
-            _beta = std::min<score_t>(SCORE_MAX, score + HALF_WINDOW * pow2(iteration()));
+            _beta = std::min<score_t>(SCORE_MAX, score + window_delta(iteration(), _tt->_eval_depth, score));
         }
         else
         {
@@ -1622,12 +1622,13 @@ namespace search
 
         if (is_capture() || (_move.from_square() == _parent->_capture_square))
             --reduction;
-
+    #if 1
         reduction = std::max(1, reduction);
-
         if (reduction > depth && can_prune())
             return LMRAction::Prune;
-
+    #else
+         reduction = std::max(1, std::min(depth, reduction));
+    #endif
         ASSERT(reduction > 0);
         _max_depth -= reduction;
 
@@ -1675,7 +1676,10 @@ namespace search
             ASSERT(_ply == 1);
             return true;
         }
-
+    #if 0
+        if (WEIGHT[_parent->state().piece_type_at(_move.from_square())] <= state().capture_value)
+            return false;  /* descend into quiescent search */
+    #endif
         if (depth() > 0
             || is_null_move()
             || is_retry()
@@ -2016,6 +2020,8 @@ namespace search
                     {
                         auto& ctxt_acc = NNUE_data[ctxt.tid()][0];
                         auto& move_acc = NNUE_data[ctxt.tid()][1];
+                        if (ctxt_acc.needs_update(ctxt.state()))
+                            ctxt_acc.update(L1A, L1B, ctxt.state());
                         ASSERT(ctxt_acc._hash == ctxt.state().hash());
                         move_acc.update(L1A, L1B, ctxt.state(), *move._state, move, ctxt_acc);
                         move._score = -nnue::eval(move_acc, L2, L_DYN, L4);

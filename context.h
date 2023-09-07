@@ -225,7 +225,6 @@ namespace search
         bool        _is_pv = false;
         bool        _is_retry = false;
         bool        _is_singleton = false;
-
         bool        _multicut_allowed = true;
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
@@ -234,6 +233,8 @@ namespace search
 
         int         _double_ext = 0;
         score_t     _eval = SCORE_MIN; /* static eval */
+        score_t     _eval_raw = SCORE_MIN; /* unscaled _eval */
+
         int         _extension = 0; /* count pending fractional extensions */
         int         _fifty = 0;
         int         _full_depth_count = late_move_reduction_count();
@@ -280,7 +281,7 @@ namespace search
 
         void        eval_nnue();
         score_t     eval_nnue_raw(bool update_only = false);
-        void        update_root_accumulators();
+        static void update_root_accumulators();
 
         score_t     static_eval();  /* use TT value if available, eval material otherwise */
 
@@ -318,6 +319,7 @@ namespace search
         int         is_repeated() const;
         INLINE bool is_retry() const { return _is_retry; }
         INLINE bool is_root() const { return _ply == 0; }
+
         INLINE int  iteration() const { ASSERT(_tt); return _tt->_iteration; }
 
         LMRAction   late_move_reduce(int move_count);
@@ -326,6 +328,7 @@ namespace search
         static void load_nnue_model(const std::string& json_file_path); /* no-op if !WITH_NNUE */
         static void log_message(LogLevel, const std::string&, bool force = true);
 
+        int         move_count() const { return _move_maker.count(); }
         int64_t     nanosleep(int nanosec);
 
         Context*    next(bool null_move, score_t, int move_count);
@@ -384,6 +387,7 @@ namespace search
         static std::string  (*_pgn)(Context*);
         static void         (*_print_state)(const State&, bool unicode);
         static void         (*_report)(PyObject*, std::vector<Context*>&);
+        static void         (*_set_syzygy_path)(const std::string&);
         static bool         (*_tb_probe_wdl)(const State&, int*);
         static size_t       (*_vmem_avail)();
 
@@ -627,9 +631,6 @@ namespace search
             && (PruneCaptures || move._state->capture_value == 0)
             && (move.promotion() == chess::PieceType::NONE)
             && (move.from_square() != _capture_square)
-        #if 0
-            && !is_counter_move(move)
-        #endif
             && can_forward_prune()
             && !move._state->is_check();
     }
@@ -668,8 +669,8 @@ namespace search
     }
 
 
-    template <typename F>
-    INLINE score_t eval_insufficient_material(const State& state, score_t eval, F f)
+    template <typename F = std::function<score_t()>>
+    INLINE score_t eval_insufficient_material(const State& state, score_t eval=SCORE_MIN, F f=[]{ return SCORE_MIN; })
     {
         if (state.is_endgame() && state.has_insufficient_material(state.turn))
         {
@@ -686,28 +687,32 @@ namespace search
         {
             eval = f();
         }
-
         return eval;
     }
 
 
-#if WITH_NNUE
+    /*
+     * Use value from the TT if available, else use material evaluation.
+     */
     INLINE score_t Context::static_eval()
     {
-        return is_valid(_eval) ? _eval : evaluate_material();
+    #if WITH_NNUE
+        if (is_valid(_eval))
+            return _eval;
+    #else
+        if (is_valid(_tt_entry._value) && _tt_entry._depth >= depth())
+            return _tt_entry._value;
+    #endif /* WITH_NNUE */
+
+        return evaluate_material();
     }
-#else
+
+#if !WITH_NNUE
     INLINE void search::Context::eval_nnue() {}
     INLINE score_t search::Context::eval_nnue_raw(bool update_only) { return 0; }
     INLINE void search::Context::load_nnue_model(const std::string&) {}
     INLINE void search::Context::update_root_accumulators() {}
-
-    /* Use value from the TT if available, else do a quick material evaluation. */
-    INLINE score_t Context::static_eval()
-    {
-        return is_valid(_tt_entry._value) ? _tt_entry._value : evaluate_material();
-    }
-#endif /* WITH_NNUE */
+#endif /* !WITH_NNUE */
 
 
     template<bool EvalCaptures> INLINE score_t Context::evaluate()
@@ -724,6 +729,7 @@ namespace search
 
         if constexpr(EvalCaptures)
         {
+            /* if either side is close to mate, captures may not make a diff. */
             if (abs(score) < MATE_HIGH)
             {
                 /* 3. Captures */
@@ -734,7 +740,7 @@ namespace search
                 if (capt >= MATE_HIGH)
                     score = capt - 1;
                 else
-                    score += capt;
+                    score += capt * CAPTURES_SCALE / 100;
 
                 ASSERT(score > SCORE_MIN);
                 ASSERT(score < SCORE_MAX);
@@ -894,13 +900,9 @@ namespace search
             return false;
 
         ASSERT(depth() >= 0);
-
         return static_eval() >= _beta
             - NULL_MOVE_DEPTH_WEIGHT * depth()
             - improvement() / NULL_MOVE_IMPROVEMENT_DIV
-        #if 0
-            + NULL_MOVE_COMPLEXITY * _parent->_move_maker.count() / _parent->piece_count()
-        #endif
             + NULL_MOVE_MARGIN;
     }
 
@@ -973,7 +975,7 @@ namespace search
     {
         return NULL_MOVE_REDUCTION
             + ctxt.depth() / NULL_MOVE_DEPTH_DIV
-            + std::min(int(NULL_MOVE_MIN), (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_DIV);
+            + std::min(ctxt.depth() / 2, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_DIV);
     }
 
 
@@ -983,6 +985,7 @@ namespace search
     INLINE Context* Context::next(bool null_move, score_t futility, int move_count)
     {
         ASSERT(_alpha < _beta);
+        ASSERT(!_is_singleton);
 
         const bool retry = _retry_next;
         _retry_next = false;
@@ -1064,7 +1067,11 @@ namespace search
 
         #if ADAPTIVE_NULL_MOVE
             ASSERT(depth() >= 0);
-            ctxt->_max_depth -= std::min(depth(), null_move_reduction(*this));
+
+            const auto reduction = std::min(depth(), std::max(null_move_reduction(*this), 0));
+            ASSERT(reduction >= 0);
+
+            ctxt->_max_depth -= reduction;
 
             /*
              * Allow the null-move to descend one ply into qsearch, to get the
@@ -1212,15 +1219,22 @@ namespace search
 
     INLINE void Context::set_time_ctrl(const TimeControl& ctrl, score_t delta)
     {
-        int time_limit = 0;
         const auto side_to_move = turn();
         const auto millisec = ctrl.millisec[side_to_move];
-        const auto moves = ctrl.moves;
+        auto moves = ctrl.moves; /* number of moves till next time control */
 
         if (delta < TIME_CTRL_EVAL_THRESHOLD)
-            time_limit = millisec / std::min(10, moves); /* take more time */
-        else
-            time_limit = millisec / moves;
+            moves = std::min(10, moves); /* score worsened, take more time */
+
+        int time_limit = millisec / moves;
+
+        const auto t_diff = (millisec - ctrl.millisec[!side_to_move] - 1) / moves;
+        /* have more time than the opponent? spend some of it. */
+        if (t_diff > 0 && time_limit + t_diff < millisec)
+            time_limit += t_diff;
+        /* if there's a time deficit, and search improved: lower the time limit. */
+        else if (delta >=0 && t_diff < 0 && time_limit + t_diff > 0)
+            time_limit += t_diff;
 
         _time_limit.store(std::max(1, time_limit), std::memory_order_relaxed);
     }
@@ -1439,6 +1453,11 @@ namespace search
 
             move._state = &Context::states(ctxt.tid(), ctxt._ply)[_state_index++];
         }
+        else if (move._state->is_check(!move._state->turn))
+        {
+            mark_as_illegal(move);
+            return false;
+        }
         else
         {
             return (_have_move = true);
@@ -1550,6 +1569,7 @@ namespace search
 
     INLINE void MoveMaker::mark_as_pruned(Context& ctxt, Move& move)
     {
+        ASSERT(!ctxt.is_root());
         move._group = MoveOrder::PRUNED_MOVES;
         _have_pruned_moves = true;
         ++ctxt._pruned_count;

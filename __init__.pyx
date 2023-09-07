@@ -460,18 +460,19 @@ cdef extern from 'context.h' namespace 'search':
         BaseMove        _best_move
         PyObject*       _engine
 
-        bool            (*_book_init)(const string&)
-        BaseMove        (*_book_lookup)(const State&, bool)
-        string          (*_epd)(const State&)
-        void            (*_log_message)(int, const string&, bool)
-        void            (*_on_iter)(PyObject*, Context*, const IterationInfo*)
-        void            (*_on_move)(PyObject*, const string&, int)
-        void            (*_on_next)(PyObject*, int64_t)
-        string          (*_pgn)(Context*)
-        void            (*_print_state)(const State&, bool)
-        void            (*_report)(PyObject*, vector[Context*]&)
-        bool            (*_tb_probe_wdl)(const State&, int*)
-        size_t          (*_vmem_avail)()
+        bool            (*_book_init)(const string&) except*
+        BaseMove        (*_book_lookup)(const State&, bool) except*
+        string          (*_epd)(const State&) except*
+        void            (*_log_message)(int, const string&, bool) except*
+        void            (*_on_iter)(PyObject*, Context*, const IterationInfo*) except*
+        void            (*_on_move)(PyObject*, const string&, int) except*
+        void            (*_on_next)(PyObject*, int64_t) except*
+        string          (*_pgn)(Context*) except*
+        void            (*_print_state)(const State&, bool) except*
+        void            (*_report)(PyObject*, vector[Context*]&) except*
+        void            (*_set_syzygy_path)(const string&) except*;
+        bool            (*_tb_probe_wdl)(const State&, int*) except*
+        size_t          (*_vmem_avail)() except*
 
         int64_t         nanosleep(int) nogil
 
@@ -486,6 +487,7 @@ cdef extern from 'context.h' namespace 'search':
         bool            is_repeated() const
         int             iteration() const
         int             rewind(int where, bool reorder)
+        void            reinitialize()
 
         @staticmethod
         void set_time_limit_ms(int millisec) nogil
@@ -675,6 +677,7 @@ cdef class NodeContext:
         self._ctxt._pgn = <string (*)(Context*)> pgn
         self._ctxt._print_state = <void (*)(const State&, bool)> print_state
         self._ctxt._vmem_avail = <size_t (*)()> vmem_avail
+        self._ctxt._set_syzygy_path = <void (*)(const string&)> _set_syzygy_path
         self._ctxt._tb_probe_wdl = <bool (*)(const State&, int*)> tb_probe_wdl
 
         self._ctxt._history.reset(new History())
@@ -842,9 +845,9 @@ cdef extern from 'search.h' namespace 'search':
         void    set_hash_size(size_t)
 
 
-    cdef score_t negamax(Context&, TranspositionTable&) nogil except*
-    cdef score_t mtdf(Context&, score_t, TranspositionTable&) nogil except*
-    cdef score_t iterative(Context&, TranspositionTable&, int) nogil except*
+    cdef score_t negamax(Context&, TranspositionTable&) except* nogil
+    cdef score_t mtdf(Context&, score_t, TranspositionTable&) except* nogil
+    cdef score_t iterative(Context&, TranspositionTable&, int) except* nogil
 
 
 cdef task_stats(const TranspositionTable& table):
@@ -1032,6 +1035,7 @@ cdef class SearchAlgorithm:
         self._table.init()
         self.set_context_callbacks()
         self.context._ctxt.set_tt(address(self._table))
+        self.context._ctxt.reinitialize()
         self.context._ctxt._max_depth = self.depth
         self.context._ctxt._prev = BaseMove()
 
@@ -1250,7 +1254,8 @@ _tb = chess.syzygy.Tablebase()
 _tb_paths = []
 
 def _tb_init():
-    for syzygy_path in Context.syzygy_path().decode().split(os.pathsep):
+    syzygy_path_list = Context.syzygy_path().decode().split(os.pathsep)
+    for syzygy_path in syzygy_path_list:
         if not os.path.isabs(syzygy_path):
             syzygy_path = os.path.realpath(
                 os.path.join(os.path.dirname(sys.argv[0]), syzygy_path)
@@ -1261,10 +1266,9 @@ def _tb_init():
         except:
             pass
 
+    log_message(2, f'_tb_init: {syzygy_path_list} {_tb_paths}'.encode(), False)
     Context.set_syzygy_path(os.pathsep.join(_tb_paths).encode())
-    if _tb_paths:
-        print(_tb_paths)
-    else:
+    if not _tb_paths:
         Context.set_tb_cardinality(0)
 
 
@@ -1296,6 +1300,12 @@ def set_syzygy_path(path):
 
 def syzygy_path():
     return Context.syzygy_path().decode()
+
+
+# C++ entry point
+cdef void _set_syzygy_path(const string& path):
+    log_message(1, f'_set_syzygy_path: {path.decode()}'.encode(), False)
+    set_syzygy_path(path.decode())
 
 
 # ---------------------------------------------------------------------

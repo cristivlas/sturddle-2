@@ -48,7 +48,7 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--concurrency', type=int, choices=range(1, 64), default=os.cpu_count() // 2)
     parser.add_argument('--hash', type=int, help='hash table size')
     parser.add_argument('-o', '--output')
-    parser.add_argument('-p', '--plot-every', type=int, default=20)
+    parser.add_argument('-p', '--plot-every', type=int, default=0)
     parser.add_argument('-r', '--rounds', type=int)
     parser.add_argument('-s', '--smp-cores', type=int, choices=range(1, 64), default=1)
     parser.add_argument('-t', '--time-control', default='1+0.1')
@@ -68,7 +68,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    args.concurrency //= args.smp_cores
+    args.concurrency = max(1, args.concurrency // args.smp_cores)
 
     # strip 'all'
     _, *tunable = tunable
@@ -112,6 +112,8 @@ if __name__ == '__main__':
         'parameter_ranges': tune_params,
         'acq_function': 'pvrs',
         'adjudicate_resign': True,
+        'resign_score': 850,
+        'resign_twosided': True,
         'engine1_tc': args.time_control,
         'engine2_tc': args.time_control,
         'rounds': args.rounds if args.rounds else len(args.tune) * 15,

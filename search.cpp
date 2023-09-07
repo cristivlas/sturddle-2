@@ -523,6 +523,7 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
 
 static INLINE void update_pruned(Context& ctxt, const Context& next, size_t& count)
 {
+    ASSERT(!ctxt.is_root());
     ++ctxt._pruned_count;
 
     if constexpr(EXTRA_STATS)
@@ -608,13 +609,16 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         && (ctxt.is_leftmost() || ctxt._alpha + 1 < ctxt._beta);
 
     /* reduce by one ply at expected cut nodes */
-    if (!ctxt.is_pv_node()
+    if (   !ctxt.is_pv_node()
         && !ctxt.is_null_move()
         && ctxt.depth() > 7
         && ctxt.can_reduce())
     {
         --ctxt._max_depth;
     }
+
+    /* prevent overflow */
+    ctxt._max_depth = std::min(ctxt._max_depth, PLY_MAX-1);
 
     if (ctxt._alpha + 1 < ctxt._beta)
     {
@@ -626,6 +630,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
     const auto alpha = ctxt._alpha;
 
+#if 0
     if (ctxt.is_leaf())
     {
         ctxt._score = ctxt.evaluate();
@@ -641,9 +646,27 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
         return *p;
     }
+#else
+    /* transposition table lookup */
+    if (const auto* p = table.lookup(ctxt))
+    {
+        ASSERT(ctxt._score == *p);
+        ASSERT(!ctxt._excluded);
+
+        return *p;
+    }
+    else if (ctxt.is_leaf())
+    {
+        ctxt._score = ctxt.evaluate();
+
+        ASSERT(ctxt._score > SCORE_MIN);
+        ASSERT(ctxt._score < SCORE_MAX);
+    }
+#endif
     else if (table._probe_endtables && probe_endtables(ctxt))
     {
         table.store<TT_Type::EXACT>(ctxt, alpha, ctxt.depth() + 2 * ctxt.tb_cardinality());
+        ctxt._eval_raw = ctxt._score;
         return ctxt._score;
     }
     else if (multicut(ctxt, table))
@@ -757,12 +780,11 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     if (ctxt.depth() >= (ctxt.is_pv_node() ? 7 : 5)
                         && ctxt._tt_entry.is_lower()
                         && next_ctxt->_move._group == MoveOrder::HASH_MOVES
-                    #if WITH_NNUE
-                        && abs(ctxt._eval) < SINGULAR_EVAL_MARGIN
-                    #endif
                         && abs(ctxt._tt_entry._value) < MATE_HIGH
                         && !ctxt._excluded
-                        && ctxt._tt_entry._depth >= ctxt.depth() - 3)
+                        && ctxt._tt_entry._depth >= ctxt.depth() - 3
+                        && abs(ctxt._eval - ctxt._tt_entry._value) <= SINGULAR_ACCURACY_MARGIN
+                       )
                     {
                         const auto s_beta = std::max(int(ctxt._tt_entry._value) - ctxt.singular_margin(), MATE_LOW);
                         /*
@@ -784,10 +806,14 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                         if (eval < s_beta)
                         {
-                            next_ctxt->_extension += ONE_PLY;
+                            const auto ext = (SINGULAR_ACCURACY_MARGIN - abs(ctxt._eval - ctxt._tt_entry._value))
+                                * ONE_PLY / SINGULAR_ACCURACY_MARGIN;
+                            ASSERT(ext >= 0);
+
+                            next_ctxt->_extension += ext; /* extend once */
                             if (!ctxt.is_pv_node() && eval + DOUBLE_EXT_MARGIN < s_beta)
                             {
-                                next_ctxt->_extension += ONE_PLY;
+                                next_ctxt->_extension += ext; /* extend more */
                             }
                         }
                         /*
@@ -1256,6 +1282,8 @@ std::vector<TaskData> SMPTasks::_tables;
  */
 score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter_count)
 {
+    ASSERT(ctxt.is_root());
+
     score_t score = 0, prev_score = 0;
     max_iter_count = std::min(PLY_MAX, max_iter_count);
 
@@ -1294,9 +1322,6 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
         }   /* SMP scope end */
 
-        if (i == 1)
-            ctxt.update_root_accumulators();
-
         ASSERT(ctxt.iteration() == ctxt._max_depth);
 
         /* post iteration info to Cython */
@@ -1312,7 +1337,12 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
             (*Context::_on_iter)(Context::_engine, &ctxt, &info);
         }
-        ++i;
+
+        if (ctxt.move_count() == 1)
+            break;
+
+        if (i++ == 1)
+            ctxt.update_root_accumulators();
     }
 
     return score;
