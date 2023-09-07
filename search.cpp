@@ -666,6 +666,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     else if (table._probe_endtables && probe_endtables(ctxt))
     {
         table.store<TT_Type::EXACT>(ctxt, alpha, ctxt.depth() + 2 * ctxt.tb_cardinality());
+        ctxt._eval_raw = ctxt._score;
         return ctxt._score;
     }
     else if (multicut(ctxt, table))

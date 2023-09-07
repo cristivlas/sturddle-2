@@ -387,6 +387,7 @@ namespace search
         static std::string  (*_pgn)(Context*);
         static void         (*_print_state)(const State&, bool unicode);
         static void         (*_report)(PyObject*, std::vector<Context*>&);
+        static void         (*_set_syzygy_path)(const std::string&);
         static bool         (*_tb_probe_wdl)(const State&, int*);
         static size_t       (*_vmem_avail)();
 
@@ -668,10 +669,9 @@ namespace search
     }
 
 
-    template <typename F>
-    INLINE score_t eval_insufficient_material(const State& state, score_t eval, F f)
+    template <typename F = std::function<score_t()>>
+    INLINE score_t eval_insufficient_material(const State& state, score_t eval=SCORE_MIN, F f=[]{ return SCORE_MIN; })
     {
-    #if !WITH_NNUE /* assume NNUE eval already accounts for insufficient material */
         if (state.is_endgame() && state.has_insufficient_material(state.turn))
         {
             if (state.has_insufficient_material(!state.turn))
@@ -687,7 +687,6 @@ namespace search
         {
             eval = f();
         }
-    #endif /* !WITH_NNUE */
         return eval;
     }
 

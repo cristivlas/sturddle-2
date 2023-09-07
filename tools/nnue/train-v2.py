@@ -416,7 +416,7 @@ def main(args):
 
         if args.schedule:
             from keras.callbacks import ReduceLROnPlateau
-            lr = ReduceLROnPlateau(monitor='loss', factor=0.2, patience=3, min_lr=1e-7)
+            lr = ReduceLROnPlateau(monitor='loss', factor=0.2, patience=3, min_lr=1e-12)
             callbacks.append(lr)
 
         if args.model is not None:

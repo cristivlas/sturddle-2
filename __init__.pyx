@@ -470,6 +470,7 @@ cdef extern from 'context.h' namespace 'search':
         string          (*_pgn)(Context*) except*
         void            (*_print_state)(const State&, bool) except*
         void            (*_report)(PyObject*, vector[Context*]&) except*
+        void            (*_set_syzygy_path)(const string&) except*;
         bool            (*_tb_probe_wdl)(const State&, int*) except*
         size_t          (*_vmem_avail)() except*
 
@@ -676,6 +677,7 @@ cdef class NodeContext:
         self._ctxt._pgn = <string (*)(Context*)> pgn
         self._ctxt._print_state = <void (*)(const State&, bool)> print_state
         self._ctxt._vmem_avail = <size_t (*)()> vmem_avail
+        self._ctxt._set_syzygy_path = <void (*)(const string&)> _set_syzygy_path
         self._ctxt._tb_probe_wdl = <bool (*)(const State&, int*)> tb_probe_wdl
 
         self._ctxt._history.reset(new History())
@@ -1252,7 +1254,8 @@ _tb = chess.syzygy.Tablebase()
 _tb_paths = []
 
 def _tb_init():
-    for syzygy_path in Context.syzygy_path().decode().split(os.pathsep):
+    syzygy_path_list = Context.syzygy_path().decode().split(os.pathsep)
+    for syzygy_path in syzygy_path_list:
         if not os.path.isabs(syzygy_path):
             syzygy_path = os.path.realpath(
                 os.path.join(os.path.dirname(sys.argv[0]), syzygy_path)
@@ -1263,10 +1266,9 @@ def _tb_init():
         except:
             pass
 
+    log_message(2, f'_tb_init: {syzygy_path_list} {_tb_paths}'.encode(), False)
     Context.set_syzygy_path(os.pathsep.join(_tb_paths).encode())
-    if _tb_paths:
-        print(_tb_paths)
-    else:
+    if not _tb_paths:
         Context.set_tb_cardinality(0)
 
 
@@ -1298,6 +1300,12 @@ def set_syzygy_path(path):
 
 def syzygy_path():
     return Context.syzygy_path().decode()
+
+
+# C++ entry point
+cdef void _set_syzygy_path(const string& path):
+    log_message(1, f'_set_syzygy_path: {path.decode()}'.encode(), False)
+    set_syzygy_path(path.decode())
 
 
 # ---------------------------------------------------------------------

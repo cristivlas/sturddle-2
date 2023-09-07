@@ -256,8 +256,13 @@ void search::Context::eval_nnue()
 
         eval += eval_fuzz();
 
+    #if WITH_NNUE
+        /* assume NNUE eval already accounts for insufficient material */
+        _eval = eval;
+    #else
         /* Make sure that insufficient material conditions are detected. */
         _eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
+    #endif /* !WITH_NNUE */
     }
 }
 
@@ -390,7 +395,7 @@ namespace search
     std::string(*Context::_pgn)(Context*) = nullptr;
     void (*Context::_print_state)(const State&, bool) = nullptr;
     void (*Context::_report)(PyObject*, std::vector<Context*>&) = nullptr;
-
+    void (*Context::_set_syzygy_path)(const std::string&) = nullptr;
     bool (*Context::_tb_probe_wdl)(const State&, int*) = nullptr;
     size_t (*Context::_vmem_avail)() = nullptr;
 

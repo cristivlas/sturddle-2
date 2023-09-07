@@ -248,7 +248,7 @@ namespace
 
         void set(std::string_view value) override
         {
-            search::Context::set_syzygy_path(std::string(value));
+            cython_wrapper::call(search::Context::_set_syzygy_path, std::string(value));
         }
     };
 
@@ -363,7 +363,7 @@ namespace
                 OR ?2 > (SELECT depth FROM position WHERE epd = ?1);
             )";
 
-        if (ctxt._score < DATAGEN_SCORE_THRESHOLD)
+        if (ctxt._score < DATAGEN_SCORE_THRESHOLD || search::eval_insufficient_material(ctxt.state()) == 0)
             g_data.clear();
         else
             search::Context::log_message(LogLevel::INFO, std::format("data_flush: score={}", ctxt._score));
