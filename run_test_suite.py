@@ -210,6 +210,9 @@ def test_epd(args, filename, tests, algo_class, **kwargs):
 
 
 def configure_logger(args):
+    log = logging.getLogger()
+    for h in log.handlers[:]:
+        log.removeHandler(h)
     format = '%(asctime)s %(levelname)-8s %(message)s'
     level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(level=level, filename=args.logfile, format=format)
