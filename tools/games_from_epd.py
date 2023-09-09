@@ -11,19 +11,27 @@ import chess.engine
 import chess.pgn
 
 
-def play_from_position(args, epd):
-    # Log the starting position
-    logging.info(f'{args.count}/{args.total} playing from: "{epd}"')
-    args.count += 1
-    # Initialize the chess engine and board
+def get_engine(args):
     engine = chess.engine.SimpleEngine.popen_uci(args.engine)
     params = {'Threads': args.threads, 'Hash': args.hash}
     if args.db:
         params['DB'] = args.db
     engine.configure(params)
+    return engine
+
+
+def play_from_position(args, epd, engines):
+    # Log the starting position
+    logging.info(f'{args.count}/{args.total} playing from: "{epd}"')
+    args.count += 1
 
     board = chess.Board(fen=epd)
     assert board.is_valid()
+
+    # An arbitrary object that identifies the game. Will automatically inform the engine
+    # if the object is not equal to the previous game (e.g., ucinewgame, new).
+    game = chess.pgn.Game()
+    game.headers['FEN'] = epd
 
     if args.depth:
         limit = chess.engine.Limit(depth=args.depth)
@@ -33,13 +41,14 @@ def play_from_position(args, epd):
         # Play the game until it is over
         while not board.is_game_over():
             assert board.is_valid()
-            result = engine.play(board, limit=limit, ponder=args.ponder)
-            board.push(result.move)
+            result = engines[board.turn].play(board, game=game, limit=limit, ponder=args.ponder)
+            if result:
+                board.push(result.move)
     except:
         # Log the exception message
         logging.exception(f'Error playing game from position "{epd}"')
-    if engine:
-        engine.quit()
+        exit(-1)
+
     # Initialize the game in PGN format
     game = chess.pgn.Game()
     game.headers['Event'] = str(uuid.uuid4())
@@ -86,8 +95,13 @@ def generate_games(args, input_paths):
                     # Add the EPD to the set if it is valid
                     epds.add(epd)
     args.total = len(epds)
+    engines = [get_engine(args), get_engine(args)]
+
     for epd in epds:
-        play_from_position(args, epd)
+        play_from_position(args, epd, engines)
+
+    engines[0].quit()
+    engines[1].quit()
 
 def main():
     # Parse the command-line arguments
@@ -118,11 +132,8 @@ def main():
         else:
             logging.warning(f'Invalid input: {input_arg}')
 
-    try:
-        # Call the generate_games function with the input paths and output path
-        generate_games(args, input_paths)
-    except KeyboardInterrupt:
-        pass
+    # Call the generate_games function with the input paths and output path
+    generate_games(args, input_paths)
 
 if __name__ == '__main__':
     main()
