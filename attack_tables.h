@@ -36,10 +36,22 @@ namespace chess
 } /* namespace chess */
 
 
+/*
+ https://github.com/llvm/llvm-project/issues/55798
+ workaround: turn on USE_MAGIC_BITS on ARM
+*/
+#if defined(__clang__) && USE_MAGIC_BITS
+  #pragma clang optimize off
+#endif
+
 #if TESTGEN
   #include "codegen/test.h"
 #else
   #include "attacks.h"
+#endif
+
+#if defined(__clang__) && USE_MAGIC_BITS
+  #pragma clang optimize on
 #endif
 
 

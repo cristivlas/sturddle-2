@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 '''
-Trainer for the Sturddle Chess 2.0 engine's neural network.
+**********************************************************************
+Trainer variant for the Sturddle Chess 2.0 engine's neural network.
+** An alternative approach to quantization-aware training than V2. ***
+
 Copyright (c) 2023 Cristian Vlasceanu.
 
 Expects memmapped numpy arrays or H5 files as inputs.
+**********************************************************************
 '''
 import argparse
 import logging

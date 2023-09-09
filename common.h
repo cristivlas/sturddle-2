@@ -147,7 +147,9 @@ constexpr size_t DEFAULT_HASH_TABLE_SIZE =  32;
  * Use this magic_bits implementation instead of attacks.h:
  * https://github.com/goutham/magic-bits
  */
-#define USE_MAGIC_BITS                      false
+#if !defined(USE_MAGIC_BITS)
+  #define USE_MAGIC_BITS                    false
+#endif
 
 /*
  * Number of processed nodes after which the search code checks
