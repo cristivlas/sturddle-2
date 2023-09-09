@@ -274,7 +274,7 @@ namespace nnue
 
             constexpr auto R = round_down<N>(INPUTS);
 
-            Vec16s in, vw, sum[N], v_out;
+            Vec16s in, vw, sum[N];
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
@@ -302,15 +302,13 @@ namespace nnue
                 );
                 for (int i = R; i != INPUTS; ++i)
                 {
-                    in = input[i];
                     vw.load_a(&w[i][j]);
-                    sums += in * vw;
+                    sums += input[i] * vw;
                 }
-                v_out.load_a(&b[j]);
-                v_out += sums;
-                v_out.store_a(&output[j]);
+                vw.load_a(&b[j]);
+                (vw + sums).store_a(&output[j]);
             }
-        #endif /* 0 */
+        #endif
         }
 
         /* hidden, output */
