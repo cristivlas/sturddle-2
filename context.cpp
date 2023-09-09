@@ -238,10 +238,17 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
     }
 
     if (update_only)
+    {
         _eval_raw = SCORE_MIN;
+    }
     else
+    {
         _eval_raw = nnue::eval(acc, L2, L_DYN, L4);
 
+    #if DATAGEN /* Make sure that insufficient material conditions are detected. */
+        _eval_raw = eval_insufficient_material(state(), _eval_raw, [_eval_raw](){ return _eval_raw; });
+    #endif
+    }
     return _eval_raw;
 }
 
@@ -260,13 +267,12 @@ void search::Context::eval_nnue()
 
         eval += eval_fuzz();
 
-    #if WITH_NNUE && !DATAGEN
+    #if true
         /* assume NNUE eval already accounts for insufficient material */
         _eval = eval;
     #else
-        /* Make sure that insufficient material conditions are detected. */
         _eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
-    #endif /* !WITH_NNUE */
+    #endif
     }
 }
 
