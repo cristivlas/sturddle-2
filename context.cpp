@@ -182,6 +182,10 @@ void assert_param_ref()
 
 #if WITH_NNUE
 
+#ifndef _countof
+#define _countof(x) std::extent<decltype(x)>::value
+#endif
+
 constexpr int INPUTS_A = 897;
 constexpr int INPUTS_B = 256;
 constexpr int HIDDEN_1A = 512;
@@ -202,7 +206,7 @@ static nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE> L1A(hidden_1a_w, 
 static nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE> L1B(hidden_1b_w, hidden_1b_b);
 
 static nnue::Layer<HIDDEN_1A, HIDDEN_2> L2(hidden_2_w, hidden_2_b);
-static nnue::Layer<HIDDEN_1B, HIDDEN_2> L_DYN(dynamic_weights_w, dynamic_weights_b);
+static nnue::Layer<HIDDEN_1B, _countof(dynamic_weights_b)> L_DYN(dynamic_weights_w, dynamic_weights_b);
 static nnue::Layer<HIDDEN_2, 1> L4(out_w, out_b);
 
 using WeightSetter = std::function<void(const std::vector<std::vector<float>>&, const std::vector<float>&)>;
