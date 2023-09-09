@@ -128,12 +128,12 @@ INLINE Vec4f operator * (const Vec4f& a, const Vec4f& b)
 
 INLINE Vec4f mul_add(const Vec4f& a, const Vec4f& b, const Vec4f& c)
 {
-    return vmlaq_f32(c, a, b);
+    return vmlaq_f32(c, a, b); // may map to vfmaq_f32 on some archs?
 }
 
 INLINE Vec4f max(const Vec4f& a, const Vec4f& b)
 {
-    return vmaxq_f32(a, b); // may map to vfmaq_f32 on some archs?
+    return vmaxq_f32(a, b);
 }
 #endif /* NEON */
 
