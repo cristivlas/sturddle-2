@@ -1,5 +1,6 @@
 /** Native C++ UCI */
 /** http://wbec-ridderkerk.nl/html/UCIProtocol.html */
+#include <filesystem>
 #include <iostream>
 #include <string_view>
 #include <tuple>
@@ -11,6 +12,8 @@
 #if DATAGEN
     #include <sqlite3.h>
 #endif
+
+namespace fs = std::filesystem;
 
 /** Raise RuntimeError, and let Python handle it... */
 static void raise_runtime_error(const char* err)
@@ -309,7 +312,7 @@ namespace
 
     struct OptionDB : public OptionBase
     {
-        OptionDB() : OptionBase("DB") {}
+        OptionDB(const std::string& path) : OptionBase("DB") { _set(path); }
 
         void print(std::ostream& out) const override
         {
@@ -317,7 +320,10 @@ namespace
             out << "type string default " << (g_db ? g_db->_filename : std::string());
         }
 
-        void set(std::string_view value) override
+        void set(std::string_view value) override { _set(std::string(value)); }
+
+    private:
+        void _set(const std::string& value)
         {
             try
             {
@@ -412,6 +418,7 @@ namespace
 #endif /* DATAGEN */
 }
 
+using Params = std::unordered_map<std::string, std::string>;
 using ThreadPool = thread_pool<>;
 
 class UCI
@@ -422,7 +429,7 @@ class UCI
     static constexpr int max_depth = PLY_MAX;
 
 public:
-    UCI(const std::string &name, const std::string &version)
+    UCI(const std::string &name, const std::string &version, Params& params)
         : _name(name)
         , _version(version)
         , _use_opening_book(search::Context::_book_init(_book))
@@ -445,7 +452,8 @@ public:
         _options.emplace("ponder", std::make_shared<OptionBool>("Ponder", _ponder));
         _options.emplace("syzygypath", std::make_shared<OptionSyzygy>());
     #if DATAGEN
-        _options.emplace("db", std::make_shared<OptionDB>());
+        const auto db_path = fs::absolute(fs::path(params["prog"]).parent_path()) / "evals.db";
+        _options.emplace("db", std::make_shared<OptionDB>(db_path.string()));
     #endif
     }
 
@@ -1190,19 +1198,23 @@ void UCI::uci()
     output("uciok");
 }
 
-extern "C" void run_uci_loop(const char *name, const char *version, bool debug)
+void uci_loop(Params params)
 {
+    const auto name = params["name"];
+    const auto version = params["version"];
+    const auto debug = params["debug"];
+
 #if WITH_NNUE
     output<false>(std::format("{}-{} {}", name, version, nnue::instrset));
 #else
     output<false>(std::format("{}-{}", name, version));
 #endif /* WITH_NNUE */
 
-    _debug = debug;
+    _debug = (debug == "true");
     std::string err;
     try
     {
-        UCI uci(name, version);
+        UCI uci(name, version, params);
         uci.run();
     }
     catch (const std::exception &e)
@@ -1217,7 +1229,7 @@ extern "C" void run_uci_loop(const char *name, const char *version, bool debug)
         raise_runtime_error(err.c_str());
 }
 #else
-extern "C" void run_uci_loop(const char *, const char *, bool)
+void uci_loop(Params params)
 {
     raise_runtime_error("Native UCI implementation is not enabled.");
 }

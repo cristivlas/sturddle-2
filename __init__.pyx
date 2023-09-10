@@ -35,6 +35,7 @@ from cython.operator cimport address, dereference as deref
 
 from libcpp cimport bool
 from libcpp.map cimport map
+from libcpp.unordered_map cimport unordered_map
 from libcpp.memory cimport unique_ptr
 from libcpp.string cimport string
 from libcpp.vector cimport vector
@@ -384,7 +385,7 @@ cdef class BoardState:
 # ---------------------------------------------------------------------
 cdef extern from 'context.h' nogil:
 
-    cdef void run_uci_loop(const char* name, const char* version, bool) except*
+    cdef void uci_loop(unordered_map[string, string]) except*
     #
     # Get/set engine params via Python
     #
@@ -1329,7 +1330,12 @@ def version():
 # Experimental: native C++ UCI implementation
 # ---------------------------------------------------------------------
 def uci(name: str, debug: bool=False):
-    cdef string n = name.encode()
-    cdef string v = version().encode()
+    cdef unordered_map[string, string] c_param
+    param = {'name': name, 'version': version()}
+    if debug:
+        param['debug'] = 'true'
+    for k,v in param.items():
+        c_param[k.encode()] = v.encode()
+
     with nogil:
-        run_uci_loop(n.c_str(), v.c_str(), debug)
+        uci_loop(c_param)

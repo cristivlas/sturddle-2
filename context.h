@@ -27,6 +27,7 @@
 #include <mutex>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <unordered_set> /* unordered_multiset */
 #include "Python.h"
 #include "config.h"
@@ -1607,4 +1608,6 @@ namespace search
 
 } /* namespace */
 
-extern "C" void run_uci_loop(const char* name, const char* version, bool debug=false);
+
+void uci_loop(std::unordered_map<std::string, std::string> params);
+
