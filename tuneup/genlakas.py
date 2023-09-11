@@ -21,15 +21,14 @@ sys.path.append(root_path())
 from chess_engine import *
 
 
-def get_engine_path(args):
+def get_engine_path(args, windows):
     try:
         import uci
         engine = make_path('sturddle.py')
     except:
         # use native (built-in) uci version
         engine = make_path('main.py')
-    platform = sysconfig.get_platform()
-    if platform.startswith('win'):
+    if windows:
         engine = sys.executable + ' ' + engine
     return engine
 
@@ -91,6 +90,8 @@ if __name__ == '__main__':
     if cutechess is None:
         raise RuntimeError('Could not locate cutechess-cli')
 
+    windows = sysconfig.get_platform().startswith('win')
+
     # fill out the script template
     script = f'''
 #!/usr/bin/env bash
@@ -98,7 +99,7 @@ if __name__ == '__main__':
 python3 {os.path.join(args.lakas_path, 'lakas.py')} \\
     --budget {args.budget} --games-per-budget {args.games_per_budget} \\
     --concurrency {args.concurrency} \\
-    --engine {get_engine_path(args)} \\
+    --engine {get_engine_path(args, windows)} \\
     --input-data-file {args.data_file} \\
     --opening-file {os.path.join(args.lakas_path, 'start_opening/ogpt_chess_startpos.epd')} \\
     --optimizer {args.strategy} \\
@@ -113,8 +114,12 @@ python3 {os.path.join(args.lakas_path, 'lakas.py')} \\
     if not args.output:
         print(script)
     else:
-        with open(args.output, 'w') as out:
+        file_path = args.output
+        with open(file_path, 'w') as out:
             out.write(script)
+        if not windows:
+            # make it executable
+            os.chmod(file_path, os.stat(file_path).st_mode | 0o111)
 
     if not params:
         warnings.warn('No tunable parameters detected!')
