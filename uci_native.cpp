@@ -14,6 +14,7 @@
 #endif
 
 namespace fs = std::filesystem;
+using Params = std::unordered_map<std::string, std::string>;
 
 /** Raise RuntimeError, and let Python handle it... */
 static void raise_runtime_error(const char* err)
@@ -418,7 +419,6 @@ namespace
 #endif /* DATAGEN */
 }
 
-using Params = std::unordered_map<std::string, std::string>;
 using ThreadPool = thread_pool<>;
 
 class UCI
