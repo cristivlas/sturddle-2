@@ -451,7 +451,7 @@ namespace search
         const auto& counters = historical_counters(state, turn, move);
         ASSERT(counters.first <= counters.second);
 
-        return score + (counters.second < 1 ? 0 : (100.0 * counters.first) / counters.second);
+        return score + (counters.second < 1 ? 0 : (double(HISTORY_SCORE_MUL) * counters.first) / counters.second);
     }
 
 

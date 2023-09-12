@@ -1224,7 +1224,7 @@ namespace search
         const auto millisec = ctrl.millisec[side_to_move];
         auto moves = ctrl.moves; /* number of moves till next time control */
 
-        if (delta < TIME_CTRL_EVAL_THRESHOLD)
+        if (delta < TIME_CTRL_EVAL_THRESHOLD_LOW)
             moves = std::min(10, moves); /* score worsened, take more time */
 
         int time_limit = millisec / moves;
@@ -1234,7 +1234,7 @@ namespace search
         if (t_diff > 0 && time_limit + t_diff < millisec)
             time_limit += t_diff;
         /* if there's a time deficit, and search improved: lower the time limit. */
-        else if (delta >=0 && t_diff < 0 && time_limit + t_diff > 0)
+        else if (delta > TIME_CTRL_EVAL_THRESHOLD_HIGH && t_diff < 0 && time_limit + t_diff > 0)
             time_limit += t_diff;
 
         _time_limit.store(std::max(1, time_limit), std::memory_order_relaxed);
