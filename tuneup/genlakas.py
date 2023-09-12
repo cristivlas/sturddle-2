@@ -32,6 +32,8 @@ def get_engine_path(args, windows):
         engine = sys.executable + ' ' + engine
     return engine
 
+optimizers = ('oneplusone', 'tbpsa', 'bayesopt', 'spsa', 'cmaes', 'ngopt')
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate Lakas tuning script.')
     parser.add_argument('-b', '--budget', type=int, default=100)
@@ -41,8 +43,8 @@ if __name__ == '__main__':
     parser.add_argument('-l', '--log-file', default='log.txt')
     parser.add_argument('-o', '--output')
     parser.add_argument('-p', '--lakas-path', default='')
-    parser.add_argument('-s', '--strategy', default='tbpsa')
-    parser.add_argument('-t', '--time-control', default='1+0.1')
+    parser.add_argument('-s', '--strategy', choices=optimizers, default='spsa')
+    parser.add_argument('-t', '--time-control', default='5+0.05')
 
     # Enumerate available engine settings
     params = {}
@@ -55,24 +57,21 @@ if __name__ == '__main__':
         params[name] = val, lo, hi, grp
 
     tunable = tuple(['all'] + list(params.keys()))
-    parser.add_argument('tune', choices=tunable, nargs='+')
-    parser.add_argument('-z', '--zero-groups', choices=groups, nargs='*')
+    parser.add_argument('tune', choices=tunable, nargs='*', default='all')
 
     args = parser.parse_args()
 
     # strip 'all'
     _, *tunable = tunable
 
+    # deal with default 'all'
+    if type(args.tune) is not list:
+        args.tune = [args.tune]
+
     # substitute 'all'
     args.tune = set(p if p != 'all' else q for q in tunable for p in args.tune)
 
     # construct list of tunable params
-    if args.zero_groups:
-        for p in params:
-            g = params[p][2]
-            if (g in args.zero_groups) and (p not in args.tune):
-                fixed_params[p] = 0 if 0 in params[p] else params[p][0]
-
     tune_params = []
     for name in args.tune:
         val, lo, hi, _ = params[name]
@@ -93,8 +92,7 @@ if __name__ == '__main__':
     windows = sysconfig.get_platform().startswith('win')
 
     # fill out the script template
-    script = f'''
-#!/usr/bin/env bash
+    script = f'''#!/usr/bin/env bash
 
 python3 {os.path.join(args.lakas_path, 'lakas.py')} \\
     --budget {args.budget} --games-per-budget {args.games_per_budget} \\
