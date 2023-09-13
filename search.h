@@ -397,7 +397,7 @@ namespace search
         void shift();
 
         void history_update_cutoffs(const Move&);
-        void history_update_non_cutoffs(const Move&, bool failed_low);
+        void history_update_non_cutoffs(const Move&);
 
         void update_stats(const Context&);
 
@@ -455,7 +455,7 @@ namespace search
     }
 
 
-    INLINE void TranspositionTable::history_update_non_cutoffs(const Move& move, bool low)
+    INLINE void TranspositionTable::history_update_non_cutoffs(const Move& move)
     {
         if (move)
         {
@@ -471,8 +471,6 @@ namespace search
         #endif /* USE_BUTTERFLY_TABLES */
 
             ++counters.second;
-
-            counters.first = std::max(0, counters.first - low * HISTORY_FAIL_LOW_PENALTY);
         }
     }
 

@@ -952,11 +952,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             }
             else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_capture())
             {
-                const auto depth = std::max(1, next_ctxt->depth());
-                const auto failed_low = next_ctxt->is_pv_node()
-                    || next_ctxt->is_extended()
-                    || (move_score + HISTORY_FAIL_LOW_MARGIN / depth <= alpha);
-                table.history_update_non_cutoffs(next_ctxt->_move, failed_low);
+                table.history_update_non_cutoffs(next_ctxt->_move);
             }
 
             /*
