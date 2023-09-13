@@ -79,9 +79,7 @@ if __name__ == '__main__':
 
     # construct time control arguments
     tc = args.time_control.split('+')
-    time_control = f'--base-time-sec {tc[0]}'
-    if len(tc) > 1:
-        time_control += f' --inc-time-sec {tc[1]}'
+    time_control = f'--base-time-sec {tc[0]} --inc-time-sec {tc[1] if len(tc) > 1 else 0}'
 
     # detect cutechess-cli location
     cutechess = 'cutechess-cli.exe' if sysconfig.get_platform().startswith('win') else 'cutechess-cli'
@@ -103,7 +101,7 @@ python3 {os.path.join(args.lakas_path, 'lakas.py')} \\
     --optimizer {args.strategy} \\
     --optimizer-log-file {args.log_file} \\
     --output-data-file {args.data_file} \\
-    --match-manager-path={cutechess} \\
+    --match-manager-path {cutechess} \\
     {time_control} \\
     --input-param="{{{"".join(tune_params)}\\
 }}"
