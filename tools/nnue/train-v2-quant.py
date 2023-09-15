@@ -53,18 +53,21 @@ def make_model(args, strategy):
 
     class FixedScaleQuantizer(quantizers.Quantizer):
         def build(self, tensor_shape, name, layer):
-            # No new TensorFlow variables needed.
-            return {}
+            return {}  # No new TensorFlow variables needed.
 
         @tf.function
         def __call__(self, inputs, training, weights, **kwargs):
             half_range = 32768  # 16-bit quantization
-            quantized_values = tf.round(inputs * Q_SCALE)
+            alpha = tf.cast(args.soft_alpha, inputs.dtype)
+
+            quantized_values = tfc.ops.soft_round(inputs * Q_SCALE, alpha)
             clipped_values = tf.keras.backend.clip(quantized_values, -half_range, half_range - 1)
+
             return clipped_values / Q_SCALE
 
         def get_config(self):
             return {}
+
     '''
     https://www.tensorflow.org/model_optimization/guide/quantization/training_comprehensive_guide.md
     '''
@@ -92,6 +95,11 @@ def make_model(args, strategy):
 
         def get_config(self):
             return {}
+
+        @classmethod
+        def from_config(cls, config):
+            return cls()
+
 
     with strategy.scope():
         activation = tf.keras.activations.relu
@@ -127,7 +135,7 @@ def make_model(args, strategy):
         hidden_1b_layer = Dense(64, activation=activation, name='hidden_1b')
 
         # Add "attention layer" that computes dynamic weights based on hidden_1b (pawns & kings features).
-        attn_fan_out = 16
+        attn_fan_out = int(args.attn)
         attention_layer = Dense(attn_fan_out, activation=None, name='dynamic_weights')
 
         # Add 2nd hidden layer
@@ -533,7 +541,7 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
-        parser.add_argument('-c', '--clip', type=float, default=3.0)
+        parser.add_argument('-c', '--clip', type=float, default=3.5)
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
         parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
@@ -547,6 +555,7 @@ if __name__ == '__main__':
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
 
+        parser.add_argument('--attn', choices=('16', '32'), default='16', help='attention layer size')
         parser.add_argument('--drop', type=float, default=0, help='drop rate')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
@@ -568,6 +577,7 @@ if __name__ == '__main__':
         parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad', help='optimization algorithm')
         parser.add_argument('--plot-file', help='plot model architecture to file')
         parser.add_argument('--quantization', '-q', action='store_true', help='simulate quantization effects during training')
+        parser.add_argument('--soft-alpha', type=float, default=0.01, help='alpha for soft_round operation')
         parser.add_argument('--tiled', action='store_true', default=True)
         parser.add_argument('--no-tiled', dest='tiled', action='store_false')
         parser.add_argument('--tensorboard', '-t', action='store_true', help='enable TensorBoard')
@@ -591,6 +601,7 @@ if __name__ == '__main__':
         import tensorflow as tf
         tf.get_logger().setLevel(log_level)
 
+        import tensorflow_compression as tfc
         import tensorflow_model_optimization as tfmot
         from tensorflow_model_optimization.python.core.quantization.keras.quantize import quantizers
 
@@ -636,7 +647,7 @@ if __name__ == '__main__':
         # The mixed_float16 policy specifies that TensorFlow should use a mix of float16 and float32
         # data types during training, with float32 being used for the activations and the parameters
         # of the model, and float16 being used for the intermediate computations. !!!! GPU Only !!!!
-        if args.gpu and args.mixed_precision:
+        if args.gpu and args.mixed_precision and not args.quantization:
             from tensorflow.keras import mixed_precision
             if compute >= 7:
                 mixed_precision.set_global_policy('mixed_float16')

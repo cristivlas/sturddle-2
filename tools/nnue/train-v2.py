@@ -43,7 +43,9 @@ def make_model(args, strategy):
     class QuantizationLayer(tf.keras.layers.Layer):
         @tf.function
         def call(self, inputs):
-            return tf.round(inputs * Q_SCALE) * (1.0 / Q_SCALE)
+            # tf.round is not differentiable, use tfc.ops.soft_round instead
+            alpha = tf.cast(args.soft_alpha, inputs.dtype)
+            return tfc.ops.soft_round(inputs * Q_SCALE, alpha) * (1.0 / Q_SCALE)
 
     @tf.function
     def soft_clip(x, clip_value, alpha=0.1):
@@ -61,8 +63,6 @@ def make_model(args, strategy):
 
     with strategy.scope():
         activation = tf.keras.activations.relu
-
-        # Define the input layer
         input_layer = Input(shape=(args.hot_encoding,), name='input')
 
         def black_occupied_mask(x):
@@ -363,22 +363,49 @@ def load_model(path):
 
 
 def set_weights(from_model, to_model):
+    q_prefix = 'quant_'  # for compatibility with train-v2-quant.py
     for layer in from_model.layers:
         params = layer.get_weights()
         if not params:
             continue
-        to_layer = to_model.get_layer(layer.name)
+        name = layer.name
+        if name.startswith(q_prefix):
+            # quantized -> plain
+            name = name[len(q_prefix):]
+            params = params[:-1]
+        try:
+            to_layer = to_model.get_layer(name)
+        except ValueError:
+            # plain -> quantized
+            try:
+                to_layer = to_model.get_layer(q_prefix + name)
+            except ValueError:
+                continue
+            params.append(np.empty(shape=()))
+
         to_layer.set_weights(params)
 
 
 def main(args):
     # Apply constraints explicitly
     class ConstraintCallback(tf.keras.callbacks.Callback):
+        def __init__(self, model):
+            super().__init__()
+            # build list of layers that have kernel constraints
+            self.k_constr_layers = [
+                layer for layer in model.layers if layer.get_weights() and layer.kernel.constraint
+            ]
+            # build list of layers that have bias constraints
+            self.b_constr_layers = [
+                layer for layer in model.layers if layer.get_weights() and layer.bias.constraint
+            ]
+
         def on_batch_end(self, batch, logs=None):
-            for layer in self.model.layers:
-                if hasattr(layer, 'kernel') and layer.kernel.constraint:
+            # apply every 10-th batch, for performance
+            if batch % 10 == 0:
+                for layer in self.k_constr_layers:
                     layer.kernel.assign(layer.kernel.constraint(layer.kernel))
-                if hasattr(layer, 'bias') and layer.bias.constraint:
+                for layer in self.b_constr_layers:
                     layer.bias.assign(layer.bias.constraint(layer.bias))
 
     if args.gpu:
@@ -412,7 +439,7 @@ def main(args):
         dataset, steps_per_epoch = dataset_from_file(args, args.input[0], args.clip, strategy, callbacks)
 
         if args.quantization:
-            callbacks.append(ConstraintCallback())
+            callbacks.append(ConstraintCallback(model))
 
         if args.schedule:
             from keras.callbacks import ReduceLROnPlateau
@@ -437,7 +464,7 @@ def main(args):
             )
             callbacks.append(model_checkpoint_callback)
 
-        model.summary()
+        model.summary(line_length=120)
         if not args.model:
             print('*****************************************************************')
             print(' WARNING: checkpoint path not provided, model WILL NOT BE SAVED! ')
@@ -501,7 +528,7 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
-        parser.add_argument('-c', '--clip', type=float, default=5.0)
+        parser.add_argument('-c', '--clip', type=float, default=3.5)
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
         parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
@@ -536,6 +563,7 @@ if __name__ == '__main__':
         parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad', help='optimization algorithm')
         parser.add_argument('--plot-file', help='plot model architecture to file')
         parser.add_argument('--quantization', '-q', action='store_true', help='simulate quantization effects during training')
+        parser.add_argument('--soft-alpha', type=float, default=0.01, help='alpha for soft_round operation')
         parser.add_argument('--tiled', action='store_true', default=True)
         parser.add_argument('--no-tiled', dest='tiled', action='store_false')
         parser.add_argument('--tensorboard', '-t', action='store_true', help='enable TensorBoard')
@@ -557,6 +585,7 @@ if __name__ == '__main__':
         print('Importing TensorFlow')
 
         import tensorflow as tf
+        import tensorflow_compression as tfc
 
         tf.get_logger().setLevel(log_level)
 
