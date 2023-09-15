@@ -105,7 +105,7 @@ def make_model(args, strategy):
             bias_constraint=constraint,
         )(input_1b)
 
-        fan_out = 16
+        fan_out = int(args.attn)
         # Compute dynamic weights based on hidden_1b
         if args.quantization:
             hidden_1b_quantized = QuantizationLayer(name='hidden_bq')(hidden_1b)
@@ -542,6 +542,7 @@ if __name__ == '__main__':
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
 
+        parser.add_argument('--attn', choices=('16', '32'), default='16', help='attention layer size')
         parser.add_argument('--drop', type=float, default=0, help='drop rate')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
