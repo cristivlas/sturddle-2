@@ -2020,6 +2020,7 @@ namespace search
                 {
                     if (!WITH_NNUE || !ctxt.is_root() || count < size_t(NNUE_ROOT_ORDER_THRESHOLD))
                     {
+                        incremental_update(move, ctxt);
                         move._group = MoveOrder::LATE_MOVES;
                         move._score =
                             ctxt.history_score(move) / (1 + HISTORY_LOW)

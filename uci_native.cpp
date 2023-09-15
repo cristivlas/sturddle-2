@@ -993,6 +993,7 @@ void UCI::go(const Arguments &args)
                 ctrl.increments[chess::BLACK] = time_increments[chess::BLACK];
                 ctrl.increments[chess::WHITE] = time_increments[chess::WHITE];
                 ctrl.moves = movestogo;
+                ctrl.score = _score;
 
                 search::Context::set_start_time();
                 ctxt->set_time_ctrl(ctrl, _score_delta);

@@ -180,6 +180,7 @@ namespace search
         int millisec[2]; /* time left until next time control for black, white */
         int increments[2]; /* increments for black, white */
         int moves; /* moves to the next time control */
+        score_t score;
     };
 
 
@@ -278,7 +279,9 @@ namespace search
         template<bool EvalCaptures = true> score_t evaluate();
 
         score_t     evaluate_end();
-        score_t     evaluate_material(bool with_piece_squares = true) const;
+
+        template<bool with_piece_squares = true>
+        score_t     evaluate_material() const;
 
         void        eval_nnue();
         score_t     eval_nnue_raw(bool update_only = false);
@@ -751,9 +754,10 @@ namespace search
     }
 
 
-    INLINE score_t Context::evaluate_material(bool with_piece_squares) const
+    template<bool with_piece_squares>
+    INLINE score_t Context::evaluate_material() const
     {
-        if (with_piece_squares)
+        if constexpr (with_piece_squares)
         {
             /*
              * Flip it from the pov of the side that moved
@@ -1232,11 +1236,15 @@ namespace search
         const auto t_diff = (millisec - ctrl.millisec[!side_to_move] - 1) / moves;
         /* have more time than the opponent? spend some of it. */
         if (t_diff > 0 && time_limit + t_diff < millisec)
+        {
             time_limit += t_diff;
+        }
         /* if there's a time deficit, and search improved: lower the time limit. */
-        else if (delta > TIME_CTRL_EVAL_THRESHOLD_HIGH && t_diff < 0 && time_limit + t_diff > 0)
+        else if (t_diff < 0 && time_limit + t_diff > 0
+            && (ctrl.score >= 0 || delta > TIME_CTRL_EVAL_THRESHOLD_HIGH))
+        {
             time_limit += t_diff;
-
+        }
         _time_limit.store(std::max(1, time_limit), std::memory_order_relaxed);
     }
 
