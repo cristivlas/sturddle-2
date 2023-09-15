@@ -2,7 +2,7 @@
 '''
 **********************************************************************
 Trainer variant for the Sturddle Chess 2.0 engine's neural network.
-** An alternative approach to quantization-aware training than V2. ***
+** Alternative, by-the-book approach to quantization-aware training.
 
 Copyright (c) 2023 Cristian Vlasceanu.
 
@@ -647,6 +647,10 @@ if __name__ == '__main__':
         # The mixed_float16 policy specifies that TensorFlow should use a mix of float16 and float32
         # data types during training, with float32 being used for the activations and the parameters
         # of the model, and float16 being used for the intermediate computations. !!!! GPU Only !!!!
+
+        # Turn off mixed mode when using quantization-aware training,
+        # due to issues with tfc.ops.soft_round during graph construction.
+
         if args.gpu and args.mixed_precision and not args.quantization:
             from tensorflow.keras import mixed_precision
             if compute >= 7:
