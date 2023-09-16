@@ -888,7 +888,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         ctxt._eval = std::max(ctxt._eval - NULL_MOVE_FAIL_PENALTY, SCORE_MIN);
 
                         /* DATAGEN: do not alter _eval_raw when tuning NULL_MOVE_FAIL_PENALTY */
-                        if (std::is_const<decltype(NULL_MOVE_FAIL_PENALTY)>::value);
+                        if (std::is_const<decltype(NULL_MOVE_FAIL_PENALTY)>::value)
                         {
                             ctxt._eval_raw = std::max(ctxt._eval_raw - NULL_MOVE_FAIL_PENALTY, SCORE_MIN);
                         }
