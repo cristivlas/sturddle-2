@@ -277,6 +277,9 @@ namespace
 
 #if DATAGEN
     /* Collect data to use for training a neural net. */
+
+    static_assert(WITH_NNUE); /* requires NNUE for now */
+
     struct Database
     {
         std::string _filename;

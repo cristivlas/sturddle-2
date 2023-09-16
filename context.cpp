@@ -245,7 +245,8 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
     {
         _eval_raw = nnue::eval(acc, L2, L_DYN, L4);
 
-    #if DATAGEN /* Make sure that insufficient material conditions are detected. */
+    #if DATAGEN
+        /* Make sure that insufficient material conditions are detected. */
         _eval_raw = eval_insufficient_material(state(), _eval_raw, [this](){ return _eval_raw; });
     #endif
     }
