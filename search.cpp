@@ -891,6 +891,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         if (std::is_const<decltype(NULL_MOVE_FAIL_PENALTY)>::value)
                         {
                             ctxt._eval_raw = std::max(ctxt._eval_raw - NULL_MOVE_FAIL_PENALTY, SCORE_MIN);
+                            data_collect_move(ctxt, BaseMove() /* null */);
                         }
                         continue;
                     }

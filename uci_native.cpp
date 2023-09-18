@@ -125,10 +125,7 @@ namespace
         log_error(err);
         PyErr_SetString(PyExc_ValueError, err.c_str());
     }
-} /* namespace */
 
-namespace
-{
     /*
     https://stackoverflow.com/questions/27866909/get-function-arity-from-template-parameter
     */
@@ -347,19 +344,6 @@ namespace
     };
 
 
-    static void data_collect_move(const search::Context& ctxt, const search::BaseMove& move)
-    {
-        if (g_db && is_valid(ctxt._eval_raw))
-        {
-            ASSERT(ctxt.get_tt());
-
-            LOG_DEBUG(std::format("data_collect_move[{}]: {} {} {}",
-                ctxt.iteration(), ctxt.epd(), move.uci(), ctxt._eval));
-
-            g_data.emplace(ctxt.epd(), std::make_tuple(move, ctxt.iteration(), ctxt._eval_raw));
-        }
-    }
-
     static void data_flush(const search::Context& ctxt)
     {
         static const char* INSERT_OR_REPLACE = R"(
@@ -415,12 +399,11 @@ namespace
         }
     }
 #else
-
-    static void data_collect_move(const search::Context&, const search::BaseMove&) {}
-    static void data_flush(const search::Context&) {}
-
+    static void data_flush(const search::Context&)
+    {
+    }
 #endif /* DATAGEN */
-}
+} /* namespace */
 
 using ThreadPool = thread_pool<>;
 
@@ -1238,3 +1221,20 @@ void uci_loop(Params params)
     raise_runtime_error("Native UCI implementation is not enabled.");
 }
 #endif /* NATIVE_UCI */
+
+
+void search::data_collect_move(const search::Context& ctxt, const chess::BaseMove& move)
+{
+#if NATIVE_UCI && DATAGEN
+    if (g_db && is_valid(ctxt._eval_raw))
+    {
+        ASSERT(ctxt.get_tt());
+
+        LOG_DEBUG(std::format("data_collect_move[{}]: {} {} {}",
+            ctxt.iteration(), ctxt.epd(), move.uci(), ctxt._eval));
+
+        g_data.emplace(ctxt.epd(), std::make_tuple(move, ctxt.iteration(), ctxt._eval_raw));
+    }
+#endif /* NATIVE_UCI && DATAGEN */
+}
+

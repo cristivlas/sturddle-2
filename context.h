@@ -1614,7 +1614,12 @@ namespace search
         _need_sort = false;
     }
 
-} /* namespace */
+    /*
+     * Collect eval data for training, implemented in uci_native.cpp
+     */
+    void data_collect_move(const Context& ctxt, const BaseMove& move);
+
+} /* namespace search */
 
 
 void uci_loop(std::unordered_map<std::string, std::string> params);
