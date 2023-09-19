@@ -256,6 +256,7 @@ namespace chess
     /* Piece values */
     constexpr int WEIGHT[] = { 0, 100, 325, 325, 500, 975, 20000 };
 
+    constexpr int MAX_MATERIAL_DELTA = WEIGHT[1]*16 + WEIGHT[2]*4 + WEIGHT[3]*4 + WEIGHT[4]*4 + WEIGHT[5]*2;
 
     /*
      * BitBoard and Square utilities

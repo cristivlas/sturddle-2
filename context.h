@@ -291,7 +291,8 @@ namespace search
 
         void        extend();       /* fractional and other extensions */
         const Move* first_valid_move();
-        score_t     futility_margin();
+
+        score_t     futility_margin() const;
 
         INLINE bool has_improved(score_t margin = 0) { return improvement() > margin; }
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
@@ -325,6 +326,8 @@ namespace search
         INLINE bool is_root() const { return _ply == 0; }
 
         INLINE int  iteration() const { ASSERT(_tt); return _tt->_iteration; }
+
+        float       late_move_prune_factor() const;
 
         LMRAction   late_move_reduce(int move_count);
         static int  late_move_reduction_count();
@@ -784,7 +787,7 @@ namespace search
     }
 
 
-    INLINE score_t Context::futility_margin()
+    INLINE score_t Context::futility_margin() const
     {
         if (is_root() || !_futility_pruning || depth() < 1)
             return 0;
@@ -964,6 +967,17 @@ namespace search
     INLINE bool Context::is_pvs_ok() const
     {
         return (_algorithm == NEGASCOUT) && !is_retry() && !is_leftmost();
+    }
+
+
+    INLINE float Context::late_move_prune_factor() const
+    {
+        const auto piece_count = chess::popcount(state().occupied());
+
+        return 1 + (
+            float(LMP_ALPHA) * move_count() / piece_count +
+            float(LMP_BETA) * evaluate_material() / chess::MAX_MATERIAL_DELTA
+        ) / (LMP_ALPHA + LMP_BETA);
     }
 
 
@@ -1253,7 +1267,7 @@ namespace search
     {
         ASSERT(_phase > 2);
         return ctxt.depth() > 1 /* do not LMP leaf nodes */
-            && _current >= LMP[ctxt.depth() - 1]
+            && _current >= LMP[ctxt.depth() - 1] * ctxt.late_move_prune_factor()
             && ctxt.can_forward_prune();
     }
 
