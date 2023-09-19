@@ -970,6 +970,9 @@ namespace search
     }
 
 
+    /*
+     * A simple model of position complexity, used with late move prunning.
+     */
     INLINE float Context::late_move_prune_factor() const
     {
         const auto piece_count = chess::popcount(state().occupied());
