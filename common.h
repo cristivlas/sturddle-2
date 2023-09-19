@@ -56,8 +56,6 @@ using score_t = int;
 
 #define ADAPTIVE_NULL_MOVE                  true
 
-#define CACHE_HEURISTIC_CUTOFFS             false
-
 /*
  * Count valid moves made as nodes if true, otherwise use effectively
  * searched nodes (not including TT pruned, FP and late-move pruned).

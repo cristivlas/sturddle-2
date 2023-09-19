@@ -672,9 +672,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     else if (multicut(ctxt, table))
     {
         ASSERT(ctxt._score < SCORE_MAX);
-#if !CACHE_HEURISTIC_CUTOFFS
         return ctxt._score;
-#endif /* !CACHE_HEURISTIC_CUTOFFS */
     }
     else
     {
@@ -822,20 +820,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                          */
                         else if (s_beta >= ctxt._beta)
                         {
-                        #if CACHE_HEURISTIC_CUTOFFS
-                            /* Store it in the TT as a cutoff move. */
-                            ctxt._alpha = ctxt._score = s_beta;
-
-                            ++move_count;
-                            /*
-                             * Same as with null move pruning below, make sure that
-                             * the move is updated in the TT when storing the result.
-                             */
-                            ctxt._cutoff_move = ctxt._best_move = next_ctxt->_move;
-                            break;
-                        #else
                             return s_beta;
-                        #endif /* CACHE_HEURISTIC_CUTOFFS */
                         }
                         else if (ctxt._tt_entry._value >= ctxt._beta && next_ctxt->can_reduce())
                         {
@@ -906,22 +891,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     if (ctxt._score > MATE_HIGH)
                         ctxt._score = ctxt._beta;
 
-                #if CACHE_HEURISTIC_CUTOFFS
-                    /*
-                     * Put the hash move (if available) back in the TT when
-                     * storing this result; could skip storing and just return
-                     * ctxt._score from here, but that hurts MTD(f) performance.
-                     * This should only be needed in the multiple cores case,
-                     * with another thread possibly writing to the same entry
-                     * in between the current thread's probe time and store time.
-                     */
-                    if (ctxt._tt_entry.is_lower() && ctxt._tt_entry._hash_move)
-                    {
-                        ctxt._best_move = ctxt._cutoff_move = ctxt._tt_entry._hash_move;
-                    }
-                #else
                     return ctxt._score;
-                #endif /* CACHE_HEURISTIC_CUTOFFS */
                 }
                 else if (next_ctxt->is_capture() + next_ctxt->is_promotion() == 0)
                 {
