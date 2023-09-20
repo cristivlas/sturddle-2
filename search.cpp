@@ -521,13 +521,41 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
 }
 
 
-static INLINE void update_pruned(Context& ctxt, const Context& next, size_t& count)
+static INLINE bool probcut(Context& ctxt, TranspositionTable& table)
 {
-    ASSERT(!ctxt.is_root());
-    ++ctxt._pruned_count;
+#if PROBCUT
+    if (  !ctxt.is_pv_node()
+        && ctxt.depth() >= PROBCUT_MIN_DEPTH
+        && ctxt.depth() <= PROBCUT_MAX_DEPTH
+        && ctxt._tt_entry._value > ctxt._beta + PROBCUT_MARGIN
+       )
+    {
+        ASSERT(!ctxt.is_root()); // pv nodes should include root
 
-    if constexpr(EXTRA_STATS)
-        ++count;
+        const auto alpha = ctxt._alpha;
+        const auto beta = ctxt._beta;
+        const auto max_depth = ctxt._max_depth;
+        const auto multicut = ctxt._multicut_allowed;
+
+        ctxt._beta += PROBCUT_MARGIN;
+        ctxt._alpha = ctxt._beta - 1;
+        ctxt._max_depth -= (ctxt.depth() - 1) / 2;
+
+        const auto value = negamax(ctxt, table);
+        if (value >= ctxt._beta)
+        {
+            ctxt._score = value;
+            return true;
+        }
+
+        ctxt.rewind();
+        ctxt._alpha = alpha;
+        ctxt._beta = beta;
+        ctxt._max_depth = max_depth;
+        ctxt._multicut_allowed = multicut;
+    }
+#endif /* PROBCUT */
+    return false;
 }
 
 
@@ -555,6 +583,16 @@ static INLINE bool probe_endtables(Context& ctxt)
         return true;
     }
     return false;
+}
+
+
+static INLINE void update_pruned(Context& ctxt, const Context& next, size_t& count)
+{
+    ASSERT(!ctxt.is_root());
+    ++ctxt._pruned_count;
+
+    if constexpr(EXTRA_STATS)
+        ++count;
 }
 
 
@@ -630,23 +668,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
     const auto alpha = ctxt._alpha;
 
-#if 0
-    if (ctxt.is_leaf())
-    {
-        ctxt._score = ctxt.evaluate();
-
-        ASSERT(ctxt._score > SCORE_MIN);
-        ASSERT(ctxt._score < SCORE_MAX);
-    }
-    /* transposition table lookup */
-    else if (const auto* p = table.lookup(ctxt))
-    {
-        ASSERT(ctxt._score == *p);
-        ASSERT(!ctxt._excluded);
-
-        return *p;
-    }
-#else
     /* transposition table lookup */
     if (const auto* p = table.lookup(ctxt))
     {
@@ -662,16 +683,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
     }
-#endif
     else if (table._probe_endtables && probe_endtables(ctxt))
     {
         table.store<TT_Type::EXACT>(ctxt, alpha, ctxt.depth() + 2 * ctxt.tb_cardinality());
         ctxt._eval_raw = ctxt._score;
-        return ctxt._score;
-    }
-    else if (multicut(ctxt, table))
-    {
-        ASSERT(ctxt._score < SCORE_MAX);
         return ctxt._score;
     }
     else
@@ -716,6 +731,12 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             return alpha;
         }
     #endif /* RAZORING */
+
+        if (probcut(ctxt, table) || multicut(ctxt, table))
+        {
+            ASSERT(ctxt._score < SCORE_MAX);
+            return ctxt._score;
+        }
 
         /* Reduce depth by 2 if PV node not found in the TT (idea from SF). */
         if (ctxt._ply
