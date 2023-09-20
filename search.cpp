@@ -521,45 +521,6 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
 }
 
 
-static INLINE bool probcut(Context& ctxt, TranspositionTable& table)
-{
-#if PROBCUT
-    if (  !ctxt.is_pv_node()
-        && ctxt.depth() >= PROBCUT_MIN_DEPTH
-        && ctxt.depth() <= PROBCUT_MAX_DEPTH
-        && ctxt._tt_entry._value > ctxt._beta + PROBCUT_MARGIN + ctxt.depth() * PROBCUT_DEPTH_FACTOR
-        && ctxt._tt_entry._depth >= ctxt.depth() - 3
-       )
-    {
-        ASSERT(!ctxt.is_root()); // pv nodes should include root
-
-        const auto alpha = ctxt._alpha;
-        const auto beta = ctxt._beta;
-        const auto max_depth = ctxt._max_depth;
-        const auto multicut = ctxt._multicut_allowed;
-
-        ctxt._beta += PROBCUT_MARGIN + ctxt.depth() * PROBCUT_DEPTH_FACTOR;
-        ctxt._alpha = ctxt._beta - 1;
-        ctxt._max_depth -= (ctxt.depth() - 1) / 2;
-
-        const auto value = negamax(ctxt, table);
-        if (value >= ctxt._beta)
-        {
-            ctxt._score = value;
-            return true;
-        }
-
-        ctxt.rewind();
-        ctxt._alpha = alpha;
-        ctxt._beta = beta;
-        ctxt._max_depth = max_depth;
-        ctxt._multicut_allowed = multicut;
-    }
-#endif /* PROBCUT */
-    return false;
-}
-
-
 /*
  * Syzygy endgame tablebase probing (https://www.chessprogramming.org/Syzygy_Bases).
  * This implementation simply calls back into the python-chess library.
@@ -733,7 +694,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         }
     #endif /* RAZORING */
 
-        if (probcut(ctxt, table) || multicut(ctxt, table))
+        if (multicut(ctxt, table))
         {
             ASSERT(ctxt._score < SCORE_MAX);
             return ctxt._score;

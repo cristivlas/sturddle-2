@@ -81,8 +81,6 @@ using score_t = int;
 
 #define MTDF_REORDER_MOVES                  true
 
-#define PROBCUT                             true
-
 #define RAZORING                            true
 
 #define REPORT_CURRENT_MOVE                 false
