@@ -528,6 +528,7 @@ static INLINE bool probcut(Context& ctxt, TranspositionTable& table)
         && ctxt.depth() >= PROBCUT_MIN_DEPTH
         && ctxt.depth() <= PROBCUT_MAX_DEPTH
         && ctxt._tt_entry._value > ctxt._beta + PROBCUT_MARGIN
+        && ctxt._tt_entry._depth >= ctxt.depth() - 3
        )
     {
         ASSERT(!ctxt.is_root()); // pv nodes should include root
