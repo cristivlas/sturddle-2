@@ -527,7 +527,7 @@ static INLINE bool probcut(Context& ctxt, TranspositionTable& table)
     if (  !ctxt.is_pv_node()
         && ctxt.depth() >= PROBCUT_MIN_DEPTH
         && ctxt.depth() <= PROBCUT_MAX_DEPTH
-        && ctxt._tt_entry._value > ctxt._beta + PROBCUT_MARGIN
+        && ctxt._tt_entry._value > ctxt._beta + PROBCUT_MARGIN + ctxt.depth() * PROBCUT_DEPTH_FACTOR
         && ctxt._tt_entry._depth >= ctxt.depth() - 3
        )
     {
@@ -538,7 +538,7 @@ static INLINE bool probcut(Context& ctxt, TranspositionTable& table)
         const auto max_depth = ctxt._max_depth;
         const auto multicut = ctxt._multicut_allowed;
 
-        ctxt._beta += PROBCUT_MARGIN;
+        ctxt._beta += PROBCUT_MARGIN + ctxt.depth() * PROBCUT_DEPTH_FACTOR;
         ctxt._alpha = ctxt._beta - 1;
         ctxt._max_depth -= (ctxt.depth() - 1) / 2;
 
