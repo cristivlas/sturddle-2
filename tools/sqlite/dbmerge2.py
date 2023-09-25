@@ -26,7 +26,10 @@ def merge_databases(input_dbs, output_db):
             with SQLConn(db) as input_conn:
                 max_row = input_conn.row_max_count('position')
                 for _, row in tenumerate(input_conn.exec('SELECT * FROM position'), total=max_row):
-                    epd, depth, score = row
+                    try:
+                        epd, depth, score = row
+                    except ValueError:
+                        break
                     existing = conn.exec('SELECT depth FROM position WHERE epd = ?', (epd,)).fetchone()
                     if existing is None or abs(depth) > abs(existing[0]):
                         conn.exec('REPLACE INTO position (epd, depth, score) VALUES (?, ?, ?)', (epd, depth, score))
