@@ -24,6 +24,7 @@ args = parser.parse_args()
 configure_logging(args)
 
 def merge_databases(input_dbs, output_db):
+    logging.info(f'Merging {input_dbs} into: {output_db}')
     # Connect to the output database and create the position table if it doesn't exist
     with SQLConn(output_db) as conn:
         conn.exec('CREATE TABLE IF NOT EXISTS position(epd text PRIMARY KEY, depth integer, score integer)')
