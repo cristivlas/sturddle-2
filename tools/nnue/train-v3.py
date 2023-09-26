@@ -255,38 +255,14 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
     # Features are packed as np.uint64
     packed_feature_count = int(np.ceil(args.hot_encoding / 64))
 
-    ''' Repack features, for testing '''
-    def pack_features(unpacked):
-        # Exclude the last column, which is the 'turn'
-        bitboard_features = unpacked[:, :-1]
-
-        # Reshape so that each set of 64 bits (8 bytes) for each bitboard is in its own array
-        reshaped_bitboard_features = bitboard_features.reshape(-1, 12, 64, 8)
-
-        # Combine the 8 bits into a byte
-        packed_bytes = np.packbits(reshaped_bitboard_features, axis=-1)
-
-        # Convert bytes back to uint64
-        packed_uint64 = np.frombuffer(packed_bytes.tobytes(), dtype='>u8')
-
-        # Reshape to match original bitboards shape
-        packed_bitboards = packed_uint64.reshape(-1, 12)
-
-        # Add the 'turn' feature back
-        turn = unpacked[:, -1:].astype('>u8')
-        return np.hstack([packed_bitboards, turn])
-
     def unpack_features(packed, label):
-        assert label.dtype == np.int64  # expect signed int
+        # assert label.dtype == np.int64  # expect signed int
         bitboards = packed[:, :12]
         turn = packed[:,-1:]
         f = np.unpackbits(np.asarray(bitboards, dtype='>u8').reshape(-1, 12).view(np.uint8))
         f = f.reshape(packed.shape[0], -1)
         f = np.hstack([f, turn])  # append turn
-
-        # repacked = pack_features(f)
-        # np.testing.assert_array_equal(packed, repacked)
-
+        # assert f.shape[1] == args.hot_encoding, (f.shape, args.hot_encoding)
         return f.astype(np.float32), np.float32(label / 100)
 
     ''' Batch generator. '''
