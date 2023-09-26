@@ -287,7 +287,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         # repacked = pack_features(f)
         # np.testing.assert_array_equal(packed, repacked)
 
-        return f, np.float32(label / 100)
+        return f.astype(np.float32), np.float32(label / 100)
 
     ''' Batch generator. '''
     class DataGenerator(tf.keras.utils.Sequence):
@@ -447,9 +447,6 @@ def main(args):
     else:
         callbacks = []
         dataset, steps_per_epoch = dataset_from_file(args, args.input[0], args.clip, strategy, callbacks)
-
-        for x, y in dataset.take(1):
-            print(x, y)
 
         if args.schedule:
             from keras.callbacks import ReduceLROnPlateau
