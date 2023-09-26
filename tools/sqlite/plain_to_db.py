@@ -26,6 +26,7 @@ def process_file(file_path, db_path):
         with open(file_path, 'r') as file:
             map_file = mmap.mmap(file.fileno(), length=0, access=mmap.ACCESS_READ)
 
+        print('Counting lines...')
         line_count = 0
         for _ in iter(map_file.readline, b''):
             line_count += 1

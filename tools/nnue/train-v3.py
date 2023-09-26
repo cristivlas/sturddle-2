@@ -50,54 +50,55 @@ def make_model(args, strategy):
 
         return clipped_loss
 
-    class FixedScaleQuantizer(quantizers.Quantizer):
-        def build(self, tensor_shape, name, layer):
-            return {}  # No new TensorFlow variables needed.
+    if args.quantization:
+        class FixedScaleQuantizer(quantizers.Quantizer):
+            def build(self, tensor_shape, name, layer):
+                return {}  # No new TensorFlow variables needed.
 
-        @tf.function
-        def __call__(self, inputs, training, weights, **kwargs):
-            half_range = 32768  # 16-bit quantization
-            alpha = tf.cast(args.soft_alpha, inputs.dtype)
+            @tf.function
+            def __call__(self, inputs, training, weights, **kwargs):
+                half_range = 32768  # 16-bit quantization
+                alpha = tf.cast(args.soft_alpha, inputs.dtype)
 
-            quantized_values = tfc.ops.soft_round(inputs * Q_SCALE, alpha)
-            clipped_values = tf.keras.backend.clip(quantized_values, -half_range, half_range - 1)
+                quantized_values = tfc.ops.soft_round(inputs * Q_SCALE, alpha)
+                clipped_values = tf.keras.backend.clip(quantized_values, -half_range, half_range - 1)
 
-            return clipped_values / Q_SCALE
+                return clipped_values / Q_SCALE
 
-        def get_config(self):
-            return {}
+            def get_config(self):
+                return {}
 
-    '''
-    https://www.tensorflow.org/model_optimization/guide/quantization/training_comprehensive_guide.md
-    '''
-    class CustomQuantizeConfig(tfmot.quantization.keras.QuantizeConfig):
-        # Return a list of tuple, each of which is:
-        # (weight_variable, quantizer_function)
-        def get_weights_and_quantizers(self, layer):
-            return [(layer.kernel, FixedScaleQuantizer())]
+        '''
+        https://www.tensorflow.org/model_optimization/guide/quantization/training_comprehensive_guide.md
+        '''
+        class CustomQuantizeConfig(tfmot.quantization.keras.QuantizeConfig):
+            # Return a list of tuple, each of which is:
+            # (weight_variable, quantizer_function)
+            def get_weights_and_quantizers(self, layer):
+                return [(layer.kernel, FixedScaleQuantizer())]
 
-        # Return a list of tuple, each of which is:
-        # (activation_output, quantizer_function)
-        def get_activations_and_quantizers(self, layer):
-            return [(layer.activation, FixedScaleQuantizer())]
+            # Return a list of tuple, each of which is:
+            # (activation_output, quantizer_function)
+            def get_activations_and_quantizers(self, layer):
+                return [(layer.activation, FixedScaleQuantizer())]
 
-        # Given quantized weights, set the weights of the layer.
-        def set_quantize_weights(self, layer, quantized_weights):
-            layer.kernel = quantized_weights[0]
+            # Given quantized weights, set the weights of the layer.
+            def set_quantize_weights(self, layer, quantized_weights):
+                layer.kernel = quantized_weights[0]
 
-        # Given quantized activations, set the activations of the layer.
-        def set_quantize_activations(self, layer, quantize_activations):
-            layer.activation = quantize_activations[0]
+            # Given quantized activations, set the activations of the layer.
+            def set_quantize_activations(self, layer, quantize_activations):
+                layer.activation = quantize_activations[0]
 
-        def get_output_quantizers(self, layer):
-            return [FixedScaleQuantizer()]
+            def get_output_quantizers(self, layer):
+                return [FixedScaleQuantizer()]
 
-        def get_config(self):
-            return {}
+            def get_config(self):
+                return {}
 
-        @classmethod
-        def from_config(cls, config):
-            return cls()
+            @classmethod
+            def from_config(cls, config):
+                return cls()
 
     with strategy.scope():
         activation = tf.keras.activations.relu
@@ -548,10 +549,11 @@ if __name__ == '__main__':
         import tensorflow as tf
         tf.get_logger().setLevel(log_level)
 
-        import tensorflow_compression as tfc
-        import tensorflow_model_optimization as tfmot
-        from tensorflow_model_optimization.python.core.quantization.keras.quantize import \
-            quantizers
+        if args.quantization:
+            import tensorflow_compression as tfc
+            import tensorflow_model_optimization as tfmot
+            from tensorflow_model_optimization.python.core.quantization.keras.quantize import \
+                quantizers
 
         print(f'TensorFlow version: {tf.__version__}')
         tf_ver = [int(v) for v in tf.__version__.split('.')]
