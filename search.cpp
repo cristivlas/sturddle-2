@@ -521,16 +521,6 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
 }
 
 
-static INLINE void update_pruned(Context& ctxt, const Context& next, size_t& count)
-{
-    ASSERT(!ctxt.is_root());
-    ++ctxt._pruned_count;
-
-    if constexpr(EXTRA_STATS)
-        ++count;
-}
-
-
 /*
  * Syzygy endgame tablebase probing (https://www.chessprogramming.org/Syzygy_Bases).
  * This implementation simply calls back into the python-chess library.
@@ -555,6 +545,16 @@ static INLINE bool probe_endtables(Context& ctxt)
         return true;
     }
     return false;
+}
+
+
+static INLINE void update_pruned(Context& ctxt, const Context& next, size_t& count)
+{
+    ASSERT(!ctxt.is_root());
+    ++ctxt._pruned_count;
+
+    if constexpr(EXTRA_STATS)
+        ++count;
 }
 
 
@@ -630,23 +630,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
     const auto alpha = ctxt._alpha;
 
-#if 0
-    if (ctxt.is_leaf())
-    {
-        ctxt._score = ctxt.evaluate();
-
-        ASSERT(ctxt._score > SCORE_MIN);
-        ASSERT(ctxt._score < SCORE_MAX);
-    }
-    /* transposition table lookup */
-    else if (const auto* p = table.lookup(ctxt))
-    {
-        ASSERT(ctxt._score == *p);
-        ASSERT(!ctxt._excluded);
-
-        return *p;
-    }
-#else
     /* transposition table lookup */
     if (const auto* p = table.lookup(ctxt))
     {
@@ -662,16 +645,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
     }
-#endif
     else if (table._probe_endtables && probe_endtables(ctxt))
     {
         table.store<TT_Type::EXACT>(ctxt, alpha, ctxt.depth() + 2 * ctxt.tb_cardinality());
         ctxt._eval_raw = ctxt._score;
-        return ctxt._score;
-    }
-    else if (multicut(ctxt, table))
-    {
-        ASSERT(ctxt._score < SCORE_MAX);
         return ctxt._score;
     }
     else
@@ -716,6 +693,12 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             return alpha;
         }
     #endif /* RAZORING */
+
+        if (multicut(ctxt, table))
+        {
+            ASSERT(ctxt._score < SCORE_MAX);
+            return ctxt._score;
+        }
 
         /* Reduce depth by 2 if PV node not found in the TT (idea from SF). */
         if (ctxt._ply
