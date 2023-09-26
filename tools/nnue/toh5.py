@@ -64,21 +64,32 @@ def decode(array):
     return board
 
 
+def add_range_to_query(args, query):
+    if args.begin or args.row_count:
+        query += f' LIMIT {-1 if args.row_count is None else args.row_count}'
+
+    if args.begin:
+        query += f' OFFSET {args.begin}'
+
+    return query
+
+
 def main(args):
+    print(args.output)
+
     clip = args.clip
+    dtype = np.uint64
+
     with SQLConn(*args.input) as sql:
-        count = sql.row_count('position')
-        dtype=np.uint64
+        count = sql.exec(f'SELECT COUNT(*) FROM ({add_range_to_query(args, "SELECT * FROM position")})', echo=True).fetchone()[0]
 
         f = h5py.File(args.output, 'x')
         out = f.create_dataset('data', shape=(count, 14), dtype=dtype)
 
-        query = 'SELECT epd, score from position'
-        if args.randomize:
-            query += ' ORDER BY RANDOM()'
-
         board = chess.Board()
-        for i, row in tenumerate(sql.exec(query), start=0, total=count, desc='Encoding'):
+
+        query = add_range_to_query(args, 'SELECT epd, score from position')
+        for i, row in tenumerate(sql.exec(query, echo=True), start=0, total=count, desc='Encoding'):
             board.set_fen(row[0])
             score = np.clip(row[1], -clip, clip)
             out[i, :-1] = encode(board, args.test).astype(dtype)
@@ -89,12 +100,16 @@ if __name__ == '__main__':
     try:
         parser = argparse.ArgumentParser(description='Convert training data from sqlite3 to H5')
         parser.add_argument('input', nargs=1)
-        parser.add_argument('-c', '--clip', type=int, default=3000)
-        parser.add_argument('-o', '--output', required=True)
-        parser.add_argument('-r', '--randomize', action='store_true')
+        parser.add_argument('-b', '--begin', type=int)
+        parser.add_argument('-c', '--clip', type=int, default=15000)
+        parser.add_argument('-o', '--output')
+        parser.add_argument('-r', '--row-count', type=int)
         parser.add_argument('-t', '--test', action='store_true')
 
         args = parser.parse_args()
+        if args.output is None:
+            base_name = os.path.splitext(os.path.basename(args.input[0]))[0]
+            args.output = f"{base_name}-{args.begin if args.begin else 0}-{args.row_count if args.row_count else 'all'}.pack.h5"
 
         main(args)
 
