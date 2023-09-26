@@ -34,6 +34,7 @@ def merge_databases(input_dbs, output_db):
             logging.info(f'--- {db} ---')
             with SQLConn(db) as input_conn:
                 max_row = input_conn.row_max_count('position')
+                logging.info(f'Estimated rows in {db}: {max_row}')
                 for _, row in tenumerate(input_conn.exec('SELECT * FROM position'), total=max_row):
                     try:
                         epd, depth, score = row
