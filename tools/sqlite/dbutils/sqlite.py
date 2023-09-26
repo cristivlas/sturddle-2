@@ -49,3 +49,7 @@ class SQLConn:
 
     def row_max_count(self, table):
         return self.exec(f'SELECT MAX(_ROWID_) FROM {table}').fetchone()[0]
+
+    def total_changes(self):
+        return self._conn.total_changes
+
