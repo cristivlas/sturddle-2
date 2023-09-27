@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 '''
 **********************************************************************
-Trainer for the Sturddle Chess 2.0 engine's neural network.
+Trainer for the Sturddle Chess 2.0 engine's neural net.
 
 Copyright (c) 2023 Cristian Vlasceanu.
 
-Expects H5 files as inputs (packed format, produced by toh5.py)
+Expects H5 files as inputs (produced by toh5.py)
 **********************************************************************
 '''
 import argparse
@@ -257,46 +257,58 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
     packed_feature_count = int(np.ceil(args.hot_encoding / 64))
 
     def unpack_features(packed, label):
-        # assert label.dtype == np.int64  # expect signed int
+        packed = packed.numpy()
+        label = label.numpy()
+        assert label.dtype == np.int64  # expect signed int
+
         bitboards = packed[:, :12]
         turn = packed[:,-1:]
+
+        assert bitboards.shape[1] == 12, (bitboards.shape, bitboards)
+
         f = np.unpackbits(np.asarray(bitboards, dtype='>u8').reshape(-1, 12).view(np.uint8))
         f = f.reshape(packed.shape[0], -1)
         f = np.hstack([f, turn])  # append turn
         # assert f.shape[1] == args.hot_encoding, (f.shape, args.hot_encoding)
         return f.astype(np.float32), np.float32(label / 100)
 
-    ''' Batch generator. '''
-    class DataGenerator(tf.keras.utils.Sequence):
-        def __init__(self, x, y):
-            # assert len(x) == len(y)
-            self.x, self.y = x, y
-            self.batch_size = args.batch_size if args.batch_size else 1
-
-            # self.len = int(np.ceil(len(self.x) / self.batch_size))
-            self.len = int(np.floor(len(self.x) / self.batch_size)) #  discard incomplete batch
-            self.indices = np.arange(self.len)
+    class BatchGenerator(tf.keras.utils.Sequence):
+        def __init__(self, filepath, feature_count, batch_size):
+            self.hf = h5py.File(filepath, 'r')
+            self.data = self.hf['data']
+            assert self.data.shape[1] == feature_count + 1, self.data.shape[1]
+            self.feature_count = feature_count
+            self.batch_size = batch_size
+            self.num_batches = int(np.floor(len(self.data) / self.batch_size))  # drop incomplete batch
+            self.indices = np.arange(self.num_batches)
             np.random.shuffle(self.indices)
-            logging.info(f'using {self.len} batches.')
+            logging.info(f'using {self.num_batches} batches.')
 
         def __call__(self):
             return self
 
         def __len__(self):
-            return self.len
+            return self.num_batches
 
         def __getitem__(self, index):
             i = self.indices[index]
             start, end = i * self.batch_size, (i + 1) * self.batch_size
-            return self.x[start:end], tf.cast(self.y[start:end], tf.int64)
+            x = self.data[start:end,:self.feature_count]
+            y = self.data[start:end,self.feature_count:]
+            return x, tf.cast(y, tf.int64)
+
+        def rows(self):
+            return self.data.shape[0]
 
         def on_epoch_end(self):
             np.random.shuffle(self.indices)
 
-    ''' Wrap DataGenerator, return tuple (Dataset, steps per epoch.)'''
-    def make_dataset(x, y):
-        generator = DataGenerator(x, y)
+    print(f'Loading dataset {filepath}')  # begin reading the H5 file.
 
+    generator = BatchGenerator(filepath, packed_feature_count, args.batch_size)
+    print(f'{generator.rows():,} rows.')
+
+    def make_dataset():
         if callbacks is not None:  # wire up the generator-defined callback
             class CallbackOnEpochEnd(tf.keras.callbacks.Callback):
                 def __init__(self, generator):
@@ -324,37 +336,12 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         dataset = dataset.prefetch(tf.data.AUTOTUNE).repeat()
         return dataset, len(generator)  # len(generator) == batches (steps) per epoch.
 
-    print(f'Loading dataset {filepath}')  # begin reading the H5 file.
-
-    f = h5py.File(filepath)
-    data = f['data']
-    dtype = data.dtype
-    row_count = data.shape[0]
-    assert data.shape[1] == packed_feature_count + 1, data.shape[1]
-    print(f'{row_count:,} rows.')
-
-    ''' Light-weight views into the data avoid loading the whole dataset in memory. '''
-    class LazyView:
-        def __init__(self, data, slice_, rows):
-            self.data = data
-            self.slice_ = slice_
-            self.len = rows
-
-        def __getitem__(self, key):
-            return self.data[key, self.slice_]
-
-        def __len__(self):
-            return self.len
-
-    x = LazyView(data, slice(0, packed_feature_count), row_count)
-    y = LazyView(data, slice(packed_feature_count, packed_feature_count + 1), row_count)
-
     if args.distribute and callbacks is not None:
-        dataset, steps_per_epoch = make_dataset(x, y)
+        dataset, steps_per_epoch = make_dataset()
         # distribute data accross several GPUs
         dataset = strategy.experimental_distribute_dataset(dataset)
     else:
-        dataset, steps_per_epoch = make_dataset(x, y)
+        dataset, steps_per_epoch = make_dataset()
 
     return dataset, steps_per_epoch
 
