@@ -23,6 +23,7 @@ def create_tmux_session(session_name, db_file, start_row, row_count, total_rows)
 
     for begin in range(start_row, total_rows, row_count):
         command = f'{script_directory}/toh5.py {db_file} --begin {begin} --row-count {row_count}'
+        #pane.send_keys(f'echo {command}')
         pane.send_keys(command)
         try:
             if begin + row_count < total_rows:
@@ -31,13 +32,16 @@ def create_tmux_session(session_name, db_file, start_row, row_count, total_rows)
             break
     session.attach_session()
 
+# https://bugs.python.org/issue34803
+large_int = lambda x: int(float(x))
+
 def main():
     parser = argparse.ArgumentParser(description='Make datasets from database.')
     parser.add_argument('db_file', help='Database file to slice.')
-    parser.add_argument('--row-count', required=True, type=int, help='Row count for each slice.')
+    parser.add_argument('--row-count', required=True, type=large_int, help='Row count for each slice.')
     parser.add_argument('--session-name', default='default_session', help='The name of the tmux session.')
-    parser.add_argument('--start-row', type=int, default=0)
-    parser.add_argument('--total-rows', type=int)
+    parser.add_argument('--start-row', type=large_int, default=0)
+    parser.add_argument('--total-rows', type=large_int)
 
     args = parser.parse_args()
 
