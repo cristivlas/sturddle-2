@@ -252,25 +252,37 @@ def export_weights(args, model, indent=2):
                 write_weigths(args, model, indent)
 
 
+def tf_unpack_bits(bitboards):
+    # Create a tensor containing bit positions [63, 62, ..., 0]
+    bit_positions = tf.constant(list(range(63, -1, -1)), dtype=tf.uint64)
+
+    # Expand dimensions to make it broadcastable with bitboards
+    bit_positions_exp = tf.reshape(bit_positions, [1, 1, 64])
+
+    # Expand bitboards dimensions to [batch_size, tf.shape(bitboards)[1], 1]
+    bitboards_exp = tf.expand_dims(bitboards, axis=-1)
+
+    # Right shift bitboards by bit positions
+    shifted = tf.bitwise.right_shift(bitboards_exp, bit_positions_exp)
+
+    # Apply bitwise AND with 1 to isolate each bit
+    isolated_bits = tf.bitwise.bitwise_and(shifted, 1)
+
+    # Flatten the isolated bits tensor
+    # return tf.reshape(isolated_bits, [tf.shape(bitboards)[0], -1])
+    return tf.reshape(isolated_bits, [-1, 12 * 64])
+
+
+def tf_unpack_features(packed, label):
+    bitboards, turn = packed[:, :12], packed[:,-1:]
+
+    f = tf.concat([tf_unpack_bits(bitboards), turn], axis=1)
+    return tf.cast(f, tf.float32), tf.cast(label, tf.float32) / 100
+
+
 def dataset_from_file(args, filepath, clip, strategy, callbacks):
     # Features are packed as np.uint64
     packed_feature_count = int(np.ceil(args.hot_encoding / 64))
-
-    def unpack_features(packed, label):
-        packed = packed.numpy()
-        label = label.numpy()
-        assert label.dtype == np.int64  # expect signed int
-
-        bitboards = packed[:, :12]
-        turn = packed[:,-1:]
-
-        assert bitboards.shape[1] == 12, (bitboards.shape, bitboards)
-
-        f = np.unpackbits(np.asarray(bitboards, dtype='>u8').reshape(-1, 12).view(np.uint8))
-        f = f.reshape(packed.shape[0], -1)
-        f = np.hstack([f, turn])  # append turn
-        # assert f.shape[1] == args.hot_encoding, (f.shape, args.hot_encoding)
-        return f.astype(np.float32), np.float32(label / 100)
 
     class BatchGenerator(tf.keras.utils.Sequence):
         def __init__(self, filepath, feature_count, batch_size):
@@ -325,14 +337,8 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             output_types=(np.uint64, np.int64), # NOTE: score is converted to SIGNED int64
             output_shapes=((None, packed_feature_count), (None, 1)),
         )
-        dataset = dataset.map(
-            lambda x, y: tf.py_function(unpack_features, [x, y], [tf.float32, tf.float32]),
-            num_parallel_calls=tf.data.AUTOTUNE
-        )
-        dataset = dataset.map(
-            lambda x, y: (tf.ensure_shape(x, [None, args.hot_encoding]), y),
-            num_parallel_calls=tf.data.AUTOTUNE
-        )
+        dataset = dataset.map(tf_unpack_features, num_parallel_calls=tf.data.AUTOTUNE)
+
         dataset = dataset.prefetch(tf.data.AUTOTUNE).repeat()
         return dataset, len(generator)  # len(generator) == batches (steps) per epoch.
 
