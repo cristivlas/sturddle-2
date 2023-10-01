@@ -1682,7 +1682,7 @@ namespace search
             return true;
 
         /* the only available move? */
-        if (_is_singleton)
+        if (_is_singleton && !get_tt()->_analysis)
         {
             ASSERT(_ply == 1);
             return true;

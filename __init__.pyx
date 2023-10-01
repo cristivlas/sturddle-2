@@ -809,6 +809,7 @@ cdef extern from 'search.h' namespace 'search':
     cdef cppclass TranspositionTable:
         TranspositionTable()
 
+        # Misc. stats
         const   size_t _check_nodes
         const   size_t _eval_count
         const   size_t _endgame_nodes
@@ -827,6 +828,8 @@ cdef extern from 'search.h' namespace 'search':
         const   score_t _w_alpha
         const   score_t _w_beta
         const   int _eval_depth
+
+        bool _analysis
 
         void    init() nogil
         size_t  nodes() nogil const
@@ -1050,6 +1053,9 @@ cdef class SearchAlgorithm:
 
         self.best_move = self.context.best_move()
         return (self.best_move, self.score)
+
+    def set_analysis_mode(self, mode):
+        self._table._analysis = mode
 
 
 cdef class IterativeDeepening(SearchAlgorithm):

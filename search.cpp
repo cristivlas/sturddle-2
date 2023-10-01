@@ -372,8 +372,9 @@ template<bool Debug> void TranspositionTable::store_pv(Context& root)
             ctxt = next;
             continue;
         }
-
+    #if 0
         get_pv_from_table<Debug>(root, *ctxt, _pvBuilder);
+    #endif
         break;
     }
 
@@ -1295,7 +1296,7 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
             (*Context::_on_iter)(Context::_engine, &ctxt, &info);
         }
 
-        if (ctxt.move_count() == 1)
+        if (ctxt.move_count() == 1 && !table._analysis)
             break;
 
         if (i++ == 1)

@@ -337,6 +337,8 @@ namespace search
         score_t _w_beta = SCORE_MAX;
         bool _reset_window = false;
         bool _probe_endtables = false;
+        bool _analysis = false;
+
         /* Stats for current thread */
         size_t _check_nodes = 0;
         size_t _eval_count = 0;
