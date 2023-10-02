@@ -521,7 +521,7 @@ if __name__ == '__main__':
         parser.add_argument('--soft-alpha', type=float, default=0.01, help='alpha for soft_round operation')
         parser.add_argument('--tiled', action='store_true', default=True)
         parser.add_argument('--no-tiled', dest='tiled', action='store_false')
-        parser.add_argument('--tensorboard', '-t', action='store_true', help='enable TensorBoard')
+        parser.add_argument('--tensorboard', '-t', action='store_true', help='enable TensorBoard logging callback')
         parser.add_argument('--schedule', action='store_true', help='use learning rate schedule')
         parser.add_argument('--validation', help='validation data filepath')
         parser.add_argument('--vfreq', type=int, default=1, help='validation frequency')
