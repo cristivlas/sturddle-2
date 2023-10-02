@@ -203,30 +203,22 @@ void TranspositionTable::store(Context& ctxt, TT_Entry& entry, score_t alpha, in
     ASSERT(alpha < ctxt._beta);
     ASSERT(ctxt._alpha >= alpha);
 
-    if (entry.is_valid())
-    {
-        if  (!entry.matches(ctxt.state()))
-        {
-            entry._type = TT_Type::NONE;
-            entry._hash_move = BaseMove();
-        }
-    }
-
-    /* Store or reset hash move */
-    auto move = ctxt._best_move;
-
-    if (move || entry.is_lower())
-        entry._hash_move = move;
-
     entry._value = ctxt._score;
 
     if (entry._value >= ctxt._beta)
+    {
         entry._type = TT_Type::LOWER;
+        entry._hash_move = ctxt._best_move;
+    }
     else if (entry._value <= alpha)
+    {
         entry._type = TT_Type::UPPER;
+    }
     else
+    {
         entry._type = TT_Type::EXACT;
-
+        entry._hash_move = ctxt._best_move;
+    }
     entry._hash = ctxt.state().hash();
     entry._depth = depth;
     entry._age = _table.clock();
@@ -372,9 +364,8 @@ template<bool Debug> void TranspositionTable::store_pv(Context& root)
             ctxt = next;
             continue;
         }
-    #if 0
+
         get_pv_from_table<Debug>(root, *ctxt, _pvBuilder);
-    #endif
         break;
     }
 
