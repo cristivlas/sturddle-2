@@ -1,13 +1,18 @@
 #pragma once
-
-#if __APPLE__ || __linux__
+#if __ANDROID__
+template <int MAX_FRAMES = 256>
+void dump_backtrace(std::ostream &out)
+{
+    /* TODO: Android */
+}
+#elif __APPLE__ || __linux__
 #include <cxxabi.h>
 #include <execinfo.h>
 #include <iostream>
 #include <memory>
 
 template <int MAX_FRAMES = 256>
-void backtrace(std::ostream &out)
+void dump_backtrace(std::ostream &out)
 {
     void *frames[MAX_FRAMES] = {0};
 
@@ -29,7 +34,7 @@ void backtrace(std::ostream &out)
 #else
 
 template <int MAX_FRAMES = 256>
-void backtrace(std::ostream &out)
+void dump_backtrace(std::ostream &out)
 {
     /* TODO: Windows */
 }
