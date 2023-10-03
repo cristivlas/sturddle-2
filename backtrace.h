@@ -1,11 +1,9 @@
 #pragma once
 #if __ANDROID__
-template <int MAX_FRAMES = 256>
-void dump_backtrace(std::ostream &out)
-{
-    /* TODO: Android */
-}
-#elif __APPLE__ || __linux__
+static_assert(__ANDROID_API__ >= 33);
+#endif /* __ANDROID__ */
+
+#if __APPLE__ || __linux__
 #include <cxxabi.h>
 #include <execinfo.h>
 #include <iostream>
@@ -24,15 +22,16 @@ void dump_backtrace(std::ostream &out)
         symbols(backtrace_symbols(frames, num_frames), deleter);
 
     if (!symbols)
+    {
         num_frames = 0;
-
+        out << "backtrace_symbols failed" << std::endl;
+    }
     for (int i = 0; i != num_frames; ++i)
     {
         out << symbols[i] << std::endl;
     }
 }
 #else
-
 template <int MAX_FRAMES = 256>
 void dump_backtrace(std::ostream &out)
 {
