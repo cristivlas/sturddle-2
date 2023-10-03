@@ -274,17 +274,17 @@ static bool is_valid_pv_move(
     const State& pos,
     const BaseMove& move)
 {
-    if constexpr(Debug)
+    if (   (pos.piece_type_at(move.from_square()) == PieceType::NONE)
+        || (pos.occupied_co(pos.turn) & chess::BB_SQUARES[move.to_square()])
+        || (pos.kings & chess::BB_SQUARES[move.to_square()])
+       )
     {
-        if (   (pos.piece_type_at(move.from_square()) == PieceType::NONE)
-            || (pos.occupied_co(pos.turn) & chess::BB_SQUARES[move.to_square()])
-            || (pos.kings & chess::BB_SQUARES[move.to_square()])
-           )
-        {
+        if constexpr(Debug)
             log_invalid_pv(func, pv, start, move);
-            return false;
-        }
+
+        return false;
     }
+
     return true;
 }
 

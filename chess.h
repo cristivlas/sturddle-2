@@ -1115,6 +1115,7 @@ namespace chess
     {
         ASSERT(move);
         ASSERT(piece_type_at(move.to_square()) != PieceType::KING);
+        ASSERT(piece_type_at(move.from_square()));
 
         _check = { -1, -1 };
 

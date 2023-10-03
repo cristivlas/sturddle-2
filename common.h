@@ -46,6 +46,7 @@
 #endif
 
 #include <cmath>
+#include "backtrace.h"
 
 using score_t = int;
 
@@ -235,6 +236,7 @@ template <typename T, typename S> static inline constexpr void assert_expr(T&& e
     while (!expr)
     {
         std::cerr << what << std::endl;
+        backtrace<>(std::cerr << std::endl);
     #if !defined(NDEBUG) || defined(_DEBUG)
         abort();
     #else
