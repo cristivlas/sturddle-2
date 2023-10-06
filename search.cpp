@@ -251,20 +251,20 @@ void TranspositionTable::store_killer_move(const Context& ctxt)
 
 
 inline void log_invalid_pv(
-     const std::string& func,
-     const PV& pv,
-     const Context& start,
-     const State& pos,
-     const BaseMove& move)
- {
-     std::ostringstream out;
-     out << func << ": invalid: " << move << " pv: ";
-     for (const auto& m : pv)
-         out << m << " ";
+    const std::string& func,
+    const PV& pv,
+    const Context& start,
+    const State& pos,
+    const BaseMove& move)
+{
+    std::ostringstream out;
+    out << func << ": invalid: " << move << " pv: ";
+    for (const auto& m : pv)
+        out << m << " ";
 
-     out << " root: " << start.epd() << " current: " << Context::epd(pos);
-     Context::log_message(LogLevel::WARN, out.str());
- }
+    out << " root: " << start.epd() << " current: " << Context::epd(pos);
+    Context::log_message(LogLevel::WARN, out.str());
+}
 
 
 
