@@ -223,6 +223,7 @@ namespace search
         mutable int _improvement = SCORE_MIN;
 
         bool        _futility_pruning = true;
+        bool        _has_singleton = false;
         bool        _is_null_move = false; /* for null-move pruning */
         bool        _is_pv = false;
         bool        _is_retry = false;
@@ -1007,7 +1008,6 @@ namespace search
     INLINE Context* Context::next(bool null_move, score_t futility, int move_count)
     {
         ASSERT(_alpha < _beta);
-        ASSERT(!_is_singleton);
 
         const bool retry = _retry_next;
         _retry_next = false;
@@ -1070,7 +1070,10 @@ namespace search
         ctxt->_extension = _extension;
         ctxt->_is_retry = retry;
         if (is_root())
+        {
             ctxt->_is_singleton = !ctxt->is_null_move() && _move_maker.is_singleton(*this);
+            _has_singleton = ctxt->_is_singleton;
+        }
         ctxt->_futility_pruning = _futility_pruning && FUTILITY_PRUNING;
         ctxt->_multicut_allowed = _multicut_allowed && MULTICUT;
 

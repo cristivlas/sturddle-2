@@ -1532,6 +1532,7 @@ namespace search
 
         _extension = 0;
         _full_depth_count = LATE_MOVE_REDUCTION_COUNT;
+        _has_singleton = false;
 
         _max_depth = iteration();
 

@@ -236,7 +236,7 @@ template <typename T, typename S> static inline constexpr void assert_expr(T&& e
     while (!expr)
     {
         std::cerr << what << std::endl;
-        dump_backtrace<>(std::cerr << std::endl);
+        dump_backtrace(std::cerr << std::endl);
     #if !defined(NDEBUG) || defined(_DEBUG)
         abort();
     #else

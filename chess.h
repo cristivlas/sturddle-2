@@ -553,6 +553,8 @@ namespace chess
         /* Get the bitboard of pieces of a given color that attack the given square */
         INLINE Bitboard attackers_mask(Color color, Square square, Bitboard occupied) const
         {
+            ASSERT(square != Square::UNDEFINED);
+
             const auto attackers = attacker_pieces_mask(color, square, occupied)
                 | (kings & BB_KING_ATTACKS[square])
                 | (pawns & BB_PAWN_ATTACKS[!color][square]);

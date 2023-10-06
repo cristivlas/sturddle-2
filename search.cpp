@@ -208,7 +208,6 @@ void TranspositionTable::store(Context& ctxt, TT_Entry& entry, score_t alpha, in
     if (entry._value >= ctxt._beta)
     {
         entry._type = TT_Type::LOWER;
-        entry._hash_move = ctxt._best_move;
     }
     else if (entry._value <= alpha)
     {
@@ -217,8 +216,8 @@ void TranspositionTable::store(Context& ctxt, TT_Entry& entry, score_t alpha, in
     else
     {
         entry._type = TT_Type::EXACT;
-        entry._hash_move = ctxt._best_move;
     }
+    entry._hash_move = ctxt._best_move;
     entry._hash = ctxt.state().hash();
     entry._depth = depth;
     entry._age = _table.clock();
@@ -252,18 +251,21 @@ void TranspositionTable::store_killer_move(const Context& ctxt)
 
 
 inline void log_invalid_pv(
-    const std::string& func,
-    const PV& pv,
-    const Context& start,
-    const BaseMove& move)
-{
-    std::ostringstream out;
-    out << "invalid: " << move << " pv=";
-    for (const auto& m : pv)
-        out << m << " ";
-    out << move << " start=" << start.epd() << " func=" << func;
-    Context::log_message(LogLevel::WARN, out.str());
-}
+     const std::string& func,
+     const PV& pv,
+     const Context& start,
+     const State& pos,
+     const BaseMove& move)
+ {
+     std::ostringstream out;
+     out << func << ": invalid: " << move << " pv: ";
+     for (const auto& m : pv)
+         out << m << " ";
+
+     out << " root: " << start.epd() << " current: " << Context::epd(pos);
+     Context::log_message(LogLevel::WARN, out.str());
+ }
+
 
 
 template<bool Debug>
@@ -274,17 +276,17 @@ static bool is_valid_pv_move(
     const State& pos,
     const BaseMove& move)
 {
-    if (   (pos.piece_type_at(move.from_square()) == PieceType::NONE)
-        || (pos.occupied_co(pos.turn) & chess::BB_SQUARES[move.to_square()])
-        || (pos.kings & chess::BB_SQUARES[move.to_square()])
-       )
+    if constexpr(Debug)
     {
-        if constexpr(Debug)
-            log_invalid_pv(func, pv, start, move);
-
-        return false;
+        if (   (pos.piece_type_at(move.from_square()) == PieceType::NONE)
+            || (pos.occupied_co(pos.turn) & chess::BB_SQUARES[move.to_square()])
+            || (pos.kings & chess::BB_SQUARES[move.to_square()])
+        )
+        {
+            log_invalid_pv(func, pv, start, pos, move);
+            return false;
+        }
     }
-
     return true;
 }
 
@@ -317,8 +319,8 @@ void TranspositionTable::get_pv_from_table(Context& root, const Context& ctxt, P
         {
             if (state.is_check(!state.turn))
             {
-                log_invalid_pv(__func__, pv, root, move);
-                break;
+                log_invalid_pv(__func__, pv, root, state, move);
+                return;
             }
         }
 
@@ -1287,7 +1289,7 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
             (*Context::_on_iter)(Context::_engine, &ctxt, &info);
         }
 
-        if (ctxt.move_count() == 1 && !table._analysis)
+        if (ctxt._has_singleton && !table._analysis)
             break;
 
         if (i++ == 1)
