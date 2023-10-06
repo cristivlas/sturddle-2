@@ -38,7 +38,7 @@ of Stockfish, then use tools/sqlite/plain_to_db.py.
 5) Train the neural net running tools/nnue/train-v3.py (requires Tensorflow and optionally cuda-toolkit)
 6) Generate weights.h by exporting model trained at step 5), running:
 ./tools/nnue/train.py export -m <path-to-model> -o weights.h
-7) Build engine (using tools/build.py, or by running "python3 setup.py build\_ext --inplace")
+7) Build engine (using tools/build.py, or by running <code>python3 setup.py build\_ext --inplace</code>)
 
 For more details on tools usage, invoke any of the scripts with the "--help" option.
 
