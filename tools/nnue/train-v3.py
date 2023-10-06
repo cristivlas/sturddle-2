@@ -338,16 +338,17 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             output_shapes=((None, packed_feature_count), (None, 1)),
         )
         dataset = dataset.map(tf_unpack_features, num_parallel_calls=tf.data.AUTOTUNE)
+        if args.gpu:
+            dataset = dataset.apply(tf.data.experimental.copy_to_device("/gpu:0"))
 
         dataset = dataset.prefetch(tf.data.AUTOTUNE).repeat()
         return dataset, len(generator)  # len(generator) == batches (steps) per epoch.
 
-    if args.distribute and callbacks is not None:
-        dataset, steps_per_epoch = make_dataset()
+    dataset, steps_per_epoch = make_dataset()
+
+    if args.distribute:
         # distribute data accross several GPUs
         dataset = strategy.experimental_distribute_dataset(dataset)
-    else:
-        dataset, steps_per_epoch = make_dataset()
 
     return dataset, steps_per_epoch
 
