@@ -34,7 +34,7 @@ of Stockfish, then use `tools/sqlite/plain_to_db.py`.
 
 4) Generate HDF5 file(s) from database(s) produced by any of the methods above: use `tools/nnue/toh5.py`.
 
-5) Train the neural net by running `tools/nnue/train-v3.py` (requires Tensorflow and optionally, the CUDA toolkit).
+5) Train the neural net by running `tools/nnue/train-v3.py` (requires Tensorflow and the CUDA toolkit).
 6) Generate `weights.h` by exporting model trained in step 5:
 <code>tools/nnue/train.py export -m <path-to-model> -o weights.h</code>
 7) Build engine (using `tools/build.py`, or by running <code>python3 setup.py build\_ext --inplace</code>).
@@ -48,6 +48,8 @@ incremental fashion). The model is original and consists of a relatively small n
 # Neural Net Architecture
 ![plot](./model.png)
 
+Inference runs on the CPU using vectorized instructions.
+The Intel, ARM v7 / ARM64 with NEON architectures are supported.
 
 ## Tuning the Engine
 
