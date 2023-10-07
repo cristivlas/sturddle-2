@@ -406,6 +406,8 @@ cdef extern from 'context.h' namespace 'search':
         int millisec[2]
         int increments[2]
         int moves
+        int score
+        int delta
 
 
 cdef extern from 'nnue.h' namespace 'nnue':
@@ -493,7 +495,7 @@ cdef extern from 'context.h' namespace 'search':
         @staticmethod
         void set_time_limit_ms(int millisec) nogil
 
-        void set_time_ctrl(const TimeControl&, score_t eval)
+        void set_time_ctrl(const TimeControl&)
 
         void            set_tt(TranspositionTable*) nogil
         TranspositionTable* get_tt() const
@@ -1089,9 +1091,10 @@ cdef class IterativeDeepening(SearchAlgorithm):
             ctrl.increments[chess.BLACK] = self.time_ctrl[1][chess.BLACK]
             ctrl.increments[chess.WHITE] = self.time_ctrl[1][chess.WHITE]
             ctrl.moves = self.time_ctrl[2]
-            # logging.debug(ctrl.millisec, ctrl.increments, ctrl.moves)
+            ctrl.score = self.score
+            ctrl.delta = self.delta
 
-            self.context._ctxt.set_time_ctrl(ctrl, self.delta)
+            self.context._ctxt.set_time_ctrl(ctrl)
 
         with nogil:
             score = iterative(deref(self.context._ctxt), table, max_iter)

@@ -974,15 +974,17 @@ void UCI::go(const Arguments &args)
             else
             {
                 search::TimeControl ctrl;
+
                 ctrl.millisec[chess::BLACK] = time_remaining[chess::BLACK];
                 ctrl.millisec[chess::WHITE] = time_remaining[chess::WHITE];
                 ctrl.increments[chess::BLACK] = time_increments[chess::BLACK];
                 ctrl.increments[chess::WHITE] = time_increments[chess::WHITE];
                 ctrl.moves = movestogo;
                 ctrl.score = _score;
+                ctrl.delta = _score_delta;
 
                 search::Context::set_start_time();
-                ctxt->set_time_ctrl(ctrl, _score_delta);
+                ctxt->set_time_ctrl(ctrl);
             }
         };
     #if 0
