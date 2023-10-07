@@ -32,7 +32,7 @@ evaluations using `tools/sqlite/pgntoevals.py`.
 - Download binpack files, convert them to plain using a development version
 of Stockfish, then use `tools/sqlite/plain_to_db.py`.
 
-4) Generate HDF5 file(s) from database(s) produced by any of the methods above: `use tools/nnue/toh5.py`.
+4) Generate HDF5 file(s) from database(s) produced by any of the methods above: use `tools/nnue/toh5.py`.
 
 5) Train the neural net by running `tools/nnue/train-v3.py` (requires Tensorflow and optionally, the CUDA toolkit).
 6) Generate `weights.h` by exporting model trained in step 5:
@@ -55,7 +55,7 @@ There are two ways to tune parameters defined in `config.h`:
 - Using https://chess-tuning-tools.readthedocs.io/en/latest/
 - or using the Lakas optimizer https://github.com/fsmosca/Lakas
 
-1) Install the preferred tool and cutechess-cli.
+1) Install the preferred tool and `cutechess-cli`.
 
 2) Edit the `config.h` file, and replace `DECLARE_VALUE` with `DECLARE_PARAM` for the parameters to be tuned.
 3) Build the python module, preferably with `NATIVE_UCI`:
