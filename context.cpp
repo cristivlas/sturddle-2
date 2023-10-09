@@ -81,7 +81,7 @@ std::map<std::string, Param> _get_param_info()
 
     for (const auto& elem : Config::_namespace)
     {
-        if (WITH_NNUE && elem.second._group == "Eval" && elem.first.find("MOBILITY") != 0)
+        if (WITH_NNUE && elem.second._group == "Eval")
             continue;
 
         info.emplace(elem.first,

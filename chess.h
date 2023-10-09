@@ -22,7 +22,7 @@
 /*
  * Core Chess support data structures and routines.
  *
- * Parts inspired and ported from:
+ * Parts inspired and adapted from:
  * python-chess (C) Niklas Fiekas (https://python-chess.readthedocs.io/en/latest/)
 */
 #include <algorithm>
@@ -245,6 +245,7 @@ namespace chess
 
 
 #define DEFAULT_MOBILITY_WEIGHTS { 0, 0, 0, 7, 6, 5, 0 }
+#define DEFAULT_WEIGHTS { 0, 100, 325, 325, 500, 975, 20000 }
 
 
 #if MOBILITY_TUNING_ENABLED
@@ -254,11 +255,24 @@ namespace chess
 #endif
 
     /* Piece values */
-    constexpr int WEIGHT[] = { 0, 100, 325, 325, 500, 975, 20000 };
+#if WEIGHT_TUNING_ENABLED
+    extern int WEIGHT[7];
 
-    constexpr int MAX_MATERIAL_DELTA = WEIGHT[1]*16 + WEIGHT[2]*4 + WEIGHT[3]*4 + WEIGHT[4]*4 + WEIGHT[5]*2;
+    INLINE int max_material_delta()
+    {
+        return WEIGHT[1]*16 + WEIGHT[2]*4 + WEIGHT[3]*4 + WEIGHT[4]*4 + WEIGHT[5]*2;
+    }
+#else
+    constexpr int WEIGHT[7] = DEFAULT_WEIGHTS;
 
-    /*
+    INLINE constexpr int max_material_delta()
+    {
+        return WEIGHT[1]*16 + WEIGHT[2]*4 + WEIGHT[3]*4 + WEIGHT[4]*4 + WEIGHT[5]*2;
+    }
+#endif /* WEIGHT_TUNING_ENABLED */
+
+
+    /**************************************************************************
      * BitBoard and Square utilities
      */
 

@@ -980,7 +980,7 @@ namespace search
 
         return 1 + (
             float(LMP_ALPHA) * move_count() / piece_count +
-            float(LMP_BETA) * evaluate_material() / chess::MAX_MATERIAL_DELTA
+            float(LMP_BETA) * evaluate_material() / chess::max_material_delta()
         ) / (LMP_ALPHA + LMP_BETA);
     }
 

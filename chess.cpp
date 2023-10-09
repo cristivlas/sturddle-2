@@ -40,10 +40,12 @@ namespace chess
     const AttackTable attack_table;
 
 #if MOBILITY_TUNING_ENABLED
-
     int MOBILITY[] = DEFAULT_MOBILITY_WEIGHTS;
+#endif
 
-#endif /* MOBILITY_TUNING_ENABLED */
+#if WEIGHT_TUNING_ENABLED
+    int WEIGHT[] = DEFAULT_WEIGHTS;
+#endif
 
     AttackMasks BB_DIAG_MASKS, BB_FILE_MASKS, BB_RANK_MASKS;
 

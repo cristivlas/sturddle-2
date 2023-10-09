@@ -46,7 +46,7 @@ constexpr score_t CHECKMATE = SCORE_MAX - 1;
 constexpr score_t MATE_LOW  = -MATE_HIGH;
 
 /* Aspiration window */
-constexpr score_t HALF_WINDOW = chess::WEIGHT[chess::PieceType::PAWN] / 4;
+constexpr score_t HALF_WINDOW = 25;
 
 
 INLINE constexpr score_t checkmated(int ply)
