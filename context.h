@@ -75,6 +75,7 @@ namespace search
         void emplace(const State& s) { _positions.emplace(s); }
         void clear() { _positions.clear(); }
         size_t count(const State& s) const { return _positions.count(s); }
+        size_t size() const { return _positions.size(); }
 
         std::unordered_multiset<State, Hasher<State>> _positions;
         int _fifty = 0;
@@ -177,10 +178,11 @@ namespace search
 
     struct TimeControl
     {
-        int millisec[2]; /* time left until next time control for black, white */
-        int increments[2]; /* increments for black, white */
-        int moves; /* moves to the next time control */
+        int millisec[2];    /* time left until next time control for black/white */
+        int increments[2];  /* time increments for black/white */
+        int moves;          /* number of moves till next time control */
         score_t score;
+        score_t delta;      /* score difference from last search */
     };
 
 
@@ -354,7 +356,7 @@ namespace search
         void        set_search_window(score_t score, score_t& prev_score);
         static void set_start_time();
         static void set_time_limit_ms(int milliseconds);
-        void        set_time_ctrl(const TimeControl&, score_t eval);
+        void        set_time_ctrl(const TimeControl&);
         INLINE void set_tt(TranspositionTable* tt) { _tt = tt; }
         bool        should_verify_null_move() const;
         int         singular_margin() const;
@@ -1242,29 +1244,44 @@ namespace search
     }
 
 
-    INLINE void Context::set_time_ctrl(const TimeControl& ctrl, score_t delta)
+    INLINE void Context::set_time_ctrl(const TimeControl& ctrl)
     {
+        constexpr int AVERAGE_MOVES_PER_GAME = 80;
+
         const auto side_to_move = turn();
         const auto millisec = ctrl.millisec[side_to_move];
-        auto moves = ctrl.moves; /* number of moves till next time control */
 
-        if (delta < TIME_CTRL_EVAL_THRESHOLD_LOW)
-            moves = std::min(10, moves); /* score worsened, take more time */
+        int moves;
 
+        if (ctrl.score > CHECKMATE - 10)
+        {
+            moves = 10;
+        }
+        else if (ctrl.delta < TIME_CTRL_EVAL_THRESHOLD_LOW)
+        {
+            /* score worsened? take more time */
+            moves = std::min(10, ctrl.moves + 1);
+        }
+        else
+        {
+            /* estimate how many moves are left in the game */
+            int moves_left = AVERAGE_MOVES_PER_GAME - int(_history->size());
+
+            moves = std::max(ctrl.moves, std::max(2, moves_left));
+        }
         int time_limit = millisec / moves;
 
+        /*
+         * If there's a time deficit, and search improved: lower the time limit.
+         */
         const auto t_diff = (millisec - ctrl.millisec[!side_to_move] - 1) / moves;
-        /* have more time than the opponent? spend some of it. */
-        if (t_diff > 0 && time_limit + t_diff < millisec)
+
+        if (t_diff < 0 && time_limit + t_diff > 0
+            && (ctrl.score >= 0 || ctrl.delta > TIME_CTRL_EVAL_THRESHOLD_HIGH))
         {
             time_limit += t_diff;
         }
-        /* if there's a time deficit, and search improved: lower the time limit. */
-        else if (t_diff < 0 && time_limit + t_diff > 0
-            && (ctrl.score >= 0 || delta > TIME_CTRL_EVAL_THRESHOLD_HIGH))
-        {
-            time_limit += t_diff;
-        }
+
         _time_limit.store(std::max(1, time_limit), std::memory_order_relaxed);
     }
 

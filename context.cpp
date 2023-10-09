@@ -1885,7 +1885,7 @@ namespace search
          */
         _group_quiet_moves = (ctxt.depth() <= 0 && !ctxt.is_check());
 
-        if (ctxt._ply * !ctxt.is_null_move() * !ctxt._excluded)
+        if (!ctxt._prev * ctxt._ply * !ctxt.is_null_move() * !ctxt._excluded)
         {
             if (const auto move = lookup_pv(ctxt))
                 ctxt._prev = *move;
@@ -1958,7 +1958,7 @@ namespace search
                 {
                     make_move<false>(ctxt, move, ctxt._ply ? MoveOrder::HASH_MOVES : MoveOrder::PREV_ITER);
                 }
-                else if (move == ctxt._tt_entry._hash_move)
+                else if (move == ctxt._tt_entry._hash_move || move == ctxt._tt_entry._best_move)
                 {
                     make_move<false>(ctxt, move, MoveOrder::HASH_MOVES);
                 }

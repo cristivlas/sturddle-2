@@ -292,15 +292,19 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             self.feature_count = feature_count
             self.batch_size = batch_size
             self.num_batches = int(np.floor(len(self.data) / self.batch_size))  # drop incomplete batch
-            self.indices = np.arange(self.num_batches)
-            np.random.shuffle(self.indices)
-            logging.info(f'using {self.num_batches} batches.')
+            if args.sample:
+                self.sample_batches()
+            else:
+                self.indices = np.arange(self.num_batches)
+                np.random.shuffle(self.indices)
+
+            logging.info(f'using {len(self.indices)} batches.')
 
         def __call__(self):
             return self
 
         def __len__(self):
-            return self.num_batches
+            return len(self.indices)
 
         def __getitem__(self, index):
             i = self.indices[index]
@@ -313,7 +317,14 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             return self.data.shape[0]
 
         def on_epoch_end(self):
-            np.random.shuffle(self.indices)
+            if args.sample:
+                self.sample_batches()
+            else:
+                np.random.shuffle(self.indices)
+
+        def sample_batches(self):
+            k = int(self.num_batches * args.sample)  # Round to integer
+            self.indices = np.random.choice(self.num_batches, k, replace=False)
 
     print(f'Loading dataset {filepath}')  # begin reading the H5 file.
 
@@ -338,16 +349,17 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             output_shapes=((None, packed_feature_count), (None, 1)),
         )
         dataset = dataset.map(tf_unpack_features, num_parallel_calls=tf.data.AUTOTUNE)
+        if args.gpu:
+            dataset = dataset.apply(tf.data.experimental.copy_to_device("/gpu:0"))
 
         dataset = dataset.prefetch(tf.data.AUTOTUNE).repeat()
         return dataset, len(generator)  # len(generator) == batches (steps) per epoch.
 
-    if args.distribute and callbacks is not None:
-        dataset, steps_per_epoch = make_dataset()
+    dataset, steps_per_epoch = make_dataset()
+
+    if args.distribute:
         # distribute data accross several GPUs
         dataset = strategy.experimental_distribute_dataset(dataset)
-    else:
-        dataset, steps_per_epoch = make_dataset()
 
     return dataset, steps_per_epoch
 
@@ -518,6 +530,7 @@ if __name__ == '__main__':
         parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad', help='optimization algorithm')
         parser.add_argument('--plot-file', help='plot model architecture to file')
         parser.add_argument('--quantization', '-q', action='store_true', help='simulate quantization effects during training')
+        parser.add_argument('--sample', type=float, help='sampling ratio')
         parser.add_argument('--soft-alpha', type=float, default=0.01, help='alpha for soft_round operation')
         parser.add_argument('--tiled', action='store_true', default=True)
         parser.add_argument('--no-tiled', dest='tiled', action='store_false')
@@ -533,6 +546,10 @@ if __name__ == '__main__':
 
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout
+
+        if args.sample:
+            args.sample = max(1e-3, min(1.0, args.sample))
+            print(f'Sampling ratio={args.sample}')
 
         log_level = configure_logging(args)
 

@@ -59,8 +59,16 @@ def deserialize_weights(model, input_path):
             layer.set_weights([weights_array, biases_array])
 
 def main():
-    # Create the parser
-    parser = argparse.ArgumentParser(description='Serialize Keras model weights to JSON')
+    class CustomFormatter(
+        argparse.ArgumentDefaultsHelpFormatter,
+        argparse.RawDescriptionHelpFormatter
+    ):
+        pass
+
+    parser = argparse.ArgumentParser(
+        description='Serialize Keras model weights to JSON',
+        formatter_class=CustomFormatter,
+    )
 
     # Add the arguments
     parser.add_argument('ModelPath', metavar='modelpath', type=str, help='Path to the Keras model')
@@ -72,7 +80,7 @@ def main():
     args = parser.parse_args()
 
     # Load the model
-    model = load_model(args.ModelPath, custom_objects={'_clipped_mae' : None})
+    model = load_model(args.ModelPath, custom_objects={'clipped_loss' : None})
 
     if args.reverse:
         deserialize_weights(model, args.output)

@@ -170,6 +170,7 @@ namespace search
         TT_Type     _type = TT_Type::NONE;
         uint8_t     _age = 0;
         int8_t      _depth = std::numeric_limits<int8_t>::min();
+        BaseMove    _best_move;
         BaseMove    _hash_move;
         int16_t     _value = SCORE_MIN;
         uint64_t    _hash = 0;

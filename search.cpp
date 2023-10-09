@@ -208,6 +208,7 @@ void TranspositionTable::store(Context& ctxt, TT_Entry& entry, score_t alpha, in
     if (entry._value >= ctxt._beta)
     {
         entry._type = TT_Type::LOWER;
+        entry._best_move = ctxt._best_move;
     }
     else if (entry._value <= alpha)
     {
@@ -370,8 +371,9 @@ template<bool Debug> void TranspositionTable::store_pv(Context& root)
         get_pv_from_table<Debug>(root, *ctxt, _pvBuilder);
         break;
     }
-
+#if 0
     if (_pvBuilder.size() > _pv.size() || !std::equal(_pvBuilder.begin(), _pvBuilder.end(), _pv.begin()))
+#endif
     {
         _pv.swap(_pvBuilder);
         log_pv<Debug>(*this, &root, "store_pv");
