@@ -81,6 +81,11 @@ namespace
         search::Context::log_message(LogLevel::DEBUG, std::to_string(msg));
     }
 
+    template <typename T> static void log_info(T info)
+    {
+        search::Context::log_message(LogLevel::INFO, std::to_string(info));
+    }
+
     template <typename T> static void log_warning(T warn)
     {
         search::Context::log_message(LogLevel::WARN, std::to_string(warn));
@@ -333,7 +338,7 @@ namespace
             catch (const std::exception& e)
             {
                 ASSERT_ALWAYS(!g_db);
-                search::Context::log_message(LogLevel::WARN, e.what());
+                log_warning(e.what());
             }
             catch (...)
             {
@@ -360,7 +365,7 @@ namespace
         if (ctxt._score < DATAGEN_SCORE_THRESHOLD || search::eval_insufficient_material(ctxt.state()) == 0)
             g_data.clear();
         else
-            search::Context::log_message(LogLevel::INFO, std::format("data_flush: score={}", ctxt._score));
+            log_info(std::format("data_flush: score={}", ctxt._score));
 
         g_data.insert(g_dataDefer.begin(), g_dataDefer.end());
         g_dataDefer.clear();
@@ -372,7 +377,7 @@ namespace
             sqlite3_stmt* stmt = nullptr;
             if (sqlite3_prepare_v2(g_db->_handle, INSERT_OR_REPLACE, -1, &stmt, nullptr) != SQLITE_OK)
             {
-                search::Context::log_message(LogLevel::ERROR, g_db->errmsg("sqlite3_prepare"));
+                log_warning(g_db->errmsg("sqlite3_prepare"));
             }
             else
             {
@@ -385,8 +390,8 @@ namespace
 
                     if (sqlite3_step(stmt) != SQLITE_DONE)
                     {
-                        search::Context::log_message(LogLevel::ERROR, g_db->errmsg("sqlite3_step"));
-                        search::Context::log_message(LogLevel::INFO, std::format("defer {} data points", g_data.size()));
+                        log_warning(g_db->errmsg("sqlite3_step"));
+                        log_info(std::format("defer {} data points", g_data.size()));
                         g_dataDefer.insert(g_data.begin(), g_data.end());
                         break;
                     }
@@ -421,8 +426,7 @@ public:
         , _use_opening_book(search::Context::_book_init(_book))
     {
         search::Context::_history = std::make_unique<search::History>();
-        search::Context::log_message(LogLevel::INFO,
-            std::format("TT_Entry size: {}", std::to_string(sizeof(search::TT_Entry))));
+        log_info(std::format("TT_Entry size: {}", sizeof(search::TT_Entry)));
 
         set_start_position();
 
