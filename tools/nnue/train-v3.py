@@ -353,15 +353,14 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             dataset = dataset.apply(tf.data.experimental.copy_to_device("/gpu:0"))
 
         dataset = dataset.prefetch(tf.data.AUTOTUNE).repeat()
-        return dataset, len(generator)  # len(generator) == batches (steps) per epoch.
 
-    dataset, steps_per_epoch = make_dataset()
+        if args.distribute:
+            # distribute data accross several GPUs
+            dataset = strategy.experimental_distribute_dataset(dataset)
 
-    if args.distribute:
-        # distribute data accross several GPUs
-        dataset = strategy.experimental_distribute_dataset(dataset)
+        return dataset
 
-    return dataset, steps_per_epoch
+    return make_dataset(), len(generator)
 
 
 def load_model(path):
@@ -562,8 +561,7 @@ if __name__ == '__main__':
         if args.quantization:
             import tensorflow_compression as tfc
             import tensorflow_model_optimization as tfmot
-            from tensorflow_model_optimization.python.core.quantization.keras.quantize import \
-                quantizers
+            from tensorflow_model_optimization.python.core.quantization.keras.quantize import quantizers
 
         print(f'TensorFlow version: {tf.__version__}')
         tf_ver = [int(v) for v in tf.__version__.split('.')]
