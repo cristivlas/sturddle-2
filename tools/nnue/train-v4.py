@@ -6,7 +6,7 @@ Trainer for the Sturddle Chess 2.0 engine's neural net.
 Copyright (c) 2023 Cristian Vlasceanu.
 
 Expects H5 files as inputs (produced by toh5.py)
-Uses CPU to unpack features.
+Uses a custom layer to unpack features, which allows unpacking on GPU.
 **********************************************************************
 '''
 import argparse
@@ -41,15 +41,24 @@ def make_model(args, strategy):
     def soft_clip(x, clip_value, alpha=0.1):
         return (2 * tf.math.sigmoid(.5 * x) - 1) * clip_value + x * alpha
 
-    def loss():
-        @tf.function
-        def clipped_loss(y_true, y_pred, delta=args.clip):
-            error = soft_clip(y_true - y_pred, delta)
-            squared_loss = 0.5 * tf.square(error)
-            linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
-            return tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
+    @tf.function
+    def clipped_loss(y_true, y_pred, delta=args.clip):
+        y_true = tf.cast(y_true, tf.float32) / 100.0
+        error = soft_clip(y_true - y_pred, delta)
+        squared_loss = 0.5 * tf.square(error)
+        linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
+        return tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
 
-        return clipped_loss
+    class UnpackLayer(tf.keras.layers.Layer):
+        def __init__(self, num_outputs, **kwargs):
+            super(UnpackLayer, self).__init__(**kwargs)
+            self.num_outputs = num_outputs
+
+        def call(self, packed):
+            bitboards, turn = packed[:, :12], packed[:,-1:]
+
+            f = tf.concat([tf_unpack_bits(bitboards), turn], axis=1)
+            return tf.cast(f, tf.float32)
 
     if args.quantization:
         class FixedScaleQuantizer(quantizers.Quantizer):
@@ -105,7 +114,8 @@ def make_model(args, strategy):
         activation = tf.keras.activations.relu
 
         # Define the input layer
-        input_layer = Input(shape=(args.hot_encoding,), name='input')
+        input_layer = Input(shape=(13,), dtype=tf.uint64, name='input')
+        unpack_layer = UnpackLayer(args.hot_encoding, name='unpack')(input_layer)
 
         def black_occupied_mask(x):
             mask = tf.zeros_like(x[:, :64])
@@ -120,18 +130,18 @@ def make_model(args, strategy):
             return mask
 
         # Extract black occupation mask (summing black pieces' bitboards)
-        black_occupied = Lambda(black_occupied_mask, name='black')(input_layer)
+        black_occupied = Lambda(black_occupied_mask, name='black')(unpack_layer)
         # Extract white occupation mask (summing white pieces' bitboards)
-        white_occupied = Lambda(white_occupied_mask, name='white')(input_layer)
+        white_occupied = Lambda(white_occupied_mask, name='white')(unpack_layer)
 
-        concat = Concatenate(name='features')([input_layer, black_occupied, white_occupied])
+        concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
         drop_in = Dropout(rate=args.drop, name='reg_features')(concat)
 
         hidden_1a_layer = Dense(512, activation=activation, name='hidden_1a')
 
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
         # hidden_1b_layer: selects the pawns and kings features.
-        input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(input_layer)
+        input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
         hidden_1b_layer = Dense(64, activation=activation, name='hidden_1b')
 
         # Add "attention layer" that computes dynamic weights based on hidden_1b (pawns & kings features).
@@ -190,11 +200,12 @@ def make_model(args, strategy):
         if args.quantization:
             with SafeModeScope(safe_mode=False), tfmot.quantization.keras.quantize_scope({
                 'CustomQuantizeConfig': CustomQuantizeConfig,
-                'FixedScaleQuantizer': FixedScaleQuantizer
+                'FixedScaleQuantizer': FixedScaleQuantizer,
+                'UnpackLayer': UnpackLayer,
             }):
                 model = tfmot.quantization.keras.quantize_apply(model)
 
-        model.compile(loss=loss(), optimizer=optimizer, metrics=[])
+        model.compile(loss=clipped_loss, optimizer=optimizer, metrics=[])
 
     return model
 
@@ -274,13 +285,6 @@ def tf_unpack_bits(bitboards):
     return tf.reshape(isolated_bits, [-1, 12 * 64])
 
 
-def tf_unpack_features(packed, label):
-    bitboards, turn = packed[:, :12], packed[:,-1:]
-
-    f = tf.concat([tf_unpack_bits(bitboards), turn], axis=1)
-    return tf.cast(f, tf.float32), tf.cast(label, tf.float32) / 100
-
-
 def dataset_from_file(args, filepath, clip, strategy, callbacks):
     # Features are packed as np.uint64
     packed_feature_count = int(np.ceil(args.hot_encoding / 64))
@@ -349,7 +353,6 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             output_types=(np.uint64, np.int64), # NOTE: score is converted to SIGNED int64
             output_shapes=((None, packed_feature_count), (None, 1)),
         )
-        dataset = dataset.map(tf_unpack_features, num_parallel_calls=tf.data.AUTOTUNE)
         if args.gpu:
             dataset = dataset.apply(tf.data.experimental.copy_to_device("/gpu:0"))
 
