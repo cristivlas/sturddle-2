@@ -6,6 +6,7 @@ Trainer for the Sturddle Chess 2.0 engine's neural net.
 Copyright (c) 2023 Cristian Vlasceanu.
 
 Expects H5 files as inputs (produced by toh5.py)
+Uses a custom layer to unpack features, which allows unpacking on GPU.
 **********************************************************************
 '''
 import argparse
