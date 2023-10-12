@@ -350,6 +350,18 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             output_shapes=((None, packed_feature_count), (None, 1)),
         )
         dataset = dataset.map(tf_unpack_features, num_parallel_calls=tf.data.AUTOTUNE)
+        if args.filter:
+            @tf.function
+            def filter(x, y):
+                f = args.filter / 100.0
+                lower_bound = tf.greater(y, -f)
+                upper_bound = tf.less(y, f)
+                condition = tf.logical_and(lower_bound, upper_bound)
+                condition = tf.reshape(condition, [-1])  # Flatten to 1D
+                return tf.boolean_mask(x, condition), tf.boolean_mask(y, condition)
+
+            dataset = dataset.map(filter, num_parallel_calls=tf.data.AUTOTUNE)
+
         if args.gpu:
             dataset = dataset.apply(tf.data.experimental.copy_to_device("/gpu:0"))
 
@@ -503,7 +515,7 @@ if __name__ == '__main__':
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
-
+        parser.add_argument('-F', '--filter', type=int)
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-4, help='learning rate')
