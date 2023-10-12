@@ -41,15 +41,13 @@ def make_model(args, strategy):
     def soft_clip(x, clip_value, alpha=0.1):
         return (2 * tf.math.sigmoid(.5 * x) - 1) * clip_value + x * alpha
 
-    def loss():
-        @tf.function
-        def clipped_loss(y_true, y_pred, delta=args.clip):
-            error = soft_clip(y_true - y_pred, delta)
-            squared_loss = 0.5 * tf.square(error)
-            linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
-            return tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
-
-        return clipped_loss
+    @tf.function
+    def clipped_loss(y_true, y_pred, delta=args.clip):
+        y_true = tf.cast(y_true, tf.float32) / 100.0
+        error = soft_clip(y_true - y_pred, delta)
+        squared_loss = 0.5 * tf.square(error)
+        linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
+        return tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
 
     if args.quantization:
         class FixedScaleQuantizer(quantizers.Quantizer):
@@ -194,7 +192,7 @@ def make_model(args, strategy):
             }):
                 model = tfmot.quantization.keras.quantize_apply(model)
 
-        model.compile(loss=loss(), optimizer=optimizer, metrics=[])
+        model.compile(loss=clipped_loss, optimizer=optimizer, metrics=[])
 
     return model
 
@@ -278,7 +276,7 @@ def tf_unpack_features(packed, label):
     bitboards, turn = packed[:, :12], packed[:,-1:]
 
     f = tf.concat([tf_unpack_bits(bitboards), turn], axis=1)
-    return tf.cast(f, tf.float32), tf.cast(label, tf.float32) / 100
+    return tf.cast(f, tf.float32), tf.cast(label, tf.float32)
 
 
 def dataset_from_file(args, filepath, clip, strategy, callbacks):
@@ -353,7 +351,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         if args.filter:
             @tf.function
             def filter(x, y):
-                f = args.filter / 100.0
+                f = args.filter
                 lower_bound = tf.greater(y, -f)
                 upper_bound = tf.less(y, f)
                 condition = tf.logical_and(lower_bound, upper_bound)
