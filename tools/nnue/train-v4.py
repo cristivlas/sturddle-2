@@ -346,6 +346,15 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                 def on_epoch_end(self, epoch, logs=None):
                     self.generator.on_epoch_end()
 
+                    # Log hyper-parameters
+                    hyperparam = {
+                        'batch': len(self.generator),
+                        'clip': args.clip,
+                        'filter': args.filter,
+                        'lr': f'{float(self.model.optimizer.lr):.4e}',
+                    }
+                    logging.info(f'{self.model.name}: epoch={epoch}, {hyperparam}')
+
             callbacks.append(CallbackOnEpochEnd(generator))
 
         dataset = tf.data.Dataset.from_generator(
