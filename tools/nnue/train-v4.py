@@ -351,7 +351,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                         'batch': len(self.generator),
                         'clip': args.clip,
                         'filter': args.filter,
-                        'lr': f'{float(self.model.optimizer.lr.read_value()):.4e}',
+                        'lr': f'{self.model.optimizer.lr.read_value():.4e}',
                     }
                     logging.info(f'{self.model.name}: epoch={epoch}, {hyperparam}')
 
