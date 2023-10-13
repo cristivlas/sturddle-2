@@ -11,6 +11,7 @@ Uses a custom layer to unpack features, which allows unpacking on GPU.
 '''
 import argparse
 import logging
+import math
 import os
 import re
 import sys
@@ -353,7 +354,8 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                         'filter': args.filter,
                         'learn rate': f'{self.model.optimizer.lr.read_value():.4e}',
                     }
-                    logging.info(f'{self.model.name}: epoch={epoch}, {hyperparam}')
+                    loss = logs.get('loss', math.nan) if logs else math.nan
+                    logging.info(f'{self.model.name}: epoch={epoch} loss={loss:.6f} hyperparam={hyperparam}')
 
             callbacks.append(CallbackOnEpochEnd(generator))
 
