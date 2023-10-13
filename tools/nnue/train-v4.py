@@ -348,10 +348,10 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
                     # Log hyper-parameters
                     hyperparam = {
-                        'batch': len(self.generator),
+                        'batch size': args.batch_size,
                         'clip': args.clip,
                         'filter': args.filter,
-                        'lr': f'{self.model.optimizer.lr.read_value():.4e}',
+                        'learn rate': f'{self.model.optimizer.lr.read_value():.4e}',
                     }
                     logging.info(f'{self.model.name}: epoch={epoch}, {hyperparam}')
 
