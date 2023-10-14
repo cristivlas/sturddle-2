@@ -317,7 +317,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             x = self.data[start:end,:self.feature_count]
             y = self.data[start:end,self.feature_count:]
             y = tf.cast(y, tf.int64)  # cast from unsigned to signed
-            y = tf.cast(y, tf.float32) / 100.0  # convert to float
+            y = tf.cast(y, tf.float32) / 100.0  # convert to float and scale
             return x, y
 
         def rows(self):
