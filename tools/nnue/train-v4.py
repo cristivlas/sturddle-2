@@ -44,7 +44,6 @@ def make_model(args, strategy):
 
     @tf.function
     def clipped_loss(y_true, y_pred, delta=args.clip):
-        y_true = tf.cast(y_true, tf.float32) / 100.0
         error = soft_clip(y_true - y_pred, delta)
         squared_loss = 0.5 * tf.square(error)
         linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
@@ -317,7 +316,9 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             start, end = i * self.batch_size, (i + 1) * self.batch_size
             x = self.data[start:end,:self.feature_count]
             y = self.data[start:end,self.feature_count:]
-            return x, tf.cast(y, tf.int64)
+            y = tf.cast(y, tf.int64)  # cast from unsigned to signed
+            y = tf.cast(y, tf.float32) / 100.0  # convert to float
+            return x, y
 
         def rows(self):
             return self.data.shape[0]
@@ -362,7 +363,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
         dataset = tf.data.Dataset.from_generator(
             generator,
-            output_types=(np.uint64, np.int64), # NOTE: score is converted to SIGNED int64
+            output_types=(np.uint64, np.float32),
             output_shapes=((None, packed_feature_count), (None, 1)),
         )
         if args.filter:
