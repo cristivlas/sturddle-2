@@ -353,6 +353,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                         'clip': args.clip,
                         'filter': args.filter,
                         'learn rate': f'{self.model.optimizer.lr.read_value():.4e}',
+                        'sampling ratio': args.sample,
                     }
                     loss = logs.get('loss', math.nan) if logs else math.nan
                     logging.info(f'{self.model.name}: epoch={epoch} loss={loss:.6f} hyperparam={hyperparam}')
