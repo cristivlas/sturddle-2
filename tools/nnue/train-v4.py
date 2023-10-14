@@ -369,8 +369,9 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         if args.filter:
             @tf.function
             def filter(x, y):
-                lower_bound = tf.greater(y, -args.filter)
-                upper_bound = tf.less(y, args.filter)
+                bound = args.filter / 100.0
+                lower_bound = tf.greater(y, -bound)
+                upper_bound = tf.less(y, bound)
                 condition = tf.logical_and(lower_bound, upper_bound)
                 condition = tf.reshape(condition, [-1])  # Flatten to 1D
                 return tf.boolean_mask(x, condition), tf.boolean_mask(y, condition)
