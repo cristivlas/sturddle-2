@@ -11,6 +11,7 @@ Uses a custom layer to unpack features, which allows unpacking on GPU.
 '''
 import argparse
 import logging
+import math
 import os
 import re
 import sys
@@ -43,7 +44,6 @@ def make_model(args, strategy):
 
     @tf.function
     def clipped_loss(y_true, y_pred, delta=args.clip):
-        y_true = tf.cast(y_true, tf.float32) / 100.0
         error = soft_clip(y_true - y_pred, delta)
         squared_loss = 0.5 * tf.square(error)
         linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
@@ -316,7 +316,9 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             start, end = i * self.batch_size, (i + 1) * self.batch_size
             x = self.data[start:end,:self.feature_count]
             y = self.data[start:end,self.feature_count:]
-            return x, tf.cast(y, tf.int64)
+            y = tf.cast(y, tf.int64)  # cast from unsigned to signed
+            y = tf.cast(y, tf.float32) / 100.0  # convert to float and scale
+            return x, y
 
         def rows(self):
             return self.data.shape[0]
@@ -346,13 +348,36 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                 def on_epoch_end(self, epoch, logs=None):
                     self.generator.on_epoch_end()
 
+                    # Log hyper-parameters
+                    hyperparam = {
+                        'batch size': args.batch_size,
+                        'clip': args.clip,
+                        'filter': args.filter,
+                        'learn rate': f'{self.model.optimizer.lr.read_value():.4e}',
+                        'sampling ratio': args.sample,
+                    }
+                    loss = logs.get('loss', math.nan) if logs else math.nan
+                    logging.info(f'{self.model.name}: epoch={epoch} loss={loss:.6f} hyperparam={hyperparam}')
+
             callbacks.append(CallbackOnEpochEnd(generator))
 
         dataset = tf.data.Dataset.from_generator(
             generator,
-            output_types=(np.uint64, np.int64), # NOTE: score is converted to SIGNED int64
+            output_types=(np.uint64, np.float32),
             output_shapes=((None, packed_feature_count), (None, 1)),
         )
+        if args.filter:
+            @tf.function
+            def filter(x, y):
+                bound = args.filter / 100.0
+                lower_bound = tf.greater(y, -bound)
+                upper_bound = tf.less(y, bound)
+                condition = tf.logical_and(lower_bound, upper_bound)
+                condition = tf.reshape(condition, [-1])  # Flatten to 1D
+                return tf.boolean_mask(x, condition), tf.boolean_mask(y, condition)
+
+            dataset = dataset.map(filter, num_parallel_calls=tf.data.AUTOTUNE)
+
         if args.gpu:
             dataset = dataset.apply(tf.data.experimental.copy_to_device("/gpu:0"))
 
@@ -361,6 +386,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         if args.distribute:
             # distribute data accross several GPUs
             dataset = strategy.experimental_distribute_dataset(dataset)
+
 
         return dataset
 
@@ -441,7 +467,7 @@ def main(args):
         if args.model is not None:
             assert os.path.exists(os.path.dirname(args.model))
 
-            save_best_only = not bool(args.save_freq)
+            save_best_only = not bool(args.save_freq) and (not args.sample or args.sample == 1.0)
 
             # https://keras.io/api/callbacks/model_checkpoint/
             model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
@@ -506,7 +532,7 @@ if __name__ == '__main__':
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
-
+        parser.add_argument('-F', '--filter', type=int)
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-4, help='learning rate')
