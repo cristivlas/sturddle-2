@@ -24,6 +24,9 @@ import numpy as np
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 Q_SCALE = 1024
+# Quantization range: use int16_t with Q_SCALE, need to add 18 values w/o overflow
+Q_MAX = 32767 / 18 / Q_SCALE
+Q_MIN = -Q_MAX
 
 def configure_logging(args):
     log_level = logging.DEBUG if args.debug else logging.INFO
@@ -38,6 +41,10 @@ def configure_logging(args):
 
 
 def make_model(args, strategy):
+    class CustomConstraint(tf.keras.constraints.Constraint):
+        def __call__(self, w):
+            return tf.clip_by_value(w, Q_MIN, Q_MAX)
+
     @tf.function
     def soft_clip(x, clip_value, alpha=0.1):
         return (2 * tf.math.sigmoid(.5 * x) - 1) * clip_value + x * alpha
@@ -135,14 +142,13 @@ def make_model(args, strategy):
         white_occupied = Lambda(white_occupied_mask, name='white')(unpack_layer)
 
         concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
-        drop_in = Dropout(rate=args.drop, name='reg_features')(concat)
-
-        hidden_1a_layer = Dense(512, activation=activation, name='hidden_1a')
+        constr = CustomConstraint()
+        hidden_1a_layer = Dense(512, activation=activation, name='hidden_1a', kernel_constraint=constr, bias_constraint=constr)
 
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
         # hidden_1b_layer: selects the pawns and kings features.
         input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
-        hidden_1b_layer = Dense(64, activation=activation, name='hidden_1b')
+        hidden_1b_layer = Dense(64, activation=activation, name='hidden_1b', kernel_constraint=constr, bias_constraint=constr)
 
         # Add "attention layer" that computes dynamic weights based on hidden_1b (pawns & kings features).
         attn_fan_out = int(args.attn)
@@ -158,7 +164,7 @@ def make_model(args, strategy):
                 for layer in [hidden_1a_layer, hidden_1b_layer]
             )
 
-        hidden_1a = hidden_1a_layer(drop_in)
+        hidden_1a = hidden_1a_layer(concat)
         hidden_1b = hidden_1b_layer(input_1b)
 
         dynamic_weights = attention_layer(hidden_1b)  # computes dynamic weights
@@ -172,8 +178,7 @@ def make_model(args, strategy):
         # Apply weights to hidden_1a (multiply hidden_1a output with dynamic weights)
         weighted = Multiply(name='weighted')([hidden_1a, attn_reshape_layer(dynamic_weights)])
 
-        drop_out = Dropout(rate=args.drop, name='reg_out')(weighted)
-        hidden_2 = hidden_2_layer(drop_out)
+        hidden_2 = hidden_2_layer(weighted)
 
         output_layer = Dense(1, name='out', dtype='float32')(hidden_2)  # define the output layer
 
@@ -199,6 +204,7 @@ def make_model(args, strategy):
 
         if args.quantization:
             with SafeModeScope(safe_mode=False), tfmot.quantization.keras.quantize_scope({
+                'CustomConstraint': CustomConstraint,
                 'CustomQuantizeConfig': CustomQuantizeConfig,
                 'FixedScaleQuantizer': FixedScaleQuantizer,
                 'UnpackLayer': UnpackLayer,
@@ -353,7 +359,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                         'batch size': args.batch_size,
                         'clip': args.clip,
                         'filter': args.filter,
-                        'learn rate': f'{self.model.optimizer.lr.read_value():.4e}',
+                        'learn rate': f'{self.model.optimizer.lr.read_value():.2e}',
                         'sampling ratio': args.sample,
                     }
                     loss = logs.get('loss', math.nan) if logs else math.nan
@@ -386,7 +392,6 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         if args.distribute:
             # distribute data accross several GPUs
             dataset = strategy.experimental_distribute_dataset(dataset)
-
 
         return dataset
 
@@ -540,7 +545,6 @@ if __name__ == '__main__':
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
 
         parser.add_argument('--attn', choices=('16', '32'), default='16', help='attention layer size')
-        parser.add_argument('--drop', type=float, default=0, help='drop rate')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
 
@@ -571,7 +575,6 @@ if __name__ == '__main__':
         parser.add_argument('--workers', '-w', type=int, default=4)
 
         args = parser.parse_args()
-        args.drop = max(0, min(0.5, args.drop))
 
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout
