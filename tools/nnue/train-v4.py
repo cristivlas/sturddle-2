@@ -431,7 +431,8 @@ def set_weights(from_model, to_model):
             to_layer = to_model.get_layer(q_prefix + name)
             params.append(np.empty(shape=()))
 
-        to_layer.set_weights(params)
+        if len(to_layer.get_weights()):
+            to_layer.set_weights(params)
 
 
 def main(args):
