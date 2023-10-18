@@ -218,8 +218,8 @@ def make_model(args, strategy):
         optimizer = model.optimizer
         if hasattr(optimizer, '_optimizer'):
             optimizer = optimizer._optimizer
-
-        logging.info(f'momentum: {optimizer.momentum}')
+        if hasattr(optimizer, 'momentum'):
+            logging.info(f'momentum: {optimizer.momentum}')
 
     return model
 
