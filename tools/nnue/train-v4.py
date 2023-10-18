@@ -196,6 +196,7 @@ def make_model(args, strategy):
         elif args.optimizer == 'sgd':
             optimizer=tf.keras.optimizers.SGD(
                 learning_rate=args.learn_rate,
+                momentum=args.momentum,
                 nesterov=args.nesterov,
                 use_ema=args.ema,
                 weight_decay=args.decay if args.decay else None)
@@ -212,6 +213,13 @@ def make_model(args, strategy):
                 model = tfmot.quantization.keras.quantize_apply(model)
 
         model.compile(loss=clipped_loss, optimizer=optimizer, metrics=[])
+
+        # Log momentum
+        optimizer = model.optimizer
+        if hasattr(optimizer, '_optimizer'):
+            optimizer = optimizer._optimizer
+
+        logging.info(f'momentum: {optimizer.momentum}')
 
     return model
 
@@ -557,6 +565,7 @@ if __name__ == '__main__':
         parser.add_argument('--mem-growth', action='store_true')
         parser.add_argument('--mem-limit', type=int, default=0, help='GPU memory limit in MB')
         parser.add_argument('--mixed-precision', dest='mixed_precision', action='store_true', default=True, help='enable mixed precision')
+        parser.add_argument('--momentum', type=float, default=0.5, help='SGD momentum')
         parser.add_argument('--name', help='optional model name')
         parser.add_argument('--nesterov', dest='nesterov', action='store_true', default=False, help='use Nesterov momentum (SGD only)')
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
