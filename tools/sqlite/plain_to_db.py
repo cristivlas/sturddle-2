@@ -32,6 +32,7 @@ def process_file(file_path, db_path):
             line_count += 1
         record_count = line_count // 6
         map_file.seek(0)  # Reset the mmap object to start of file
+        print(f'Done: {line_count} lines, {record_count} records.')
 
         progress_bar = tqdm(total=record_count)
 
