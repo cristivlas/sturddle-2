@@ -233,7 +233,6 @@ the maximum number of decimal digits of precision that can be
 represented by a numpy.float32 value is 7.
 '''
 def write_weigths(args, model, indent):
-    e = 1 / Q_SCALE
     for layer in model.layers:
         params = layer.get_weights()
         if not params:

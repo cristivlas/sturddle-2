@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 '''
 **********************************************************************
-Trainer variant for the Sturddle Chess 2.0 engine's neural network.
-** Alternative, by-the-book approach to quantization-aware training.
+Trainer for the Sturddle Chess 2.0 engine's neural net.
 
 Copyright (c) 2023 Cristian Vlasceanu.
 
-Expects memmapped numpy arrays or H5 files as inputs.
+Expects H5 files as inputs (produced by toh5.py)
+Uses a custom layer to unpack features, which allows unpacking on GPU.
 **********************************************************************
 '''
 import argparse
 import logging
+import math
 import os
 import re
 import sys
@@ -23,6 +24,9 @@ import numpy as np
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 Q_SCALE = 1024
+# Quantization range: use int16_t with Q_SCALE, need to add 18 values w/o overflow
+Q_MAX = 32767 / 18 / Q_SCALE
+Q_MIN = -Q_MAX
 
 def configure_logging(args):
     log_level = logging.DEBUG if args.debug else logging.INFO
@@ -37,75 +41,88 @@ def configure_logging(args):
 
 
 def make_model(args, strategy):
+    class CustomConstraint(tf.keras.constraints.Constraint):
+        def __call__(self, w):
+            return tf.clip_by_value(w, Q_MIN, Q_MAX)
+
     @tf.function
     def soft_clip(x, clip_value, alpha=0.1):
         return (2 * tf.math.sigmoid(.5 * x) - 1) * clip_value + x * alpha
 
-    def loss():
-        @tf.function
-        def clipped_loss(y_true, y_pred, delta=args.clip):
-            error = soft_clip(y_true - y_pred, delta)
-            squared_loss = 0.5 * tf.square(error)
-            linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
-            return tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
+    @tf.function
+    def clipped_loss(y_true, y_pred, delta=args.clip):
+        error = soft_clip(y_true - y_pred, delta)
+        squared_loss = 0.5 * tf.square(error)
+        linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
+        return tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
 
-        return clipped_loss
+    class UnpackLayer(tf.keras.layers.Layer):
+        def __init__(self, num_outputs, **kwargs):
+            super(UnpackLayer, self).__init__(**kwargs)
+            self.num_outputs = num_outputs
 
-    class FixedScaleQuantizer(quantizers.Quantizer):
-        def build(self, tensor_shape, name, layer):
-            return {}  # No new TensorFlow variables needed.
+        def call(self, packed):
+            bitboards, turn = packed[:, :12], packed[:,-1:]
 
-        @tf.function
-        def __call__(self, inputs, training, weights, **kwargs):
-            half_range = 32768  # 16-bit quantization
-            alpha = tf.cast(args.soft_alpha, inputs.dtype)
+            f = tf.concat([tf_unpack_bits(bitboards), turn], axis=1)
+            return tf.cast(f, tf.float32)
 
-            quantized_values = tfc.ops.soft_round(inputs * Q_SCALE, alpha)
-            clipped_values = tf.keras.backend.clip(quantized_values, -half_range, half_range - 1)
+    if args.quantization:
+        class FixedScaleQuantizer(quantizers.Quantizer):
+            def build(self, tensor_shape, name, layer):
+                return {}  # No new TensorFlow variables needed.
 
-            return clipped_values / Q_SCALE
+            @tf.function
+            def __call__(self, inputs, training, weights, **kwargs):
+                half_range = 32768  # 16-bit quantization
+                alpha = tf.cast(args.soft_alpha, inputs.dtype)
 
-        def get_config(self):
-            return {}
+                quantized_values = tfc.ops.soft_round(inputs * Q_SCALE, alpha)
+                clipped_values = tf.keras.backend.clip(quantized_values, -half_range, half_range - 1)
 
-    '''
-    https://www.tensorflow.org/model_optimization/guide/quantization/training_comprehensive_guide.md
-    '''
-    class CustomQuantizeConfig(tfmot.quantization.keras.QuantizeConfig):
-        # Return a list of tuple, each of which is:
-        # (weight_variable, quantizer_function)
-        def get_weights_and_quantizers(self, layer):
-            return [(layer.kernel, FixedScaleQuantizer())]
+                return clipped_values / Q_SCALE
 
-        # Return a list of tuple, each of which is:
-        # (activation_output, quantizer_function)
-        def get_activations_and_quantizers(self, layer):
-            return [(layer.activation, FixedScaleQuantizer())]
+            def get_config(self):
+                return {}
 
-        # Given quantized weights, set the weights of the layer.
-        def set_quantize_weights(self, layer, quantized_weights):
-            layer.kernel = quantized_weights[0]
+        '''
+        https://www.tensorflow.org/model_optimization/guide/quantization/training_comprehensive_guide.md
+        '''
+        class CustomQuantizeConfig(tfmot.quantization.keras.QuantizeConfig):
+            # Return a list of tuple, each of which is:
+            # (weight_variable, quantizer_function)
+            def get_weights_and_quantizers(self, layer):
+                return [(layer.kernel, FixedScaleQuantizer())]
 
-        # Given quantized activations, set the activations of the layer.
-        def set_quantize_activations(self, layer, quantize_activations):
-            layer.activation = quantize_activations[0]
+            # Return a list of tuple, each of which is:
+            # (activation_output, quantizer_function)
+            def get_activations_and_quantizers(self, layer):
+                return [(layer.activation, FixedScaleQuantizer())]
 
-        def get_output_quantizers(self, layer):
-            return [FixedScaleQuantizer()]
+            # Given quantized weights, set the weights of the layer.
+            def set_quantize_weights(self, layer, quantized_weights):
+                layer.kernel = quantized_weights[0]
 
-        def get_config(self):
-            return {}
+            # Given quantized activations, set the activations of the layer.
+            def set_quantize_activations(self, layer, quantize_activations):
+                layer.activation = quantize_activations[0]
 
-        @classmethod
-        def from_config(cls, config):
-            return cls()
+            def get_output_quantizers(self, layer):
+                return [FixedScaleQuantizer()]
 
+            def get_config(self):
+                return {}
+
+            @classmethod
+            def from_config(cls, config):
+                return cls()
 
     with strategy.scope():
         activation = tf.keras.activations.relu
 
         # Define the input layer
-        input_layer = Input(shape=(args.hot_encoding,), name='input')
+        input_layer = Input(shape=(13,), dtype=tf.uint64, name='input')
+        unpack_layer = UnpackLayer(args.hot_encoding, name='unpack')(input_layer)
 
         def black_occupied_mask(x):
             mask = tf.zeros_like(x[:, :64])
@@ -120,19 +137,18 @@ def make_model(args, strategy):
             return mask
 
         # Extract black occupation mask (summing black pieces' bitboards)
-        black_occupied = Lambda(black_occupied_mask, name='black')(input_layer)
+        black_occupied = Lambda(black_occupied_mask, name='black')(unpack_layer)
         # Extract white occupation mask (summing white pieces' bitboards)
-        white_occupied = Lambda(white_occupied_mask, name='white')(input_layer)
+        white_occupied = Lambda(white_occupied_mask, name='white')(unpack_layer)
 
-        concat = Concatenate(name='features')([input_layer, black_occupied, white_occupied])
-        drop_in = Dropout(rate=args.drop, name='reg_features')(concat)
-
-        hidden_1a_layer = Dense(512, activation=activation, name='hidden_1a')
+        concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
+        constr = CustomConstraint()
+        hidden_1a_layer = Dense(512, activation=activation, name='hidden_1a', kernel_constraint=constr, bias_constraint=constr)
 
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
         # hidden_1b_layer: selects the pawns and kings features.
-        input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(input_layer)
-        hidden_1b_layer = Dense(64, activation=activation, name='hidden_1b')
+        input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
+        hidden_1b_layer = Dense(64, activation=activation, name='hidden_1b', kernel_constraint=constr, bias_constraint=constr)
 
         # Add "attention layer" that computes dynamic weights based on hidden_1b (pawns & kings features).
         attn_fan_out = int(args.attn)
@@ -148,11 +164,10 @@ def make_model(args, strategy):
                 for layer in [hidden_1a_layer, hidden_1b_layer]
             )
 
-        hidden_1a = hidden_1a_layer(drop_in)
+        hidden_1a = hidden_1a_layer(concat)
         hidden_1b = hidden_1b_layer(input_1b)
 
-        # Compute dynamic weights
-        dynamic_weights = attention_layer(hidden_1b)
+        dynamic_weights = attention_layer(hidden_1b)  # computes dynamic weights
 
         # The "reshaping" layer repeats or tiles the dynamic weights to match the output shape of hidden_1a.
         if args.tiled:
@@ -163,14 +178,14 @@ def make_model(args, strategy):
         # Apply weights to hidden_1a (multiply hidden_1a output with dynamic weights)
         weighted = Multiply(name='weighted')([hidden_1a, attn_reshape_layer(dynamic_weights)])
 
-        drop_out = Dropout(rate=args.drop, name='reg_out')(weighted)
-        hidden_2 = hidden_2_layer(drop_out)
+        hidden_2 = hidden_2_layer(weighted)
+        hidden_2_alt = Dense(16, activation=activation, name='hidden_2_alt')(hidden_1a)
 
-        # Define the output layer
-        output_layer = Dense(1, name='out', dtype='float32')(hidden_2)
+        output_layer = Dense(1, name='out', dtype='float32')(hidden_2)  # define the output layer
+        output_alt = Dense(1, name='out_alt', dtype='float32')(hidden_2_alt)
 
         # Create the model
-        model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer, name=args.name)
+        model = tf.keras.models.Model(inputs=input_layer, outputs=[output_layer, output_alt], name=args.name)
 
         if args.optimizer in ['adam', 'amsgrad']:
             optimizer=tf.keras.optimizers.Adam(
@@ -183,6 +198,7 @@ def make_model(args, strategy):
         elif args.optimizer == 'sgd':
             optimizer=tf.keras.optimizers.SGD(
                 learning_rate=args.learn_rate,
+                momentum=args.momentum,
                 nesterov=args.nesterov,
                 use_ema=args.ema,
                 weight_decay=args.decay if args.decay else None)
@@ -191,12 +207,21 @@ def make_model(args, strategy):
 
         if args.quantization:
             with SafeModeScope(safe_mode=False), tfmot.quantization.keras.quantize_scope({
+                'CustomConstraint': CustomConstraint,
                 'CustomQuantizeConfig': CustomQuantizeConfig,
-                'FixedScaleQuantizer': FixedScaleQuantizer
+                'FixedScaleQuantizer': FixedScaleQuantizer,
+                'UnpackLayer': UnpackLayer,
             }):
                 model = tfmot.quantization.keras.quantize_apply(model)
 
-        model.compile(loss=loss(), optimizer=optimizer, metrics=[])
+        model.compile(loss=clipped_loss, optimizer=optimizer, metrics=[])
+
+        # Log momentum
+        optimizer = model.optimizer
+        if hasattr(optimizer, '_optimizer'):
+            optimizer = optimizer._optimizer
+        if hasattr(optimizer, 'momentum'):
+            logging.info(f'momentum: {optimizer.momentum}')
 
     return model
 
@@ -210,8 +235,9 @@ the maximum number of decimal digits of precision that can be
 represented by a numpy.float32 value is 7.
 '''
 def write_weigths(args, model, indent):
-    e = 1 / Q_SCALE
     for layer in model.layers:
+        if '_alt' in layer.name:
+            continue
         params = layer.get_weights()
         if not params:
             continue
@@ -255,136 +281,132 @@ def export_weights(args, model, indent=2):
                 write_weigths(args, model, indent)
 
 
-def dataset_from_file(args, filepath, clip, strategy, callbacks):
-    @tf.function
-    def filter(x, y):
-        lower_bound = tf.greater(y[0], -args.filter)
-        upper_bound = tf.less(y[0], args.filter)
-        condition = tf.logical_and(lower_bound, upper_bound)
-        return tf.reduce_all(condition)
+def tf_unpack_bits(bitboards):
+    # Create a tensor containing bit positions [63, 62, ..., 0]
+    bit_positions = tf.constant(list(range(63, -1, -1)), dtype=tf.uint64)
 
-    '''
-    Batch generator.
-    '''
-    class DataGenerator(tf.keras.utils.Sequence):
-        def __init__(self, x, y):
-            assert len(x) == len(y)
-            self.x, self.y = x, y
-            self.batch_size = args.batch_size if args.batch_size else 1
-            self.len = int(np.ceil(len(self.x) / self.batch_size))
-            self.indices = np.arange(self.len)
-            np.random.shuffle(self.indices)
-            logging.info(f'using {self.len} batches.')
+    # Expand dimensions to make it broadcastable with bitboards
+    bit_positions_exp = tf.reshape(bit_positions, [1, 1, 64])
+
+    # Expand bitboards dimensions to [batch_size, tf.shape(bitboards)[1], 1]
+    bitboards_exp = tf.expand_dims(bitboards, axis=-1)
+
+    # Right shift bitboards by bit positions
+    shifted = tf.bitwise.right_shift(bitboards_exp, bit_positions_exp)
+
+    # Apply bitwise AND with 1 to isolate each bit
+    isolated_bits = tf.bitwise.bitwise_and(shifted, 1)
+
+    # Flatten the isolated bits tensor
+    # return tf.reshape(isolated_bits, [tf.shape(bitboards)[0], -1])
+    return tf.reshape(isolated_bits, [-1, 12 * 64])
+
+
+def dataset_from_file(args, filepath, clip, strategy, callbacks):
+    # Features are packed as np.uint64
+    packed_feature_count = int(np.ceil(args.hot_encoding / 64))
+
+    class BatchGenerator(tf.keras.utils.Sequence):
+        def __init__(self, filepath, feature_count, batch_size):
+            self.hf = h5py.File(filepath, 'r')
+            self.data = self.hf['data']
+            assert self.data.shape[1] == feature_count + 1, self.data.shape[1]
+            self.feature_count = feature_count
+            self.batch_size = batch_size
+            self.num_batches = int(np.floor(len(self.data) / self.batch_size))  # drop incomplete batch
+            if args.sample:
+                self.sample_batches()
+            else:
+                self.indices = np.arange(self.num_batches)
+                np.random.shuffle(self.indices)
+
+            logging.info(f'using {len(self.indices)} batches.')
 
         def __call__(self):
             return self
 
         def __len__(self):
-            return self.len
+            return len(self.indices)
 
         def __getitem__(self, index):
             i = self.indices[index]
-            # assert 0 <= i < self.len
             start, end = i * self.batch_size, (i + 1) * self.batch_size
-            x = self.x[start:end]
-            y = self.y[start:end]
+            x = self.data[start:end,:self.feature_count]
+            y = self.data[start:end,self.feature_count:]
+            y = tf.cast(y, tf.int64)  # cast from unsigned to signed
+            y = tf.cast(y, tf.float32) / 100.0  # convert to float and scale
             return x, y
 
+        def rows(self):
+            return self.data.shape[0]
+
         def on_epoch_end(self):
-            np.random.shuffle(self.indices)
+            if args.sample:
+                self.sample_batches()
+            else:
+                np.random.shuffle(self.indices)
 
-    '''
-    Split training data into macro batches (chunks).
-    Using macro batching may reduce I/O latency.
-    '''
-    class MacroBatchGenerator(tf.keras.utils.Sequence):
-        def __init__(self, x, y):
-            self.x = x
-            self.y = y
-            self.macro_batch_size = args.macro_batch_size
-            self.len = int(np.ceil(len(self.x) / self.macro_batch_size))
-            logging.info(f'using {self.len} macro-batches.')
+        def sample_batches(self):
+            k = int(self.num_batches * args.sample)  # Round to integer
+            self.indices = np.random.choice(self.num_batches, k, replace=False)
 
-        def __len__(self):
-            return self.len
+    print(f'Loading dataset {filepath}')  # begin reading the H5 file.
 
-        def __getitem__(self, index):
-            x_macro_batch = self.x[index * self.macro_batch_size:(index + 1) * self.macro_batch_size]
-            y_macro_batch = self.y[index * self.macro_batch_size:(index + 1) * self.macro_batch_size]
-            return DataGenerator(x_macro_batch, y_macro_batch)
+    generator = BatchGenerator(filepath, packed_feature_count, args.batch_size)
+    print(f'{generator.rows():,} rows.')
 
-    def make_dataset(x, y):
-        class CallbackOnEpochEnd(tf.keras.callbacks.Callback):
-            def __init__(self, generator):
-                super(CallbackOnEpochEnd, self).__init__()
-                self.generator = generator
+    def make_dataset():
+        if callbacks is not None:  # wire up the generator-defined callback
+            class CallbackOnEpochEnd(tf.keras.callbacks.Callback):
+                def __init__(self, generator):
+                    super(CallbackOnEpochEnd, self).__init__()
+                    self.generator = generator
 
-            def on_epoch_end(self, epoch, logs=None):
-                self.generator.on_epoch_end()
+                def on_epoch_end(self, epoch, logs=None):
+                    self.generator.on_epoch_end()
 
-        generator = DataGenerator(x, y)
-        if callbacks is None:
-            return generator, None
+                    # Log hyper-parameters
+                    hyperparam = {
+                        'batch size': args.batch_size,
+                        'clip': args.clip,
+                        'filter': args.filter,
+                        'learn rate': f'{self.model.optimizer.lr.read_value():.2e}',
+                        'sampling ratio': args.sample,
+                    }
+                    loss = logs.get('loss', math.nan) if logs else math.nan
+                    logging.info(f'{self.model.name}: epoch={epoch} loss={loss:.6f} hyperparam={hyperparam}')
 
-        callbacks.append(CallbackOnEpochEnd(generator))
-        steps_per_epoch = len(generator)
+            callbacks.append(CallbackOnEpochEnd(generator))
 
         dataset = tf.data.Dataset.from_generator(
             generator,
-            output_types=(dtype, dtype),
-            output_shapes=((None, args.hot_encoding), (None, 1)),
+            output_types=(np.uint64, np.float32),
+            output_shapes=((None, packed_feature_count), (None, 1)),
         )
-
         if args.filter:
-            dataset = dataset.filter(filter)
+            @tf.function
+            def filter(x, y):
+                bound = args.filter / 100.0
+                lower_bound = tf.greater(y, -bound)
+                upper_bound = tf.less(y, bound)
+                condition = tf.logical_and(lower_bound, upper_bound)
+                condition = tf.reshape(condition, [-1])  # Flatten to 1D
+                return tf.boolean_mask(x, condition), tf.boolean_mask(y, condition)
+
+            dataset = dataset.map(filter, num_parallel_calls=tf.data.AUTOTUNE)
+
+        if args.gpu:
+            dataset = dataset.apply(tf.data.experimental.copy_to_device("/gpu:0"))
+
         dataset = dataset.prefetch(tf.data.AUTOTUNE).repeat()
 
-        return dataset, steps_per_epoch
+        if args.distribute:
+            # distribute data accross several GPUs
+            dataset = strategy.experimental_distribute_dataset(dataset)
 
-    print(f'Loading dataset {filepath}')
-    dtype = np.float16 if args.half else np.float32
+        return dataset
 
-    if os.path.splitext(filepath)[1].lower() == '.h5':
-        f = h5py.File(filepath)
-        data = f['data']
-        dtype = data.dtype
-        row_count = data.shape[0]
-        assert data.shape[1] == args.hot_encoding + 1, data.shape[1]
-        print(f'{row_count:,} rows.')
-
-        class LazyView:
-            def __init__(self, data, slice_, rows):
-                self.data = data
-                self.slice_ = slice_
-                self.len = rows
-
-            def __getitem__(self, key):
-                return self.data[key, self.slice_]
-
-            def __len__(self):
-                return self.len
-
-        x = LazyView(data, slice(0, args.hot_encoding), row_count)
-        y = LazyView(data, slice(args.hot_encoding, args.hot_encoding + 1), row_count)
-    else:
-        data = np.memmap(filepath, dtype=dtype, mode='r')
-        row_count = data.shape[0] // (args.hot_encoding + 1)
-        data = data.reshape((row_count, (args.hot_encoding + 1)))
-        x = data[:,:args.hot_encoding]
-        y = data[:,args.hot_encoding:]
-        print(x.shape, y.shape)
-    steps_per_epoch = None
-
-    if args.distribute and callbacks is not None:
-        dataset, steps_per_epoch = make_dataset(x, y)
-        # distribute data accross several GPUs
-        dataset = strategy.experimental_distribute_dataset(dataset)
-    elif args.macro_batch_size > 0:
-        # use macro-batching (chunking) to reduce I/O latency
-        dataset = MacroBatchGenerator(x, y)
-    else:
-        dataset, steps_per_epoch = make_dataset(x, y)
-    return dataset, steps_per_epoch
+    return make_dataset(), len(generator)
 
 
 def load_model(path):
@@ -420,7 +442,8 @@ def set_weights(from_model, to_model):
             to_layer = to_model.get_layer(q_prefix + name)
             params.append(np.empty(shape=()))
 
-        to_layer.set_weights(params)
+        if len(to_layer.get_weights()):
+            to_layer.set_weights(params)
 
 
 def main(args):
@@ -439,8 +462,7 @@ def main(args):
     else:
         model = make_model(args, strategy)
 
-    if args.plot_file:
-        # Display the model architecture
+    if args.plot_file:  # Display the model architecture
         tf.keras.utils.plot_model(
             model,
             to_file=args.plot_file,
@@ -462,10 +484,7 @@ def main(args):
         if args.model is not None:
             assert os.path.exists(os.path.dirname(args.model))
 
-            if args.macro_batch_size > 0:
-                save_best_only = False
-            else:
-                save_best_only = not bool(args.save_freq)
+            save_best_only = not bool(args.save_freq)
 
             # https://keras.io/api/callbacks/model_checkpoint/
             model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
@@ -491,24 +510,7 @@ def main(args):
             )
             callbacks.append(tensorboard_callback)
 
-        if args.macro_batch_size:
-            # Validation data is not supported in chunk mode.
-            # H5 files not supported either (may run out of memory).
-            for era in range(args.epochs // args.macro_epochs):
-                logging.info(f'===== Era: {era} =====')
-                indices = np.arange(len(dataset))
-                np.random.shuffle(indices)
-                logging.info(f'indices: {indices}')
-                for i,j in enumerate(indices):
-                    logging.info(f'MacroBatch: {i + 1}/{len(indices)}: {j}')
-                    model.fit(
-                        dataset[j],
-                        callbacks=callbacks,
-                        epochs=args.macro_epochs,
-                        max_queue_size=args.max_queue_size,
-                        workers=args.workers,
-                        use_multiprocessing=args.use_multiprocessing)
-        elif args.validation:
+        if args.validation:
             validation_data, _ = dataset_from_file(args, args.validation, None, strategy, None)
             model.fit(
                 dataset,
@@ -548,7 +550,6 @@ if __name__ == '__main__':
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
         parser.add_argument('-F', '--filter', type=int)
-        parser.add_argument('-H', '--half', action='store_true', help='treat input data as half-precision (float16)')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-4, help='learning rate')
@@ -556,7 +557,6 @@ if __name__ == '__main__':
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
 
         parser.add_argument('--attn', choices=('16', '32'), default='16', help='attention layer size')
-        parser.add_argument('--drop', type=float, default=0, help='drop rate')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
 
@@ -564,12 +564,11 @@ if __name__ == '__main__':
         parser.add_argument('--hot-encoding', choices=(769,), type=int, default=769, help=argparse.SUPPRESS)
 
         parser.add_argument('--logdir', default='/tmp/logs', help='tensorboard log dir')
-        parser.add_argument('--macro-batch-size', type=int, default=0)
-        parser.add_argument('--macro-epochs', type=int, default=1, help='epochs per macro-batch')
         parser.add_argument('--max-queue-size', type=int, default=10000, help='max size for queue that holds batches')
         parser.add_argument('--mem-growth', action='store_true')
         parser.add_argument('--mem-limit', type=int, default=0, help='GPU memory limit in MB')
         parser.add_argument('--mixed-precision', dest='mixed_precision', action='store_true', default=True, help='enable mixed precision')
+        parser.add_argument('--momentum', type=float, default=0.5, help='SGD momentum')
         parser.add_argument('--name', help='optional model name')
         parser.add_argument('--nesterov', dest='nesterov', action='store_true', default=False, help='use Nesterov momentum (SGD only)')
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
@@ -577,10 +576,11 @@ if __name__ == '__main__':
         parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad', help='optimization algorithm')
         parser.add_argument('--plot-file', help='plot model architecture to file')
         parser.add_argument('--quantization', '-q', action='store_true', help='simulate quantization effects during training')
+        parser.add_argument('--sample', type=float, help='sampling ratio')
         parser.add_argument('--soft-alpha', type=float, default=0.01, help='alpha for soft_round operation')
         parser.add_argument('--tiled', action='store_true', default=True)
         parser.add_argument('--no-tiled', dest='tiled', action='store_false')
-        parser.add_argument('--tensorboard', '-t', action='store_true', help='enable TensorBoard')
+        parser.add_argument('--tensorboard', '-t', action='store_true', help='enable TensorBoard logging callback')
         parser.add_argument('--schedule', action='store_true', help='use learning rate schedule')
         parser.add_argument('--validation', help='validation data filepath')
         parser.add_argument('--vfreq', type=int, default=1, help='validation frequency')
@@ -588,10 +588,13 @@ if __name__ == '__main__':
         parser.add_argument('--workers', '-w', type=int, default=4)
 
         args = parser.parse_args()
-        args.drop = max(0, min(0.5, args.drop))
 
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout
+
+        if args.sample:
+            args.sample = max(1e-3, min(1.0, args.sample))
+            print(f'Sampling ratio={args.sample}')
 
         log_level = configure_logging(args)
 
@@ -601,9 +604,10 @@ if __name__ == '__main__':
         import tensorflow as tf
         tf.get_logger().setLevel(log_level)
 
-        import tensorflow_compression as tfc
-        import tensorflow_model_optimization as tfmot
-        from tensorflow_model_optimization.python.core.quantization.keras.quantize import quantizers
+        if args.quantization:
+            import tensorflow_compression as tfc
+            import tensorflow_model_optimization as tfmot
+            from tensorflow_model_optimization.python.core.quantization.keras.quantize import quantizers
 
         print(f'TensorFlow version: {tf.__version__}')
         tf_ver = [int(v) for v in tf.__version__.split('.')]
