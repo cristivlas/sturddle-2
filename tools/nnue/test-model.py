@@ -48,7 +48,8 @@ def run_tests(args, model):
         encoding = encoding.T.reshape((1, 13))
         eval = model.predict(encoding)
         print(board.epd(), *eval)
-        evals.append(eval[0][0] * 100)
+        res = eval[0][0][0] if len(eval) > 1 else eval[0][0]
+        evals.append(res * 100)
     print(evals)
     
     

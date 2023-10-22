@@ -181,8 +181,9 @@ def make_model(args, strategy):
         hidden_2 = hidden_2_layer(weighted)
         hidden_2_alt = Dense(16, activation=activation, name='hidden_2_alt')(hidden_1a)
 
+        average = Average()([hidden_2, hidden_2_alt])
         output_layer = Dense(1, name='out', dtype='float32')(hidden_2)  # define the output layer
-        output_alt = Dense(1, name='out_alt', dtype='float32')(hidden_2_alt)
+        output_alt = Dense(1, name='out_alt', dtype='float32')(average)
 
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=[output_layer, output_alt], name=args.name)
