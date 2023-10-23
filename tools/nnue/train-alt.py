@@ -3,6 +3,20 @@
 **********************************************************************
 Trainer for the Sturddle Chess 2.0 engine's neural net.
 
+This is same as train-v4.py, with a twist: the model has
+an alternate path, with a secondary (alternate) output and an Average
+layer. The concept is somewhat similar to ensemble methods due to using
+multiple "sub-models" (in this case, paths through the network) to make
+a prediction. Ensemble methods often average or otherwise combine
+predictions from multiple models to get a more robust or accurate final
+prediction.
+
+Averaging the output from the modulated and unmodulated paths can potentially
+get a more robust or accurate prediction than one would from either path alone,
+especially if each path captures different aspects of the data.
+
+**********************************************************************
+
 Copyright (c) 2023 Cristian Vlasceanu.
 
 Expects H5 files as inputs (produced by toh5.py)
@@ -375,7 +389,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                         'sampling ratio': args.sample,
                     }
                     loss = logs.get('loss', math.nan) if logs else math.nan
-                    logging.info(f'{self.model.name}: epoch={epoch} loss={loss:.6f} hyperparam={hyperparam}')
+                    logging.info(f'{self.model.name}: epoch={epoch} loss={loss:.6f} hyperparam={hyperparam} logs={logs}')
 
             callbacks.append(CallbackOnEpochEnd(generator))
 
