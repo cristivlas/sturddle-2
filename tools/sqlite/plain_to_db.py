@@ -19,20 +19,21 @@ class SQLConnExtended(SQLConn):
         self._conn.commit()
 
 
-def process_file(file_path, db_path):
+def process_file(file_path, db_path, record_count=None):
     with SQLConnExtended(db_path) as conn:
         conn.create_table_if_not_exists()
 
         with open(file_path, 'r') as file:
             map_file = mmap.mmap(file.fileno(), length=0, access=mmap.ACCESS_READ)
 
-        print('Counting lines...')
-        line_count = 0
-        for _ in iter(map_file.readline, b''):
-            line_count += 1
-        record_count = line_count // 6
-        map_file.seek(0)  # Reset the mmap object to start of file
-        print(f'Done: {line_count} lines, {record_count} records.')
+        if record_count is None:
+            print('Counting lines...')
+            line_count = 0
+            for _ in iter(map_file.readline, b''):
+                line_count += 1
+            record_count = line_count // 6
+            print(f'Done: {line_count} lines, {record_count} records.')
+            map_file.seek(0)  # Reset the mmap object to start of file
 
         progress_bar = tqdm(total=record_count)
 
@@ -62,6 +63,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Convert text file to SQLite3 database.')
     parser.add_argument('input', help='Input file path')
     parser.add_argument('-o', '--output', help='Output SQLite3 database path')
+    parser.add_argument('-r', '--records', type=int, help='Number of records to process')
     args = parser.parse_args()
 
-    process_file(args.input, args.output)
+    process_file(args.input, args.output, args.records)
