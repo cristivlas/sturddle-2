@@ -245,7 +245,7 @@ namespace chess
 
 
 #define DEFAULT_MOBILITY_WEIGHTS { 0, 0, 0, 7, 6, 5, 0 }
-#define DEFAULT_WEIGHTS { 0, 100, 325, 325, 500, 975, 20000 }
+#define DEFAULT_WEIGHTS { 0, 85, 319, 343, 522, 986, 20000 }
 
 
 #if MOBILITY_TUNING_ENABLED
