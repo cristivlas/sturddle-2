@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 import argparse
 import mmap
+import os
+import signal
+import time
 
 from dbutils.sqlite import SQLConn
 from queue import Queue
@@ -23,10 +26,23 @@ class SQLConnExtended(SQLConn):
         self._create_table_if_not_exists()
 
 
-def parse_lines(map_file, queue, progress_bar):
+shutdown = []
+
+
+def parse_lines(map_file, queue, batch_size, progress_bar):
     fen = b''
     score = 0
+    count = 0
+
     for line in iter(map_file.readline, b''):
+        if shutdown:
+            queue.put(None)
+            break
+
+        count += 1
+        if count % batch_size == 0:
+            time.sleep(0.01)  # Yield execution
+
         if line.startswith(b'fen'):
             fen = line[4:].strip()
         elif line.startswith(b'score'):
@@ -36,26 +52,34 @@ def parse_lines(map_file, queue, progress_bar):
             progress_bar.update()
 
 
-def write_to_db(db_path, queue, batch_size):
+def write_to_db(db_path, queue, batch_size, progress_bar):
     with SQLConnExtended(db_path) as conn:
         batch = []
         while True:
             record = queue.get()
             if record is None:  # Sentinel value to indicate completion
                 break
+
             batch.append(record)
             if len(batch) >= batch_size:
                 conn.executemany('INSERT OR IGNORE INTO position VALUES (?, ?)', batch)
+                progress_bar.update(len(batch))
                 batch.clear()
 
         if batch:  # handle any remaining records
+            progress_bar.update(len(batch))
             conn.executemany('INSERT OR IGNORE INTO position VALUES (?, ?)', batch)
 
 
-def process_file(file_path, db_path, batch_size, record_count=None):
-    with open(file_path, 'r') as file:
+def process_file(args):
+    queue = Queue(maxsize=1000 * args.batch_size)
+
+    with open(args.input, 'r') as file:
         map_file = mmap.mmap(file.fileno(), length=0, access=mmap.ACCESS_READ)
 
+        record_count = args.records
+
+        # Count records if not provided in the command line
         if record_count is None:
             print('Counting lines...')
             line_count = 0
@@ -65,17 +89,17 @@ def process_file(file_path, db_path, batch_size, record_count=None):
             print(f'Done: {line_count} lines, {record_count} records.')
             map_file.seek(0)  # Reset the mmap object to start of file
 
-        progress_bar = tqdm(total=record_count)
-        record_queue = Queue(maxsize=1000 * batch_size)
+        read_progress = tqdm(desc='Reading', total=record_count)
+        write_progress = tqdm(desc='Writing', total=record_count)
 
-        parser_thread = Thread(target=parse_lines, args=(map_file, record_queue, progress_bar))
-        db_thread = Thread(target=write_to_db, args=(db_path, record_queue, batch_size))
+        parser_thread = Thread(target=parse_lines, args=(map_file, queue, args.batch_size, read_progress))
+        db_thread = Thread(target=write_to_db, args=(args.output, queue, args.batch_size, write_progress))
 
         parser_thread.start()
         db_thread.start()
 
         parser_thread.join()
-        record_queue.put(None)  # Sentinel value to indicate completion to db_thread
+        queue.put(None)  # Sentinel value to indicate completion to db_thread
         db_thread.join()
 
 
@@ -87,4 +111,13 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--records', type=int, help='Number of records to process')
     args = parser.parse_args()
 
-    process_file(args.input, args.output, args.batch_size, args.records)
+    def signal_handler(signal, frame):
+        if shutdown:
+            os._exit(signal)
+        shutdown.append(True)
+        print(f'\nShutting down on signal {signal} in {frame}')
+
+    signal.signal(signal.SIGINT, signal_handler)
+
+    process_file(args)
+
