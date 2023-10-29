@@ -26,6 +26,7 @@
 #include <thread>
 #include "chess.h"
 #include "shared_hash_table.h"
+#include "utility.h"
 
 constexpr int ONE_PLY = 16; /* fractional extensions */
 constexpr int PLY_MAX = 100;
@@ -79,6 +80,18 @@ namespace search
     score_t mtdf(Context&, score_t, TranspositionTable&);
     score_t iterative(Context&, TranspositionTable&, int);
 
+    INLINE score_t _negamax(Context& ctxt, TranspositionTable& tbl) noexcept
+    {
+        return cython_wrapper::call_nogil(negamax, ctxt, tbl);
+    }
+    INLINE score_t _mtdf(Context& ctxt, score_t score, TranspositionTable& tbl) noexcept
+    {
+        return cython_wrapper::call_nogil(mtdf, ctxt, score, tbl);
+    }
+    INLINE score_t _iterative(Context& ctxt, TranspositionTable& tbl, int max_iter_count) noexcept
+    {
+        return cython_wrapper::call_nogil(iterative, ctxt, tbl, max_iter_count);
+    }
 
     using BaseMove = chess::BaseMove;
     using PV = std::vector<BaseMove>;

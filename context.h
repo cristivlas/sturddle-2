@@ -1661,3 +1661,8 @@ namespace search
 
 void uci_loop(std::unordered_map<std::string, std::string> params);
 
+INLINE void _uci_loop(std::unordered_map<std::string, std::string> params) noexcept
+{
+    cython_wrapper::call_nogil(uci_loop, params);
+}
+

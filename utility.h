@@ -71,6 +71,26 @@ namespace
             ASSERT(fn);
             return fn(std::forward<Args>(args)...);
         }
+
+        template <typename R, typename... Params, typename... Args>
+        static INLINE R call_nogil(R (*fn)(Params...), Args&&... args) noexcept
+        {
+            try
+            {
+                return fn(std::forward<Args>(args)...);
+            }
+            catch (const std::exception& e)
+            {
+                GIL_State gil_state;
+                PyErr_SetString(PyExc_RuntimeError, e.what());
+            }
+            catch (...)
+            {
+                GIL_State gil_state;
+                PyErr_SetString(PyExc_RuntimeError, "C++ exception");
+            }
+            return R();
+        }
     };
 
 

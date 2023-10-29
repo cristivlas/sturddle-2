@@ -385,7 +385,8 @@ cdef class BoardState:
 # ---------------------------------------------------------------------
 cdef extern from 'context.h' nogil:
 
-    cdef void uci_loop(unordered_map[string, string]) except*
+    cdef void _uci_loop(unordered_map[string, string]) nogil
+
     #
     # Get/set engine params via Python
     #
@@ -851,9 +852,9 @@ cdef extern from 'search.h' namespace 'search':
         void    set_hash_size(size_t)
 
 
-    cdef score_t negamax(Context&, TranspositionTable&) except* nogil
-    cdef score_t mtdf(Context&, score_t, TranspositionTable&) except* nogil
-    cdef score_t iterative(Context&, TranspositionTable&, int) except* nogil
+    cdef score_t _negamax(Context&, TranspositionTable&) nogil
+    cdef score_t _mtdf(Context&, score_t, TranspositionTable&) nogil
+    cdef score_t _iterative(Context&, TranspositionTable&, int) nogil
 
 
 cdef task_stats(const TranspositionTable& table):
@@ -1097,7 +1098,7 @@ cdef class IterativeDeepening(SearchAlgorithm):
             self.context._ctxt.set_time_ctrl(ctrl)
 
         with nogil:
-            score = iterative(deref(self.context._ctxt), table, max_iter)
+            score = _iterative(deref(self.context._ctxt), table, max_iter)
 
         return score
 
@@ -1108,7 +1109,7 @@ cdef class Negamax(SearchAlgorithm):
         assert self.context.max_depth() == self.depth
         self.context._ctxt._algorithm = NEGAMAX
         with nogil:
-            score = negamax(deref(self.context._ctxt), table)
+            score = _negamax(deref(self.context._ctxt), table)
         return score
 
 
@@ -1118,7 +1119,7 @@ cdef class Negascout(SearchAlgorithm):
         assert self.context.max_depth() == self.depth
         self.context._ctxt._algorithm = NEGASCOUT
         with nogil:
-            score = negamax(deref(self.context._ctxt), table)
+            score = _negamax(deref(self.context._ctxt), table)
         return score
 
 
@@ -1128,7 +1129,7 @@ cdef class MTDf(SearchAlgorithm):
         assert self.context.max_depth() == self.depth
         self.context._ctxt._algorithm = MTDF
         with nogil:
-            score = mtdf(deref(self.context._ctxt), 0, table)
+            score = _mtdf(deref(self.context._ctxt), 0, table)
         return score
 
 
@@ -1347,4 +1348,4 @@ def uci(name: str, debug: bool=False):
         c_param[k.encode()] = v.encode()
 
     with nogil:
-        uci_loop(c_param)
+        _uci_loop(c_param)
