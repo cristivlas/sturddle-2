@@ -30,7 +30,7 @@ Alternatively:
 - Download PGNs from https://database.lichess.org/ and extract
 evaluations using `tools/sqlite/pgntoevals.py`.
 - Download binpack files, convert them to plain using a development version
-of Stockfish, then use `tools/sqlite/plain_to_db.py`.
+of Stockfish, then use `tools/sqlite/plaintodb.py`.
 
 4) Generate HDF5 file(s) from database(s) produced by any of the methods above: use `tools/nnue/toh5.py`.
 
