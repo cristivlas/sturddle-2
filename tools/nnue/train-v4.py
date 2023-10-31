@@ -365,6 +365,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                     hyperparam = {
                         'batch size': args.batch_size,
                         'clip': args.clip,
+                        'dataset size': f'{generator.rows():,}',
                         'filter': args.filter,
                         'learn rate': f'{self.model.optimizer.lr.read_value():.2e}',
                         'sampling ratio': args.sample,
@@ -536,16 +537,17 @@ if __name__ == '__main__':
             argparse.RawDescriptionHelpFormatter
         ):
             pass
+
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
-        parser.add_argument('-c', '--clip', type=float, default=3.5)
+        parser.add_argument('-c', '--clip', type=float, default=3.5, help='Huber delta (used to be hard clip)')
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
         parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
-        parser.add_argument('-F', '--filter', type=int)
+        parser.add_argument('-F', '--filter', type=int, help='hard clip (filter out) scores with higher abs value')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-4, help='learning rate')
@@ -574,14 +576,14 @@ if __name__ == '__main__':
         parser.add_argument('--quantization', '-q', action='store_true', help='simulate quantization effects during training')
         parser.add_argument('--sample', type=float, help='sampling ratio')
         parser.add_argument('--soft-alpha', type=float, default=0.01, help='alpha for soft_round operation')
-        parser.add_argument('--tiled', action='store_true', default=True)
+        parser.add_argument('--tiled', action='store_true', default=True, help='how to apply attention (dynamic) weights, see nnue.h')
         parser.add_argument('--no-tiled', dest='tiled', action='store_false')
         parser.add_argument('--tensorboard', '-t', action='store_true', help='enable TensorBoard logging callback')
         parser.add_argument('--schedule', action='store_true', help='use learning rate schedule')
         parser.add_argument('--validation', help='validation data filepath')
         parser.add_argument('--vfreq', type=int, default=1, help='validation frequency')
-        parser.add_argument('--use-multiprocessing', action='store_true')
-        parser.add_argument('--workers', '-w', type=int, default=4)
+        parser.add_argument('--use-multiprocessing', action='store_true', help='(experimental)')
+        parser.add_argument('--workers', '-w', type=int, default=4, help='(experimental)')
 
         args = parser.parse_args()
 
