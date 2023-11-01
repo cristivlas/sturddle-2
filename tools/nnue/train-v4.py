@@ -368,10 +368,11 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                         'dataset size': f'{generator.rows():,}',
                         'filter': args.filter,
                         'learn rate': f'{self.model.optimizer.lr.read_value():.2e}',
+                        'model': self.model.name,
                         'sampling ratio': args.sample,
                     }
                     loss = logs.get('loss', math.nan) if logs else math.nan
-                    logging.info(f'{self.model.name}: epoch={epoch} loss={loss:.6f} hyperparam={hyperparam}')
+                    logging.info(f'epoch={epoch} loss={loss:.6f} hyperparam={hyperparam}')
 
             callbacks.append(CallbackOnEpochEnd(generator))
 
@@ -547,10 +548,10 @@ if __name__ == '__main__':
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
-        parser.add_argument('-F', '--filter', type=int, help='hard clip (filter out) scores with higher abs value')
+        parser.add_argument('-F', '--filter', type=int, default=15000, help='hard clip (filter out) scores with higher abs value')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
-        parser.add_argument('-r', '--learn-rate', type=float, default=1e-4, help='learning rate')
+        parser.add_argument('-r', '--learn-rate', type=float, default=1e-3, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
 
