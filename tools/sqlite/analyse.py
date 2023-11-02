@@ -22,8 +22,9 @@ _insert = '''INSERT INTO position(epd, depth, score) VALUES(?,?,?)'''
 
 def analyse(args, sql_out, engine, epd):
     board = chess.Board(fen=epd)
-    if not board.is_valid():
+    if not board.is_valid() or board.is_game_over():
         return
+
     limit = chess.engine.Limit(depth=args.depth) if args.depth else chess.engine.Limit(time=args.time_limit)
     info = engine.analyse(board, limit)
     score = info['score']

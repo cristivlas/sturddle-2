@@ -349,7 +349,7 @@ namespace
     };
 
 
-    static void data_flush(const search::Context& ctxt)
+    static void data_flush(const search::Context& ctxt, int threshold = DATAGEN_SCORE_THRESHOLD)
     {
         static const char* INSERT_OR_REPLACE = R"(
             INSERT OR REPLACE INTO position (epd, depth, score)
@@ -362,10 +362,10 @@ namespace
                 OR ?2 > (SELECT depth FROM position WHERE epd = ?1);
             )";
 
-        if (ctxt._score < DATAGEN_SCORE_THRESHOLD || search::eval_insufficient_material(ctxt.state()) == 0)
+        if (ctxt._score < threshold || search::eval_insufficient_material(ctxt.state()) == 0)
             g_data.clear();
         else
-            log_info(std::format("data_flush: score={}", ctxt._score));
+            LOG_DEBUG(std::format("data_flush: score={}", ctxt._score));
 
         g_data.insert(g_dataDefer.begin(), g_dataDefer.end());
         g_dataDefer.clear();
@@ -952,7 +952,11 @@ void UCI::go(const Arguments &args)
     else if (do_analysis && !explicit_movetime)
     {
         ctxt->set_time_limit_ms(INFINITE);
-        _compute_pool->push_task([this]{ search(); output_best_move(); });
+        _compute_pool->push_task([this]{
+            search();
+            output_best_move();
+            data_flush(context(), SCORE_MIN /* no threshold */);
+        });
     }
     else
     {
