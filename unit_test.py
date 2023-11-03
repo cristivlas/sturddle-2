@@ -98,9 +98,9 @@ def test_castling_moves_generation():
 def test_en_passant():
     tests = [
         ('black pass', '4k3/3p4/8/4P3/8/8/8/4K3 b', 'd7d5', 0),
-        ('white take', '4k3/8/8/3pP3/8/8/8/4K3 w - d6', 'e5d6', 100),
+        ('white take', '4k3/8/8/3pP3/8/8/8/4K3 w - d6', 'e5d6', 85),
         ('white pass', '4k3/8/8/8/3p4/8/4P3/4K3 w - -', 'e2e4', 0),
-        ('black take', '4k3/8/8/8/3pP3/8/8/4K3 b - e3', 'd4e3', 100),
+        ('black take', '4k3/8/8/8/3pP3/8/8/4K3 b - e3', 'd4e3', 85),
     ]
 
     for name, epd, move, value in tests:
@@ -182,26 +182,26 @@ def test_pins():
 
 def test_static_exchanges():
     tests = [
-        ('capt.01', '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - - 0 2', 'e5', chess.BLACK, 100),
+        ('capt.01', '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - - 0 2', 'e5', chess.BLACK, 85),
         ('capt.02', 'r2r2k1/1pp2ppp/p2q1b2/3pN3/2PP4/PP1Q3P/5PP1/R3R1K1 b - - 0 22', 'e5', chess.BLACK, 0),
-        ('capt.03', 'r4rk1/1ppnbppp/p2q4/3pNb2/3P4/PP5P/2PNBPP1/R2QK2R w KQ - 5 14', 'e5', chess.BLACK, 100),
+        ('capt.03', 'r4rk1/1ppnbppp/p2q4/3pNb2/3P4/PP5P/2PNBPP1/R2QK2R w KQ - 5 14', 'e5', chess.BLACK, 85),
         ('capt.04', 'r4rk1/1pp2ppp/p2q1b2/4N3/2QP4/PP5P/5PP1/R3R1K1 w - - 1 24', 'f7', chess.WHITE, 0),
         # ('capt.05', 'r4rk1/2p2ppp/p2q1b2/1p2N3/1P1P1R2/PQ3P1P/6P1/3R2K1 b - - 6 31', 'e5', chess.BLACK, 80),
         # ('capt.06', 'r3r1k1/2p2ppp/p2q1b2/1p2N3/1P1PR3/P4P1P/2Q3P1/3R2K1 w - - 7 32', 'e5', chess.BLACK, 80),
         ('capt.07', 'rnb1kbnr/ppp1pppp/8/8/4qP2/2B5/PPP1N1PP/RN1QKB1R w KQkq - 3 8', 'f4', chess.BLACK, 0),
-        ('capt.08', '5r2/3k1r2/1pqPp3/p2pP2p/2p2PpP/8/PPPQ1P2/1K1R3R w - - 1 36', 'f4', chess.BLACK, 100),
+        ('capt.08', '5r2/3k1r2/1pqPp3/p2pP2p/2p2PpP/8/PPPQ1P2/1K1R3R w - - 1 36', 'f4', chess.BLACK, 85),
         # ('capt.09', '2bqkbnr/1ppppppp/3r4/p3n3/P2P4/1P5P/1BP1PPP1/RN1QKBNR w KQk - 1 6', 'e5', chess.WHITE, 0),
         ('capt.10', 'r1bqk2r/pp1p1pbp/6p1/4p3/2PnP3/2N1B3/PP3PPP/R2QKB1R w KQkq - 0 10', 'd4', chess.WHITE, 0),
         ('capt.11', '1r1q1rk1/p3bBpp/2Q5/8/3Pb3/2n1BN2/P4PPP/R4RK1 b - - 0 18', 'c6', chess.BLACK, 0),
         # ('capt.12', '2rq1rk1/1p2b1pp/p1b1Np2/2n1P1B1/3p1PPP/4Q3/PPP5/1K1R1B1R w - - 0 21', 'e3', chess.BLACK, 0),
-        ('capt.13', 'r4rk1/ppp2ppp/5n2/2bPn3/4K3/2NP4/PPPBB1PP/R6R w - - 3 3', 'e5', chess.WHITE, 325),
-        ('capt.14', '2r3k1/p5p1/4p3/1p1bP3/2pb2Q1/5N2/1q3P1P/3R1RK1 b - - 3 32', 'd4', chess.WHITE, 325),
+        ('capt.13', 'r4rk1/ppp2ppp/5n2/2bPn3/4K3/2NP4/PPPBB1PP/R6R w - - 3 3', 'e5', chess.WHITE, 319),
+        ('capt.14', '2r3k1/p5p1/4p3/1p1bP3/2pb2Q1/5N2/1q3P1P/3R1RK1 b - - 3 32', 'd4', chess.WHITE, 343),
 
-        #('capt.15', 'rqr3k1/p4p1p/5Qp1/2b5/2N5/2Pn2NP/P2B1PP1/2R2RK1 w - - 0 24', 'g3', chess.BLACK, 325),
+        #('capt.15', 'rqr3k1/p4p1p/5Qp1/2b5/2N5/2Pn2NP/P2B1PP1/2R2RK1 w - - 0 24', 'g3', chess.BLACK, 319),
         #depends on SEE_PIN_AWARENESS_DEPTH in common.h
         ('capt.15', 'rqr3k1/p4p1p/5Qp1/2b5/2N5/2Pn2NP/P2B1PP1/2R2RK1 w - - 0 24', 'g3', chess.BLACK, 0),
 
-        ('capt.16', '5r1k/pp4pp/2p5/2b1q3/4P3/1PB1p3/P3Q1PP/3N2K1 w - -', 'e5', chess.WHITE, 975),
+        ('capt.16', '5r1k/pp4pp/2p5/2b1q3/4P3/1PB1p3/P3Q1PP/3N2K1 w - -', 'e5', chess.WHITE, 986),
         ('capt.17', '5r1k/pp4pp/2p5/2b1P3/4P3/1PB1p3/P3Q1PP/3N1qK1 w - -', 'f1', chess.WHITE, 0),
     ]
 
@@ -353,7 +353,7 @@ def test_nnue_eval():
     ]
 
     evals = [
-        35.35655736923218, -298.3745574951172, 72.7791428565979, -156.0771346092224, 622.2373962402344, 366.0494804382324, 163.69282007217407, 197.1117377281189
+        29.06503677368164, 49.87163543701172, 83.60757827758789, -107.37495422363281, 727.0357131958008, 309.3132972717285, 259.49792861938477, 67.52338409423828
     ]
     for i, fen in enumerate(tests):
         eval = engine.nnue_eval_fen(fen)
