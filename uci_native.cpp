@@ -404,7 +404,7 @@ namespace
         }
     }
 #else
-    static void data_flush(const search::Context&)
+    static void data_flush(const search::Context&, int = 0)
     {
     }
 #endif /* DATAGEN */
