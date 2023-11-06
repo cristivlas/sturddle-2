@@ -25,7 +25,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 Q_SCALE = 1024
 # Quantization range: use int16_t with Q_SCALE, prevent overflow
-Q_MAX = 32767 / Q_SCALE / 65
+Q_MAX = 32767 / Q_SCALE / 66
 Q_MIN = -Q_MAX
 
 def configure_logging(args):
