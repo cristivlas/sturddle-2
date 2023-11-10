@@ -268,12 +268,10 @@ void search::Context::eval_nnue()
 
         eval += eval_fuzz();
 
-    #if true
-        /* assume NNUE eval already accounts for insufficient material */
-        _eval = eval;
-    #else
-        _eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
-    #endif
+        if (is_qsearch())
+            _eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
+        else
+            _eval = eval; /* assume NNUE eval already accounts for insufficient material */
     }
 }
 
