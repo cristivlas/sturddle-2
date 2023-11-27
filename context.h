@@ -739,8 +739,8 @@ namespace search
 
         if constexpr(EvalCaptures)
         {
-            /* if either side is close to mate, captures may not make a diff. */
-            if (abs(score) < MATE_HIGH)
+            /* Captures may not make a difference for large score gaps. */
+            if (abs(score) < CAPTURES_THRESHOLD)
             {
                 /* 3. Captures */
                 const auto capt = eval_captures(*this);

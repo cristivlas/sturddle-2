@@ -30,6 +30,28 @@
  * To cherry-pick, replace DECLARE_VALUE with DECLARE_PARAM
  */
 
+constexpr int ONE_PLY = 16; /* fractional extensions */
+constexpr int PLY_MAX = 100;
+
+constexpr int PLY_HISTORY_MAX = 20;
+
+constexpr score_t SCORE_MIN = -30000;
+constexpr score_t SCORE_MAX =  30000;
+
+constexpr score_t CHECKMATE = SCORE_MAX - 1;
+
+#if MTDF_CSTAR_BISECT
+    constexpr score_t MATE_HIGH = SCORE_MAX / 2;
+#else
+    constexpr score_t MATE_HIGH = SCORE_MAX - PLY_MAX;
+#endif /* MTDF_CSTAR_BISECT */
+
+constexpr score_t MATE_LOW  = -MATE_HIGH;
+
+/* Aspiration window */
+constexpr score_t HALF_WINDOW = 25;
+
+
 #if REFCOUNT_PARAM
 /* Instrumentation & debug: count parameter usage */
 struct Val
@@ -165,6 +187,7 @@ DECLARE_ALIAS(  SMP_CORES, Threads,                   1,    1, THREAD_MAX)
 
 GROUP(Search)
 DECLARE_VALUE(  CAPTURES_SCALE,                      99,    0,     150)
+DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
 DECLARE_VALUE(  DOUBLE_EXT_MARGIN,                 1354,    0,    2000)
 DECLARE_VALUE(  DOUBLE_EXT_MAX,                      12,    0,     100)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
