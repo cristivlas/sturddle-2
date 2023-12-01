@@ -907,6 +907,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                 break; /* found a cutoff */
             }
+            else if (ctxt._retry_next)
+            {
+                continue;
+            }
             else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_capture())
             {
                 table.history_update_non_cutoffs(next_ctxt->_move);
