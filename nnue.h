@@ -607,8 +607,8 @@ namespace nnue
     };
 
 
-    template <typename A, typename L2, typename ATTN, typename OUT>
-    INLINE int eval(const A& a, const L2& l2, const ATTN& attn, const OUT& out)
+    template <typename A, typename ATTN, typename L2, typename L3, typename OUT>
+    INLINE int eval(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out)
     {
         static_assert(A::OUTPUTS_A == L2::INPUTS);
         static_assert(A::OUTPUTS_B == ATTN::INPUTS);
@@ -617,6 +617,7 @@ namespace nnue
         ALIGN float attn_out[ATTN::OUTPUTS];
         ALIGN float l2_in[L2::INPUTS];
         ALIGN float l2_out[L2::OUTPUTS];
+        ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1];
 
         activation(a._output_a, l2_in); // process output of hidden_1a
@@ -669,8 +670,9 @@ namespace nnue
 
         static const Vector v_zero(0.0);
         l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
+        l3.dot(l2_out, l3_out, [](const Vector& v) { return max(v, v_zero); });
 
-        out.dot(l2_out, output);
+        out.dot(l3_out, output);
         return 100 * output[0];
     }
 

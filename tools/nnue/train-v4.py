@@ -179,8 +179,9 @@ def make_model(args, strategy):
         weighted = Multiply(name='weighted')([hidden_1a, attn_reshape_layer(dynamic_weights)])
 
         hidden_2 = hidden_2_layer(weighted)
+        hidden_3 = Dense(16, activation=activation, name='hidden_3')(hidden_2)  # 3rd hidden layer
 
-        output_layer = Dense(1, name='out', dtype='float32')(hidden_2)  # define the output layer
+        output_layer = Dense(1, name='out', dtype='float32')(hidden_3)  # define the output layer
 
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer, name=args.name)

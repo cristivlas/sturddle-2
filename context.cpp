@@ -191,9 +191,11 @@ constexpr int INPUTS_B = 256;
 constexpr int HIDDEN_1A = 512;
 constexpr int HIDDEN_1B = 64;
 constexpr int HIDDEN_2 = 16;
+constexpr int HIDDEN_3 = 16;
 
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
 static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
+
 /*
  * The accumulator takes the inputs and process them into two outputs,
  * using (hidden) neural layers L1A and L1B. L1B processes only the 1st
@@ -207,13 +209,16 @@ static nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE> L1B(hidden_1b_w, 
 
 static nnue::Layer<HIDDEN_1A, HIDDEN_2> L2(hidden_2_w, hidden_2_b);
 static nnue::Layer<HIDDEN_1B, _countof(dynamic_weights_b)> L_DYN(dynamic_weights_w, dynamic_weights_b);
-static nnue::Layer<HIDDEN_2, 1> L4(out_w, out_b);
+
+static nnue::Layer<HIDDEN_2, HIDDEN_3> L3(hidden_3_w, hidden_3_b);
+static nnue::Layer<HIDDEN_3, 1> L4(out_w, out_b);
 
 using WeightSetter = std::function<void(const std::vector<std::vector<float>>&, const std::vector<float>&)>;
 static std::unordered_map<std::string, WeightSetter> registry = {
     { "hidden_1a", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L1A.set_weights(w, b); } },
     { "hidden_1b", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L1B.set_weights(w, b); } },
     { "hidden_2", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L2.set_weights(w, b); } },
+    { "hidden_3", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L2.set_weights(w, b); } },
     { "dynamic_weights", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L_DYN.set_weights(w, b); } },
     { "out", [](const std::vector<std::vector<float>>& w, const std::vector<float>& b) { L4.set_weights(w, b); } },
 };
@@ -243,7 +248,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
     }
     else
     {
-        _eval_raw = nnue::eval(acc, L2, L_DYN, L4);
+        _eval_raw = nnue::eval(acc, L_DYN, L2, L3, L4);
 
     #if DATAGEN
         /* Make sure that insufficient material conditions are detected. */
@@ -2035,7 +2040,7 @@ namespace search
                             ctxt_acc.update(L1A, L1B, ctxt.state());
                         ASSERT(ctxt_acc._hash == ctxt.state().hash());
                         move_acc.update(L1A, L1B, ctxt.state(), *move._state, move, ctxt_acc);
-                        move._score = -nnue::eval(move_acc, L2, L_DYN, L4);
+                        move._score = -nnue::eval(move_acc, L_DYN, L2, L3, L4);
                         move._group = MoveOrder::ROOT_MOVES;
                     }
                 #endif /* WITH_NNUE */
