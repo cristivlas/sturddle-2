@@ -195,10 +195,7 @@ def make_model(args, strategy):
         dynamic_weights = attention_layer(hidden_1b)  # computes dynamic weights
 
         # The "reshaping" layer repeats or tiles the dynamic weights to match the output shape of hidden_1a.
-        if args.tiled:
-            attn_reshape_layer = Lambda(lambda x: tf.tile(x, tf.constant([1, hidden_1a_inputs // attn_fan_out])))
-        else:
-            attn_reshape_layer = Lambda(lambda x: tf.repeat(x, repeats=hidden_1a_inputs // attn_fan_out, axis=1))
+        attn_reshape_layer = Lambda(lambda x: tf.tile(x, tf.constant([1, hidden_1a_inputs // attn_fan_out])))
 
         # Apply weights to hidden_1a (multiply hidden_1a output with dynamic weights)
         weighted = Multiply(name='weighted')([hidden_1a, attn_reshape_layer(dynamic_weights)])
@@ -603,8 +600,6 @@ if __name__ == '__main__':
         parser.add_argument('--quantization', '-q', action='store_true', help='simulate quantization effects during training')
         parser.add_argument('--sample', type=float, help='sampling ratio')
         parser.add_argument('--soft-alpha', type=float, default=0.01, help='alpha for soft_round operation')
-        parser.add_argument('--tiled', action='store_true', default=True, help='how to apply attention (dynamic) weights, see nnue.h')
-        parser.add_argument('--no-tiled', dest='tiled', action='store_false')
         parser.add_argument('--tensorboard', '-t', action='store_true', help='enable TensorBoard logging callback')
         parser.add_argument('--schedule', action='store_true', help='use learning rate schedule')
         parser.add_argument('--validation', help='validation data filepath')

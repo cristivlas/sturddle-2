@@ -676,7 +676,6 @@ namespace nnue
         static_assert(L2::INPUTS % Vector::size() == 0);
         static_assert(ATTN::OUTPUTS % Vector::size() == 0);
 
-#if true /* (see args.tiled in train.py) */
     #if true /* vectorized */
         Vector v1, v2;
         for (int i = 0; i != L2::INPUTS; i += Vector::size())
@@ -691,28 +690,12 @@ namespace nnue
             l2_in[i] *= attn_out[i % ATTN::OUTPUTS];
         }
     #endif /* !vectorized */
-#else
-    #if true /* vectorized */
-        Vector v1;
-        for (int i = 0; i != L2::INPUTS; i += Vector::size())
-        {
-            v1.load_a(&l2_in[i]);
 
-            // Load the repeated value of attn_out to v2
-            Vector v2(attn_out[i * ATTN::OUTPUTS / L2::INPUTS]);
-
-            (v1 * v2).store_a(&l2_in[i]);
-        }
-    #else
-        for (int i = 0; i < L2::INPUTS; ++i)
-        {
-            l2_in[i] *= attn_out[i * ATTN::OUTPUTS / L2::INPUTS];
-        }
-    #endif /* !vectorized */
-#endif /* !TILED */
 
         static const Vector v_zero(0.0);
-#if 0
+
+    #if 0
+        /* Convert to int16 */
         ALIGN int16_t l2_in_q[L2::INPUTS];
         for (int i = 0; i != L2::INPUTS; i += 16)
         {
@@ -723,12 +706,13 @@ namespace nnue
             out.store_a(&l2_in_q[i]);
         }
 
+        /* Quantized dot product */
         static const Vec16f v16f_zero(0.0);
         l2.dot(l2_in_q, l2_out, [](const Vec16f& v) { return max(v, v16f_zero); });
 
-#else
+    #else
         l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
-#endif
+    #endif
 
         l3.dot(l2_out, l3_out, [](const Vector& v) { return max(v, v_zero); });
 
