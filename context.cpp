@@ -207,7 +207,11 @@ static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
 static nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE_1> L1A(hidden_1a_w, hidden_1a_b);
 static nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE_1> L1B(hidden_1b_w, hidden_1b_b);
 
+#if 0
 static nnue::Layer<HIDDEN_1A, HIDDEN_2, int16_t, nnue::QSCALE_2> L2(hidden_2_w, hidden_2_b);
+#else
+static nnue::Layer<HIDDEN_1A, HIDDEN_2> L2(hidden_2_w, hidden_2_b);
+#endif
 static nnue::Layer<HIDDEN_1B, _countof(dynamic_weights_b)> L_DYN(dynamic_weights_w, dynamic_weights_b);
 
 static nnue::Layer<HIDDEN_2, HIDDEN_3> L3(hidden_3_w, hidden_3_b);

@@ -711,6 +711,8 @@ namespace nnue
     #endif /* !vectorized */
 #endif /* !TILED */
 
+        static const Vector v_zero(0.0);
+#if 0
         ALIGN int16_t l2_in_q[L2::INPUTS];
         for (int i = 0; i != L2::INPUTS; i += 16)
         {
@@ -722,9 +724,12 @@ namespace nnue
         }
 
         static const Vec16f v16f_zero(0.0);
-        static const Vector v_zero(0.0);
-
         l2.dot(l2_in_q, l2_out, [](const Vec16f& v) { return max(v, v16f_zero); });
+
+#else
+        l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
+#endif
+
         l3.dot(l2_out, l3_out, [](const Vector& v) { return max(v, v_zero); });
 
         out.dot(l3_out, output);
