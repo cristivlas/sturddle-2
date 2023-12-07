@@ -25,8 +25,9 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 Q_SCALE = 1024
 # Quantization range: use int16_t with Q_SCALE, prevent overflow
+# 64 pieces max + 1 turn + 1 bias == 66
 Q_MAX = 32767 / Q_SCALE / 66
-Q_MIN = -Q_MAX
+Q_MIN = -32768 / Q_SCALE / 66
 
 def configure_logging(args):
     log_level = logging.DEBUG if args.debug else logging.INFO
@@ -42,8 +43,12 @@ def configure_logging(args):
 
 def make_model(args, strategy):
     class CustomConstraint(tf.keras.constraints.Constraint):
+        def __init__(self, qmin=Q_MIN, qmax=Q_MAX):
+            self.qmin = qmin
+            self.qmax = qmax
+
         def __call__(self, w):
-            return tf.clip_by_value(w, Q_MIN, Q_MAX)
+            return tf.clip_by_value(w, self.qmin, self.qmax)
 
     @tf.function
     def soft_clip(x, clip_value, alpha=0.1):
@@ -143,19 +148,39 @@ def make_model(args, strategy):
 
         concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
         constr = CustomConstraint()
-        hidden_1a_layer = Dense(512, activation=activation, name='hidden_1a', kernel_constraint=constr, bias_constraint=constr)
+        hidden_1a_inputs = 512
+        hidden_1a_layer = Dense(
+            hidden_1a_inputs,
+            activation=activation,
+            name='hidden_1a',
+            kernel_constraint=constr,
+            bias_constraint=constr
+        )
 
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
         # hidden_1b_layer: selects the pawns and kings features.
         input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
-        hidden_1b_layer = Dense(64, activation=activation, name='hidden_1b', kernel_constraint=constr, bias_constraint=constr)
+        hidden_1b_layer = Dense(
+            64,
+            activation=activation,
+            name='hidden_1b',
+            kernel_constraint=constr,
+            bias_constraint=constr
+        )
 
         # Add "attention layer" that computes dynamic weights based on hidden_1b (pawns & kings features).
         attn_fan_out = int(args.attn)
         attention_layer = Dense(attn_fan_out, activation=None, name='dynamic_weights')
 
         # Add 2nd hidden layer
-        hidden_2_layer = Dense(16, activation=activation, name='hidden_2')
+        constr2 = CustomConstraint(-32768 / 1024 / 256, 32767 / 1024 / 256)
+        hidden_2_layer = Dense(
+            16,
+            activation=activation,
+            name='hidden_2',
+            kernel_constraint=constr2,
+            bias_constraint=constr2
+        )
 
         if args.quantization:
             quantization_config = CustomQuantizeConfig()
@@ -171,9 +196,9 @@ def make_model(args, strategy):
 
         # The "reshaping" layer repeats or tiles the dynamic weights to match the output shape of hidden_1a.
         if args.tiled:
-            attn_reshape_layer = Lambda(lambda x: tf.tile(x, tf.constant([1, 512 // attn_fan_out])))
+            attn_reshape_layer = Lambda(lambda x: tf.tile(x, tf.constant([1, hidden_1a_inputs // attn_fan_out])))
         else:
-            attn_reshape_layer = Lambda(lambda x: tf.repeat(x, repeats=512 // attn_fan_out, axis=1))
+            attn_reshape_layer = Lambda(lambda x: tf.repeat(x, repeats=hidden_1a_inputs // attn_fan_out, axis=1))
 
         # Apply weights to hidden_1a (multiply hidden_1a output with dynamic weights)
         weighted = Multiply(name='weighted')([hidden_1a, attn_reshape_layer(dynamic_weights)])
