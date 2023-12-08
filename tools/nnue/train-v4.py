@@ -173,14 +173,7 @@ def make_model(args, strategy):
         attention_layer = Dense(attn_fan_out, activation=None, name='dynamic_weights')
 
         # Add 2nd hidden layer
-        constr2 = CustomConstraint(-32768 / 1024 / 256, 32767 / 1024 / 256)
-        hidden_2_layer = Dense(
-            16,
-            activation=activation,
-            name='hidden_2',
-            kernel_constraint=constr2,
-            bias_constraint=constr2
-        )
+        hidden_2_layer = Dense(16, activation=activation, name='hidden_2')
 
         if args.quantization:
             quantization_config = CustomQuantizeConfig()

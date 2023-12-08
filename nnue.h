@@ -53,8 +53,7 @@ namespace nnue
     using namespace chess;
     using input_t = int16_t;
 
-    constexpr int QSCALE_1 = 1024;
-    constexpr int QSCALE_2 = 16;
+    constexpr int QSCALE = 1024;
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
@@ -193,7 +192,7 @@ namespace nnue
     template <int N>
     INLINE void activation(const int16_t (&input)[N], float (&output)[N])
     {
-        constexpr float QSCALE_RECIP = 1.0f / QSCALE_1;
+        constexpr float QSCALE_RECIP = 1.0f / QSCALE;
 
         #pragma clang loop vectorize(enable)
         for (int i = 0; i != N; ++i)
@@ -243,6 +242,7 @@ namespace nnue
 
             set_weights(weights, biases);
         }
+
 
         /* input */
         template <size_t S, typename F>
@@ -301,54 +301,6 @@ namespace nnue
                 }
                 vw.load_a(&b[j]);
                 (vw + sums).store_a(&output[j]);
-            }
-        #endif
-        }
-
-
-        /* 2nd hidden */
-        template <typename F>
-        static INLINE void dot(
-            const int16_t (&input)[INPUTS],
-            float (&output)[OUTPUTS],
-            const int16_t(&b)[OUTPUTS],
-            const int16_t(&)[INPUTS][OUTPUTS],
-            const int16_t(&wt)[OUTPUTS][INPUTS],
-            F activate
-        )
-        {
-            static_assert(INPUTS % 16 == 0);
-            static_assert(OUTPUTS % 16 == 0);
-
-        #if 0 /* test */
-            for (int j = 0; j != OUTPUTS; ++j)
-            {
-                output[j] = b[j];
-                #pragma clang loop vectorize(enable)
-                for (int i = 0; i != INPUTS; ++i)
-                    output[j] += input[i] * wt[j][i];
-
-                ASSERT_ALWAYS(abs(output[j]) <= 32767);
-                output[j] = std::max<float>(0, output[j] / QSCALE_2 / QSCALE_2);
-            }
-        #else
-            Vec16s iv, out, wv, sum[16];
-
-            for (int j = 0; j != OUTPUTS; j += 16)
-            {
-                out.load_a(&b[j]);
-                for (int i = 0; i != INPUTS; i += 16)
-                {
-                    iv.load_a(&input[i]);
-
-                    for (int k = 0; k != 16; ++k)
-                    {
-                        wv.load_a(&wt[j + k][i]);
-                        sum[k] = iv * wv;
-                    }
-                    out += horizontal_add(sum);
-                }
-                activate(to_float(extend(out)) / QSCALE_2 / QSCALE_2).store_a(&output[j]);
             }
         #endif
         }
@@ -691,29 +643,9 @@ namespace nnue
         }
     #endif /* !vectorized */
 
-
         static const Vector v_zero(0.0);
 
-    #if 0
-        /* Convert to int16 */
-        ALIGN int16_t l2_in_q[L2::INPUTS];
-        for (int i = 0; i != L2::INPUTS; i += 16)
-        {
-            Vec16f in;
-            Vec16s out;
-            in.load_a(&l2_in[i]);
-            out = compress(roundi(in * QSCALE_2));
-            out.store_a(&l2_in_q[i]);
-        }
-
-        /* Quantized dot product */
-        static const Vec16f v16f_zero(0.0);
-        l2.dot(l2_in_q, l2_out, [](const Vec16f& v) { return max(v, v16f_zero); });
-
-    #else
         l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
-    #endif
-
         l3.dot(l2_out, l3_out, [](const Vector& v) { return max(v, v_zero); });
 
         out.dot(l3_out, output);
