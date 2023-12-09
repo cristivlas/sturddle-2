@@ -25,9 +25,11 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 Q_SCALE = 1024
 # Quantization range: use int16_t with Q_SCALE, prevent overflow
-# 64 pieces max + 1 turn + 1 bias == 66
-Q_MAX = 32767 / Q_SCALE / 66
-Q_MIN = -32768 / Q_SCALE / 66
+Q_MAX = 32767 / Q_SCALE / 130
+Q_MIN = -32768 / Q_SCALE / 130
+
+SCALE = 128.0
+
 
 def configure_logging(args):
     log_level = logging.DEBUG if args.debug else logging.INFO
@@ -346,7 +348,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             x = self.data[start:end,:self.feature_count]
             y = self.data[start:end,self.feature_count:]
             y = tf.cast(y, tf.int64)  # cast from unsigned to signed
-            y = tf.cast(y, tf.float32) / 100.0  # convert to float and scale
+            y = tf.cast(y, tf.float32) / SCALE  # convert to float and scale
             return x, y
 
         def rows(self):
@@ -400,7 +402,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         if args.filter:
             @tf.function
             def filter(x, y):
-                bound = args.filter / 100.0
+                bound = args.filter / SCALE
                 lower_bound = tf.greater(y, -bound)
                 upper_bound = tf.less(y, bound)
                 condition = tf.logical_and(lower_bound, upper_bound)

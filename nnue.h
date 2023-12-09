@@ -649,7 +649,7 @@ namespace nnue
         l3.dot(l2_out, l3_out, [](const Vector& v) { return max(v, v_zero); });
 
         out.dot(l3_out, output);
-        return 100 * output[0];
+        return 128 * output[0];
     }
 
 
