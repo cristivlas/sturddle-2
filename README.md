@@ -34,7 +34,7 @@ of Stockfish, then use `tools/sqlite/plaintodb.py`.
 
 4) Generate HDF5 file(s) from database(s) produced by any of the methods above: use `tools/nnue/toh5.py`.
 
-5) Train the neural net by running `tools/nnue/train-v3.py` (requires Tensorflow and the CUDA toolkit).
+5) Train the neural net by running `tools/nnue/train-v4.py` (requires Tensorflow and the CUDA toolkit).
 6) Generate `weights.h` by exporting model trained in step 5:
 <code>tools/nnue/train.py export -m <path-to-model> -o weights.h</code>
 7) Build engine (using `tools/build.py`, or by running <code>python3 setup.py build\_ext --inplace</code>).
@@ -43,7 +43,7 @@ loaded into the engine at runtime by using the UCI command:
 <code>setoption name NNUEModel value YOUR-JSON-FILE-HERE</code>.
 
 Note that the name NNUE used here only means that the neural net is updated efficiently (i.e. in an
-incremental fashion). The model is original and consists of a relatively small number of parameters (485489).
+incremental fashion). The model is original and consists of a relatively small number of parameters (485761).
 
 # Neural Net Architecture
 ![plot](./model.png)
