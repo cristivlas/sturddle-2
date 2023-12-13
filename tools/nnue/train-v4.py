@@ -28,7 +28,7 @@ Q_SCALE = 1024
 Q_MAX = 32767 / Q_SCALE / 130
 Q_MIN = -32768 / Q_SCALE / 130
 
-SCALE = 128.0
+SCALE = 100.0
 
 
 def configure_logging(args):
