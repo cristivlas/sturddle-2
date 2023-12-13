@@ -81,11 +81,6 @@ namespace
         search::Context::log_message(LogLevel::DEBUG, std::to_string(msg));
     }
 
-    template <typename T> static void log_info(T info)
-    {
-        search::Context::log_message(LogLevel::INFO, std::to_string(info));
-    }
-
     template <typename T> static void log_warning(T warn)
     {
         search::Context::log_message(LogLevel::WARN, std::to_string(warn));
@@ -338,7 +333,7 @@ namespace
             catch (const std::exception& e)
             {
                 ASSERT_ALWAYS(!g_db);
-                log_warning(e.what());
+                search::Context::log_message(LogLevel::WARN, e.what());
             }
             catch (...)
             {
@@ -349,7 +344,7 @@ namespace
     };
 
 
-    static void data_flush(const search::Context& ctxt, int threshold = DATAGEN_SCORE_THRESHOLD)
+    static void data_flush(const search::Context& ctxt)
     {
         static const char* INSERT_OR_REPLACE = R"(
             INSERT OR REPLACE INTO position (epd, depth, score)
@@ -362,10 +357,10 @@ namespace
                 OR ?2 > (SELECT depth FROM position WHERE epd = ?1);
             )";
 
-        if (ctxt._score < threshold || search::eval_insufficient_material(ctxt.state()) == 0)
+        if (ctxt._score < DATAGEN_SCORE_THRESHOLD || search::eval_insufficient_material(ctxt.state()) == 0)
             g_data.clear();
         else
-            LOG_DEBUG(std::format("data_flush: score={}", ctxt._score));
+            search::Context::log_message(LogLevel::INFO, std::format("data_flush: score={}", ctxt._score));
 
         g_data.insert(g_dataDefer.begin(), g_dataDefer.end());
         g_dataDefer.clear();
@@ -377,7 +372,7 @@ namespace
             sqlite3_stmt* stmt = nullptr;
             if (sqlite3_prepare_v2(g_db->_handle, INSERT_OR_REPLACE, -1, &stmt, nullptr) != SQLITE_OK)
             {
-                log_warning(g_db->errmsg("sqlite3_prepare"));
+                search::Context::log_message(LogLevel::ERROR, g_db->errmsg("sqlite3_prepare"));
             }
             else
             {
@@ -390,8 +385,8 @@ namespace
 
                     if (sqlite3_step(stmt) != SQLITE_DONE)
                     {
-                        log_warning(g_db->errmsg("sqlite3_step"));
-                        log_info(std::format("defer {} data points", g_data.size()));
+                        search::Context::log_message(LogLevel::ERROR, g_db->errmsg("sqlite3_step"));
+                        search::Context::log_message(LogLevel::INFO, std::format("defer {} data points", g_data.size()));
                         g_dataDefer.insert(g_data.begin(), g_data.end());
                         break;
                     }
@@ -404,7 +399,7 @@ namespace
         }
     }
 #else
-    static void data_flush(const search::Context&, int = 0)
+    static void data_flush(const search::Context&)
     {
     }
 #endif /* DATAGEN */
@@ -426,7 +421,8 @@ public:
         , _use_opening_book(search::Context::_book_init(_book))
     {
         search::Context::_history = std::make_unique<search::History>();
-        log_info(std::format("TT_Entry size: {}", sizeof(search::TT_Entry)));
+        search::Context::log_message(LogLevel::INFO,
+            std::format("TT_Entry size: {}", std::to_string(sizeof(search::TT_Entry))));
 
         set_start_position();
 
@@ -952,11 +948,7 @@ void UCI::go(const Arguments &args)
     else if (do_analysis && !explicit_movetime)
     {
         ctxt->set_time_limit_ms(INFINITE);
-        _compute_pool->push_task([this]{
-            search();
-            output_best_move();
-            data_flush(context(), SCORE_MIN /* no threshold */);
-        });
+        _compute_pool->push_task([this]{ search(); output_best_move(); });
     }
     else
     {
@@ -982,17 +974,15 @@ void UCI::go(const Arguments &args)
             else
             {
                 search::TimeControl ctrl;
-
                 ctrl.millisec[chess::BLACK] = time_remaining[chess::BLACK];
                 ctrl.millisec[chess::WHITE] = time_remaining[chess::WHITE];
                 ctrl.increments[chess::BLACK] = time_increments[chess::BLACK];
                 ctrl.increments[chess::WHITE] = time_increments[chess::WHITE];
                 ctrl.moves = movestogo;
                 ctrl.score = _score;
-                ctrl.delta = _score_delta;
 
                 search::Context::set_start_time();
-                ctxt->set_time_ctrl(ctrl);
+                ctxt->set_time_ctrl(ctrl, _score_delta);
             }
         };
     #if 0
