@@ -287,7 +287,7 @@ namespace search
         score_t     evaluate_material() const;
 
         void        eval_nnue();
-        score_t     eval_nnue_raw(bool update_only = false);
+        score_t     eval_nnue_raw(bool update_only = false, bool side_to_move_pov = true);
         static void update_root_accumulators();
 
         score_t     static_eval();  /* use TT value if available, eval material otherwise */
@@ -719,7 +719,7 @@ namespace search
 
 #if !WITH_NNUE
     INLINE void search::Context::eval_nnue() {}
-    INLINE score_t search::Context::eval_nnue_raw(bool update_only) { return 0; }
+    INLINE score_t search::Context::eval_nnue_raw(bool update_only, bool pov) { return 0; }
     INLINE void search::Context::load_nnue_model(const std::string&) {}
     INLINE void search::Context::update_root_accumulators() {}
 #endif /* !WITH_NNUE */

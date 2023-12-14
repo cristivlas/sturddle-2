@@ -345,10 +345,14 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         def __getitem__(self, index):
             i = self.indices[index]
             start, end = i * self.batch_size, (i + 1) * self.batch_size
-            x = self.data[start:end,:self.feature_count]
-            y = self.data[start:end,self.feature_count:]
-            y = tf.cast(y, tf.int64)  # cast from unsigned to signed
-            y = tf.cast(y, tf.float32) / SCALE  # convert to float and scale
+            x = self.data[start:end, :self.feature_count]
+            y = self.data[start:end, self.feature_count:]
+            y = tf.cast(y, tf.int64)  # Cast from unsigned to signed
+            y = tf.cast(y, tf.float32) / SCALE  # Convert to float, and scale
+
+            white_to_move = tf.equal(x[:,-1:], 1)  # Training data is from side-to-move POV
+            y = tf.where(white_to_move, y, -y)  # Convert to White's perspective
+
             return x, y
 
         def rows(self):

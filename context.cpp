@@ -223,8 +223,10 @@ static std::unordered_map<std::string, WeightSetter> registry = {
 };
 
 
-score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
+score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side_to_move_pov /* = true */)
 {
+    ASSERT(!is_valid(_eval_raw));
+
     auto& acc = NNUE_data[tid()][_ply];
 
     if (is_root() || _update_nnue)
@@ -249,6 +251,10 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */)
     {
         _eval_raw = nnue::eval(acc, L_DYN, L2, L3, L4);
 
+        if (side_to_move_pov)
+        {
+            _eval_raw *= SIGN[state().turn];
+        }
     #if DATAGEN
         /* Make sure that insufficient material conditions are detected. */
         _eval_raw = eval_insufficient_material(state(), _eval_raw, [this](){ return _eval_raw; });
@@ -373,7 +379,7 @@ int nnue::eval_fen(const std::string& fen)
     ASSERT_ALWAYS(ctxt._ply == 0);
     ctxt._state = &state;
     chess::parse_fen(fen, state);
-    return ctxt.eval_nnue_raw();
+    return ctxt.eval_nnue_raw(false, false);
 }
 #endif /* WITH_NNUE */
 
@@ -2039,7 +2045,7 @@ namespace search
                             ctxt_acc.update(L1A, L1B, ctxt.state());
                         ASSERT(ctxt_acc._hash == ctxt.state().hash());
                         move_acc.update(L1A, L1B, ctxt.state(), *move._state, move, ctxt_acc);
-                        move._score = -nnue::eval(move_acc, L_DYN, L2, L3, L4);
+                        move._score = -nnue::eval(move_acc, L_DYN, L2, L3, L4) * SIGN[ctxt.state().turn];
                         move._group = MoveOrder::ROOT_MOVES;
                     }
                 #endif /* WITH_NNUE */

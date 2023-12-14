@@ -653,7 +653,10 @@ namespace nnue
     }
 
 
-    int eval_fen(const std::string&); /* testing */
+    /**
+     * Evaluate FEN from White's point of view, for testing.
+     */
+    int eval_fen(const std::string&);
 
 #if !WITH_NNUE
     INLINE int eval_fen(const std::string&) { return 0; }
