@@ -326,7 +326,7 @@ namespace search
 
             for (auto e = first; e < last; ++e)
             {
-                ASSERT((const uint8_t*)(e + 1) <= &_data.back());
+                ASSERT((const uint8_t*)(e + 1) <= &_data.back() + 1);
                 Proxy p(e, h);
 
                 /* using full-size lock? */
