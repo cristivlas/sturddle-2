@@ -150,7 +150,9 @@ def make_model(args, strategy):
 
         concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
         constr = CustomConstraint()
-        hidden_1a_inputs = 512
+        pool_size = 4
+        hidden_1a_inputs = 640
+
         hidden_1a_layer = Dense(
             hidden_1a_inputs,
             activation=activation,
@@ -195,7 +197,14 @@ def make_model(args, strategy):
         # Apply weights to hidden_1a (multiply hidden_1a output with dynamic weights)
         weighted = Multiply(name='weighted')([hidden_1a, attn_reshape_layer(dynamic_weights)])
 
-        hidden_2 = hidden_2_layer(weighted)
+        def custom_pooling(x):
+            reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // pool_size, pool_size))
+            # Take the max over the last dimension
+            return tf.reduce_mean(reshaped, axis=-1)
+
+        weighted_pooled = Lambda(custom_pooling, name='pool')(weighted)
+
+        hidden_2 = hidden_2_layer(weighted_pooled)
         hidden_3 = Dense(16, activation=activation, name='hidden_3')(hidden_2)  # 3rd hidden layer
 
         output_layer = Dense(1, name='out', dtype='float32')(hidden_3)  # define the output layer

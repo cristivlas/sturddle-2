@@ -188,7 +188,8 @@ void assert_param_ref()
 
 constexpr int INPUTS_A = 897;
 constexpr int INPUTS_B = 256;
-constexpr int HIDDEN_1A = 512;
+constexpr int HIDDEN_1A = 640;
+constexpr int HIDDEN_1A_POOLED = HIDDEN_1A / 4;
 constexpr int HIDDEN_1B = 64;
 constexpr int HIDDEN_2 = 16;
 constexpr int HIDDEN_3 = 16;
@@ -206,7 +207,7 @@ static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
  */
 static nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE> L1A(hidden_1a_w, hidden_1a_b);
 static nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE> L1B(hidden_1b_w, hidden_1b_b);
-static nnue::Layer<HIDDEN_1A, HIDDEN_2> L2(hidden_2_w, hidden_2_b);
+static nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2> L2(hidden_2_w, hidden_2_b);
 static nnue::Layer<HIDDEN_1B, _countof(dynamic_weights_b)> L_DYN(dynamic_weights_w, dynamic_weights_b);
 
 static nnue::Layer<HIDDEN_2, HIDDEN_3> L3(hidden_3_w, hidden_3_b);

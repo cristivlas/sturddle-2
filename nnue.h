@@ -360,6 +360,24 @@ namespace nnue
     };
 
 
+    template <size_t INPUTS, size_t OUTPUTS>
+    INLINE void pool(const float (&in)[INPUTS], float (&out)[OUTPUTS])
+    {
+        constexpr size_t stride = INPUTS / OUTPUTS;
+
+        static_assert(INPUTS % OUTPUTS == 0);
+        static_assert(stride == 4);
+
+        Vec4f v;
+
+        for (size_t i = 0, j = 0; i + stride <= INPUTS; i += stride, ++j)
+        {
+            v.load_a(&in[i]);
+            out[j] = horizontal_add(v) / Vec4f::size();
+        }
+    }
+
+
     template <int M, int N, int O> struct Accumulator
     {
         static constexpr int INPUTS = M;
@@ -605,17 +623,20 @@ namespace nnue
     template <typename A, typename ATTN, typename L2, typename L3, typename OUT>
     INLINE int eval(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out)
     {
-        static_assert(A::OUTPUTS_A == L2::INPUTS);
+        constexpr size_t POOL_STRIDE = 4;
+
+        static_assert(A::OUTPUTS_A == L2::INPUTS * POOL_STRIDE);
         static_assert(A::OUTPUTS_B == ATTN::INPUTS);
 
         ALIGN float attn_in[ATTN::INPUTS];
         ALIGN float attn_out[ATTN::OUTPUTS];
+        ALIGN float l1_out[A::OUTPUTS_A];
         ALIGN float l2_in[L2::INPUTS];
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1];
 
-        activation(a._output_a, l2_in); // process output of hidden_1a
+        activation(a._output_a, l1_out); // process output of hidden_1a
         activation(a._output_b, attn_in); // process output of hidden_1b
 
         /*
@@ -630,18 +651,20 @@ namespace nnue
 
     #if true /* vectorized */
         Vector v1, v2;
-        for (int i = 0; i != L2::INPUTS; i += Vector::size())
+        for (int i = 0; i != A::OUTPUTS_A; i += Vector::size())
         {
-            v1.load_a(&l2_in[i]);
+            v1.load_a(&l1_out[i]);
             v2.load_a(&attn_out[i % ATTN::OUTPUTS]);
-            (v1 * v2).store_a(&l2_in[i]);
+            (v1 * v2).store_a(&l1_out[i]);
         }
     #else
-        for (int i = 0; i < L2::INPUTS; ++i)
+        for (int i = 0; i < A::OUTPUTS_A; ++i)
         {
-            l2_in[i] *= attn_out[i % ATTN::OUTPUTS];
+            l1_out[i] *= attn_out[i % ATTN::OUTPUTS];
         }
     #endif /* !vectorized */
+
+        pool(l1_out, l2_in);
 
         static const Vector v_zero(0.0);
 
