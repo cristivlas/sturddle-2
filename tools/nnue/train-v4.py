@@ -179,12 +179,24 @@ def make_model(args, strategy):
         # Add 2nd hidden layer
         hidden_2_layer = Dense(16, activation=activation, name='hidden_2')
 
+        # ... and 3rd
+        hidden_3_layer = Dense(16, activation=activation, name='hidden_3')
+
         if args.quantization:
             quantization_config = CustomQuantizeConfig()
             hidden_1a_layer, hidden_1b_layer = (
                 tfmot.quantization.keras.quantize_annotate_layer(layer, quantize_config=quantization_config)
                 for layer in [hidden_1a_layer, hidden_1b_layer]
             )
+
+        if args.freeze_up:
+            attention_layer.trainable = False
+            hidden_1a_layer.trainable = False
+            hidden_1b_layer.trainable = False
+
+        if args.freeze_low:
+            hidden_2_layer.trainable = False
+            hidden_3_layer.trainable = False
 
         hidden_1a = hidden_1a_layer(concat)
         hidden_1b = hidden_1b_layer(input_1b)
@@ -205,7 +217,7 @@ def make_model(args, strategy):
         weighted_pooled = Lambda(custom_pooling, name='pool')(weighted)
 
         hidden_2 = hidden_2_layer(weighted_pooled)
-        hidden_3 = Dense(16, activation=activation, name='hidden_3')(hidden_2)  # 3rd hidden layer
+        hidden_3 = hidden_3_layer(hidden_2)  # 3rd hidden layer
 
         output_layer = Dense(1, name='out', dtype='float32')(hidden_3)  # define the output layer
 
@@ -590,7 +602,7 @@ if __name__ == '__main__':
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
 
-        #for future support of other hot-encoding schemes
+        # For future support of other hot-encoding schemes
         parser.add_argument('--hot-encoding', choices=(769,), type=int, default=769, help=argparse.SUPPRESS)
 
         parser.add_argument('--logdir', default='/tmp/logs', help='tensorboard log dir')
@@ -614,6 +626,10 @@ if __name__ == '__main__':
         parser.add_argument('--vfreq', type=int, default=1, help='validation frequency')
         parser.add_argument('--use-multiprocessing', action='store_true', help='(experimental)')
         parser.add_argument('--workers', '-w', type=int, default=4, help='(experimental)')
+
+        # Experiment with selective fine-tuning
+        parser.add_argument('--freeze-low', action='store_true', help='freeze lower part of the net')
+        parser.add_argument('--freeze-up', action='store_true', help='freeze upper part of the net')
 
         args = parser.parse_args()
 
