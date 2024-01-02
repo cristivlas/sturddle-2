@@ -1242,7 +1242,23 @@ void search::data_collect_move(const search::Context& ctxt, const chess::BaseMov
         LOG_DEBUG(std::format("data_collect_move[{}]: {} {} {}",
             ctxt.iteration(), ctxt.epd(), move.uci(), ctxt._eval));
 
+    #if true
+        const auto iteration = ctxt.iteration();
+        const auto* c = &ctxt;
+        while (true)
+        {
+            ASSERT_ALWAYS(c);
+            g_data.emplace(c->epd(), std::make_tuple(c->_best_move, iteration, c->_eval_raw));
+
+            auto next = c->next_ply();
+            if (!next || next->is_null_move() || next->_move != c->_best_move)
+                break;
+            c = next;
+            log_info(std::format("data_collect_move: ply={}", c->_ply));
+        }
+    #else
         g_data.emplace(ctxt.epd(), std::make_tuple(move, ctxt.iteration(), ctxt._eval_raw));
+    #endif
     }
 #endif /* NATIVE_UCI && DATAGEN */
 }
