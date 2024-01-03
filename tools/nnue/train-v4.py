@@ -3,7 +3,7 @@
 **********************************************************************
 Trainer for the Sturddle Chess 2.0 engine's neural net.
 
-Copyright (c) 2023 Cristian Vlasceanu.
+Copyright (c) 2023, 2024 Cristian Vlasceanu.
 
 Expects H5 files as inputs (produced by toh5.py)
 Uses a custom layer to unpack features, which allows unpacking on GPU.
@@ -190,13 +190,14 @@ def make_model(args, strategy):
             )
 
         if args.freeze_up:
-            attention_layer.trainable = False
             hidden_1a_layer.trainable = False
             hidden_1b_layer.trainable = False
 
         if args.freeze_low:
             hidden_2_layer.trainable = False
             hidden_3_layer.trainable = False
+            attention_layer.trainable = False
+            hidden_1b_layer.trainable = False
 
         hidden_1a = hidden_1a_layer(concat)
         hidden_1b = hidden_1b_layer(input_1b)
