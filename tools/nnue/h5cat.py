@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""
+Virtually concatenate h5 files.
+"""
 
 import argparse
 import os

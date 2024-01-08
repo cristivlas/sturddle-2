@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""
+Convert sqlite3 databases into h5 files, in parallel.
+"""
 import argparse
 import os
 import sqlite3
