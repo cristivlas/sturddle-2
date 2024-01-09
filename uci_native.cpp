@@ -866,7 +866,8 @@ void UCI::debug()
     output(std::format("hash: {}", _buf._state._hash));
     size_t history_size = 0;
     history_size = search::Context::_history->_positions.size();
-    output(std::format("history_size: {}", history_size));
+    output(std::format("history size: {}", history_size));
+    output(std::format("halfmove clock: {}", search::Context::_history->_fifty));
     std::ostringstream checkers;
     chess::for_each_square(_buf._state.checkers_mask(_buf._state.turn),
         [&checkers](chess::Square sq) {
