@@ -639,6 +639,8 @@ namespace nnue
         activation(a._output_a, l1_out); // process output of hidden_1a
         activation(a._output_b, attn_in); // process output of hidden_1b
 
+        pool(l1_out, l2_in);
+
         /*
          * The dynamic weights computed by the "attention" layer
          * are used to modulate the output of another hidden layer
@@ -647,24 +649,21 @@ namespace nnue
         attn.dot(attn_in, attn_out);
 
         static_assert(L2::INPUTS % Vector::size() == 0);
-        static_assert(ATTN::OUTPUTS % Vector::size() == 0);
 
     #if true /* vectorized */
         Vector v1, v2;
-        for (int i = 0; i != A::OUTPUTS_A; i += Vector::size())
+        for (int i = 0; i != L2::INPUTS; i += Vector::size())
         {
-            v1.load_a(&l1_out[i]);
+            v1.load_a(&l2_in[i]);
             v2.load_a(&attn_out[i % ATTN::OUTPUTS]);
-            (v1 * v2).store_a(&l1_out[i]);
+            (v1 * v2).store_a(&l2_in[i]);
         }
     #else
         for (int i = 0; i < A::OUTPUTS_A; ++i)
         {
-            l1_out[i] *= attn_out[i % ATTN::OUTPUTS];
+            l2_in[i] *= attn_out[i % ATTN::OUTPUTS];
         }
     #endif /* !vectorized */
-
-        pool(l1_out, l2_in);
 
         static const Vector v_zero(0.0);
 

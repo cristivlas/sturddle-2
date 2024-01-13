@@ -204,20 +204,20 @@ def make_model(args, strategy):
 
         dynamic_weights = attention_layer(hidden_1b)  # computes dynamic weights
 
-        # The "reshaping" layer repeats or tiles the dynamic weights to match the output shape of hidden_1a.
-        attn_reshape_layer = Lambda(lambda x: tf.tile(x, tf.constant([1, hidden_1a_inputs // attn_fan_out])))
-
-        # Apply weights to hidden_1a (multiply hidden_1a output with dynamic weights)
-        weighted = Multiply(name='weighted')([hidden_1a, attn_reshape_layer(dynamic_weights)])
-
         def custom_pooling(x):
             reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // pool_size, pool_size))
             # Take the max over the last dimension
             return tf.reduce_mean(reshaped, axis=-1)
 
-        weighted_pooled = Lambda(custom_pooling, name='pool')(weighted)
+        pooled = Lambda(custom_pooling, name='pool')(hidden_1a)
 
-        hidden_2 = hidden_2_layer(weighted_pooled)
+        # The "reshaping" layer repeats or tiles the dynamic weights to match the output shape of pooled
+        attn_reshape_layer = Lambda(lambda x: tf.tile(x, tf.constant([1, hidden_1a_inputs // pool_size // attn_fan_out])))
+
+        # Apply weights to pooled (multiply pooled output with dynamic weights)
+        weighted = Multiply(name='weighted')([pooled, attn_reshape_layer(dynamic_weights)])
+
+        hidden_2 = hidden_2_layer(weighted)
         hidden_3 = hidden_3_layer(hidden_2)  # 3rd hidden layer
 
         output_layer = Dense(1, name='out', dtype='float32')(hidden_3)  # define the output layer
