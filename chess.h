@@ -72,23 +72,20 @@ constexpr int SIGN[] = { -1, 1 };
 template<typename T> INLINE T constexpr pow2(T x) { return x * x; }
 
 
-template<
-    typename T,
-    size_t max_size = 256,
-    template<typename, size_t> class Container = std::array
->
+template<typename T, size_t max_size = 256>
 class MaxSizeVector
 {
 public:
-    using container_type = Container<T, max_size>;
     using const_iterator = const T*;
     using iterator = T*;
 
     MaxSizeVector() : _current_size(0)
-    {}
+    {
+        _container.reserve(max_size);
+    }
 
     template <typename InputIterator>
-    void assign(InputIterator first, InputIterator last)
+    INLINE void assign(InputIterator first, InputIterator last)
     {
         size_t count = std::distance(first, last);
         check_capacity(__func__, count);
@@ -96,59 +93,61 @@ public:
         std::copy(first, last, _container.begin());
     }
 
-    void clear() { _current_size = 0; }
-    size_t size() const { return _current_size; }
-    bool empty() const { return size() == 0; }
-    iterator begin() { return &_container[0]; }
-    iterator end() { return &_container[0] + _current_size; }
-    const_iterator begin() const { return &_container[0]; }
-    const_iterator end() const { return &_container[0] + _current_size; }
+    INLINE void clear() { _current_size = 0; }
+    INLINE size_t size() const { return _current_size; }
+    INLINE bool empty() const { return size() == 0; }
+    INLINE iterator begin() { return &_container[0]; }
+    INLINE iterator end() { return &_container[0] + _current_size; }
+    INLINE const_iterator begin() const { return &_container[0]; }
+    INLINE const_iterator end() const { return &_container[0] + _current_size; }
 
-    void emplace_back(T&& value)
+    INLINE void emplace_back(T&& value)
     {
         check_capacity(__func__);
         _container[_current_size++] = std::move(value);
     }
 
     template <typename... Args>
-    void emplace_back(Args&&... args)
+    INLINE void emplace_back(Args&&... args)
     {
         check_capacity(__func__);
         _container[_current_size++] = T(std::forward<Args>(args)...);
     }
 
-    T& operator[](size_t index)
+    INLINE T& operator[](size_t index)
     {
         check_size(__func__, index);
         return _container[index];
     }
 
-    const T& operator[](size_t index) const
+    INLINE const T& operator[](size_t index) const
     {
         check_size(__func__, index);
         return _container[index];
     }
 
 private:
-    inline void check_capacity(const char* func) const
+    INLINE void check_capacity(const char* func) const
     {
+    #if 0
         if (_current_size >= max_size)
             throw std::out_of_range(std::string("capacity exceeded: ") + func);
+    #endif
     }
 
-    inline void check_capacity(const char* func, size_t i) const
+    INLINE void check_capacity(const char* func, size_t i) const
     {
         if (i >= max_size)
             throw std::out_of_range(std::string("capacity exceeded: ") + func);
     }
 
-    inline void check_size(const char* func, size_t i) const
+    INLINE void check_size(const char* func, size_t i) const
     {
         if (i >= _current_size)
             throw std::out_of_range(std::string("index out of range: ") + func);
     }
 
-    Container<T, max_size> _container;
+    std::vector<T> _container;
     size_t _current_size;
 };
 
