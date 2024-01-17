@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -70,6 +70,88 @@ constexpr int SIGN[] = { -1, 1 };
 
 
 template<typename T> INLINE T constexpr pow2(T x) { return x * x; }
+
+
+template<
+    typename T,
+    size_t max_size = 256,
+    template<typename, size_t> class Container = std::array
+>
+class MaxSizeVector
+{
+public:
+    using container_type = Container<T, max_size>;
+    using const_iterator = typename container_type::const_iterator;
+    using iterator = typename container_type::iterator;
+
+    MaxSizeVector() : _current_size(0)
+    {}
+
+    template <typename InputIterator>
+    void assign(InputIterator first, InputIterator last)
+    {
+        size_t count = std::distance(first, last);
+        check_capacity(__func__, count);
+        _current_size = count;
+        std::copy(first, last, _container.begin());
+    }
+
+    void clear() { _current_size = 0; }
+    size_t size() const { return _current_size; }
+    bool empty() const { return size() == 0; }
+    iterator begin() { return _container.begin(); }
+    iterator end() { return _container.begin() + _current_size; }
+    const_iterator begin() const { return _container.begin(); }
+    const_iterator end() const { return _container.begin() + _current_size; }
+
+    void emplace_back(T&& value)
+    {
+        check_capacity(__func__);
+        _container[_current_size++] = std::move(value);
+    }
+
+    template <typename... Args>
+    void emplace_back(Args&&... args)
+    {
+        check_capacity(__func__);
+        _container[_current_size++] = T(std::forward<Args>(args)...);
+    }
+
+    T& operator[](size_t index)
+    {
+        check_size(__func__, index);
+        return _container[index];
+    }
+
+    const T& operator[](size_t index) const
+    {
+        check_size(__func__, index);
+        return _container[index];
+    }
+
+private:
+    inline void check_capacity(const char* func) const
+    {
+        if (_current_size >= max_size)
+            throw std::out_of_range(std::string("capacity exceeded: ") + func);
+    }
+
+    inline void check_capacity(const char* func, size_t i) const
+    {
+        if (i >= max_size)
+            throw std::out_of_range(std::string("capacity exceeded: ") + func);
+    }
+
+    inline void check_size(const char* func, size_t i) const
+    {
+        if (i >= _current_size)
+            throw std::out_of_range(std::string("index out of range: ") + func);
+    }
+
+    Container<T, max_size> _container;
+    size_t _current_size;
+};
+
 
 namespace chess
 {
@@ -511,9 +593,11 @@ namespace chess
         return !lhs.is_equal(rhs);
     }
 
-
+#if 0
     using MovesList = std::vector<Move>;
-
+#else
+    using MovesList = MaxSizeVector<Move>;
+#endif
 
 #if USE_PIECE_SQUARE_TABLES
     INLINE constexpr int square_index(int i, chess::Color color)

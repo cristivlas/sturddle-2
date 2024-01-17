@@ -1,7 +1,7 @@
 # distutils: language = c++
 # cython: language_level = 3
 """
-Sturddle Chess Engine (c) 2022, 2023 Cristian Vlasceanu.
+Sturddle Chess Engine (c) 2022, 2023, 2024 Cristian Vlasceanu.
 -------------------------------------------------------------------------
 
 This program is free software: you can redistribute it and/or modify
@@ -59,7 +59,7 @@ ctypedef stdint.int64_t int64_t
 ctypedef stdint.uint64_t uint64_t
 
 
-# ostream placeholder
+# std::ostream placeholder
 cdef extern from '<iostream>' namespace 'std':
     cdef cppclass ostream:
         pass
@@ -119,6 +119,14 @@ cdef extern from 'chess.h' namespace 'chess':
 
     cdef Bitboard BB_ALL
 
+    cdef cppclass MaxSizeVector[T]:
+        MaxSizeVector() except +
+        size_t size()
+        T& operator[](size_t index)
+        T* begin()
+        T* end()
+        const T* begin() const
+        const T* end() const
 
     cdef cppclass BaseMove:
         BaseMove()
@@ -134,7 +142,9 @@ cdef extern from 'chess.h' namespace 'chess':
         Move()
         Move(const BaseMove&)
 
+
     ctypedef vector[BaseMove] PV
+    ctypedef MaxSizeVector[Move] MovesList
 
 
     cdef cppclass Position:
@@ -190,11 +200,11 @@ cdef extern from 'chess.h' namespace 'chess':
 
         Bitboard checkers_mask(Color) const
 
-        void generate_castling_moves(vector[Move]& moves) const
-        void generate_moves(vector[Move]&, vector[Move]&) const
+        void generate_castling_moves(MovesList& moves) const
+        void generate_moves(MovesList&, MovesList&) const
 
-        vector[Move]& generate_pseudo_legal_moves(vector[Move]&, Bitboard, Bitboard) const
-        size_t make_pseudo_legal_moves(vector[Move]&) const
+        MovesList& generate_pseudo_legal_moves(MovesList&, Bitboard, Bitboard) const
+        size_t make_pseudo_legal_moves(MovesList&) const
 
 
     cdef score_t estimate_static_exchanges(const State&, Color, int, PieceType)
@@ -371,7 +381,7 @@ cdef class BoardState:
 
     """ Generate castling moves (for testing) """
     def castling_moves(self):
-        cdef vector[Move] moves
+        cdef MovesList moves
         self._state.generate_castling_moves(moves)
         return [py_move(m) for m in moves]
 
@@ -1201,7 +1211,7 @@ def get_hash_full():
 # Ad-hoc move generation performance tests.
 # ---------------------------------------------------------------------
 def perft(fen, repeat=1):
-    cdef vector[Move] moves
+    cdef MovesList moves
     cdef size_t count = 0
     board = BoardState(chess.Board(fen=fen))
     start = time.perf_counter()
@@ -1213,8 +1223,8 @@ def perft(fen, repeat=1):
 
 
 def perft2(fen, repeat=1):
-    cdef vector[Move] moves
-    cdef vector[Move] buffer
+    cdef MovesList moves
+    cdef MovesList buffer
     cdef size_t count = 0
     board = BoardState(chess.Board(fen=fen))
     start = time.perf_counter()
