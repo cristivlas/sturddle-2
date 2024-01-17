@@ -81,8 +81,8 @@ class MaxSizeVector
 {
 public:
     using container_type = Container<T, max_size>;
-    using const_iterator = typename container_type::const_iterator;
-    using iterator = typename container_type::iterator;
+    using const_iterator = const T*;
+    using iterator = T*;
 
     MaxSizeVector() : _current_size(0)
     {}
@@ -99,10 +99,10 @@ public:
     void clear() { _current_size = 0; }
     size_t size() const { return _current_size; }
     bool empty() const { return size() == 0; }
-    iterator begin() { return _container.begin(); }
-    iterator end() { return _container.begin() + _current_size; }
-    const_iterator begin() const { return _container.begin(); }
-    const_iterator end() const { return _container.begin() + _current_size; }
+    iterator begin() { return &_container[0]; }
+    iterator end() { return &_container[0] + _current_size; }
+    const_iterator begin() const { return &_container[0]; }
+    const_iterator end() const { return &_container[0] + _current_size; }
 
     void emplace_back(T&& value)
     {
