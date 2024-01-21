@@ -395,7 +395,7 @@ cdef class BoardState:
 # ---------------------------------------------------------------------
 cdef extern from 'context.h' nogil:
 
-    cdef void _uci_loop(unordered_map[string, string]) nogil
+    cdef void _uci_loop(unordered_map[string, string]) noexcept nogil
 
     #
     # Get/set engine params via Python
@@ -862,9 +862,9 @@ cdef extern from 'search.h' namespace 'search':
         void    set_hash_size(size_t)
 
 
-    cdef score_t _negamax(Context&, TranspositionTable&) nogil
-    cdef score_t _mtdf(Context&, score_t, TranspositionTable&) nogil
-    cdef score_t _iterative(Context&, TranspositionTable&, int) nogil
+    cdef score_t _negamax(Context&, TranspositionTable&) noexcept nogil
+    cdef score_t _mtdf(Context&, score_t, TranspositionTable&) noexcept nogil
+    cdef score_t _iterative(Context&, TranspositionTable&, int) noexcept nogil
 
 
 cdef task_stats(const TranspositionTable& table):
