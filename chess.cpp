@@ -524,33 +524,6 @@ namespace chess
     }
 
 
-    // Ported from python-chess.
-    // https://python-chess.readthedocs.io/en/latest/_modules/chess.html#Board.has_insufficient_material
-    bool State::has_insufficient_material(Color color) const
-    {
-        if (_occupied_co[color] & (pawns | rooks | queens))
-            return false;
-
-        // Knights are only insufficient material if:
-        // (1) We do not have any other pieces, including more than one knight.
-        // (2) The opponent does not have pawns, knights, bishops or rooks.
-        if (_occupied_co[color] & knights)
-            return popcount(_occupied_co[color]) <= 2
-                && (_occupied_co[!color] & ~kings & ~queens) == 0;
-
-        // Bishops are only insufficient material if:
-        // (1) We do not have any other pieces, including bishops of the opposite color.
-        // (2) The opponent does not have bishops of the opposite color, pawns or knights.
-        if (_occupied_co[color] & bishops)
-        {
-            auto same_color = (bishops & BB_DARK_SQUARES) == 0 || (bishops & BB_LIGHT_SQUARES) == 0;
-            return same_color && !pawns && !knights;
-        }
-
-        return true;
-    }
-
-
     /* for testing */
     size_t State::make_pseudo_legal_moves(MovesList& moves) const
     {

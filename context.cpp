@@ -479,18 +479,6 @@ namespace search
         #if WITH_NNUE
             NNUE_data.resize(n_threads);
         #endif
-
-        #if 0
-            for (size_t n = 0; n < n_threads; ++n)
-            {
-                /* pre-allocate memory */
-                for (size_t ply = 0; ply < PLY_MAX; ++ply)
-                {
-                    _move_stacks[n][ply].reserve(PREALLOCATE_MOVE_COUNT);
-                    _state_stacks[n][ply].reserve(PREALLOCATE_MOVE_COUNT);
-                }
-            }
-        #endif
         }
     }
 
