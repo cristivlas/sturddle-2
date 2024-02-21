@@ -58,7 +58,7 @@ def plot(values, hyperparams):
                     fig.canvas.draw_idle()
 
     fig.canvas.mpl_connect('motion_notify_event', hover)
-
+    fig.canvas.manager.set_window_title('Loss Over Iterations')
     plt.show()
 
 if __name__ == '__main__':
