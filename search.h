@@ -217,7 +217,6 @@ namespace search
         static constexpr size_t BUCKET_SIZE = 4;
         struct Entry
         {
-            using lock_t = std::atomic_flag;
             State       _state;
             MovesList   _moves;
             int         _use_count = 0;
@@ -240,7 +239,7 @@ namespace search
             std::vector<Entry>(_data.size()).swap(_data);
         }
 
-        INLINE bool lookup(const State& state, MovesList& moves)
+        INLINE bool lookup(const State& state, MovesList& moves) // non-const due to locking
         {
             const auto hash = state.hash();
 
