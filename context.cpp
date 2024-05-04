@@ -53,6 +53,34 @@ using std::chrono::duration_cast;
 using std::chrono::high_resolution_clock;
 using std::chrono::nanoseconds;
 
+#if __APPLE__ || __linux__
+#include <signal.h>
+
+static void segv_handler(int sig)
+{
+    dump_backtrace(std::cerr);
+    cython_wrapper::GIL_State gil_state;
+    PyErr_SetString(PyExc_Exception, "Segmentation Fault");
+}
+
+static void setup_crash_handler()
+{
+    struct sigaction sa = {};
+    sa.sa_handler = segv_handler;
+    sigemptyset(&sa.sa_mask);
+
+    if (sigaction(SIGSEGV, &sa, nullptr) != 0)
+    {
+        perror("Failed to set signal handler");
+        _exit(1); // Fail hard if we can't set up SIGSEGV handling
+    }
+}
+#else
+
+static void setup_crash_handler()
+{
+}
+#endif /* __APPLE__ || __linux__ */
 
 /*
  * Late-move reduction tables (adapted from berserk)
@@ -424,6 +452,7 @@ namespace search
     /* Init attack masks and other magic bitboards in chess.cpp */
     /* static */ void Context::init()
     {
+        setup_crash_handler();
         _init();
     }
 
