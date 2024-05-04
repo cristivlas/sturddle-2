@@ -82,6 +82,71 @@ static void setup_crash_handler()
 }
 #endif /* __APPLE__ || __linux__ */
 
+namespace
+{
+    class MovesCache
+    {
+        static constexpr size_t BUCKET_SIZE = 4;
+        struct Entry
+        {
+            State       _state;
+            MovesList   _moves;
+            int         _use_count = 0;
+            int         _write_attempts = 0;
+        };
+
+        std::vector<Entry> _data;
+
+    public:
+        explicit MovesCache(size_t size = 1031) : _data(size)
+        {
+        }
+
+        INLINE void clear()
+        {
+            std::vector<Entry>(_data.size()).swap(_data);
+        }
+
+        INLINE bool lookup(const State& state, MovesList& moves) // non-const due to locking
+        {
+            const auto hash = state.hash();
+
+            for (size_t j = 0; j < BUCKET_SIZE; ++j)
+            {
+                const auto i = (hash + j) % _data.size();
+                auto& entry = _data[i];
+                if (state.hash() == entry._state.hash() && state == entry._state)
+                {
+                    ++entry._use_count;
+                    moves.assign(entry._moves.begin(), entry._moves.end());
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        INLINE void write(const State& state, const MovesList& moves)
+        {
+            const auto hash = state.hash();
+
+            for (size_t j = 0; j < BUCKET_SIZE; ++j)
+            {
+                const auto i = (hash + j) % _data.size();
+                auto& entry = _data[i];
+                if (++entry._write_attempts > 2 * entry._use_count)
+                {
+                    entry._moves.assign(moves.begin(), moves.end());
+                    entry._state = state;
+                    entry._use_count = 0;
+                    entry._write_attempts = 0;
+                    break;
+                }
+            }
+        }
+    };
+} /* namespace */
+
+
 /*
  * Late-move reduction tables (adapted from berserk)
  */
@@ -427,6 +492,7 @@ namespace search
     std::vector<Context::ContextStack> Context::_context_stacks(SMP_CORES);
     std::vector<Context::MoveStack> Context::_move_stacks(SMP_CORES);
     std::vector<Context::StateStack> Context::_state_stacks(SMP_CORES);
+    std::vector<MovesCache> _moves_cache(SMP_CORES);
 
     /* Cython callbacks */
     PyObject* Context::_engine = nullptr;
@@ -448,6 +514,15 @@ namespace search
     size_t (*Context::_vmem_avail)() = nullptr;
 
     std::string Context::_syzygy_path = "syzygy/3-4-5";
+
+
+    /* static */ void Context::clear_moves_cache()
+    {
+        for (auto& cache : _moves_cache)
+        {
+            cache.clear();
+        }
+    }
 
     /* Init attack masks and other magic bitboards in chess.cpp */
     /* static */ void Context::init()
@@ -502,6 +577,7 @@ namespace search
         if (_context_stacks.size() < n_threads)
         {
             _context_stacks.resize(n_threads);
+            _moves_cache.resize(n_threads);
             _move_stacks.resize(n_threads);
             _state_stacks.resize(n_threads);
 
@@ -1883,7 +1959,7 @@ namespace search
 
         auto& moves_list = ctxt.moves();
 
-        auto& moves_cache = ctxt.get_tt()->moves_cache();
+        auto& moves_cache = _moves_cache[ctxt.tid()];
         if (moves_cache.lookup(ctxt.state(), moves_list))
         {
             for (auto& move : moves_list)

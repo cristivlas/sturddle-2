@@ -93,7 +93,6 @@ static size_t mem_avail()
 
 
 TranspositionTable::HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE, mem_avail());
-MovesCache TranspositionTable::_moves_cache(1031);
 
 
 /* static */ size_t TranspositionTable::max_hash_size()
@@ -167,7 +166,7 @@ void TranspositionTable::clear()
     assert_param_ref();
 
     _table.clear();
-    _moves_cache.clear();
+    Context::clear_moves_cache();
 }
 
 

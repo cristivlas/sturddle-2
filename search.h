@@ -212,74 +212,6 @@ namespace search
 #pragma pack(pop)
 
 
-    class MovesCache
-    {
-        static constexpr size_t BUCKET_SIZE = 4;
-        struct Entry
-        {
-            State       _state;
-            MovesList   _moves;
-            int         _use_count = 0;
-            int         _write_attempts = 0;
-            std::mutex  _mutex;
-
-            INLINE void lock() { _mutex.lock(); }
-            INLINE void unlock() { _mutex.unlock(); }
-        };
-
-        std::vector<Entry> _data;
-
-    public:
-        explicit MovesCache(size_t size) : _data(size)
-        {
-        }
-
-        INLINE void clear()
-        {
-            std::vector<Entry>(_data.size()).swap(_data);
-        }
-
-        INLINE bool lookup(const State& state, MovesList& moves) // non-const due to locking
-        {
-            const auto hash = state.hash();
-
-            for (size_t j = 0; j < BUCKET_SIZE; ++j)
-            {
-                const auto i = (hash + j) % _data.size();
-                auto& entry = _data[i];
-                std::lock_guard<Entry> lock(entry);
-                if (state.hash() == entry._state.hash() && state == entry._state)
-                {
-                    ++entry._use_count;
-                    moves.assign(entry._moves.begin(), entry._moves.end());
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        INLINE void write(const State& state, const MovesList& moves)
-        {
-            const auto hash = state.hash();
-
-            for (size_t j = 0; j < BUCKET_SIZE; ++j)
-            {
-                const auto i = (hash + j) % _data.size();
-                auto& entry = _data[i];
-                std::lock_guard<Entry> lock(entry);
-                if (++entry._write_attempts > 2 * entry._use_count)
-                {
-                    entry._moves.assign(moves.begin(), moves.end());
-                    entry._state = state;
-                    entry._use_count = 0;
-                    entry._write_attempts = 0;
-                    break;
-                }
-            }
-        }
-    };
-
-
     /*
      * Hash table, counter moves, historical counts.
      * Under SMP the hash table is shared between threads.
@@ -305,7 +237,6 @@ namespace search
         KillerMovesTable    _killer_moves; /* killer moves at each ply */
         HistoryCounters     _hcounters[2]; /* History heuristic counters. */
         static HashTable    _table;        /* shared hashtable */
-        static MovesCache   _moves_cache;
 
     public:
         TranspositionTable() = default;
@@ -402,8 +333,6 @@ namespace search
 
         /* set hash table size in MB */
         static void set_hash_size(size_t);
-
-        static MovesCache& moves_cache() { return _moves_cache; }
     };
 
 

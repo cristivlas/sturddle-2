@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -266,6 +266,8 @@ namespace search
         bool        can_reduce() const;
 
         int64_t     check_time_and_update_nps(); /* return elapsed milliseconds */
+        static void clear_moves_cache();
+
         Context*    clone(ContextBuffer&, int ply = 0) const;
 
         int         depth() const { return _max_depth - _ply; }
