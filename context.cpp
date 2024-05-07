@@ -1792,10 +1792,7 @@ namespace search
             ASSERT(_ply == 1);
             return true;
         }
-    #if 0
-        if (WEIGHT[_parent->state().piece_type_at(_move.from_square())] <= state().capture_value)
-            return false;  /* descend into quiescent search */
-    #endif
+
         if (depth() > 0
             || is_null_move()
             || is_retry()

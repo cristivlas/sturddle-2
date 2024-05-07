@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,7 +33,7 @@
   #define HAVE_INT128 false
 #else
   #define HAVE_INT128 (INTPTR_MAX == INT64_MAX)
-#endif /* Microsoft */
+#endif /* Microsoft Compiler */
 
 #if !defined(_DEBUG)
 #if _MSC_VER
@@ -97,7 +97,7 @@ using score_t = int;
 
 #define SMP                                 true
 
-/* experiment with different SEE heuristic impls */
+/* Experiment with different SEE heuristic impls */
 #if !defined(USE_SIMPLE_SEE)
   #define USE_SIMPLE_SEE                    false
 #endif /* USE_SIMPLE_SEE */
