@@ -36,7 +36,7 @@ else:
 
 def get_compiler_major_version():
     # Get the compiler from the CC environment variable
-    compiler = environ.get('CC', 'clang')
+    compiler = environ.get('CC', 'gcc')
 
     version_string = subprocess.check_output([compiler, '--version']).decode('utf-8')
 
@@ -142,36 +142,46 @@ else:
         '-DCALLBACK_PERIOD=8192',
         '-fno-stack-protector',
         '-DWITH_NNUE',
-        '-Wno-macro-redefined',
-        '-D_FORTIFY_SOURCE=0',
         '-Wno-empty-body',
         '-Wno-int-in-bool-context',
     ]
 
-    # Note: NATIVE_UCI assumes building with clang. And who gives a ... about gcc anyway?
-    if NATIVE_UCI:
-        args += [
-            '-stdlib=libc++',
-            '-fexperimental-library',
-            '-DNATIVE_UCI=true',
-        ]
-        link += [
-            '-fuse-ld=lld',
-            f'-L/usr/lib/llvm-{get_compiler_major_version()}/lib/',
-            '-L/usr/local/opt/llvm/lib/c++',
-            '-lc++',
-            '-lc++experimental',
-            '-lsqlite3',
-        ]
     # Silence off Py_DEPRECATED warnings for clang;
     # clang is the default compiler on macosx.
     cc = 'clang' if platform.startswith('macos') else environ.get('CC', None)
     if cc and cc.startswith('clang'):
         args += [
+            '-Wno-macro-redefined',
+            '-D_FORTIFY_SOURCE=0',  # Avoid the overhead.
             '-Wno-deprecated-declarations',
             '-fvisibility=hidden',
             '-DPyMODINIT_FUNC=__attribute__((visibility("default"))) extern "C" PyObject*',
         ]
+        if NATIVE_UCI:
+            if get_compiler_major_version() < 14:
+                raise RuntimeError('NATIVE_UCI requires clang 14 or higher')
+            args += [
+                '-stdlib=libc++',
+                '-fexperimental-library',
+                '-DNATIVE_UCI=true',
+            ]
+            link += [
+                '-fuse-ld=lld',
+                f'-L/usr/lib/llvm-{get_compiler_major_version()}/lib/',
+                '-L/usr/local/opt/llvm/lib/c++',
+                '-lc++',
+                '-lc++experimental',
+                '-lsqlite3',
+            ]
+    else:
+        if NATIVE_UCI:
+            if get_compiler_major_version() < 13:
+                raise RuntimeError('NATIVE_UCI uses C++20 and requires GCC 13 or later')
+            args += [
+                '-DNATIVE_UCI=true',
+            ]
+        args.append('-DUSE_MAGIC_BITS')
+
 """
 end of compiler args.
 """

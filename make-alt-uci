@@ -1,0 +1,3 @@
+# Build with Python implementation of UCI, if the compiler does not support C++20.
+python3 setup.py clean --all
+CFLAGS="-march=native $CFLAGS" python3 setup.py build_ext --inplace
