@@ -34,9 +34,10 @@ else:
         pass
 
 
-def get_compiler_major_version():
+def get_compiler_major_version(compiler=None):
     # Get the compiler from the CC environment variable
-    compiler = environ.get('CC', 'gcc')
+    if compiler is None:
+        compiler = environ.get('CC', 'gcc')
 
     version_string = subprocess.check_output([compiler, '--version']).decode('utf-8')
 
@@ -158,8 +159,9 @@ else:
             '-DPyMODINIT_FUNC=__attribute__((visibility("default"))) extern "C" PyObject*',
         ]
         if NATIVE_UCI:
-            if get_compiler_major_version() < 14:
-                raise RuntimeError('NATIVE_UCI requires clang 14 or higher')
+            cc_ver = get_compiler_major_version(cc)
+            if cc_ver < 14:
+                raise RuntimeError(f'{cc} ver={cc_ver}. NATIVE_UCI requires clang 14 or higher')
             args += [
                 '-stdlib=libc++',
                 '-fexperimental-library',
