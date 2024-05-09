@@ -151,88 +151,99 @@ namespace search
             entry_t* _entry = nullptr;
             bool _locked = false;
 
+            INLINE void take_ownership()
+            {
+            #if !NO_ASSERT
+                if (_locked)
+                    entry()->_owner = this;
+            #endif /* NO_ASSERT */
+            }
+
     #if SMP
-            INLINE lock_t* lock_p()
+            static INLINE lock_t* lock_p(entry_t* e)
             {
                 static_assert(sizeof(lock_t) == sizeof(key_t));
-                return reinterpret_cast<lock_t*>(&entry()->_lock);
+                return reinterpret_cast<lock_t*>(&e->_lock);
             }
 
             template<bool strong=false>
             static bool try_lock(lock_t* lock, uint64_t hash)
             {
+                ASSERT(lock);
                 auto k = key(hash);
                 if constexpr(strong)
                     return lock->compare_exchange_strong(
                         k,
                         LOCKED,
-                        std::memory_order_release,
-                        std::memory_order_relaxed);
+                        std::memory_order_acq_rel,  /* stronger order on success */
+                        std::memory_order_acquire);
                 else
                     return lock->compare_exchange_weak(
                         k,
                         LOCKED,
-                        std::memory_order_release,
-                        std::memory_order_relaxed);
+                        std::memory_order_release, /* on success */
+                        std::memory_order_acquire); /* on failure */
             }
 
-            INLINE void blocking_lock(const entry_t* e)
+            static INLINE bool blocking_lock(entry_t* entry)
             {
-                static constexpr int max_try = 16;
+                ASSERT(entry);
                 int i = 0;
-                auto lock = lock_p();
-
-                for (auto k = e->_hash; !try_lock(lock, k); k = e->_hash)
+                auto lock = lock_p(entry);
+                for (auto k = entry->_hash; !try_lock(lock, k); k = entry->_hash)
                 {
-                    if (++i > max_try)
-                        return;
+                    if (++i > 1024)
+                    {
+                        std::this_thread::yield();
+                    }
+                #if true /* defend against deadlock bugs */
+                    if (i > 1024 * 1024)
+                    {
+                        ASSERT(false);
+                        return false;
+                    }
+                #endif
                 }
-                _locked = true;
-
-            #if !NO_ASSERT
-                entry()->_owner = this;
-            #endif /* NO_ASSERT */
+                return true;
             }
 
-            INLINE void non_blocking_lock(const entry_t*, uint64_t key)
+            static INLINE bool non_blocking_lock(entry_t* entry, uint64_t key)
             {
-                if (try_lock<true>(lock_p(), key))
+                ASSERT(entry);
+                if (try_lock<true>(lock_p(entry), key))
                 {
-                    _locked = true;
-                #if !NO_ASSERT
-                    entry()->_owner = this;
-                #endif /* NO_ASSERT */
+                    return true;
                 }
+                return false;
             }
 
             INLINE void release()
             {
-                if (_locked)
-                {
-                    ASSERT(*lock_p() == LOCKED);
-                    ASSERT(entry()->_owner == this);
+                ASSERT(_locked); /* caller must check! */
+                const auto e = entry();
+                ASSERT(*lock_p(e) == LOCKED);
+                ASSERT(entry()->_owner == this);
 
-                    lock_p()->store(key(entry()->_hash), std::memory_order_release);
-                    _locked = false;
-                }
+                lock_p(e)->store(key(e->_hash), std::memory_order_seq_cst);
+                _locked = false;
             }
     #else
-            INLINE void blocking_lock(const entry_t*) { _locked = true; }
-            INLINE void non_blocking_lock(const entry_t* e, uint64_t key) { _locked = (e->_hash == key); }
+            INLINE static bool blocking_lock(const entry_t*) { return true; }
+            INLINE static bool non_blocking_lock(const entry_t* e, uint64_t key) { return (e->_hash == key); }
             INLINE void release() { _locked = false; }
     #endif /* !SMP */
 
         protected:
             SpinLock() = default;
 
-            explicit SpinLock(entry_t* e) : _entry(e)
+            explicit SpinLock(entry_t* e) : _entry(e), _locked(blocking_lock(e))
             {
-                blocking_lock(this->entry());
+                take_ownership();
             }
 
-            SpinLock(entry_t* e, uint64_t hash) : _entry(e)
+            SpinLock(entry_t* e, uint64_t hash) : _entry(e), _locked(non_blocking_lock(e, hash))
             {
-                non_blocking_lock(this->entry(), hash);
+                take_ownership();
             }
 
             ~SpinLock()
@@ -245,11 +256,8 @@ namespace search
                 : _entry(other._entry)
                 , _locked(other._locked)
             {
-                other._locked = false;
-            #if !NO_ASSERT
-                if (_locked)
-                    entry()->_owner = this;
-            #endif /* NO_ASSERT */
+                other._locked = false; /* this takes ownership */
+                take_ownership();
             }
 
             SpinLock(const SpinLock&) = delete;

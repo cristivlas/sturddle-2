@@ -179,6 +179,7 @@ public:
 
 INLINE float horizontal_add(const Vec8f& x)
 {
+#if 0
     // Split and add
     float16x4_t a = vadd_f16(vget_high_f16(x), vget_low_f16(x));
 
@@ -188,6 +189,15 @@ INLINE float horizontal_add(const Vec8f& x)
 
     // Return the result (all lanes are the same)
     return vget_lane_f16(b, 0);
+#else 
+    // Pairwise addition reduces the vector in steps
+    float16x4_t sum = vpadd_f16(vget_low_f16(x), vget_high_f16(x));
+    sum = vpadd_f16(sum, sum);
+    sum = vpadd_f16(sum, sum);
+
+    // Return the result (first element in the vector)
+    return vget_lane_f16(sum, 0);
+#endif
 }
 
 INLINE Vec8f operator + (const Vec8f& a, const Vec8f& b)
