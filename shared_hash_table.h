@@ -211,7 +211,6 @@ namespace search
                 {
                     ASSERT(*lock_p() == LOCKED);
                     ASSERT(entry()->_owner == this);
-                    ASSERT(entry()->_hash);
 
                     lock_p()->store(key(entry()->_hash), std::memory_order_release);
                     _locked = false;
