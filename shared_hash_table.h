@@ -207,13 +207,15 @@ namespace search
 
             INLINE void release()
             {
-                ASSERT(_locked);
-                ASSERT(*lock_p() == LOCKED);
-                ASSERT(entry()->_owner == this);
-                ASSERT(entry()->_hash);
+                if (_locked)
+                {
+                    ASSERT(*lock_p() == LOCKED);
+                    ASSERT(entry()->_owner == this);
+                    ASSERT(entry()->_hash);
 
-                lock_p()->store(key(entry()->_hash), std::memory_order_release);
-                _locked = false;
+                    lock_p()->store(key(entry()->_hash), std::memory_order_release);
+                    _locked = false;
+                }
             }
     #else
             INLINE void blocking_lock(const entry_t*) { _locked = true; }
