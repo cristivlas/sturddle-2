@@ -178,7 +178,7 @@ namespace search
 
             INLINE void blocking_lock(const entry_t* e)
             {
-                static constexpr size_t max_try = 16;
+                static constexpr int max_try = 16;
                 int i = 0;
                 auto lock = lock_p();
 
@@ -227,7 +227,6 @@ namespace search
             explicit SpinLock(entry_t* e) : _entry(e)
             {
                 blocking_lock(this->entry());
-                ASSERT(_locked);
             }
 
             SpinLock(entry_t* e, uint64_t hash) : _entry(e)
@@ -269,7 +268,7 @@ namespace search
         public:
             Proxy() = default;
 
-            Proxy(entry_t* e) : SpinLock(e) { ASSERT(this->is_locked()); }
+            Proxy(entry_t* e) : SpinLock(e) {}
             Proxy(entry_t* e, uint64_t hash) : SpinLock(e, hash) {}
 
             INLINE const entry_t* operator->() const { return SpinLock::entry(); }
@@ -370,7 +369,8 @@ namespace search
                     return q;
 
                 Proxy p(e);
-                ASSERT(p);
+                if (!p)
+                    continue;
 
                 if (!p->is_valid())
                 {
