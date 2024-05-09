@@ -49,6 +49,7 @@ namespace chess
   #endif
 #endif
 
+/* Attack tables are needed for initializing Rays */
 #if TESTGEN
   #include "codegen/test.h"
 #else

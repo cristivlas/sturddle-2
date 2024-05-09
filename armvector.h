@@ -9,7 +9,7 @@
 
 #if (__arm64__) || (__aarch64__)
     #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
-    #define INSTRSET 8 /* use Vec8f */
+        #define INSTRSET 8 /* use Vec8f */
         #define ARCH "ARM64+FP16"
     #else
         #define ARCH "ARM64"

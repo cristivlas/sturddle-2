@@ -255,3 +255,17 @@ static inline std::string timestamp()
     return _TOSTR(BUILD_STAMP);
 }
 
+
+template<typename F>
+class on_scope_exit {
+public:
+    explicit on_scope_exit(F f) : _f(f) {}
+
+    ~on_scope_exit() {
+        _f();
+    }
+
+private:
+    F _f;
+};
+

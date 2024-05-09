@@ -191,7 +191,7 @@ extensions = [
         name=environ.get('TARGET', 'chess_engine'),
         sources=sourcefiles,
         extra_compile_args=args + inc_dirs,
-        extra_link_args=link
+        extra_link_args=link + ['-g']
     )]
 if not NATIVE_UCI:
     extensions.append(Extension(

@@ -1,0 +1,2 @@
+python3 setup.py clean --all
+CFLAGS="-arch arm64 $CFLAGS" python3 setup.py build_ext --inplace

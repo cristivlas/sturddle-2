@@ -308,7 +308,7 @@ namespace search
         score_t     improvement();
         static void init();
         bool        is_beta_cutoff(Context*, score_t);
-        static bool is_cancelled() { return _cancel.load(std::memory_order_relaxed); }
+        static bool is_cancelled() { return _cancel.load(std::memory_order_acquire); }
         INLINE bool is_capture() const { return state().capture_value != 0; }
         INLINE bool is_check() const { return state().is_check(); }
         bool        is_counter_move(const Move&) const;
@@ -1661,8 +1661,14 @@ namespace search
 } /* namespace search */
 
 
+/* C++ implementation of UCI protocol if NATIVE_UCI is defined,
+ * or just a stub otherwise (and the uci.pyx impl is used instead).
+ * See uci_native.cpp for details.
+ */
 void uci_loop(std::unordered_map<std::string, std::string> params);
 
+
+/* Make uci_loop accessible from Python */
 INLINE void _uci_loop(std::unordered_map<std::string, std::string> params) noexcept
 {
     cython_wrapper::call_nogil(uci_loop, params);

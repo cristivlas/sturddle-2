@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,10 +26,13 @@
 #define FULL_SIZE_LOCK false /* half-size => 32 bit, full => 64 bit */
 
 #if _MSC_VER
-  static constexpr auto CACHE_LINE_SIZE = std::hardware_destructive_interference_size;
+    static constexpr auto CACHE_LINE_SIZE = std::hardware_destructive_interference_size;
+
+#elif defined(__APPLE__) && defined(__aarch64__)
+    /* Apple M1 */
+    static constexpr size_t CACHE_LINE_SIZE = 128;
 #else
-  /* __cpp_lib_hardware_interference_size is broken in some versions of clang and gcc */
-  static constexpr size_t CACHE_LINE_SIZE = 64;
+    static constexpr size_t CACHE_LINE_SIZE = 64;
 #endif /* _MSC_VER */
 
 
@@ -175,10 +178,15 @@ namespace search
 
             INLINE void blocking_lock(const entry_t* e)
             {
+                static constexpr size_t max_try = 16;
+                int i = 0;
                 auto lock = lock_p();
 
                 for (auto k = e->_hash; !try_lock(lock, k); k = e->_hash)
-                    ;
+                {
+                    if (++i > max_try)
+                        return;
+                }
                 _locked = true;
 
             #if !NO_ASSERT

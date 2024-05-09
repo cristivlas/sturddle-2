@@ -1,6 +1,6 @@
 #pragma once
 /*
- * Sturddle Chess Engine (C) 2022, 2023 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -80,35 +80,43 @@ public:
     template<typename F = void (*)()>
     void wait_for_tasks(F f = []{})
     {
-        /* wait for all tasks to get picked up, assume enough workers */
-        std::unique_lock<mutex_type> lock(_mutex);
-        while (!_tasks.empty())
-        {
-            _cv.notify_all();
-            _cv.wait(lock);
+        { /* wait for all tasks to get picked up */
+
+            std::unique_lock<mutex_type> lock(_mutex);
+            while (!_tasks.empty())
+            {
+                _cv.notify_all(); /* wake up worker threads */
+                _cv.wait(lock);
+            }
         }
 
-        while (tasks_pending() > 0)
+        while (true)
         {
             f();
-            std::this_thread::yield();
+            std::unique_lock<mutex_type> lock(_mutex);
+            if (_tasks_pending <= 0)
+            {
+                break;
+            }
+            _cv.wait_for(lock, std::chrono::milliseconds(1000));
         }
-    }
-
-    int tasks_pending() const
-    {
-        return _tasks_pending.load(std::memory_order_relaxed);
     }
 
 private:
-    void work(size_t index)
+    bool is_running() const
     {
-        _tid = static_cast<thread_id_type>(index);
+        return _running.load(std::memory_order_relaxed);
+    }
 
-        while (_running.load(std::memory_order_relaxed))
+    void work(size_t tid)
+    {
+        _tid = static_cast<thread_id_type>(tid);
+
+        while (is_running())
         {
             std::function<void()> task;
-            {
+
+            {   /* mutex scope */
                 std::unique_lock<mutex_type> lock(_mutex);
                 while (_tasks.empty())
                 {
@@ -116,33 +124,40 @@ private:
                         return;
                     _cv.wait(lock);
                 }
+
                 if constexpr(FIFO)
+                {
                     task.swap(_tasks.front());
-                else
-                    task.swap(_tasks.back());
-
-                ++_tasks_pending;
-
-                if constexpr(FIFO)
                     _tasks.pop_front();
+                }
                 else
+                {
+                    task.swap(_tasks.back());
                     _tasks.pop_back();
+                }
+                ++_tasks_pending;
             }
 
-            task();
+            on_scope_exit finalize([&task, this] {
+                /* if task wraps a lambda, ensure that all variables captured
+                 * by value go out of scope before decrementing _tasks_pending
+                 */
+                task = nullptr;
 
-            /* if task wraps a lambda, ensure that all variables captured
-             * by value go out of scope before decrementing _tasks_pending
-             */
-            task = nullptr;
-            ASSERT(tasks_pending() > 0);
-            --_tasks_pending;
-            _cv.notify_all();
+                {
+                    std::unique_lock<mutex_type> lock(_mutex);
+
+                    ASSERT(_tasks_pending > 0);
+                    --_tasks_pending;
+                }
+                _cv.notify_all();
+            });
+            task();
         }
     }
 
     std::atomic_bool _running;
-    std::atomic_int _tasks_pending;
+    int _tasks_pending;
     std::condition_variable _cv;
     mutex_type _mutex;
     Container _tasks;

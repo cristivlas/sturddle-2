@@ -33,7 +33,7 @@
 #if __linux__
 #include <sys/sysinfo.h>
 #elif __APPLE__
-#include <sys/sysctl.h>
+#include <mach/mach.h>
 #elif _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -74,12 +74,19 @@ static size_t mem_avail()
         return info.freeram;
 
 #elif __APPLE__
-    unsigned long mem = 0;
-    size_t len = sizeof(mem);
-    static int mib[2] = { CTL_HW, HW_USERMEM };
+    vm_size_t page_size = 0;
+    vm_statistics64_data_t vm_stats = {};
+    mach_port_t mach_port = mach_host_self();
+    on_scope_exit cleanup([&mach_port]() {
+        mach_port_deallocate(mach_task_self(), mach_port);
+    });
+    mach_msg_type_number_t count = sizeof(vm_stats) / sizeof(natural_t);
 
-    if (sysctl(mib, std::extent<decltype(mib)>::value, &mem, &len, nullptr, 0) == 0)
-        return mem;
+    if (host_page_size(mach_port, &page_size) == KERN_SUCCESS &&
+        host_statistics64(mach_port, HOST_VM_INFO, (host_info64_t)&vm_stats, &count) == KERN_SUCCESS)
+    {
+        return static_cast<size_t>(vm_stats.free_count * page_size);
+    }
 #elif _WIN32
     MEMORYSTATUSEX statex = {};
     statex.dwLength = sizeof (statex);
@@ -370,13 +377,9 @@ template<bool Debug> void TranspositionTable::store_pv(Context& root)
         get_pv_from_table<Debug>(root, *ctxt, _pvBuilder);
         break;
     }
-#if 0
-    if (_pvBuilder.size() > _pv.size() || !std::equal(_pvBuilder.begin(), _pvBuilder.end(), _pv.begin()))
-#endif
-    {
-        _pv.swap(_pvBuilder);
-        log_pv<Debug>(*this, &root, "store_pv");
-    }
+
+    _pv.swap(_pvBuilder);
+    log_pv<Debug>(*this, &root, "store_pv");
 }
 
 
@@ -595,6 +598,9 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             return ctxt._score = ctxt._alpha;
         }
     }
+
+    if (ctxt.is_cancelled())
+        return ctxt._score;
 
     /*
      * https://www.chessprogramming.org/Node_Types#PV
@@ -1161,16 +1167,8 @@ public:
             auto tt = &_tables[i]._tt;
 
             threads->push_task([t_ctxt, tt, score]() mutable {
-
                 tt->_tid = ThreadPool::thread_id();
-                try
-                {
-                    search_iteration(*t_ctxt, *tt, score);
-                }
-                catch(const std::exception& e)
-                {
-                    Context::log_message(LogLevel::ERROR, e.what());
-                }
+                search_iteration(*t_ctxt, *tt, score);
             });
         }
     }
@@ -1180,7 +1178,7 @@ public:
         if (threads)
         {
             Context::cancel();
-            threads->wait_for_tasks();
+            threads->wait_for_tasks([] { Context::cancel(); });
         }
     }
 

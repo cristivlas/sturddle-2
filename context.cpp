@@ -53,7 +53,7 @@ using std::chrono::duration_cast;
 using std::chrono::high_resolution_clock;
 using std::chrono::nanoseconds;
 
-#if __APPLE__ || __linux__
+#if __linux__
 #include <signal.h>
 
 static void segv_handler(int sig)
@@ -80,7 +80,7 @@ static void setup_crash_handler()
 static void setup_crash_handler()
 {
 }
-#endif /* __APPLE__ || __linux__ */
+#endif /* __linux__ */
 
 namespace
 {
