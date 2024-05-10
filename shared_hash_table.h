@@ -116,31 +116,31 @@ INLINE bool operator!=(const CacheLineAlignedAllocator<T>& a, const CacheLineAli
 namespace search
 {
 #if FULL_SIZE_LOCK
-    using key_t = uint64_t;
+    using raw_lock_t = uint64_t;
 
-    static INLINE constexpr key_t key(uint64_t hash)
+    static INLINE constexpr raw_lock_t key(uint64_t hash)
     {
         return hash;
     }
 #else
     /* 32-bit lock: smaller TT_Entry at the expense of an extra match() */
-    using key_t = uint32_t;
+    using raw_lock_t = uint32_t;
 
-    static INLINE constexpr key_t key(uint64_t key)
+    static INLINE constexpr raw_lock_t key(uint64_t key)
     {
         return key & 0xFFFFFFFF;
     }
 #endif /* FULL_SIZE_LOCK */
 
-    static_assert(std::atomic<key_t>::is_always_lock_free);
-    static constexpr key_t LOCKED = key_t(-1);
+    static_assert(std::atomic<raw_lock_t>::is_always_lock_free);
+    static constexpr raw_lock_t LOCKED = raw_lock_t(-1);
 
 
     template<typename T> class SharedHashTable
     {
         using entry_t = T;
         using data_t = std::vector<uint8_t, CacheLineAlignedAllocator<uint8_t>>;
-        using lock_t = std::atomic<key_t>;
+        using lock_t = std::atomic<raw_lock_t>;
 
         static constexpr auto bucket_size = 5 * CACHE_LINE_SIZE;
         static constexpr auto entries_per_bucket = bucket_size / sizeof(entry_t);
@@ -162,42 +162,44 @@ namespace search
     #if SMP
             static INLINE lock_t* lock_p(entry_t* e)
             {
-                static_assert(sizeof(lock_t) == sizeof(key_t));
+                static_assert(sizeof(lock_t) == sizeof(raw_lock_t));
                 return reinterpret_cast<lock_t*>(&e->_lock);
             }
 
-            template<bool strong=false>
-            static bool try_lock(lock_t* lock, uint64_t hash)
+            static INLINE bool try_read_lock(lock_t* lock, uint64_t hash)
             {
                 ASSERT(lock);
                 auto k = key(hash);
-                if constexpr(strong)
-                    return lock->compare_exchange_strong(
+                return lock->compare_exchange_strong(
                         k,
                         LOCKED,
                         std::memory_order_acq_rel,  /* stronger order on success */
                         std::memory_order_acquire);
-                else
-                    return lock->compare_exchange_weak(
-                        k,
-                        LOCKED,
-                        std::memory_order_release, /* on success */
-                        std::memory_order_acquire); /* on failure */
             }
 
-            static INLINE bool blocking_lock(entry_t* entry)
+            static INLINE bool try_write_lock(lock_t* lock, uint64_t hash)
             {
-                ASSERT(entry);
+                ASSERT(lock);
+                auto k = key(hash);
+                /* Expected to be called within a retry loop.
+                 * Use weak compare exchange, as the loop provides
+                 * resiliency to spurious failures.
+                 */
+                return lock->compare_exchange_weak(
+                    k,
+                    LOCKED,
+                    std::memory_order_release, /* on success */
+                    std::memory_order_acquire); /* on failure */
+            }
+
+            static INLINE bool write_lock(entry_t* entry)
+            {
                 int i = 0;
                 auto lock = lock_p(entry);
-                for (auto k = entry->_hash; !try_lock(lock, k); k = entry->_hash)
+                for (auto h = entry->_hash; !try_write_lock(lock, h); h = entry->_hash)
                 {
-                    if (++i > 1024)
-                    {
-                        std::this_thread::yield();
-                    }
-                #if true /* defend against deadlock bugs */
-                    if (i > 1024 * 1024)
+                #if false /* defend against deadlock bugs */
+                    if (++i > 1024 * 1024)
                     {
                         ASSERT(false);
                         return false;
@@ -207,14 +209,9 @@ namespace search
                 return true;
             }
 
-            static INLINE bool non_blocking_lock(entry_t* entry, uint64_t key)
+            static INLINE bool read_lock(entry_t* entry, uint64_t hash)
             {
-                ASSERT(entry);
-                if (try_lock<true>(lock_p(entry), key))
-                {
-                    return true;
-                }
-                return false;
+                return try_read_lock(lock_p(entry), hash);
             }
 
             INLINE void release()
@@ -228,20 +225,20 @@ namespace search
                 _locked = false;
             }
     #else
-            INLINE static bool blocking_lock(const entry_t*) { return true; }
-            INLINE static bool non_blocking_lock(const entry_t* e, uint64_t key) { return (e->_hash == key); }
+            INLINE static bool write_lock(const entry_t*) { return true; }
+            INLINE static bool read_lock(const entry_t* e, uint64_t key) { return (e->_hash == key); }
             INLINE void release() { _locked = false; }
     #endif /* !SMP */
 
         protected:
             SpinLock() = default;
 
-            explicit SpinLock(entry_t* e) : _entry(e), _locked(blocking_lock(e))
+            explicit SpinLock(entry_t* e) : _entry(e), _locked(write_lock(e))
             {
                 take_ownership();
             }
 
-            SpinLock(entry_t* e, uint64_t hash) : _entry(e), _locked(non_blocking_lock(e, hash))
+            SpinLock(entry_t* e, uint64_t hash) : _entry(e), _locked(read_lock(e, hash))
             {
                 take_ownership();
             }
@@ -346,7 +343,7 @@ namespace search
                 Proxy p(e, h);
 
                 /* using full-size lock? */
-                if constexpr(sizeof(key_t) == sizeof(h))
+                if constexpr(sizeof(raw_lock_t) == sizeof(h))
                 {
                     if (p)
                     {

@@ -151,12 +151,15 @@ namespace search
         UPPER,
     };
 
-
-#pragma pack(push, 4)
+#if defined(__APPLE__) && defined(__aarch64__) && FULL_SIZE_LOCK
+    #pragma pack(push, 8)
+#else
+    #pragma pack(push, 4)
+#endif
     class TT_Entry
     {
         template<typename T> friend class SharedHashTable;
-        key_t       _lock = 0;
+        raw_lock_t  _lock = 0;
 
     public:
         TT_Type     _type = TT_Type::NONE;
