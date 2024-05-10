@@ -13,10 +13,11 @@ import chess
 import chess.pgn
 import chess.polyglot
 import chess.syzygy
-try:
-    import cpufeature
-except:
-    pass
+
+#try:
+#    import cpufeature
+#except:
+#    pass
 import psutil
 
 import uci

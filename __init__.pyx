@@ -1252,7 +1252,7 @@ def perft3(fen, repeat=1):
 
 def read_config(fname='sturddle.cfg', echo=False):
     with open(fname) as f:
-        ns = {'__builtins__': {}}
+        ns = {'__builtins__': {'hardware_concurrency': os.cpu_count()}}
         exec(f.read(), ns)
 
         for name, value in ns.get('params', {}).items():

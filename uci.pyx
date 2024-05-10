@@ -1,7 +1,7 @@
 # distutils: language = c++
 # cython: language_level = 3
 """
-Sturddle Chess Engine (c) 2022, 2023 Cristian Vlasceanu.
+Sturddle Chess Engine (c) 2022, 2023, 2024 Cristian Vlasceanu.
 -------------------------------------------------------------------------
 
 This program is free software: you can redistribute it and/or modify
@@ -32,6 +32,7 @@ by researchers in 2019 and announced in 2020
 """
 
 import argparse
+import armcpu
 import logging
 import sysconfig
 import time
@@ -49,27 +50,30 @@ from libcpp.string cimport string
 cdef extern from 'nnue.h' namespace 'nnue':
     string instrset
 
-try:
-    import cpufeature
-    '''
-    Import the chess engine module flavor that best matches the CPU capabilities.
-    '''
-    def _is_avx512_supported():
-        for f in cpufeature.extension.CPUFeature:
-            if (f.startswith('AVX512') and cpufeature.extension.CPUFeature[f]):
-                return True
-        return False
+flavors = {'chess_engine': lambda *_: True }
 
-    def _is_avx2_supported():
-        return cpufeature.extension.CPUFeature['AVX2']
+if not armcpu.is_apple_silicon():
+    try:
+        import cpufeature
+        '''
+        Import the chess engine module flavor that best matches the CPU capabilities.
+        '''
+        def _is_avx512_supported():
+            for f in cpufeature.extension.CPUFeature:
+                if (f.startswith('AVX512') and cpufeature.extension.CPUFeature[f]):
+                    return True
+            return False
 
-    flavors = {
-        'chess_engine_avx512': _is_avx512_supported,
-        'chess_engine_avx2': _is_avx2_supported,
-        'chess_engine': lambda *_: True,
-    }
-except ModuleNotFoundError:
-    flavors = { 'chess_engine': lambda *_: True }
+        def _is_avx2_supported():
+            return cpufeature.extension.CPUFeature['AVX2']
+
+        flavors = {
+            'chess_engine_avx512': _is_avx512_supported,
+            'chess_engine_avx2': _is_avx2_supported,
+            'chess_engine': lambda *_: True,
+        }
+    except ModuleNotFoundError:
+        ...
 
 for eng in flavors:
     if not flavors[eng]():

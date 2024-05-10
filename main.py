@@ -40,6 +40,12 @@ if armcpu.get_arch() is not None:
         'chess_engine_armv8_2': _is_fp16_supported,
         'chess_engine': lambda *_: True
     }
+elif armcpu.is_apple_silicon():
+    # importing cpufeature on Apple Silicon under Rosetta
+    # emulation crashes with 'Floating point exception: 8'
+    flavors = {
+        'chess_engine': lambda *_: True
+    }
 else:
     # Select AVX2 or AVX512 on x86/AMD64
     import cpufeature

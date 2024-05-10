@@ -162,19 +162,20 @@ else:
             cc_ver = get_compiler_major_version(cc)
             if cc_ver < 14:
                 raise RuntimeError(f'{cc} ver={cc_ver}. NATIVE_UCI requires clang 14 or higher')
-            args += [
-                '-stdlib=libc++',
-                '-fexperimental-library',
-                '-DNATIVE_UCI=true',
-            ]
-            link += [
-                '-fuse-ld=lld',
-                f'-L/usr/lib/llvm-{get_compiler_major_version()}/lib/',
-                '-L/usr/local/opt/llvm/lib/c++',
-                '-lc++',
-                '-lc++experimental',
-                '-lsqlite3',
-            ]
+
+            args.append('-DNATIVE_UCI=true')
+            link.append('-lsqlite3')  # For DATAGEN
+            if '-arch arm64' in environ.get('CFLAGS', ''):
+                print('ARM64 Target, skipping extra compiler and linker flags.')
+            else:
+                args += ['-stdlib=libc++', '-fexperimental-library']
+                link += [
+                    '-fuse-ld=lld',
+                    f'-L/usr/lib/llvm-{get_compiler_major_version()}/lib/',
+                    '-L/usr/local/opt/llvm/lib/c++',
+                    '-lc++',
+                    '-lc++experimental',
+                ]
     else:
         if NATIVE_UCI:
             if get_compiler_major_version() < 13:

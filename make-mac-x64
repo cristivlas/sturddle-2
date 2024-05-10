@@ -1,0 +1,2 @@
+python3 setup.py clean --all
+CFLAGS="-arch x86_64 -mmacosx-version-min=13.3 $CFLAGS" python3 setup.py build_ext --inplace
