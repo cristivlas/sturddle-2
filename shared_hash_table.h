@@ -23,7 +23,7 @@
 #include <cstdlib>
 #include <new>
 
-#define FULL_SIZE_LOCK true /* half-size => 32 bit, full => 64 bit */
+#define FULL_SIZE_LOCK false /* half-size => 32 bit, full => 64 bit */
 
 #if _MSC_VER
     static constexpr auto CACHE_LINE_SIZE = std::hardware_destructive_interference_size;
