@@ -23,7 +23,7 @@
 #include <cstdlib>
 #include <new>
 
-#define FULL_SIZE_LOCK false /* half-size => 32 bit, full => 64 bit */
+#define FULL_SIZE_LOCK true /* half-size => 32 bit, full => 64 bit */
 
 #if _MSC_VER
     static constexpr auto CACHE_LINE_SIZE = std::hardware_destructive_interference_size;
@@ -194,18 +194,10 @@ namespace search
 
             static INLINE bool write_lock(entry_t* entry)
             {
-                int i = 0;
                 auto lock = lock_p(entry);
                 for (auto h = entry->_hash; !try_write_lock(lock, h); h = entry->_hash)
-                {
-                #if false /* defend against deadlock bugs */
-                    if (++i > 1024 * 1024)
-                    {
-                        ASSERT(false);
-                        return false;
-                    }
-                #endif
-                }
+                    ; 
+
                 return true;
             }
 
