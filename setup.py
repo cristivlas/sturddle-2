@@ -165,7 +165,7 @@ else:
 
             args.append('-DNATIVE_UCI=true')
             link.append('-lsqlite3')  # For DATAGEN
-            if '-arch arm64' in environ.get('CFLAGS', ''):
+            if '-arch arm64' in environ.get('ARCHFLAGS', ''):
                 print('ARM64 Target, skipping extra compiler and linker flags.')
             else:
                 args += ['-stdlib=libc++', '-fexperimental-library']

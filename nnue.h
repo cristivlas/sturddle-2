@@ -134,11 +134,11 @@ namespace nnue
             #if INSTRSET >= 9
                 v.store_partial(1, p);
             #elif INSTRSET >= 8
-            #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
-                *p = v[0];
-            #else
-                _mm_store_ss(p, _mm256_castps256_ps128(v));
-            #endif
+                #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+                    *p = v[0];
+                #else
+                    _mm_store_ss(p, _mm256_castps256_ps128(v));
+                #endif
             #else
                 _mm_store_ss(p, v);
             #endif
