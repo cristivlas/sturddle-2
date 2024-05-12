@@ -86,7 +86,7 @@ namespace
 {
     class MovesCache
     {
-        static constexpr size_t BUCKET_SIZE = 4;
+        static constexpr size_t BUCKET_SIZE = 2;
         struct Entry
         {
             State       _state;
