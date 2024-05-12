@@ -202,7 +202,7 @@ def test_epd(args, filename, tests, algo_class, **kwargs):
         print(f' {succeeded:3d} ({succeeded * 100 / total:6.2f}%)')
         if args.verbose:
             for n in sorted(results[1].items()):
-                print (f'{" "*76} | {n[1]["eval-count"]:8d} | {n[1]["nodes"]:9d} |')
+                print (f'{" "*77} | {n[1]["eval-count"]:8d} | {n[1]["nodes"]:9d} |')
 
 
     print(f'Succeeded: {succeeded} / {total}')
