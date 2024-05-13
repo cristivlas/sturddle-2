@@ -2030,8 +2030,8 @@ namespace search
             size_t      count,
             score_t     futility)
     {
-        const KillerMoves* const killer_moves =
-            (Phase == 2) ? ctxt._tt->get_killer_moves(ctxt._ply) : nullptr;
+        const KillerMoves* const killer_moves = (Phase == 2 && ctxt.depth() > 0)
+            ? ctxt._tt->get_killer_moves(ctxt._ply) : nullptr;
 
         /* Confidence bar for historical scores */
         const double hist_high = (Phase == 3) ? hist_thresholds[ctxt.iteration()] : 0;
