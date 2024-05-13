@@ -1663,7 +1663,7 @@ namespace search
 
     void Context::set_search_window(score_t score, score_t& prev_score)
     {
-        if (!ASPIRATION_WINDOW || iteration() == 1)
+        if (!ASPIRATION_WINDOW || iteration() <= 3)
         {
             _alpha = SCORE_MIN;
             _beta = SCORE_MAX;

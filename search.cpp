@@ -581,11 +581,11 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         if (ctxt._fifty >= 100)
             return 0; /* draw by fifty moves rule */
 
+        /* Update the Zobrist hash incrementally. */
         zobrist_update(ctxt._parent->state(), ctxt._move, *ctxt._state);
 
         if (ctxt.is_repeated() > 0)
             return 0;
-
         /*
          * Mating distance pruning: skip the search if a shorter mate was found.
          * https://www.chessprogramming.org/Mate_Distance_Pruning
@@ -629,8 +629,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     if constexpr(!COUNT_VALID_MOVES_AS_NODES)
         ++table._nodes;
 
-    const auto alpha = ctxt._alpha;
-
     /* transposition table lookup */
     if (const auto* p = table.lookup(ctxt))
     {
@@ -639,7 +637,9 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
         return *p;
     }
-    else if (ctxt.is_leaf())
+    const auto alpha = ctxt._alpha;
+
+    if (ctxt.is_leaf())
     {
         ctxt._score = ctxt.evaluate();
 
@@ -731,6 +731,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     table._history_counters += next_ctxt->_move._group == MoveOrder::HISTORY_COUNTERS;
 
                 /* Futility pruning, 2nd pass. */
+                /* (1st pass happens during move generation) */
                 if (futility > 0)
                 {
                     ASSERT(move_count > 0);
@@ -1252,6 +1253,8 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
         {   /* SMP scope start */
             SMPTasks tasks(ctxt, table, score);
+
+            /* main thread search */
             const auto iter_score = search_iteration(ctxt, table, score);
 
             if (ctxt.is_cancelled())
@@ -1278,7 +1281,7 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
         ASSERT(ctxt.iteration() == ctxt._max_depth);
 
-        /* post iteration info to Cython */
+        /* post iteration info to Cython if there's a registered callback */
         if (Context::_on_iter)
         {
             IterationInfo info = { score, table.nodes(), 0, 0 };

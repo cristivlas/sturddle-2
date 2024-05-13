@@ -75,9 +75,8 @@ def write_stats(filename, name, result, algo, stats):
 
     agg = {}
     for k in stats[0]:
-        if k == 'nps':
-            #agg[k] = stats[0][k]
-            continue
+        if k in ['nps', 'tt-usage']:
+            agg[k] = stats[0][k]  # Do not aggregate.
         else:
             agg[k] = sum([s[k] for s in stats.values()])
 
