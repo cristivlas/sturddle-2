@@ -73,17 +73,24 @@ Write move stats to file
 def write_stats(filename, name, result, algo, stats):
     global have_header
 
-    stats[0]['test'] = name
-    stats[0]['result'] = result
-    stats[0]['depth'] = algo.current_depth
-    stats[0]['stm'] = chess.COLOR_NAMES[algo.context.board().turn]
+    agg = {}
+    for k in stats[0]:
+        if k == 'nps':
+            #agg[k] = stats[0][k]
+            continue
+        else:
+            agg[k] = sum([s[k] for s in stats.values()])
+
+    agg['test'] = name
+    #agg['result'] = result
+    #agg['depth'] = algo.current_depth
+    #agg['stm'] = chess.COLOR_NAMES[algo.context.board().turn]
 
     with open(filename, 'a+') as out:
         if not have_header:
-            out.write(','.join(stats[0].keys()) + '\n')
+            out.write(','.join(agg.keys()) + '\n')
             have_header = True
-        out.write(','.join([str(x) for x in stats[0].values()]) + '\n')
-
+        out.write(','.join([str(x) for x in agg.values()]) + '\n')
 
 
 def search(algo_class, name, board, expected, depths, **kwargs):
