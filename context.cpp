@@ -362,6 +362,12 @@ void search::Context::eval_nnue()
 {
     if (!is_valid(_eval))
     {
+        if (is_valid(_tt_entry._eval))
+        {
+            _eval = _tt_entry._eval;
+            return;
+        }
+
         auto eval = evaluate_material();
 
         /* stick with material eval if in quiescent search, or if heavily imbalanced */

@@ -167,6 +167,7 @@ namespace search
         int8_t      _depth = std::numeric_limits<int8_t>::min();
         BaseMove    _best_move;
         BaseMove    _hash_move;
+        int16_t     _eval = SCORE_MIN; /* static */
         int16_t     _value = SCORE_MIN;
         uint64_t    _hash = 0;
     #if !NO_ASSERT

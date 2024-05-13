@@ -209,6 +209,7 @@ void TranspositionTable::store(Context& ctxt, TT_Entry& entry, score_t alpha, in
     ASSERT(alpha < ctxt._beta);
     ASSERT(ctxt._alpha >= alpha);
 
+    entry._eval = ctxt._eval;
     entry._value = ctxt._score;
 
     if (entry._value >= ctxt._beta)
