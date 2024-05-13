@@ -194,9 +194,11 @@ namespace search
 
             static INLINE bool write_lock(entry_t* entry)
             {
+                int i = 0;
                 auto lock = lock_p(entry);
                 for (auto h = entry->_hash; !try_write_lock(lock, h); h = entry->_hash)
-                    ; 
+                    if (++i > 1024 * 1024)
+                        return false;
 
                 return true;
             }
@@ -363,7 +365,7 @@ namespace search
                 ASSERT((const uint8_t*)(e + 1) <= &_data.back());
 
                 Proxy q(e, h); /* try non-blocking locking 1st */
-                if (q)
+                if (q && q->_hash == h)
                     return q;
 
                 Proxy p(e);

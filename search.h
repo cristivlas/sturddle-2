@@ -437,7 +437,7 @@ namespace search
     INLINE const int16_t* TranspositionTable::lookup(C& ctxt)
     {
         ctxt._tt_entry = TT_Entry();
-        if (ctxt._ply == 0 || ctxt._excluded)
+        if (ctxt.is_root() || ctxt._excluded)
             return nullptr;
 
         /* expect repetitions to be dealt with before calling into this function */
@@ -453,7 +453,7 @@ namespace search
         }
 
         /* http://www.talkchess.com/forum3/viewtopic.php?topic_view=threads&p=305236&t=30788 */
-        if (ctxt._ply && !ctxt.is_pv_node())
+        if (!ctxt.is_pv_node())
         {
             if (auto value = ctxt._tt_entry.lookup_score(ctxt))
             {
@@ -474,9 +474,6 @@ namespace search
     {
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
-
-        if constexpr(EXTRA_STATS)
-            update_stats(ctxt);
 
         if (auto p = _table.lookup_write(ctxt.state(), depth))
         {

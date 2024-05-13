@@ -189,7 +189,7 @@ INLINE float horizontal_add(const Vec8f& x)
 
     // Return the result (all lanes are the same)
     return vget_lane_f16(b, 0);
-#else 
+#else
     // Pairwise addition reduces the vector in steps
     float16x4_t sum = vpadd_f16(vget_low_f16(x), vget_high_f16(x));
     sum = vpadd_f16(sum, sum);

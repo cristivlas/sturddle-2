@@ -600,7 +600,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     }
 
     if (ctxt.is_cancelled())
-        return ctxt._score;
+        return ctxt._score = 0;
 
     /*
      * https://www.chessprogramming.org/Node_Types#PV
@@ -972,17 +972,14 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     }
 
     /*
-     * Do not store 0 scores in the TT - they could be draws by repetition,
-     * which are path-dependent; and the general wisdom is to not store root
-     * nodes either (https://www.stmintz.com/ccc/index.php?id=93686)
+     * The conventional wisdom is to not store root nodes
+     * (https://www.stmintz.com/ccc/index.php?id=93686)
      */
-    if (ctxt._score
-        && ctxt._ply
-        && !ctxt._excluded
-        && !ctxt.is_qsearch()
-        && !ctxt.is_cancelled()
-       )
+    if (ctxt._score && !ctxt.is_root() && !ctxt._excluded && !ctxt.is_qsearch() && !ctxt.is_cancelled())
         table.store(ctxt, alpha, ctxt.depth());
+
+    if constexpr(EXTRA_STATS)
+        table.update_stats(ctxt);
 
     return ctxt._score;
 }
@@ -1239,6 +1236,9 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
     ASSERT(ctxt.is_root());
 
     score_t score = 0, prev_score = 0;
+
+    table.increment_clock();
+
     max_iter_count = std::min(PLY_MAX, max_iter_count);
 
     for (int i = 1; i != max_iter_count;)
