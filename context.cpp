@@ -1992,6 +1992,7 @@ namespace search
          */
         _group_quiet_moves = (ctxt.depth() <= 0 && !ctxt.is_check());
 
+        /* Populate _prev move from the Principal Variation, if missing. */
         if (!ctxt._prev * ctxt._ply * !ctxt.is_null_move() * !ctxt._excluded)
         {
             if (const auto move = lookup_pv(ctxt))
@@ -2059,13 +2060,17 @@ namespace search
 
             ASSERT(move._group == MoveOrder::UNORDERED_MOVES);
 
-            if constexpr (Phase == 1)
+            if constexpr (Phase == 1)  /* best moves from previous iteration and from hashtable */
             {
                 if (move == ctxt._prev)
                 {
                     make_move<false>(ctxt, move, ctxt._ply ? MoveOrder::HASH_MOVES : MoveOrder::PREV_ITER);
                 }
-                else if (move == ctxt._tt_entry._hash_move || move == ctxt._tt_entry._best_move)
+                else if (move == ctxt._tt_entry._best_move)
+                {
+                    make_move<false>(ctxt, move, MoveOrder::BEST_MOVES);
+                }
+                else if (move == ctxt._tt_entry._hash_move)
                 {
                     make_move<false>(ctxt, move, MoveOrder::HASH_MOVES);
                 }

@@ -180,22 +180,23 @@ namespace search
     enum MoveOrder : int8_t
     {
         UNDEFINED = 0,
-        PREV_ITER = 1,
-        HASH_MOVES = 2,
-        PROMOTIONS = 3,
-        LAST_MOVED_CAPTURE = 4,
-        WINNING_CAPTURES = 5,
-        EQUAL_CAPTURES = 6,
-        KILLER_MOVES = 7,
-        LOSING_CAPTURES = 8,
-        HISTORY_COUNTERS = 9,
-        TACTICAL_MOVES = 10, /* pushed pawns, checks, etc. */
-        ROOT_MOVES = 11, /* root moves ordered by NNUE eval */
-        LATE_MOVES = 12, /* all other legal moves not covered above */
-        UNORDERED_MOVES = 13,
-        PRUNED_MOVES = 14,
-        QUIET_MOVES = 15,
-        ILLEGAL_MOVES = 16,
+        PREV_ITER = 1, /* best move from previous iteration */
+        BEST_MOVES = 2, /* best move(s) from cache (hashtable) */
+        HASH_MOVES = 3, /* moves from hashtable */
+        PROMOTIONS = 4,
+        LAST_MOVED_CAPTURE = 5,
+        WINNING_CAPTURES = 6,
+        EQUAL_CAPTURES = 7,
+        KILLER_MOVES = 8,
+        LOSING_CAPTURES = 9,
+        HISTORY_COUNTERS = 10,
+        TACTICAL_MOVES = 11, /* pushed pawns, checks, etc. */
+        ROOT_MOVES = 12, /* root moves ordered by NNUE eval */
+        LATE_MOVES = 13, /* all other legal moves not covered above */
+        UNORDERED_MOVES = 14,
+        PRUNED_MOVES = 15,
+        QUIET_MOVES = 16,
+        ILLEGAL_MOVES = 17,
     };
 }
 
