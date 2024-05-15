@@ -2038,7 +2038,7 @@ namespace search
             score_t     futility)
     {
         const KillerMoves* const killer_moves = (Phase == 2 && ctxt.depth() > 0)
-        #if 1
+        #if 0
             ? ctxt._tt->get_killer_moves(ctxt.depth()) : nullptr;
         #else
             ? ctxt._tt->get_killer_moves(ctxt._ply) : nullptr;
@@ -2068,7 +2068,7 @@ namespace search
             {
                 if (move == ctxt._prev)
                 {
-                    make_move<false>(ctxt, move, ctxt._ply ? MoveOrder::HASH_MOVES : MoveOrder::PREV_ITER);
+                    make_move<false>(ctxt, move, /* ctxt._ply ? MoveOrder::HASH_MOVES : */ MoveOrder::PREV_ITER);
                 }
                 else if (move == ctxt._tt_entry._best_move)
                 {
@@ -2076,7 +2076,7 @@ namespace search
                 }
                 else if (move == ctxt._tt_entry._hash_move)
                 {
-                    make_move<false>(ctxt, move, MoveOrder::HASH_MOVES);
+                    make_move<false>(ctxt, move, MoveOrder::HASH_MOVES, ctxt._tt_entry._value);
                 }
                 else if (move.promotion())
                 {

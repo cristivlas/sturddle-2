@@ -244,7 +244,7 @@ void TranspositionTable::store_killer_move(const Context& ctxt)
         return;
 
     ASSERT(!ctxt.state().is_capture(move));
-#if 1
+#if 0
     auto& killers = _killer_moves[ctxt.depth()];
 #else
     auto& killers = _killer_moves[ctxt._ply];
