@@ -118,7 +118,7 @@ class GameFileReader:
                 break
             if game.errors:
                 self.errors = game.errors
-                break
+                continue
             if not game.valid:
                 continue
             if game.duplicate or game.filtered:
