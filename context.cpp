@@ -2038,7 +2038,11 @@ namespace search
             score_t     futility)
     {
         const KillerMoves* const killer_moves = (Phase == 2 && ctxt.depth() > 0)
+        #if 1
+            ? ctxt._tt->get_killer_moves(ctxt.depth()) : nullptr;
+        #else
             ? ctxt._tt->get_killer_moves(ctxt._ply) : nullptr;
+        #endif
 
         /* Confidence bar for historical scores */
         const double hist_high = (Phase == 3) ? hist_thresholds[ctxt.iteration()] : 0;
@@ -2101,7 +2105,11 @@ namespace search
                 }
                 else if (auto k_move = match_killer(killer_moves, move))
                 {
-                    make_move<false>(ctxt, move, MoveOrder::KILLER_MOVES, k_move->_score);
+                    if (make_move<false>(ctxt, move, MoveOrder::KILLER_MOVES, k_move->_score))
+                    {
+                        if constexpr(EXTRA_STATS)
+                            ++ctxt.get_tt()->_killers;
+                    }
                 }
             }
             /* Top historical scores, including counter-move bonus. */
