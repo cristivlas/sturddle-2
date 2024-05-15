@@ -288,7 +288,11 @@ constexpr int HIDDEN_2 = 16;
 constexpr int HIDDEN_3 = 16;
 
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
-static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
+
+/* round-up, to prevent alignment errors on ARM */
+static constexpr size_t ACC_PER_THREAD = nnue::round_up<128>(PLY_MAX);
+
+static std::vector<std::array<Accumulator, ACC_PER_THREAD>> NNUE_data(SMP_CORES);
 
 /*
  * The accumulator takes the inputs and process them into two outputs,

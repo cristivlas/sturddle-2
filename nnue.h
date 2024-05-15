@@ -154,6 +154,12 @@ namespace nnue
         return (x / N) * N;
     }
 
+    template <unsigned int N>
+    constexpr unsigned int round_up(unsigned int x)
+    {
+        return ((x + N - 1) / N) * N;
+    }
+
     template <typename T>
     INLINE void one_hot_encode(const State& board, T (&encoding)[897])
     {
