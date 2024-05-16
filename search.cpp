@@ -848,7 +848,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 return ctxt._score;
             }
 
-            if (ctxt.is_beta_cutoff(next_ctxt, move_score) && !ctxt.is_pv_node())
+            if (ctxt.is_beta_cutoff(next_ctxt, move_score))
             {
                 ASSERT(ctxt._score == move_score);
                 ASSERT(ctxt._cutoff_move || next_ctxt->is_null_move());
@@ -882,7 +882,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                     return ctxt._score;
                 }
-                else if (next_ctxt->is_capture() + next_ctxt->is_promotion() == 0)
+                else if (!ctxt.is_pv_node() && (next_ctxt->is_capture() + next_ctxt->is_promotion() == 0))
                 {
                     /*
                      * Store data for move reordering heuristics.
