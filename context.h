@@ -233,7 +233,7 @@ namespace search
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
         bool        _retry_next = false;
-        bool        _update_nnue = false; /* requires full update (non-incremental) */
+        bool        _non_incremental_update = false; /* NNUE */
 
         int         _double_ext = 0;
         score_t     _eval = SCORE_MIN; /* static eval */

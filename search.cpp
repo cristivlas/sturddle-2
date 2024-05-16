@@ -791,7 +791,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         s_ctxt->_alpha = s_beta - 1;
                         s_ctxt->_beta = s_beta;
                         s_ctxt->_score = SCORE_MIN;
-                        s_ctxt->_update_nnue = true;
+                        s_ctxt->_non_incremental_update = true;
 
                         const auto eval = negamax(*s_ctxt, table);
 

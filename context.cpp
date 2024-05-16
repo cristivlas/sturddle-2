@@ -321,20 +321,44 @@ static std::unordered_map<std::string, WeightSetter> registry = {
 score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side_to_move_pov /* = true */)
 {
     ASSERT(!is_valid(_eval_raw));
+    const auto t = tid();
 
-    auto& acc = NNUE_data[tid()][_ply];
+    auto& acc = NNUE_data[t][_ply];
 
-    if (is_root() || _update_nnue)
+    if (is_root() || _non_incremental_update)
     {
         acc.update(L1A, L1B, state());
     }
     else
     {
-        auto& prev = NNUE_data[tid()][_ply - 1];
+        auto& prev = NNUE_data[t][_ply - 1];
+    #if 0
         if (prev.needs_update(_parent->state()))
         {
             _parent->eval_nnue_raw(true);
         }
+    #else
+        for (int ply = 0; ply < _ply; ++ply)
+        {
+            Context* const c = _context_stacks[t][ply].as_context()->_parent;
+            ASSERT(c->_ply == ply);
+
+            auto& a = NNUE_data[t][ply];
+            if (a.needs_update(c->state()))
+            {
+                if (c->is_root())
+                {
+                    a.update(L1A, L1B, c->state());
+                }
+                else
+                {
+                    a.update(L1A, L1B, c->_parent->state(), c->state(), c->_move, NNUE_data[t][ply - 1]);
+                    c->_eval_raw = SCORE_MIN;
+                }
+            }
+        }
+    #endif
+
         acc.update(L1A, L1B, _parent->state(), state(), _move, prev);
     }
 
