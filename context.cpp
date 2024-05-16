@@ -1767,15 +1767,13 @@ namespace search
             reduction -= _parent->history_count(_move) / HISTORY_COUNT_HIGH;
         }
 
-        if (is_capture() || (_move.from_square() == _parent->_capture_square))
+        if (is_capture() || (_move.from_square() == _parent->_capture_square) || _tt->probe(state()))
             --reduction;
-    #if 1
+
         reduction = std::max(1, reduction);
         if (reduction > depth && can_prune())
             return LMRAction::Prune;
-    #else
-         reduction = std::max(1, std::min(depth, reduction));
-    #endif
+
         ASSERT(reduction > 0);
         _max_depth -= reduction;
 

@@ -848,7 +848,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 return ctxt._score;
             }
 
-            if (ctxt.is_beta_cutoff(next_ctxt, move_score))
+            if (ctxt.is_beta_cutoff(next_ctxt, move_score) && !ctxt.is_pv_node())
             {
                 ASSERT(ctxt._score == move_score);
                 ASSERT(ctxt._cutoff_move || next_ctxt->is_null_move());
