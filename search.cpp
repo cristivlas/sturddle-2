@@ -882,7 +882,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                     return ctxt._score;
                 }
-                else if (!ctxt.is_pv_node() && (next_ctxt->is_capture() + next_ctxt->is_promotion() == 0))
+                else if (next_ctxt->is_capture() + next_ctxt->is_promotion() == 0)
                 {
                     /*
                      * Store data for move reordering heuristics.

@@ -301,7 +301,12 @@ namespace search
 
         template<typename C> const int16_t* lookup(C& ctxt);
 
-        bool is_cutoff(const State& state) const
+        INLINE bool is_cached(const State& state) const
+        {
+            return !!_table.lookup_read(state);
+        }
+
+        INLINE bool is_cutoff(const State& state) const
         {
             auto p = _table.lookup_read(state);
             return p ? p->is_lower() : false;

@@ -2087,7 +2087,7 @@ namespace search
             {
                 if (move == ctxt._prev)
                 {
-                    make_move<false>(ctxt, move, /* ctxt._ply ? MoveOrder::HASH_MOVES : */ MoveOrder::PREV_ITER);
+                    make_move<false>(ctxt, move, MoveOrder::PREV_ITER);
                 }
                 else if (move == ctxt._tt_entry._best_move)
                 {
