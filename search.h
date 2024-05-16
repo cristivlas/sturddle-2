@@ -301,7 +301,11 @@ namespace search
 
         template<typename C> const int16_t* lookup(C& ctxt);
 
-        bool probe(const State& state) const { return !!_table.lookup_read(state); }
+        bool is_cutoff(const State& state) const
+        {
+            auto p = _table.lookup_read(state);
+            return p ? p->is_lower() : false;
+        }
 
         template<TT_Type=TT_Type::NONE, typename C=struct Context>
         void store(C& ctxt, score_t alpha, int depth);
