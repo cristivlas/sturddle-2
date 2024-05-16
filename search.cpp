@@ -239,12 +239,16 @@ void TranspositionTable::store_killer_move(const Context& ctxt)
 #if KILLER_MOVE_HEURISTIC
     ASSERT(ctxt._ply < PLY_MAX);
 
+    if (ctxt.depth() < KILLER_MOVES_MIN_DEPTH)
+        return;
+
     const auto& move = ctxt._cutoff_move;
     if (!move)
         return;
 
     ASSERT(!ctxt.state().is_capture(move));
-#if 0
+
+#if STORE_KILLER_MOVES_BY_DEPTH
     auto& killers = _killer_moves[ctxt.depth()];
 #else
     auto& killers = _killer_moves[ctxt._ply];

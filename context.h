@@ -411,7 +411,7 @@ namespace search
         int repeated_count(const State&) const;
 
         BaseMove            _counter_move;
-        mutable int8_t      _can_prune = -1;
+        mutable int8_t      _can_forward_prune = -1;
 
         mutable int8_t      _repetitions = -1;
         bool                _leftmost = false;
@@ -604,9 +604,9 @@ namespace search
 
     INLINE bool Context::can_forward_prune() const
     {
-        if (_can_prune == -1)
+        if (_can_forward_prune == -1)
         {
-            _can_prune =
+            _can_forward_prune =
                 (_parent != nullptr)
                 && !is_pv_node()
                 && !_excluded
@@ -615,7 +615,7 @@ namespace search
                 && (_parent->_mate_detected == 0 || _parent->_mate_detected % 2)
                 && !is_check();
         }
-        return _can_prune > 0;
+        return _can_forward_prune > 0;
     }
 
 
@@ -625,10 +625,12 @@ namespace search
         ASSERT(_ply > 0);
         ASSERT(!is_null_move());
         ASSERT(_move);
+        ASSERT(_move._state);
 
         return !is_extended()
             && !is_pv_node()
             && !is_repeated()
+            && !_tt->probe(*_move._state)
             && _parent->can_prune_move<PruneCaptures>(_move);
     }
 

@@ -289,10 +289,7 @@ constexpr int HIDDEN_3 = 16;
 
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
 
-/* round-up, to prevent alignment errors on ARM */
-static constexpr size_t ACC_PER_THREAD = nnue::round_up<128>(PLY_MAX);
-
-static std::vector<std::array<Accumulator, ACC_PER_THREAD>> NNUE_data(SMP_CORES);
+static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
 
 /*
  * The accumulator takes the inputs and process them into two outputs,
@@ -1639,7 +1636,7 @@ namespace search
 
         _best_move = BaseMove();
         _cancel = false;
-        _can_prune = -1;
+        _can_forward_prune = -1;
 
         _capture_square = Square::UNDEFINED;
         _cutoff_move = Move();
@@ -2042,7 +2039,7 @@ namespace search
             score_t     futility)
     {
         const KillerMoves* const killer_moves = (Phase == 2 && ctxt.depth() > 0)
-        #if 0
+        #if STORE_KILLER_MOVES_BY_DEPTH
             ? ctxt._tt->get_killer_moves(ctxt.depth()) : nullptr;
         #else
             ? ctxt._tt->get_killer_moves(ctxt._ply) : nullptr;
