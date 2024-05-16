@@ -630,9 +630,6 @@ namespace search
         return !is_extended()
             && !is_pv_node()
             && !is_repeated()
-        #if 0
-            && !_tt->probe(*_move._state)
-        #endif
             && _parent->can_prune_move<PruneCaptures>(_move);
     }
 
@@ -661,7 +658,7 @@ namespace search
             && !is_extended()
             && (_move.from_square() != _parent->_capture_square)
             && !is_recapture()
-            && !state().is_check();
+            && !is_check();
     }
 
 
@@ -1578,7 +1575,7 @@ namespace search
             }
         }
 
-        if (move._state->is_check(ctxt.turn()))
+        if (!ctxt.get_tt()->is_cached(*move._state) && move._state->is_check(ctxt.turn()))
         {
             mark_as_illegal(move); /* can't leave the king in check */
             return false;
