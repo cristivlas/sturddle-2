@@ -630,7 +630,9 @@ namespace search
         return !is_extended()
             && !is_pv_node()
             && !is_repeated()
+        #if 0
             && !_tt->probe(*_move._state)
+        #endif
             && _parent->can_prune_move<PruneCaptures>(_move);
     }
 

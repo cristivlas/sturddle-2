@@ -325,14 +325,14 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
 
     auto& acc = NNUE_data[t][_ply];
 
-    if (is_root() || _non_incremental_update)
+    if (is_root() || _non_incremental_update || _ply > PLY_MAX / 2)
     {
         acc.update(L1A, L1B, state());
     }
     else
     {
         auto& prev = NNUE_data[t][_ply - 1];
-    #if 0
+    #if true
         if (prev.needs_update(_parent->state()))
         {
             _parent->eval_nnue_raw(true);
@@ -353,8 +353,8 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
                 else
                 {
                     a.update(L1A, L1B, c->_parent->state(), c->state(), c->_move, NNUE_data[t][ply - 1]);
-                    c->_eval_raw = SCORE_MIN;
                 }
+                c->_eval_raw = SCORE_MIN;
             }
         }
     #endif
