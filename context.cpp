@@ -2063,11 +2063,7 @@ namespace search
             score_t     futility)
     {
         const KillerMoves* const killer_moves = (Phase == 2 && ctxt.depth() > 0)
-        #if STORE_KILLER_MOVES_BY_DEPTH
-            ? ctxt._tt->get_killer_moves(ctxt.depth()) : nullptr;
-        #else
             ? ctxt._tt->get_killer_moves(ctxt._ply) : nullptr;
-        #endif
 
         /* Confidence bar for historical scores */
         const double hist_high = (Phase == 3) ? hist_thresholds[ctxt.iteration()] : 0;

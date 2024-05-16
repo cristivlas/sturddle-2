@@ -97,8 +97,6 @@ using score_t = int;
 
 #define SMP                                 true
 
-#define STORE_KILLER_MOVES_BY_DEPTH         false
-
 /* Experiment with different SEE heuristic impls */
 #if !defined(USE_SIMPLE_SEE)
   #define USE_SIMPLE_SEE                    false
