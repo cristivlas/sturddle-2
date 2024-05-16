@@ -346,7 +346,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
             auto& a = NNUE_data[t][ply];
             if (a.needs_update(c->state()))
             {
-                if (c->is_root())
+                if (ply == 0) /* c->is_root() */
                 {
                     a.update(L1A, L1B, c->state());
                 }
