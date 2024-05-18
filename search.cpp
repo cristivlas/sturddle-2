@@ -766,7 +766,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     */
                     if (ctxt.depth() >= (ctxt.is_pv_node() ? 7 : 5)
                         && ctxt._tt_entry.is_lower()
-                        && next_ctxt->_move._group == MoveOrder::HASH_MOVES
+                        && next_ctxt->_move._group == MoveOrder::BEST_MOVES
                         && abs(ctxt._tt_entry._value) < MATE_HIGH
                         && !ctxt._excluded
                         && ctxt._tt_entry._depth >= ctxt.depth() - 3
@@ -774,6 +774,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                        )
                     {
                         const auto s_beta = std::max(int(ctxt._tt_entry._value) - ctxt.singular_margin(), MATE_LOW);
+
                         /*
                          * Hack: use ply + 2 for the singular search to avoid clobbering
                          * _move_maker's _moves / _states stacks for the current context.
