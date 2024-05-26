@@ -1147,23 +1147,11 @@ public:
             if (_tables[i]._tt._pv.empty())
                 _tables[i]._tt._pv = table._pv;
 
-            /* get the previous moves before clobbering the Context */
-            BaseMove hash_move, prev_best;
-            if (_tables[i]._ctxt)
-            {
-                hash_move = _tables[i]._ctxt->_tt_entry._hash_move;
-                prev_best = _tables[i]._ctxt->_prev;
-            }
-
             _tables[i]._ctxt = _root.clone(_tables[i]._raw_mem);
             _tables[i]._tt._w_alpha = _tables[i]._ctxt->_alpha;
             _tables[i]._tt._w_beta = _tables[i]._ctxt->_beta;
             _tables[i]._ctxt->_max_depth += (i % 2) == 0;
             _tables[i]._ctxt->set_tt(&_tables[i]._tt);
-            _tables[i]._ctxt->_tt_entry._hash_move = hash_move;
-
-            if (prev_best)
-                _tables[i]._ctxt->_prev = prev_best;
 
             /* pass context and TT pointers to thread task */
             auto t_ctxt = _tables[i]._ctxt;
