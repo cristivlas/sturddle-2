@@ -25,7 +25,7 @@
 #include <memory>
 #include <thread>
 #include "chess.h"
-#include "shared_hash_table.h"
+#include "hash_table.h"
 #include "utility.h"
 
 
