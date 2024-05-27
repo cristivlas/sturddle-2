@@ -8,7 +8,6 @@ import argparse
 import glob
 import os
 import platform
-import secrets
 import shutil
 import string
 import sys
@@ -90,9 +89,6 @@ if __name__ == '__main__':
             print('Build failed.')
             sys.exit(-1)
 
-    # Generate key
-    KEY = ''.join(secrets.choice(string.ascii_uppercase + string.ascii_lowercase) for i in range(16))
-
     if args.venv:
         scripts_dir = 'Scripts' if is_windows() else 'bin'
         installer = os.path.join(args.venv, scripts_dir, 'pyinstaller')
@@ -117,7 +113,7 @@ if __name__ == '__main__':
     data = f'--add-data={BOOK}{os.path.pathsep}.'
 
     # run PyInstaller
-    if run_cmd(f'{installer} {script} -p . --onefile {" ".join(libs)} {data} --key="{KEY}"'):
+    if run_cmd(f'{installer} {script} -p . --onefile {" ".join(libs)} {data}'):
         print('pyinstaller failed')
         sys.exit(-2)
 
