@@ -10,6 +10,9 @@ from setuptools.command.build_ext import build_ext
 
 import armcpu
 
+MIN_CLANG_VER = 16
+MIN_GCC_VER = 13
+
 '''
 Monkey-patch MSVCCompiler to use clang-cl.exe on Windows.
 '''
@@ -160,8 +163,8 @@ else:
         ]
         if NATIVE_UCI:
             cc_ver = get_compiler_major_version(cc)
-            if cc_ver < 14:
-                raise RuntimeError(f'{cc} ver={cc_ver}. NATIVE_UCI requires clang 14 or higher')
+            if cc_ver < MIN_CLANG_VER:
+                raise RuntimeError(f'{cc} ver={cc_ver}. NATIVE_UCI requires clang {MIN_CLANG_VER} or higher')
 
             args.append('-DNATIVE_UCI=true')
             link.append('-lsqlite3')  # For DATAGEN
@@ -178,8 +181,8 @@ else:
                 ]
     else:
         if NATIVE_UCI:
-            if get_compiler_major_version() < 13:
-                raise RuntimeError('NATIVE_UCI uses C++20 and requires GCC 13 or later')
+            if get_compiler_major_version() < MIN_GCC_VER:
+                raise RuntimeError(f'NATIVE_UCI uses C++20 and requires GCC {MIN_GCC_VER} or later')
             args += [
                 '-DNATIVE_UCI=true',
             ]
