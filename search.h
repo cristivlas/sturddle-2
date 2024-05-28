@@ -313,9 +313,9 @@ namespace search
         }
 
         template<TT_Type=TT_Type::NONE, typename C=struct Context>
-        void store(C& ctxt, score_t alpha, int depth);
+        void store(C& ctxt, int depth);
 
-        void store(Context&, TT_Entry&, score_t, int depth);
+        void store(Context&, TT_Entry&, int depth);
 
         template<typename C> void store_countermove(C& ctxt);
         void store_killer_move(const Context&);
@@ -483,7 +483,7 @@ namespace search
 
 
     template<TT_Type type, typename C>
-    INLINE void TranspositionTable::store(C& ctxt, score_t alpha, int depth)
+    INLINE void TranspositionTable::store(C& ctxt, int depth)
     {
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
@@ -491,7 +491,8 @@ namespace search
         if (auto p = _table.lookup_write(ctxt.state(), depth))
         {
             auto& entry = *p;
-            store(ctxt, entry, alpha, depth);
+            store(ctxt, entry, depth);
+
             if constexpr(type != TT_Type::NONE)
                 entry._type = type;
         }

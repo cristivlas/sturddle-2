@@ -202,12 +202,10 @@ void TranspositionTable::update_stats(const Context& ctxt)
 }
 
 
-void TranspositionTable::store(Context& ctxt, TT_Entry& entry, score_t alpha, int depth)
+void TranspositionTable::store(Context& ctxt, TT_Entry& entry, int depth)
 {
     ASSERT(ctxt._score > SCORE_MIN);
     ASSERT(ctxt._score < SCORE_MAX);
-    ASSERT(alpha < ctxt._beta);
-    ASSERT(ctxt._alpha >= alpha);
 
     entry._eval = ctxt._eval;
     entry._value = ctxt._score;
@@ -217,7 +215,7 @@ void TranspositionTable::store(Context& ctxt, TT_Entry& entry, score_t alpha, in
         entry._type = TT_Type::LOWER;
         entry._best_move = ctxt._best_move;
     }
-    else if (entry._value <= alpha)
+    else if (entry._value <= ctxt._alpha)
     {
         entry._type = TT_Type::UPPER;
     }
@@ -641,7 +639,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
         return *p;
     }
-    const auto alpha = ctxt._alpha;
 
     if (ctxt.is_leaf())
     {
@@ -652,7 +649,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     }
     else if (table._probe_endtables && probe_endtables(ctxt))
     {
-        table.store<TT_Type::EXACT>(ctxt, alpha, ctxt.depth() + 2 * ctxt.tb_cardinality());
+        table.store<TT_Type::EXACT>(ctxt, ctxt.depth() + 2 * ctxt.tb_cardinality());
         ctxt._eval_raw = ctxt._score;
         return ctxt._score;
     }
@@ -692,10 +689,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     #if RAZORING
         if (ctxt.depth() > 0
             && eval > SCORE_MIN
-            && eval < alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(ctxt.depth())
-            && eval + eval_captures(ctxt) < alpha)
+            && eval < ctxt._alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(ctxt.depth())
+            && eval + eval_captures(ctxt) < ctxt._alpha)
         {
-            return alpha;
+            return ctxt._alpha;
         }
     #endif /* RAZORING */
 
@@ -858,7 +855,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 {
                     if (ctxt.should_verify_null_move() && !verify_null_move(ctxt, *next_ctxt))
                     {
-                        ctxt._alpha = alpha;
+                    #if 0
+                        ctxt._alpha = table._w_alpha;
                         ctxt._score = SCORE_MIN;
                         ctxt._eval = std::max(ctxt._eval - NULL_MOVE_FAIL_PENALTY, SCORE_MIN);
 
@@ -868,6 +866,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                             ctxt._eval_raw = std::max(ctxt._eval_raw - NULL_MOVE_FAIL_PENALTY, SCORE_MIN);
                             data_collect_move(ctxt, BaseMove() /* null */);
                         }
+                    #endif
                         continue;
                     }
 
@@ -982,7 +981,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
      * (https://www.stmintz.com/ccc/index.php?id=93686)
      */
     if (ctxt._score && !ctxt.is_root() && !ctxt._excluded && !ctxt.is_qsearch() && !ctxt.is_cancelled())
-        table.store(ctxt, alpha, ctxt.depth());
+        table.store(ctxt, ctxt.depth());
 
     if constexpr(EXTRA_STATS)
         table.update_stats(ctxt);
