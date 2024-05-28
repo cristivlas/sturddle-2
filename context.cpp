@@ -396,7 +396,7 @@ void search::Context::eval_nnue()
         auto eval = evaluate_material();
 
         /* stick with material eval if in quiescent search, or if heavily imbalanced */
-        if (!is_qsearch() && abs(eval) <= MAX_NNUE_EVAL)
+        if (state().just_king(!turn()) || (!is_qsearch() && abs(eval) <= MAX_NNUE_EVAL))
         {
             eval = eval_nnue_raw() * (NNUE_EVAL_SCALE + eval / 32) / 1024;
         }
@@ -1752,9 +1752,10 @@ namespace search
             return LMRAction::Prune;
 
         /* no reductions at very low depth and in qsearch */
-        if (depth < 3 || count < _parent->_full_depth_count || !can_reduce())
+        if (depth < 3 || count < _parent->_full_depth_count /* || !can_reduce() */)
             return LMRAction::None;
 
+        /* Lookup reduction in the Late Move Reduction table. */
         auto reduction = LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)];
 
         if (_move._group != MoveOrder::TACTICAL_MOVES)
@@ -2087,7 +2088,7 @@ namespace search
             {
                 if (move == ctxt._prev)
                 {
-                    make_move<false>(ctxt, move, MoveOrder::PREV_ITER);
+                    make_move<false>(ctxt, move, ctxt.depth() < 3 ? MoveOrder::PREV_ITER : MoveOrder::HASH_MOVES);
                 }
                 else if (move == ctxt._tt_entry._best_move)
                 {

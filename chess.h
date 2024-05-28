@@ -1110,12 +1110,18 @@ namespace chess
         bool is_en_passant(const BaseMove&) const;
         bool is_pinned(Color color) const;
 
-        bool just_king_and_pawns(Color color) const
+        INLINE bool just_king(Color color) const
+        {
+            return (~kings & occupied_co(color)) == 0;
+        }
+
+        INLINE bool just_king_and_pawns(Color color) const
         {
             return (~(kings | pawns) & occupied_co(color)) == 0;
         }
+
         /* Side the move is down to just king and (maybe) pawns? */
-        bool just_king_and_pawns() const
+        INLINE bool just_king_and_pawns() const
         {
             return just_king_and_pawns(turn);
         }
