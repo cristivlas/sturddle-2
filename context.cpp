@@ -158,7 +158,7 @@ struct LMR
     {
         for (int depth = 1; depth < PLY_MAX; ++depth)
             for (int moves = 1; moves < 64; ++moves)
-                _table[depth][moves] = 0.1 + log(depth) * log(moves) / 2;
+                _table[depth][moves] = 0.1 + log(depth) * log(moves) / 2 + depth / 3;
     }
 } LMR;
 
@@ -1752,7 +1752,7 @@ namespace search
             return LMRAction::Prune;
 
         /* no reductions at very low depth and in qsearch */
-        if (depth < 3 || count < _parent->_full_depth_count /* || !can_reduce() */)
+        if (depth < 3 || count < _parent->_full_depth_count || !can_reduce())
             return LMRAction::None;
 
         /* Lookup reduction in the Late Move Reduction table. */
