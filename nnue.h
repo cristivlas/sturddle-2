@@ -249,7 +249,6 @@ namespace nnue
             set_weights(weights, biases);
         }
 
-
         /* input */
         template <size_t S, typename F>
         static INLINE void dot(
@@ -311,7 +310,6 @@ namespace nnue
         #endif
         }
 
-
         /* hidden, output */
         template <typename F>
         static INLINE void dot(
@@ -336,9 +334,12 @@ namespace nnue
                 for (int k = 0; k != Q; ++k)
                     sum[k] = Vector(0.0);
 
+                #pragma unroll INPUTS
                 for (int i = 0; i != INPUTS; i += N)
                 {
                     v_in.load_a(&input[i]);
+
+                    #pragma unroll Q
                     for (int k = 0; k != Q; ++k)
                     {
                         v_wt.load_a(&wt[j + k][i]);
