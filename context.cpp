@@ -158,7 +158,7 @@ struct LMR
     {
         for (int depth = 1; depth < PLY_MAX; ++depth)
             for (int moves = 1; moves < 64; ++moves)
-                _table[depth][moves] = 0.1 + log(depth) * log(moves) / 2 + depth / 3;
+                _table[depth][moves] = 0.1 + log(depth) * log(moves) / 2;
     }
 } LMR;
 
