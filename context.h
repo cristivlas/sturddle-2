@@ -1438,7 +1438,7 @@ namespace search
         /* captures of the last piece moved by the opponent are handled separately */
         ASSERT(move.to_square() != ctxt._move.to_square());
 
-        if (make_move<false>(ctxt, move))
+        if (make_move<true>(ctxt, move))
         {
             ASSERT(move._state->capture_value);
 
