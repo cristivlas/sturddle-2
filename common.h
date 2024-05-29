@@ -90,6 +90,8 @@ using score_t = int;
 
 #define REVERSE_FUTILITY_PRUNING            true
 
+#define SIMPLE_CAPTURES_ORDERING            true
+
 /*
  * https://www.chessprogramming.org/Singular_Extensions
  */
@@ -186,6 +188,7 @@ namespace search
         PROMOTIONS = 4,
         LAST_MOVED_CAPTURE = 5,
         WINNING_CAPTURES = 6,
+        CAPTURES = WINNING_CAPTURES, /* used with SIMPLE_CAPTURES_ORDERING */
         EQUAL_CAPTURES = 7,
         KILLER_MOVES = 8,
         LOSING_CAPTURES = 9,
@@ -255,18 +258,4 @@ static inline std::string timestamp()
 {
     return _TOSTR(BUILD_STAMP);
 }
-
-
-template<typename F>
-class on_scope_exit {
-public:
-    explicit on_scope_exit(F f) : _f(f) {}
-
-    ~on_scope_exit() {
-        _f();
-    }
-
-private:
-    F _f;
-};
 

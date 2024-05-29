@@ -127,6 +127,7 @@ namespace search
         const Move* get_move_at(Context& ctxt, int index, score_t futility = 0);
 
         void make_capture(Context&, Move&);
+
         template<bool LateMovePrune> bool make_move(Context&, Move&, score_t futility = 0);
         template<bool LateMovePrune> bool make_move(Context&, Move&, MoveOrder, float = 0);
 
@@ -521,7 +522,7 @@ namespace search
     }
 
     /*
-     * Evaluate same square exchanges
+     * Evaluate same square exchanges. Called by make_captures.
      */
     template<bool StaticExchangeEvaluation>
     INLINE score_t eval_exchanges(int tid, const Move& move)
@@ -536,11 +537,10 @@ namespace search
             if constexpr(StaticExchangeEvaluation)
             {
                 /* Approximate without playing the moves. */
-            #if USE_SIMPLE_SEE
-                val = see(*move._state, move._state->turn, move.to_square());
-            #else
-                val = estimate_static_exchanges(*move._state, move._state->turn, move.to_square());
-            #endif /* USE_SIMPLE_SEE */
+                if constexpr(USE_SIMPLE_SEE)
+                    val = see(*move._state, move._state->turn, move.to_square());
+                else
+                    val = estimate_static_exchanges(*move._state, move._state->turn, move.to_square());
             }
             else
             {
@@ -1448,6 +1448,11 @@ namespace search
             auto capture_gain = move._state->capture_value;
             auto other = ctxt.state().piece_weight_at(move.from_square());
 
+        #if SIMPLE_CAPTURES_ORDERING
+            capture_gain -= other;
+            move._group = MoveOrder::CAPTURES;
+        #else
+            /* eval_exchanges */
             /* skip exchange evaluation if the capturer is worth less than the captured */
 
             if (other >= capture_gain && abs(ctxt._score) < MATE_HIGH)
@@ -1478,6 +1483,7 @@ namespace search
                 static_assert(MoveOrder::WINNING_CAPTURES + 1 == MoveOrder::EQUAL_CAPTURES);
                 move._group = MoveOrder::WINNING_CAPTURES + (capture_gain == 0);
             }
+        #endif /* !SIMPLE_CAPTURES_ORDERING */
 
             move._score = capture_gain;
         }

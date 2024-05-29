@@ -891,6 +891,8 @@ namespace search
      *
      * Skip the exchanges when the value of the captured piece exceeds
      * the value of the capturer.
+     *
+     * Called by eval_captures (if !STATIC_EXCHANGES).
      */
     INLINE int do_captures(int tid, const State& state, Bitboard from_mask, Bitboard to_mask)
     {

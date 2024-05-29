@@ -135,4 +135,21 @@ namespace
 
         return std::uniform_int_distribution<int>(low, high)(gen);
     }
+
+
+    template<typename F>
+    class on_scope_exit
+    {
+    public:
+        explicit on_scope_exit(F f) : _f(f) {}
+
+        on_scope_exit(const on_scope_exit&) = delete;
+        on_scope_exit& operator=(const on_scope_exit&) = delete;
+
+        ~on_scope_exit() noexcept(false) { _f(); }
+
+    private:
+        F _f;
+    };
+
 } /* namespace */
