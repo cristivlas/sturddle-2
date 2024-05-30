@@ -90,7 +90,7 @@ using score_t = int;
 
 #define REVERSE_FUTILITY_PRUNING            true
 
-#define SIMPLE_CAPTURES_ORDERING            true
+#define SIMPLE_CAPTURES_ORDERING            false
 
 /*
  * https://www.chessprogramming.org/Singular_Extensions

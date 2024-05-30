@@ -719,12 +719,17 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         const auto root_depth = table._iteration;
         int move_count = 0, futility = -1;
 
+        score_t a = SCORE_MIN, b = SCORE_MAX, s = SCORE_MIN;
+
         /* iterate over moves */
         while (auto next_ctxt = ctxt.next(null_move, futility, move_count))
         {
             if (next_ctxt->is_null_move())
             {
                 null_move = false;
+
+                /* save, in case null-move verification fails */
+                a = ctxt._alpha, b = ctxt._beta, s = ctxt._score;
             }
             else
             {
@@ -855,6 +860,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 {
                     if (ctxt.should_verify_null_move() && !verify_null_move(ctxt, *next_ctxt))
                     {
+                        ctxt._alpha = a, ctxt._beta = b, ctxt._score = s;
                         continue;
                     }
 
