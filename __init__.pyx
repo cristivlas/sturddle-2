@@ -644,7 +644,7 @@ cdef bool book_init(const string& filepath) except* with gil:
     return opening_book_init(filepath.decode())
 
 
-cdef BaseMove book_lookup(const State& state, bool best_move) except*:
+cdef BaseMove book_lookup(const State& state, bool best_move) except* with gil:
     board = board_from_cxx_state(state)
     entry = opening_book_lookup(board, best_move)
     if entry and entry.move:
