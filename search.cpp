@@ -119,7 +119,16 @@ TranspositionTable::HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE
 
 /* static */ void TranspositionTable::set_hash_size(size_t MB)
 {
-    if (_table.resize(MB, mem_avail()))
+    bool ok = true;
+    try
+    {
+        _table.resize(MB, mem_avail());
+    }
+    catch (...)
+    {
+        ok = false;
+    }
+    if (ok)
     {
         std::ostringstream out;
         out << "set_hash_size: requested=" << MB << " new="

@@ -151,16 +151,10 @@ namespace search
         UPPER,
     };
 
-#if defined(__APPLE__) && defined(__aarch64__) && FULL_SIZE_LOCK
-    #pragma pack(push, 8)
-#else
-    #pragma pack(push, 4)
-#endif
+#pragma pack(push, 4)
+
     class TT_Entry
     {
-        template<typename T> friend class SharedHashTable;
-        raw_lock_t  _lock = 0;
-
     public:
         TT_Type     _type = TT_Type::NONE;
         uint8_t     _age = 0;
@@ -170,9 +164,6 @@ namespace search
         int16_t     _eval = SCORE_MIN; /* static */
         int16_t     _value = SCORE_MIN;
         uint64_t    _hash = 0;
-    #if !NO_ASSERT
-        void*       _owner = nullptr;
-    #endif /* NO_ASSERT */
 
         INLINE bool is_lower() const { return _type == TT_Type::LOWER; }
         INLINE bool is_upper() const { return _type == TT_Type::UPPER; }
@@ -222,7 +213,7 @@ namespace search
      */
     class TranspositionTable
     {
-        using HashTable = SharedHashTable<TT_Entry>;
+        using HashTable = hash_table<TT_Entry>;
 
     #if USE_BUTTERFLY_TABLES
         using HistoryCounters = MoveTable<std::pair<int, int>>;
