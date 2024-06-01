@@ -266,11 +266,13 @@ namespace search
         bool        can_reduce() const;
 
         int64_t     check_time_and_update_nps(); /* return elapsed milliseconds */
+
         static void clear_moves_cache();
 
         Context*    clone(ContextBuffer&, int ply = 0) const;
 
         int         depth() const { return _max_depth - _ply; }
+
         static int64_t elapsed_milliseconds();
 
         static void ensure_stacks();
@@ -445,8 +447,8 @@ namespace search
         std::array<uint8_t, sizeof(Context)> _mem = { 0 };
         State _state; /* for null-move and clone() */
 
-        Context* as_context() { return reinterpret_cast<Context*>(&_mem[0]); }
-        const Context* as_context() const { return reinterpret_cast<const Context*>(&_mem[0]); }
+        INLINE Context* as_context() { return reinterpret_cast<Context*>(&_mem[0]); }
+        INLINE const Context* as_context() const { return reinterpret_cast<const Context*>(&_mem[0]); }
     };
 
 
@@ -665,6 +667,7 @@ namespace search
     /* static */ INLINE int64_t Context::elapsed_milliseconds()
     {
         const auto now = std::chrono::steady_clock::now();
+
         return std::chrono::duration_cast<std::chrono::milliseconds>(
             now - _time_start.load(std::memory_order_relaxed)
         ).count();
@@ -1040,6 +1043,7 @@ namespace search
         {
             ASSERT(move->_state);
             ASSERT(ctxt->_is_null_move == false);
+
             ctxt->_move = *move;
             ctxt->_state = move->_state;
             ctxt->_leftmost = is_leftmost() && next_move_index() == 1;
@@ -1060,6 +1064,7 @@ namespace search
             ASSERT(null_move);
             ASSERT(!ctxt->_move);
             ASSERT(ctxt->_state);
+
             state().clone_into(*ctxt->_state);
             ctxt->_state->_check = { 0, 0 };
             flip(ctxt->_state->turn);
@@ -1203,6 +1208,7 @@ namespace search
         if constexpr(Construct)
         {
             auto ctxt = new (buffer.as_context()) Context;
+
             ctxt->_state = &buffer._state;
             return ctxt;
         }

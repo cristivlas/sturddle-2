@@ -33,7 +33,7 @@
   #define HAVE_INT128 false
 #else
   #define HAVE_INT128 (INTPTR_MAX == INT64_MAX)
-#endif /* Microsoft Compiler */
+#endif /* !Microsoft Compiler */
 
 #if !defined(_DEBUG)
 #if _MSC_VER

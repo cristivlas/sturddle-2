@@ -218,6 +218,7 @@ namespace search
         }
     };
 
+
     template <typename T>
     class hash_table
     {
