@@ -157,8 +157,18 @@ struct LMR
     LMR()
     {
         for (int depth = 1; depth < PLY_MAX; ++depth)
+        {
             for (int moves = 1; moves < 64; ++moves)
-                _table[depth][moves] = 0.1 + log(depth) * log(moves) / 2;
+            {
+                const auto v = 0.5 + log(depth) * log(moves) / 2;
+                const auto e = (100 + depth) / 100.0;
+
+                _table[depth][moves] = int(pow(v, e));
+
+                // std::cout << "[" << depth << "][" << moves << "]: " << int(v);
+                // std::cout << ", " << int(pow(v, e)) << std::endl;
+            }
+        }
     }
 } LMR;
 
