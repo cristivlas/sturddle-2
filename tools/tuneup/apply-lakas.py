@@ -1,3 +1,4 @@
+#! /usr/bin/env python3
 import argparse
 import re
 import ast
@@ -25,7 +26,7 @@ def parse_best_params(logfile):
             match = re.search(r"best param: ({.*})", line)
             if match:
                 best_params = ast.literal_eval(match.group(1))
-                logging.info(f"Found best params: {best_params}")
+                logging.info(f"Best params: {best_params}")
                 break
 
     if not best_params:
@@ -44,8 +45,13 @@ def update_header(header_file, best_params):
         original_line = line
         for param, value in best_params.items():
             # This pattern matches lines like: DECLARE_VALUE(  PARAM_NAME, VALUE, MIN, MAX)
-            pattern = re.compile(rf'(DECLARE_VALUE\s*\(\s*{param}\s*,\s*)(\d+)(\s*,\s*\d+\s*,\s*\d+\s*\))')
+            pattern = re.compile(rf'(DECLARE_VALUE\s*\(\s*{param}\s*,\s*)(-?\d+)(\s*,\s*-?\d+\s*,\s*-?\d+\s*\))')
             match = pattern.search(line)
+
+            if not match:
+                pattern = re.compile(rf'(DECLARE_PARAM\s*\(\s*{param}\s*,\s*)(-?\d+)(\s*,\s*-?\d+\s*,\s*-?\d+\s*\))')
+                match = pattern.search(line)
+
             if match:
                 before_value = match.group(1)
                 old_value = match.group(2)
@@ -63,7 +69,8 @@ def update_header(header_file, best_params):
                 # Construct the updated line
                 replacement = f'{before_value}{new_value}{after_value}'
                 line = pattern.sub(replacement, line)
-                logging.info(f"Updated line: '{original_line.strip()}' to '{line.strip()}'")
+                if line != original_line:
+                    logging.info(f"Updated line: '{original_line.strip()}' to '{line.strip()}'")
         updated_lines.append(line)
 
     logging.info(f"Writing updated header file: {header_file}")
@@ -71,10 +78,28 @@ def update_header(header_file, best_params):
         f.writelines(updated_lines)
 
 
+def print_mobility(best_params):
+    m_sym = {
+        'MOBILITY_PAWN': 1,
+        'MOBILITY_KNIGHT': 2,
+        'MOBILITY_BISHOP': 3,
+        'MOBILITY_ROOK': 4,
+        'MOBILITY_QUEEN': 5,
+        'MOBILITY_KING': 6,
+    }
+    m_map = { k:0 for k in range(0, 7) }
+
+    for k in m_sym:
+        if k in best_params:
+            m_map[m_sym[k]] = best_params[k]
+    weights = ', '.join(map(str, m_map.values()))
+    print(f'#define DEFAULT_MOBILITY_WEIGHTS {{ {weights} }}')
+
+
 def main():
     parser = argparse.ArgumentParser(description='Update C++ header file with best parameters from log file.')
     parser.add_argument('logfile', help='Path to the log file')
-    parser.add_argument('--config', required=True, help='Path to the C++ header file')
+    parser.add_argument('--config', default='config.h', help='Path to the C++ header file')
 
     args = parser.parse_args()
 
@@ -82,6 +107,8 @@ def main():
     if best_params:
         update_header(args.config, best_params)
         logging.info("Header file updated successfully.")
+        print_mobility(best_params)
+
     else:
         logging.warning("No best params found to update the header file.")
 
