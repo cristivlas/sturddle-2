@@ -786,12 +786,10 @@ namespace search
     /*
      * Futility pruning margins.
      */
-    static constexpr double PHI = 1.61803398875;
-
     template<std::size_t... I>
     static constexpr std::array<int, sizeof ... (I)> margins(std::index_sequence<I...>)
     {
-        return { static_cast<int>(50 * I + pow(I + PHI, M_E)) ... };
+        return { static_cast<int>(60 * I + pow(I, 1.99)) ... };
     }
 
 
@@ -800,7 +798,12 @@ namespace search
         if (is_root() || !_futility_pruning || depth() < 1)
             return 0;
 
-        static const auto fp_margins = margins(std::make_index_sequence<PLY_MAX>{});
+        static const auto fp_margins = []() {
+            const auto m = margins(std::make_index_sequence<PLY_MAX>{});
+            //for (size_t i = 0; i != m.size(); ++i)
+            //    std::clog << i << ": " << m[i] << std::endl;
+            return m;
+        } ();
         return fp_margins[depth()] * can_forward_prune();
     }
 
