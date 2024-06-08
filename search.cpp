@@ -57,7 +57,7 @@ static void log_pv(const TranspositionTable& tt, const Context* ctxt, const char
         std::ostringstream out;
 
         out << info << ": ";
-        for (const auto& move : tt._pv)
+        for (const auto& move : tt._pv[0])
             out << move << " ";
         if (ctxt)
             out << " pos=" << ctxt->epd();
@@ -388,8 +388,9 @@ template<bool Debug> void TranspositionTable::store_pv(Context& root)
         get_pv_from_table<Debug>(root, *ctxt, _pvBuilder);
         break;
     }
-
-    _pv.swap(_pvBuilder);
+    for (int n = PV_COUNT - 1; n > 0; --n)
+        _pv[n].swap(_pv[n - 1]);
+    _pv[0].swap(_pvBuilder);
     log_pv<Debug>(*this, &root, "store_pv");
 }
 
@@ -1146,8 +1147,8 @@ public:
             _tables[i]._tt._iteration = table._iteration;
 
             /* copy principal variation from main thread */
-            if (_tables[i]._tt._pv.empty())
-                _tables[i]._tt._pv = table._pv;
+            if (_tables[i]._tt._pv[0].empty())
+                _tables[i]._tt._pv[0] = table._pv[0];
 
             _tables[i]._ctxt = _root.clone(_tables[i]._raw_mem);
             _tables[i]._tt._w_alpha = _tables[i]._ctxt->_alpha;
@@ -1307,7 +1308,8 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
  */
 void TranspositionTable::shift()
 {
-    _pv.clear();
+    for (auto& pv : _pv)
+        pv.clear();
 
     shift_left_2(_killer_moves.begin(), _killer_moves.end());
     shift_left_2(_plyHistory.begin(), _plyHistory.end());

@@ -246,7 +246,7 @@ namespace search
         int _tid = 0;
         int _iteration = 0;
         int _eval_depth = 0;
-        PV  _pv; /* principal variation */
+        PV  _pv[PV_COUNT]; /* principal variations */
         PV  _pvBuilder;
         PlyHistory _plyHistory;
 
@@ -285,7 +285,7 @@ namespace search
             return &_killer_moves[ply];
         }
 
-        const PV& get_pv() const { return _pv; }
+        const PV& get_pv(size_t n = 0) const { return _pv[n]; }
 
         /* Reconstruct PV from hash table moves. Called by store_pv. */
         template<bool Debug=false> void get_pv_from_table(Context&, const Context&, PV&);

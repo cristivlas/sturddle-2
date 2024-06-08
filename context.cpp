@@ -1980,13 +1980,15 @@ namespace search
         if (!ctxt.get_tt() || !ctxt._move)
             return nullptr;
 
-        const auto& pv = ctxt.get_tt()->get_pv();
         const size_t ply = ctxt._ply;
 
-        if (ply + 1 >= pv.size())
-            return nullptr;
-
-        return pv[ply] == ctxt._move ? &pv[ply + 1] : nullptr;
+        for (size_t i = 0; i != PV_COUNT; ++i)
+        {
+            const auto& pv = ctxt.get_tt()->get_pv(i);
+            if (ply + 1 < pv.size() && pv[ply] == ctxt._move)
+                return &pv[ply + 1];
+        }
+        return nullptr;
     }
 
 
