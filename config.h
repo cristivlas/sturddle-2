@@ -195,6 +195,7 @@ DECLARE_VALUE(  LMP_ALPHA,                           17,    0,     100)
 DECLARE_VALUE(  LMP_BETA,                            36,    1,     100)
 DECLARE_VALUE(  LMP_BASE,                             2,    2,     100)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               3,    0,     100)
+DECLARE_VALUE(  KILLER_MOVES_MARGIN,                 50,    0,    1000)
 
 DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,     100)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
