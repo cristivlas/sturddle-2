@@ -1517,7 +1517,7 @@ namespace search
 
             move._state = &Context::states(ctxt.tid(), ctxt._ply)[_state_index++];
         }
-        else if (/* !ctxt.get_tt()->is_cached(*move._state) && */ move._state->is_check(!move._state->turn))
+        else if (move._state->is_check(!move._state->turn))
         {
             mark_as_illegal(move);
             return false;
@@ -1591,7 +1591,7 @@ namespace search
             }
         }
 
-        if (/* !ctxt.get_tt()->is_cached(*move._state) && */ move._state->is_check(ctxt.turn()))
+        if (move._state->is_check(ctxt.turn()))
         {
             mark_as_illegal(move); /* can't leave the king in check */
             return false;
