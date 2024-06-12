@@ -511,7 +511,7 @@ cdef extern from 'context.h' namespace 'search':
         void            set_tt(TranspositionTable*) nogil
         TranspositionTable* get_tt() const
         const PV&       get_pv() nogil const
-        Context*        next(bool, score_t, int)
+        Context*        next(bool, score_t, int&)
         int             tid() const
 
         @staticmethod
@@ -1239,13 +1239,14 @@ def perft2(fen, repeat=1):
 def perft3(fen, repeat=1):
     cdef TranspositionTable table
     cdef size_t count = 0
+    cdef int move_count = 0
     node = NodeContext(chess.Board(fen=fen))
     node._ctxt.set_tt(address(table))
     start = time.perf_counter()
 
     for i in range(0, repeat):
         node._ctxt._max_depth = max(1, i % 100)
-        while node._ctxt.next(False, 0, 0) != NULL:
+        while node._ctxt.next(False, 0, move_count) != NULL:
             count += 1
         node._ctxt.rewind(0, True)
 

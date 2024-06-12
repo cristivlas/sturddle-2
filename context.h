@@ -119,6 +119,19 @@ namespace search
 
         int rewind(Context&, int where, bool reorder);
 
+        INLINE void swap(MoveMaker& other)
+        {
+            std::swap(_group_quiet_moves, other._group_quiet_moves);
+            std::swap(_have_move, other._have_move);
+            std::swap(_have_quiet_moves, other._have_quiet_moves);
+            std::swap(_have_pruned_moves, other._have_pruned_moves);
+            std::swap(_need_sort, other._need_sort);
+            std::swap(_phase, other._phase);
+            std::swap(_count, other._count);
+            std::swap(_current, other._current);
+            std::swap(_state_index, other._state_index);
+        }
+
     private:
         bool can_late_move_prune(const Context& ctxt) const;
         void ensure_moves(Context&);
@@ -345,7 +358,7 @@ namespace search
         int         move_count() const { return _move_maker.count(); }
         int64_t     nanosleep(int nanosec);
 
-        Context*    next(bool null_move, score_t, int move_count);
+        Context*    next(bool null_move, score_t, int& move_count);
 
         template<bool Construct = false> Context* next_ply() const;
 
@@ -1015,11 +1028,16 @@ namespace search
     /*
      * Get the next move and wrap it into a Context object.
      */
-    INLINE Context* Context::next(bool null_move, score_t futility, int move_count)
+    INLINE Context* Context::next(bool null_move, score_t futility, int& move_count)
     {
         ASSERT(_alpha < _beta);
 
         const bool retry = _retry_next;
+        if (retry)
+        {
+            ASSERT(move_count > 0);
+            --move_count;
+        }
         _retry_next = false;
 
         if (!_excluded && !on_next() && move_count > 0)
@@ -1039,6 +1057,10 @@ namespace search
         ASSERT(null_move || move->_state);
         ASSERT(null_move || move->_group != MoveOrder::UNDEFINED);
         ASSERT(null_move || move->_group < MoveOrder::UNORDERED_MOVES);
+
+        MoveMaker temp;
+        if (retry)
+            next_ply<false>()->_move_maker.swap(temp);
 
         auto ctxt = next_ply<true>();
 
@@ -1152,6 +1174,14 @@ namespace search
                     ctxt->_fifty = 0;
                 else
                     ctxt->_fifty = (is_root() ? _history->_fifty : _fifty) + 1;
+            }
+
+            if (temp.count() >= 0)
+            {
+                ctxt->_move_maker.swap(temp);
+                ASSERT(temp.count() == -1);
+
+                ctxt->rewind(0);
             }
         }
 
