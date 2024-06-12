@@ -6,7 +6,7 @@
 #include <limits>
 #include <new>
 
-constexpr size_t HASH_TABLE_MAX_READERS = 4;
+constexpr size_t HASH_TABLE_MAX_READERS = 64;
 constexpr int SPIN_LOCK_MAX_RETRY = 1024 * 1024;
 
 #if _MSC_VER

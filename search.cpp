@@ -649,7 +649,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         return *p;
     }
 
-    if (!ctxt.is_pv_node() && !ctxt.is_retry() && ctxt._eval > ctxt._alpha && ctxt.depth() < 7)
+    if (!ctxt.is_pv_node() && /* !ctxt.is_retry() && */ ctxt._eval > ctxt._alpha && ctxt.depth() < 7)
     {
         ++ctxt._max_depth;
     }

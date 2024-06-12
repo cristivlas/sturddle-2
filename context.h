@@ -654,7 +654,7 @@ namespace search
     {
         ASSERT(!is_null_move());
 
-        return !is_root()
+        return !is_leftmost()
             && !is_retry()
             && (state().pushed_pawns_score <= 1)
             && !is_extended()
@@ -789,7 +789,7 @@ namespace search
     template<std::size_t... I>
     static constexpr std::array<int, sizeof ... (I)> margins(std::index_sequence<I...>)
     {
-        return { static_cast<int>(225 * I + pow(I, 1.99)) ... };
+        return { static_cast<int>(75 * I + pow(I, 1.99)) ... };
     }
 
 
