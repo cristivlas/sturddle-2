@@ -277,7 +277,20 @@ namespace
 
 #if DATAGEN
     /* Collect data to use for training a neural net. */
-
+    /* Data is written to CSV files under the DB path (set via uci).
+     *
+     * KNOWN ISSUES
+     * ------------
+     * generate_unique_filename is not transactional, race conditions
+     * may occur between generating the name and using the file.
+     *
+     * The number of generated files gets large very quickly; it is
+     * possible to run ouf of inodes; to mitigate this, the collect2.py
+     * tool should be run in parallel with generating eval data. The
+     * tool monitors the DB dir and processes the CSV files, consolidating
+     * the data into a sqlite3 db; files are deleted once processed.
+     * (The tool is Linux-only).
+     */
     static_assert(WITH_NNUE); /* requires NNUE for now */
 
     static std::unordered_map<std::string, std::tuple<search::BaseMove, int, score_t>> g_data;
