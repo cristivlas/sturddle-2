@@ -342,7 +342,7 @@ namespace
 
         if (!g_data.empty() && ctxt._score >= threshold && search::eval_insufficient_material(ctxt.state()) != 0)
         {
-            const auto filename = generate_unique_filename(g_data_dir, ".txt");
+            const auto filename = generate_unique_filename(g_data_dir, ".csv");
             log_info(std::format("Writing {} positions to: {}", g_data.size(), filename));
 
             std::ofstream of(filename);
@@ -354,7 +354,8 @@ namespace
             {
                 for (const auto& pos : g_data)
                 {
-                    of << pos.first << "," << std::get<0>(pos.second) << "," << std::get<1>(pos.second) << "," << std::get<2>(pos.second) << "\n";
+                    of << pos.first << "," << std::get<0>(pos.second)
+                       << "," << std::get<1>(pos.second) << "," << std::get<2>(pos.second) << "\n";
                 }
             }
         }
