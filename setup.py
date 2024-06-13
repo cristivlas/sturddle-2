@@ -167,7 +167,7 @@ else:
                 raise RuntimeError(f'{cc} ver={cc_ver}. NATIVE_UCI requires clang {MIN_CLANG_VER} or higher')
 
             args.append('-DNATIVE_UCI=true')
-            link.append('-lsqlite3')  # For DATAGEN
+
             if '-arch arm64' in environ.get('ARCHFLAGS', ''):
                 print('ARM64 Target, skipping extra compiler and linker flags.')
             else:

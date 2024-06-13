@@ -995,6 +995,11 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     if constexpr(EXTRA_STATS)
         table.update_stats(ctxt);
 
+#if DATAGEN
+    if (ctxt.tid() == 0)
+        data_collect_move(ctxt, ctxt._best_move);
+#endif /* DATAGEN */
+
     return ctxt._score;
 }
 

@@ -1,6 +1,7 @@
 /** Native C++ UCI */
 /** http://wbec-ridderkerk.nl/html/UCIProtocol.html */
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string_view>
 #include <tuple>
@@ -8,9 +9,6 @@
 #include "context.h"
 #if WITH_NNUE
     #include "nnue.h"
-#endif
-#if DATAGEN
-    #include <sqlite3.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -282,39 +280,33 @@ namespace
 
     static_assert(WITH_NNUE); /* requires NNUE for now */
 
-    struct Database
+    static std::unordered_map<std::string, std::tuple<search::BaseMove, int, score_t>> g_data;
+    static std::string g_data_dir;
+
+    static std::string generate_unique_filename(const fs::path& dir, const std::string& extension)
     {
-        std::string _filename;
-        sqlite3* _handle = nullptr;
+        static std::random_device rd;
+        static std::mt19937 gen(rd());
+        static std::uniform_int_distribution<> dis(0, 15);
 
-        static constexpr const char* SCHEMA =
-            "CREATE TABLE IF NOT EXISTS position(epd text PRIMARY KEY, depth integer, score integer)";
+        std::string filename;
+        filename.reserve(16 + extension.length());
 
-        Database(std::string_view filename) : _filename(filename)
+        const char* chars = "0123456789abcdef";
+        for (int i = 0; i < 16; ++i)
         {
-            if (sqlite3_open(_filename.c_str(), &_handle) != SQLITE_OK)
-            {
-                throw std::runtime_error(errmsg("sqlite3_open"));
-            }
-
-            if (sqlite3_exec(_handle, SCHEMA, nullptr, nullptr, nullptr) != SQLITE_OK)
-            {
-                throw std::runtime_error(errmsg("sqlite3_exec"));
-            }
+            filename += chars[dis(gen)];
         }
 
-        ~Database() { sqlite3_close(_handle); }
+        filename += extension;
 
-        std::string errmsg(const char* op) const
+        fs::path full_path = dir / filename;
+        if (fs::exists(full_path))
         {
-            return std::format("{}({}): {}", _filename, op, sqlite3_errmsg(_handle));
+            return generate_unique_filename(dir, extension);
         }
-    };
-
-    std::unique_ptr<Database> g_db;
-    using EvalData = std::unordered_map<std::string, std::tuple<search::BaseMove, int, score_t>>;
-    EvalData g_data, g_dataDefer;
-
+        return full_path;
+    }
 
     struct OptionDB : public OptionBase
     {
@@ -323,7 +315,7 @@ namespace
         void print(std::ostream& out) const override
         {
             OptionBase::print(out);
-            out << "type string default " << (g_db ? g_db->_filename : std::string());
+            out << "type string default " << g_data_dir;
         }
 
         void set(std::string_view value) override { _set(std::string(value)); }
@@ -333,16 +325,12 @@ namespace
         {
             try
             {
-                g_db = std::make_unique<Database>(value);
+                fs::create_directories(value);
+                g_data_dir = value;
             }
             catch (const std::exception& e)
             {
-                log_error(e.what());
-            }
-            catch (...)
-            {
-                log_error("unknown exception");
-                throw;
+                log_error(std::format("{}: {}", value, e.what()));
             }
         }
     };
@@ -350,56 +338,25 @@ namespace
 
     static void data_flush(const search::Context& ctxt, int threshold = DATAGEN_SCORE_THRESHOLD)
     {
-        static const char* INSERT_OR_REPLACE = R"(
-            INSERT OR REPLACE INTO position (epd, depth, score)
-            SELECT
-                ?1,
-                ?2,
-                ?3
-            WHERE
-                NOT EXISTS (SELECT 1 FROM position WHERE epd = ?1)
-                OR ?2 > (SELECT depth FROM position WHERE epd = ?1);
-            )";
+        auto clear = on_scope_exit([]{ g_data.clear(); });
 
-        if (ctxt._score < threshold || search::eval_insufficient_material(ctxt.state()) == 0)
-            g_data.clear();
-        else
-            LOG_DEBUG(std::format("data_flush: score={}", ctxt._score));
-
-        g_data.insert(g_dataDefer.begin(), g_dataDefer.end());
-        g_dataDefer.clear();
-
-        if (!g_data.empty())
+        if (!g_data.empty() && ctxt._score >= threshold && search::eval_insufficient_material(ctxt.state()) != 0)
         {
-            ASSERT_ALWAYS(g_db);
+            const auto filename = generate_unique_filename(g_data_dir, ".txt");
+            log_info(std::format("Writing {} positions to: {}", g_data.size(), filename));
 
-            sqlite3_stmt* stmt = nullptr;
-            if (sqlite3_prepare_v2(g_db->_handle, INSERT_OR_REPLACE, -1, &stmt, nullptr) != SQLITE_OK)
+            std::ofstream of(filename);
+            if (!of)
             {
-                log_warning(g_db->errmsg("sqlite3_prepare"));
+                log_error("Could not open file.");
             }
             else
             {
-                while (!g_data.empty())
+                for (const auto& pos : g_data)
                 {
-                    auto i = g_data.begin();
-                    sqlite3_bind_text(stmt, 1, i->first.c_str(), -1, SQLITE_STATIC);
-                    sqlite3_bind_int(stmt, 2, std::get<1>(i->second));
-                    sqlite3_bind_int(stmt, 3, std::get<2>(i->second));
-
-                    if (sqlite3_step(stmt) != SQLITE_DONE)
-                    {
-                        log_warning(g_db->errmsg("sqlite3_step"));
-                        log_info(std::format("defer {} data points", g_data.size()));
-                        g_dataDefer.insert(g_data.begin(), g_data.end());
-                        break;
-                    }
-                    g_data.erase(i);
-                    sqlite3_reset(stmt);
+                    of << pos.first << "," << std::get<0>(pos.second) << "," << std::get<1>(pos.second) << "," << std::get<2>(pos.second) << "\n";
                 }
-                sqlite3_finalize(stmt);
             }
-            g_data.clear();
         }
     }
 #else
@@ -443,7 +400,7 @@ public:
         _options.emplace("ponder", std::make_shared<OptionBool>("Ponder", _ponder));
         _options.emplace("syzygypath", std::make_shared<OptionSyzygy>());
     #if DATAGEN
-        const auto db_path = fs::absolute(fs::path(params["prog"]).parent_path()) / "evals.db";
+        const auto db_path = fs::absolute(fs::path(params["prog"]).parent_path()) / "evals";
         _options.emplace("db", std::make_shared<OptionDB>(db_path.string()));
     #endif
     }
@@ -1026,7 +983,6 @@ INLINE void UCI::isready()
 void UCI::newgame()
 {
     stop();
-    data_flush(context());
     search::TranspositionTable::clear_shared_hashtable();
     set_start_position();
     _book_depth = max_depth;
@@ -1177,6 +1133,8 @@ void UCI::stop()
     _output_pool->wait_for_tasks();
 #endif /* OUTOUT_POOL */
     output_best_move<true>();
+
+    data_flush(context());
 }
 
 void UCI::uci()
@@ -1238,32 +1196,14 @@ void uci_loop(Params params)
 void search::data_collect_move(const search::Context& ctxt, const chess::BaseMove& move)
 {
 #if NATIVE_UCI && DATAGEN
-    if (g_db && is_valid(ctxt._eval_raw))
+    if (!g_data_dir.empty() && is_valid(ctxt._eval_raw) && move)
     {
         ASSERT(ctxt.get_tt());
 
         LOG_DEBUG(std::format("data_collect_move[{}]: {} {} {}",
             ctxt.iteration(), ctxt.epd(), move.uci(), ctxt._eval));
 
-    #if true
-        const auto* c = &ctxt;
-        while (true)
-        {
-            ASSERT_ALWAYS(c);
-            if (is_valid(c->_eval_raw))
-            {
-                g_data.emplace(c->epd(), std::make_tuple(c->_best_move, c->depth(), c->_eval_raw));
-                LOG_DEBUG(std::format("data_collect_move: ply={} depth={}", c->_ply, c->depth()));
-            }
-            auto next = c->next_ply();
-            if (!next || next->_parent != c || next->is_null_move() || next->_move != c->_best_move)
-                break;
-
-            c = next;
-        }
-    #else
         g_data.emplace(ctxt.epd(), std::make_tuple(move, ctxt.iteration(), ctxt._eval_raw));
-    #endif
     }
 #endif /* NATIVE_UCI && DATAGEN */
 }
