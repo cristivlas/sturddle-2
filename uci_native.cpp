@@ -291,7 +291,6 @@ namespace
      * the data into a sqlite3 db; files are deleted once processed.
      * (The tool is Linux-only).
      */
-    static_assert(WITH_NNUE); /* requires NNUE for now */
 
     static std::unordered_map<std::string, std::tuple<search::BaseMove, int, score_t>> g_data;
     static std::string g_data_dir;
@@ -1217,7 +1216,13 @@ void search::data_collect_move(const search::Context& ctxt, const chess::BaseMov
         LOG_DEBUG(std::format("data_collect_move[{}]: {} {} {}",
             ctxt.iteration(), ctxt.epd(), move.uci(), ctxt._eval));
 
-        g_data.emplace(ctxt.epd(), std::make_tuple(move, ctxt.iteration(), ctxt._eval_raw));
+    #if WITH_NNUE
+        const auto eval = ctxt._eval_raw;
+    #else
+        const auto eval = ctxt._eval;
+    #endif
+
+        g_data.emplace(ctxt.epd(), std::make_tuple(move, ctxt.iteration(), eval));
     }
 #endif /* NATIVE_UCI && DATAGEN */
 }
