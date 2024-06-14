@@ -659,6 +659,7 @@ namespace search
                 {
                     if (next_ctxt->_retry_above_alpha == RETRY::Reduced)
                     {
+                        ASSERT(!next_ctxt->is_retry());
                         _retry_next = true;
 
                         if constexpr(EXTRA_STATS)
@@ -669,6 +670,7 @@ namespace search
                     }
                     else if (next_ctxt->_retry_above_alpha == RETRY::PVS && score < _beta)
                     {
+                        ASSERT(!next_ctxt->is_retry());
                         _retry_next = true;
                         _retry_beta = -score;
                     }
