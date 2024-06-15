@@ -502,6 +502,7 @@ namespace nnue
             }
         }
 
+        /** Recompute incrementally */
         template <typename LA, typename LB>
         INLINE void recompute(
             const LA& layer_a,
@@ -517,15 +518,17 @@ namespace nnue
             static_assert(LB::OUTPUTS % Vec16s::size() == 0);
 
             int update_layer_b = 0;
-            for (int i = 0; i < r_idx; ++i)
+            for (int i = 0; i < r_idx && !update_layer_b; ++i)
                 update_layer_b += remove_inputs[i] < LB::INPUTS;
-            for (int i = 0; i < a_idx; ++i)
+            for (int i = 0; i < a_idx && !update_layer_b; ++i)
                 update_layer_b += add_inputs[i] < LB::INPUTS;
 
-            Vec16s vo, vw;
+            using VecShort = Vec16s;
 
-            /* layer A */
-            for (int j = 0; j != OUTPUTS_A; j += Vec16s::size())
+            VecShort vo, vw;
+
+            /* Layer A */
+            for (int j = 0; j != OUTPUTS_A; j += VecShort::size())
             {
                 vo.load_a(&_output_a[j]);
 
@@ -549,8 +552,8 @@ namespace nnue
 
             if (update_layer_b)
             {
-                /* layer B */
-                for (int j = 0; j != OUTPUTS_B; j += Vec16s::size())
+                /* Layer B */
+                for (int j = 0; j != OUTPUTS_B; j += VecShort::size())
                 {
                     vo.load_a(&_output_b[j]);
 
