@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import csv
 import sqlite3
@@ -36,10 +37,6 @@ def create_table(connection):
     with connection:
         connection.execute(CREATE_TABLE_QUERY)
 
-def insert_data(connection, epd, depth, score):
-    with connection:
-        connection.execute(INSERT_QUERY, (epd, depth, score))
-
 def process_file(file_path, db_queue):
     logging.info(f"Processing file: {file_path}")
     data = []
@@ -70,6 +67,9 @@ def is_file_open(file_path):
 def process_queue(file_queue, db_queue):
     while True:
         file_path = file_queue.get()
+        if file_path is None:
+            file_queue.task_done()
+            break
         while is_file_open(file_path):
             logging.warning(f"File {file_path} is open by another process, retrying...")
             time.sleep(1)
@@ -84,11 +84,15 @@ def insert_into_db(db_queue, db_path):
     create_table(connection)
     while True:
         data = db_queue.get()
-        try:
-            for epd, depth, score in data:
-                insert_data(connection, epd, depth, score)
-        except Exception as e:
-            logging.error(f"Error inserting into database: {e}")
+        if data is None:
+            db_queue.task_done()
+            break
+        with connection:
+            try:
+                for epd, depth, score in data:
+                    connection.execute(INSERT_QUERY, (epd, depth, score))
+            except Exception as e:
+                logging.error(f"Error inserting into database: {e}")
         db_queue.task_done()
     connection.close()
 
@@ -127,6 +131,8 @@ def main():
     except KeyboardInterrupt:
         observer.stop()
         logging.info("Stopping the directory watcher")
+        file_queue.put(None)
+        db_queue.put(None)
     observer.join()
 
     # Wait for all threads to finish

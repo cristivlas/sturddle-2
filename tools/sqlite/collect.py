@@ -1,7 +1,9 @@
+#! /usr/bin/env python3
 import os
 import csv
 import sqlite3
 import argparse
+from tqdm import tqdm
 
 # Define the database schema
 CREATE_TABLE_QUERY = '''
@@ -26,18 +28,15 @@ def create_table(connection):
     with connection:
         connection.execute(CREATE_TABLE_QUERY)
 
-def insert_data(connection, epd, depth, score):
-    with connection:
-        connection.execute(INSERT_QUERY, (epd, depth, score))
-
 def process_file(file_path, connection):
-    with open(file_path, 'r') as file:
-        reader = csv.reader(file)
-        for row in reader:
-            epd, uci_move, depth, score = row
-            depth = int(depth)
-            score = int(score)
-            insert_data(connection, epd, depth, score)
+    with connection:
+        with open(file_path, 'r') as file:
+            reader = csv.reader(file)
+            for row in reader:
+                epd, uci_move, depth, score = row
+                depth = int(depth)
+                score = int(score)
+                connection.execute(INSERT_QUERY, (epd, depth, score))
 
 def main():
     args = parse_arguments()
@@ -50,7 +49,7 @@ def main():
 
     # Iterate over all files in the specified directory
     for root, _, files in os.walk(args.directory):
-        for file in files:
+        for file in tqdm(files):
             file_path = os.path.join(root, file)
             try:
                 process_file(file_path, connection)
