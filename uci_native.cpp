@@ -431,7 +431,7 @@ private:
     void ponderhit();
     void position(const Arguments &args);
     void setoption(const Arguments &args);
-    void stop();
+    void stop(bool flush = false);
     void uci();
     void newgame();
 
@@ -744,8 +744,7 @@ void UCI::run()
         if (args.front() == "quit")
         {
             _output_expected = false;
-            stop();
-            data_flush(context());
+            stop(true);
             break;
         }
         dispatch(cmd, args);
@@ -799,7 +798,7 @@ INLINE void UCI::dispatch(std::string &cmd, const Arguments &args)
         }
         if (tok == "stop")
         {
-            stop();
+            stop(true);
             return;
         }
         break;
@@ -995,7 +994,7 @@ INLINE void UCI::isready()
 
 void UCI::newgame()
 {
-    stop();
+    stop(true);
     search::TranspositionTable::clear_shared_hashtable();
     set_start_position();
     _book_depth = max_depth;
@@ -1138,7 +1137,7 @@ void UCI::setoption(const Arguments &args)
         log_warning(__func__ + (": \"" + opt_name + "\": not found"));
 }
 
-void UCI::stop()
+void UCI::stop(bool flush)
 {
     search::Context::set_time_limit_ms(0);
     _compute_pool->wait_for_tasks([] { search::Context::cancel(); });
@@ -1147,7 +1146,8 @@ void UCI::stop()
 #endif /* OUTOUT_POOL */
     output_best_move<true>();
 
-    data_flush(context());
+    if (flush)
+        data_flush(context());
 }
 
 void UCI::uci()
