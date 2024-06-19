@@ -174,7 +174,8 @@ else:
                 args += ['-stdlib=libc++', '-fexperimental-library']
                 link += [
                     '-fuse-ld=lld',
-                    f'-L/usr/lib/llvm-{get_compiler_major_version()}/lib/',
+                    f'-L/usr/lib/llvm-{cc_ver}/lib/',
+                    f'-L/usr/lib/llvm-{cc_ver}/lib/x86_64-pc-linux-gnu',
                     '-L/usr/local/opt/llvm/lib/c++',
                     '-lc++',
                     '-lc++experimental',
