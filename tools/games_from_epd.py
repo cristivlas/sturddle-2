@@ -111,7 +111,7 @@ def main():
     parser.add_argument('-e', '--engine', default='stockfish')
     parser.add_argument('-o', '--output', default='out.pgn', help='path to output PGN file')
     parser.add_argument('-p', '--ponder', action='store_true')
-    parser.add_argument('-t', '--time', type=float, default=0.01, help='engine time limit')
+    parser.add_argument('-t', '--time', type=float, default=0.1, help='engine time limit')
     parser.add_argument('--hash', type=int, default=512, help='engine hashtable size in MB')
     parser.add_argument('--threads', type=int, default=1, help='engine threads')
 
