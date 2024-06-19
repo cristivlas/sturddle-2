@@ -76,6 +76,8 @@ def main(args):
     clip = args.clip
     dtype = np.uint64
 
+    board = chess.Board()
+
     with SQLConn(*args.input) as sql:
         count = sql.exec(f'SELECT COUNT(*) FROM ({add_range_to_query(args, "SELECT * FROM position")})', echo=True).fetchone()[0]
 
@@ -86,8 +88,6 @@ def main(args):
         print(f'\nWriting out: {args.output}')
         f = h5py.File(args.output, 'x')
         out = f.create_dataset('data', shape=(count, 14), dtype=dtype)
-
-        board = chess.Board()
 
         query = add_range_to_query(args, 'SELECT epd, score from position')
         for i, row in tenumerate(sql.exec(query, echo=True), start=0, total=count, desc='Encoding'):
