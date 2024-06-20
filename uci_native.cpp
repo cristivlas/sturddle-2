@@ -41,6 +41,9 @@ static void raise_runtime_error(const char* err)
 #endif
 #define OUTPUT_POOL false
 
+using ThreadPool = thread_pool<>;
+static auto _compute_pool(std::make_unique<ThreadPool>(1));
+
 static constexpr auto INFINITE = -1;
 static std::string g_out; /* global output buffer */
 
@@ -284,9 +287,10 @@ namespace
      * generate_unique_filename is not transactional, race conditions
      * may occur between generating the name and using the file.
      */
-    using MoveInfo = std::tuple<search::BaseMove, int, score_t>;
+    using MoveData = std::tuple<search::BaseMove, int, score_t>;
+    using EvalData = std::unordered_map<chess::State, MoveData, Hasher<chess::State>>;
 
-    static std::unordered_map<chess::State, MoveInfo, Hasher<chess::State>> g_data;
+    static EvalData g_data;
     static std::string g_data_dir;
 
     static std::string generate_unique_filename(const fs::path& dir, const std::string& extension)
@@ -345,28 +349,32 @@ namespace
     static void data_flush(const search::Context& ctxt, int threshold = DATAGEN_SCORE_THRESHOLD)
     {
         ASSERT_ALWAYS(ctxt.tid() == 0);
-        auto clear = on_scope_exit([]{ g_data.clear(); });
 
-        if (!g_data.empty() && ctxt._score >= threshold && search::eval_insufficient_material(ctxt.state()) != 0)
+        EvalData data;
+        data.swap(g_data);
+
+        if (!data.empty() && ctxt._score >= threshold)
         {
             const auto filename = generate_unique_filename(g_data_dir, ".csv");
-            log_info(std::format("Writing {} positions to: {}", g_data.size(), filename));
+            log_info(std::format("Writing {} positions to: {}", data.size(), filename));
 
-            std::ofstream of(filename);
-            if (!of)
-            {
-                log_error("Could not open file.");
-            }
-            else
-            {
-                for (const auto& pos : g_data)
+            _compute_pool->push_task([filename, data] {
+                std::ofstream of(filename);
+                if (!of)
                 {
-                    of << search::Context::epd(pos.first) << "," << std::get<0>(pos.second)
-                       << "," << std::get<1>(pos.second) << "," << std::get<2>(pos.second)
-                       << std::endl;
+                    log_error("Could not open file.");
                 }
-                of.flush();
-            }
+                else
+                {
+                    for (const auto& pos : data)
+                    {
+                        of << search::Context::epd(pos.first) << "," << std::get<0>(pos.second)
+                        << "," << std::get<1>(pos.second) << "," << std::get<2>(pos.second)
+                        << std::endl;
+                    }
+                    of.flush();
+                }
+            });
         }
     }
 #else
@@ -375,8 +383,6 @@ namespace
     }
 #endif /* DATAGEN */
 } /* namespace */
-
-using ThreadPool = thread_pool<>;
 
 class UCI
 {
@@ -563,7 +569,6 @@ private:
     EngineOptions _options;
     const std::string _name;
     const std::string _version; /* engine version */
-    static std::unique_ptr<ThreadPool> _compute_pool;
 #if OUTPUT_POOL
     static std::unique_ptr<ThreadPool> _output_pool;
 #endif /* OUTPUT_POOL */
@@ -577,8 +582,6 @@ private:
 #if OUTPUT_POOL
 std::unique_ptr<ThreadPool> UCI::_output_pool(std::make_unique<ThreadPool>(1));
 #endif /* OUTPUT_POOL */
-std::unique_ptr<ThreadPool> UCI::_compute_pool(std::make_unique<ThreadPool>(1));
-
 std::atomic_bool UCI::_output_expected(false);
 
 /** Estimate number of moves (not plies!) until mate. */
@@ -1231,4 +1234,3 @@ void uci_loop(Params params)
     raise_runtime_error("Native UCI implementation is not enabled.");
 }
 #endif /* NATIVE_UCI */
-
