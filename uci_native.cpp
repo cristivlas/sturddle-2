@@ -1199,15 +1199,16 @@ void search::data_collect_move(const search::Context& ctxt, const chess::BaseMov
 #if DATAGEN
     if (ctxt.tid() == 0 && ctxt.depth() >= DATAGEN_MIN_DEPTH)
     {
-    #if WITH_NNUE
-        const auto eval = ctxt._eval_raw;
-    #else
+    //#if WITH_NNUE
+    //    const auto eval = ctxt._eval_raw;
+    //#else
         const auto eval = ctxt._score;
-    #endif
+    //#endif
 
         if (!g_data_dir.empty() && is_valid(eval) && move)
         {
-            LOG_DEBUG(std::format("{}: {}, {}/{} {}", ctxt.epd(), move.uci(), ctxt.depth(), ctxt.iteration(), eval));
+            LOG_DEBUG(std::format("{}: {}, {}/{} {}",
+                ctxt.epd(), move.uci(), ctxt.depth(), ctxt.iteration(), eval));
 
             auto i = g_data.find(ctxt.state());
             if (i == g_data.end())
