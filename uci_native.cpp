@@ -283,13 +283,6 @@ namespace
      * ------------
      * generate_unique_filename is not transactional, race conditions
      * may occur between generating the name and using the file.
-     *
-     * The number of generated files gets large very quickly; it is
-     * possible to run ouf of inodes; to mitigate this, the collect2.py
-     * tool should be run in parallel with generating eval data. The
-     * tool monitors the DB dir and processes the CSV files, consolidating
-     * the data into a sqlite3 db; files are deleted once processed.
-     * (The tool is Linux-only).
      */
     using MoveInfo = std::tuple<search::BaseMove, int, score_t>;
 
@@ -351,6 +344,7 @@ namespace
 
     static void data_flush(const search::Context& ctxt, int threshold = DATAGEN_SCORE_THRESHOLD)
     {
+        ASSERT_ALWAYS(ctxt.tid() == 0);
         auto clear = on_scope_exit([]{ g_data.clear(); });
 
         if (!g_data.empty() && ctxt._score >= threshold && search::eval_insufficient_material(ctxt.state()) != 0)
@@ -368,8 +362,10 @@ namespace
                 for (const auto& pos : g_data)
                 {
                     of << search::Context::epd(pos.first) << "," << std::get<0>(pos.second)
-                       << "," << std::get<1>(pos.second) << "," << std::get<2>(pos.second) << "\n";
+                       << "," << std::get<1>(pos.second) << "," << std::get<2>(pos.second)
+                       << std::endl;
                 }
+                of.flush();
             }
         }
     }
@@ -1214,9 +1210,13 @@ void search::data_collect_move(const search::Context& ctxt, const chess::BaseMov
             LOG_DEBUG(std::format("{}: {}, {}/{} {}", ctxt.epd(), move.uci(), ctxt.depth(), ctxt.iteration(), eval));
 
             auto i = g_data.find(ctxt.state());
-            if (i == g_data.end() || std::get<1>(i->second) <= ctxt.depth())
+            if (i == g_data.end())
             {
-                g_data[ctxt.state()] = std::make_tuple(move, ctxt.depth(), eval);
+                g_data.emplace(ctxt.state(), std::make_tuple(move, ctxt.depth(), eval));
+            }
+            else if (std::get<1>(i->second) <= ctxt.depth())
+            {
+                i->second = std::make_tuple(move, ctxt.depth(), eval);
             }
         }
     }
