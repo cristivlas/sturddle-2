@@ -291,8 +291,9 @@ namespace
      * the data into a sqlite3 db; files are deleted once processed.
      * (The tool is Linux-only).
      */
+    using MoveInfo = std::tuple<search::BaseMove, int, score_t>;
 
-    static std::unordered_map<std::string, std::tuple<search::BaseMove, int, score_t>> g_data;
+    static std::unordered_map<chess::State, MoveInfo, Hasher<chess::State>> g_data;
     static std::string g_data_dir;
 
     static std::string generate_unique_filename(const fs::path& dir, const std::string& extension)
@@ -366,7 +367,7 @@ namespace
             {
                 for (const auto& pos : g_data)
                 {
-                    of << pos.first << "," << std::get<0>(pos.second)
+                    of << search::Context::epd(pos.first) << "," << std::get<0>(pos.second)
                        << "," << std::get<1>(pos.second) << "," << std::get<2>(pos.second) << "\n";
                 }
             }
@@ -526,8 +527,6 @@ private:
             }
             std::format_to(std::back_inserter(g_out), "bestmove {}", move.uci());
             output(g_out);
-
-            data_collect_move(context(), move);
         }
     }
 
@@ -1198,32 +1197,37 @@ void uci_loop(Params params)
     if (!err.empty())
         raise_runtime_error(err.c_str());
 }
+
+void search::data_collect_move(const search::Context& ctxt, const chess::BaseMove& move)
+{
+#if DATAGEN
+    if (ctxt.tid() == 0 && ctxt.depth() >= DATAGEN_MIN_DEPTH)
+    {
+    #if WITH_NNUE
+        const auto eval = ctxt._eval_raw;
+    #else
+        const auto eval = ctxt._score;
+    #endif
+
+        if (!g_data_dir.empty() && is_valid(eval) && move)
+        {
+            LOG_DEBUG(std::format("{}: {}, {}/{} {}", ctxt.epd(), move.uci(), ctxt.depth(), ctxt.iteration(), eval));
+
+            auto i = g_data.find(ctxt.state());
+            if (i == g_data.end() || std::get<1>(i->second) <= ctxt.depth())
+            {
+                g_data[ctxt.state()] = std::make_tuple(move, ctxt.depth(), eval);
+            }
+        }
+    }
+#endif /* DATAGEN */
+}
+
 #else
+
 void uci_loop(Params params)
 {
     raise_runtime_error("Native UCI implementation is not enabled.");
 }
 #endif /* NATIVE_UCI */
-
-
-void search::data_collect_move(const search::Context& ctxt, const chess::BaseMove& move)
-{
-#if NATIVE_UCI && DATAGEN
-    if (!g_data_dir.empty() && is_valid(ctxt._eval_raw) && move)
-    {
-        ASSERT(ctxt.get_tt());
-
-        LOG_DEBUG(std::format("data_collect_move[{}]: {} {} {}",
-            ctxt.iteration(), ctxt.epd(), move.uci(), ctxt._eval));
-
-    #if WITH_NNUE
-        const auto eval = ctxt._eval_raw;
-    #else
-        const auto eval = ctxt._eval;
-    #endif
-
-        g_data.emplace(ctxt.epd(), std::make_tuple(move, ctxt.iteration(), eval));
-    }
-#endif /* NATIVE_UCI && DATAGEN */
-}
 
