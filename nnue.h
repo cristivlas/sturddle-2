@@ -161,7 +161,7 @@ namespace nnue
     }
 
     template <typename T>
-    INLINE void one_hot_encode(const State& board, T (&encoding)[897])
+    INLINE void one_hot_encode(const State& board, T (&encoding)[912] /* round_up<16>(897) */)
     {
         const auto& color_masks = board._occupied_co;
         int i = 63;
@@ -209,37 +209,44 @@ namespace nnue
     template <int I, int O, typename T=float, int Scale=1>
     struct Layer
     {
-        static constexpr int INPUTS = I;
+        /* Round up to Vec16s::size() to deal with the 897 inputs. */
+        static constexpr int INPUTS = round_up<16>(I);
         static constexpr int OUTPUTS = O;
 
         ALIGN T _b[OUTPUTS]; /* biases */
         ALIGN T _w[INPUTS][OUTPUTS]; /* weights */
         ALIGN T _wt[OUTPUTS][INPUTS]; /* weights transposed */
 
-        Layer(const float(&w)[INPUTS][OUTPUTS], const float(&b)[OUTPUTS])
+        Layer(const float(&w)[I][OUTPUTS], const float(&b)[OUTPUTS])
         {
             set_weights(w, b);
         }
 
-        void set_weights(const float(&w)[INPUTS][OUTPUTS], const float(&b)[OUTPUTS])
+        void set_weights(const float(&w)[I][OUTPUTS], const float(&b)[OUTPUTS])
         {
             for (int j = 0; j != OUTPUTS; ++j)
                 _b[j] = b[j] * Scale;
 
-            for (int i = 0; i != INPUTS; ++i)
+            for (int i = 0; i != I; ++i)
+            {
                 for (int j = 0; j != OUTPUTS; ++j)
                     _w[i][j] = _wt[j][i] = w[i][j] * Scale;
+            }
+            /* padding, if needed */
+            for (int i = I; i != INPUTS; ++i)
+                for (int j = 0; j != OUTPUTS; ++j)
+                    _w[i][j] = _wt[j][i] = 0;
         }
 
         void set_weights(const std::vector<std::vector<float>>& w, const std::vector<float>& b)
         {
-            if (w.size() != INPUTS || w[0].size() != OUTPUTS || b.size() != OUTPUTS)
+            if (w.size() != I || w[0].size() != OUTPUTS || b.size() != OUTPUTS)
                 throw std::invalid_argument("Input dimensions do not match layer dimensions");
 
-            float weights[INPUTS][OUTPUTS];
+            float weights[I][OUTPUTS];
             float biases[OUTPUTS];
 
-            for (int i = 0; i < INPUTS; ++i)
+            for (int i = 0; i < I; ++i)
                 for (int j = 0; j < OUTPUTS; ++j)
                     weights[i][j] = w[i][j];
 
@@ -275,6 +282,7 @@ namespace nnue
             static_assert(OUTPUTS % N == 0);
 
             constexpr auto R = round_down<N>(INPUTS);
+            static_assert(R == INPUTS); /* expect padded inputs */
 
             Vec16s in, vw, sum[N];
 
@@ -299,11 +307,13 @@ namespace nnue
 
                 auto sums = horizontal_add(sum);
 
+            #if 0 /* not needed when padding up the inputs */
                 for (int i = R; i != INPUTS; ++i)
                 {
                     vw.load_a(&w[i][j]);
                     sums += input[i] * vw;
                 }
+            #endif
                 vw.load_a(&b[j]);
                 (vw + sums).store_a(&output[j]);
             }
@@ -322,9 +332,10 @@ namespace nnue
         )
         {
             constexpr int N = Vector::size();
-            constexpr int Q = (OUTPUTS % N == 0) ? N : 1;
+            constexpr int Q = (OUTPUTS % N == 0) ? N : OUTPUTS % N;
 
             static_assert(INPUTS % N == 0);
+            static_assert(Q == N || Q == 1); /* result layer: Q == 1 */
 
             Vector sum[Q], v_wt, v_in, v_out;
 
@@ -387,7 +398,7 @@ namespace nnue
 
     template <int M, int N, int O> struct Accumulator
     {
-        static constexpr int INPUTS = M;
+        static constexpr int INPUTS = round_up<16>(M);
         static constexpr int OUTPUTS_A = N;
         static constexpr int OUTPUTS_B = O;
 

@@ -358,7 +358,7 @@ namespace
             const auto filename = generate_unique_filename(g_data_dir, ".csv");
             log_info(std::format("Writing {} positions to: {}", data.size(), filename));
 
-            _compute_pool->push_task([filename, data] {
+            //_compute_pool->push_task([filename, data] {
                 std::ofstream of(filename);
                 if (!of)
                 {
@@ -374,7 +374,7 @@ namespace
                     }
                     of.flush();
                 }
-            });
+            //});
         }
     }
 #else
