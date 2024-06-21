@@ -176,7 +176,7 @@ DECLARE_VALUE(  FUTILITY_PRUNING,                     1,    0,       1)
 DECLARE_VALUE(  MULTICUT,                             1,    0,       1)
 DECLARE_CONST(  PREALLOCATE_MOVE_COUNT,             192,    0,     512)
 #if DATAGEN
-DECLARE_PARAM(  DATAGEN_SCORE_THRESHOLD,            750,    0,   30000)
+DECLARE_PARAM(  DATAGEN_SCORE_THRESHOLD,              0,    0,   30000)
 DECLARE_PARAM(  DATAGEN_MIN_DEPTH,                   10, -100,     100)
 #endif
 /* SEE */

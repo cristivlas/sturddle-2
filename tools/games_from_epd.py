@@ -47,7 +47,7 @@ def play_from_position(args, epd, engines):
     except:
         # Log the exception message
         logging.exception(f'Error playing game from position "{epd}"')
-        exit(-1)
+        return
 
     # Initialize the game in PGN format
     game = chess.pgn.Game()
@@ -95,13 +95,18 @@ def generate_games(args, input_paths):
                     # Add the EPD to the set if it is valid
                     epds.add(epd)
     args.total = len(epds)
-    engines = [get_engine(args), get_engine(args)]
 
     for epd in epds:
+        engines = [None, None]
+        engines = [get_engine(args), get_engine(args)]
         play_from_position(args, epd, engines)
+        for i in range(0, 2):
+            try:
+                engines[i].quit()
+            except:
+                logging.exception(f"engine[{i}].quit()")
+            engines[i] = None
 
-    engines[0].quit()
-    engines[1].quit()
 
 def main():
     # Parse the command-line arguments
