@@ -7,11 +7,7 @@ from tqdm import tqdm
 
 # Define the database schema
 CREATE_TABLE_QUERY = '''
-CREATE TABLE IF NOT EXISTS position(
-    epd text PRIMARY KEY,   -- Position
-    depth integer,          -- Analysis Depth
-    score integer           -- Score
-)
+CREATE TABLE IF NOT EXISTS position(epd text, depth integer, score integer)
 '''
 
 INSERT_QUERY = '''

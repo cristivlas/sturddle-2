@@ -74,7 +74,7 @@ def cleanup(engines):
             if engines[i]:
                 engines[i].quit()
         except Exception as e:
-            logging.error(f"engine[{i}].quit(): {e}")
+            logging.error(f"engine[{i}].quit() failed - {e}")
         engines[i] = None
 
 

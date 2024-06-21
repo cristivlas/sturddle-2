@@ -14,13 +14,10 @@ import subprocess
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Define the database schema
+# Define the database schema.
+# Do not define a primary key here, let the merge tools deal with dupes.
 CREATE_TABLE_QUERY = '''
-CREATE TABLE IF NOT EXISTS position(
-    epd text PRIMARY KEY,   -- Position
-    depth integer,          -- Analysis Depth
-    score integer           -- Score
-)
+CREATE TABLE IF NOT EXISTS position(epd text, depth integer, score integer)
 '''
 
 INSERT_QUERY = '''
