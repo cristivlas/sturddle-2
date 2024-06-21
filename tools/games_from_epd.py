@@ -73,8 +73,10 @@ def cleanup(engines):
         try:
             if engines[i]:
                 engines[i].quit()
+        except TimeoutError:
+            logging.warning(f"engine[{i}].quit() timed out")
         except Exception as e:
-            logging.error(f"engine[{i}].quit() failed - {e}")
+            logging.warning(f"engine[{i}].quit() failed: {e}")
         engines[i] = None
 
 
