@@ -67,9 +67,11 @@ def process_queue(file_queue, db_queue):
         if file_path is None:
             file_queue.task_done()
             break
-        while is_file_open(file_path):
-            logging.warning(f"File {file_path} is open by another process, retrying...")
-            time.sleep(1)
+        if is_file_open(file_path):
+            file_queue.put(file_path)
+            logging.info("File %s is open by another process, re-queued.", file_path)
+            time.sleep(3)
+            continue
         try:
             process_file(file_path, db_queue)
         except Exception as e:
