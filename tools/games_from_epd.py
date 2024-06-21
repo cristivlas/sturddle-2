@@ -44,10 +44,11 @@ def play_from_position(args, epd, engines):
             result = engines[board.turn].play(board, game=game, limit=limit, ponder=args.ponder)
             if result:
                 board.push(result.move)
-    except:
+
+    except Exception as e:
         # Log the exception message
-        logging.exception(f'Error playing game from position "{epd}"')
-        return
+        logging.error(f'Error playing game from position "{epd}": {e}')
+        quit()
 
     # Initialize the game in PGN format
     game = chess.pgn.Game()
@@ -65,6 +66,17 @@ def play_from_position(args, epd, engines):
     # Save the game in PGN format to the output file
     with open(args.output, 'a') as f:
         f.write(game.accept(chess.pgn.StringExporter()) + '\n\n')
+
+
+def cleanup(engines):
+    for i in range(0, 2):
+        try:
+            if engines[i]:
+                engines[i].quit()
+        except Exception as e:
+            logging.error(f"engine[{i}].quit(): {e}")
+        engines[i] = None
+
 
 def generate_games(args, input_paths):
     # Initialize an empty set to store the EPDS
@@ -98,15 +110,14 @@ def generate_games(args, input_paths):
 
     for epd in epds:
         engines = [None, None]
-        engines = [get_engine(args), get_engine(args)]
-        play_from_position(args, epd, engines)
-        for i in range(0, 2):
-            try:
-                engines[i].quit()
-            except:
-                logging.exception(f"engine[{i}].quit()")
-            engines[i] = None
-
+        try:
+            engines = [get_engine(args), get_engine(args)]
+            play_from_position(args, epd, engines)
+            cleanup(engines)
+        except KeyboardInterrupt:
+            logging.info("Interrupted.")
+            cleanup(engines)
+            return
 
 def main():
     # Parse the command-line arguments
