@@ -76,7 +76,7 @@ def cleanup(engines):
         except TimeoutError:
             logging.warning(f"engine[{i}].quit() timed out")
         except Exception as e:
-            logging.warning(f"engine[{i}].quit() failed: {e}")
+            logging.warning(f"engine[{i}].quit() {e.__class__.__name__} {e}")
         engines[i] = None
 
 
