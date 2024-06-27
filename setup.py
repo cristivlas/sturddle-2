@@ -44,8 +44,8 @@ def get_compiler_major_version(compiler=None):
 
     version_string = subprocess.check_output([compiler, '--version']).decode('utf-8')
 
-    # This pattern looks for the first digit(s), followed by a dot, followed by any digit(s) and then a dash or space.
-    # That should match the major.minor part of the version.
+    # This pattern looks for the first digit(s), followed by a dot, followed by any digit(s)
+    # and then a dash or space. That should match the major.minor part of the version.
     version_pattern = re.compile(r'(\d+)\.\d+\.\d+')
     version = version_pattern.search(version_string)
     if version:
@@ -129,7 +129,10 @@ if platform.startswith('win'):
             '-Wno-unused-command-line-argument',
             '-Wno-unused-variable',
         ]
+    else:
+        link += ['/LTCG:OFF']
 else:
+    # Linux, Mac
     STDCPP=20 if NATIVE_UCI else 17
 
     # Linux and Mac

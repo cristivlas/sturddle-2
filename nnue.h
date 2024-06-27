@@ -93,6 +93,8 @@ namespace nnue
     static const std::string instrset = ARCH;
 #endif /* __FMA__ */
 
+    static const Vector v_zero(0.0);
+
     INLINE Vec16s horizontal_add(const Vec16s (&v)[16])
     {
         return Vec16s(
@@ -685,8 +687,6 @@ namespace nnue
             l2_in[i] *= attn_out[i % ATTN::OUTPUTS];
         }
     #endif /* !vectorized */
-
-        static const Vector v_zero(0.0);
 
         l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
         l3.dot(l2_out, l3_out, [](const Vector& v) { return max(v, v_zero); });
