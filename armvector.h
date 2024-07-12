@@ -227,7 +227,7 @@ INLINE Vec8f mul_add(const Vec8f& a, const Vec8f& b, const Vec8f& c)
 #endif /* __ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
 
 
-#if 0 /* Emulate with SIMDE */
+#if !__APPLE__ /* Emulate with SIMDE */
 class Vec16s
 {
     __m256i ymm;
