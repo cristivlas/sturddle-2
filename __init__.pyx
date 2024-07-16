@@ -1278,12 +1278,11 @@ _tb = chess.syzygy.Tablebase()
 _tb_paths = []
 
 def _tb_init():
+    cwd = os.getcwd()
     syzygy_path_list = Context.syzygy_path().decode().split(os.pathsep)
     for syzygy_path in syzygy_path_list:
         if not os.path.isabs(syzygy_path):
-            syzygy_path = os.path.realpath(
-                os.path.join(os.path.dirname(sys.argv[0]), syzygy_path)
-            )
+            syzygy_path = os.path.realpath(os.path.join(cwd, syzygy_path))
         try:
             _tb.add_directory(syzygy_path)
             _tb_paths.append(syzygy_path)
