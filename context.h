@@ -1497,7 +1497,7 @@ namespace search
 
             if (other >= capture_gain && abs(ctxt._score) < MATE_HIGH)
             {
-                other = eval_exchanges<true>(ctxt.tid(), move);
+                other = eval_exchanges<false>(ctxt.tid(), move);
 
                 if (EXCHANGES_DETECT_CHECKMATE && other < MATE_LOW)
                 {

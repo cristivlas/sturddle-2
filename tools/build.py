@@ -113,7 +113,7 @@ if __name__ == '__main__':
     data = f'--add-data={BOOK}{os.path.pathsep}.'
 
     # run PyInstaller
-    if run_cmd(f'{installer} {script} -p . --onefile {" ".join(libs)} {data}'):
+    if run_cmd(f'{installer} {script} -p . --onefile {" ".join(libs)} {data} --icon chess.ico --hide-console hide-early'):
         print('pyinstaller failed')
         sys.exit(-2)
 
