@@ -86,7 +86,9 @@ def _configure_logging(args):
 
 '''
 Workaround for --onefile executable built with PyInstaller:
-hide the console if not running from a CMD prompt or Windows Terminal
+hide the console if not running from a CMD prompt or Windows Terminal.
+
+PyInstaller 6.9.0 has --hide-console, not available in 5.7.0
 '''
 def _hide_console():
     # Running under Windows, but not from under CMD.EXE or Windows Terminal (PowerShell)?
