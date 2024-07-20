@@ -480,61 +480,6 @@ namespace search
         return i >= 32 || piece_squares[side][i] == Square::UNDEFINED;
     }
 
-    /*
-     * An alternative SEE implementation than aims to be simpler
-     * and perhaps more efficient than estimate_static_exchanges.
-     * Does not handle supporting attacks, pinned pieces, checks, etc.,
-     * which is ok; this is only used for reordering capturing moves.
-     */
-    INLINE score_t see(const State& pos, chess::Color side_to_move, Square square)
-    {
-        score_t val = 0;
-        score_t target_val = chess::WEIGHT[pos.piece_type_at(square)];
-        ASSERT(target_val); /* expected to be called after a move to square */
-
-        const auto occupancy_mask = pos.occupied();
-        const Bitboard attacks[] = {
-            pos.attackers_mask(chess::Color::BLACK, square, occupancy_mask),
-            pos.attackers_mask(chess::Color::WHITE, square, occupancy_mask),
-        };
-        PieceSquares piece_squares[2];
-        piece_squares[chess::BLACK].fill(Square::UNDEFINED);
-        piece_squares[chess::WHITE].fill(Square::UNDEFINED);
-        size_t index[2] = {0, 0}; /* indices into piece_squares */
-
-        for (const auto c : { chess::BLACK, chess::WHITE })
-        {
-            size_t i = 0;
-            chess::for_each_square(attacks[c], [c, &piece_squares, &i] (Square s) {
-                piece_squares[c][i++] = s;
-            });
-            /* sort by least valuable attacker/defender */
-            insertion_sort(piece_squares[c].begin(), piece_squares[c].begin() + i,
-                [&pos](Square lhs, Square rhs) {
-                    return pos.piece_type_at(lhs) < pos.piece_type_at(rhs);
-                });
-        }
-
-        for (auto side = side_to_move;; chess::flip(side))
-        {
-            /* ran out of attackers or defenders? done */
-            if (depleted(piece_squares, index, side))
-                break;
-            const auto i = index[side]++;
-            const auto piece_type = pos.piece_type_at(piece_squares[side][i]);
-            /* king cannot recapture if the other side actively attacks the square */
-            if (piece_type == chess::KING && !depleted(piece_squares, index, !side))
-                break;
-            if (side == side_to_move)
-                val += target_val;
-            else if (val <= target_val)
-                return 0; /* assume side_to_move will not initiate exchanges of net loss */
-            else
-                val -= target_val;
-            target_val = chess::WEIGHT[piece_type];
-        }
-        return val;
-    }
 
     /*
      * Evaluate same square exchanges. Called by make_captures.
@@ -552,10 +497,7 @@ namespace search
             if constexpr(StaticExchangeEvaluation)
             {
                 /* Approximate without playing the moves. */
-                if constexpr(USE_SIMPLE_SEE)
-                    val = see(*move._state, move._state->turn, move.to_square());
-                else
-                    val = estimate_static_exchanges(*move._state, move._state->turn, move.to_square());
+                val = estimate_static_exchanges(*move._state, move._state->turn, move.to_square());
             }
             else
             {
@@ -1719,4 +1661,3 @@ INLINE void _uci_loop(std::unordered_map<std::string, std::string> params) noexc
 {
     cython_wrapper::call_nogil(uci_loop, params);
 }
-
