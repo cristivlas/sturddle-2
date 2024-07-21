@@ -160,7 +160,7 @@ Config::Namespace Config::_namespace = {
 
 static constexpr int HASH_MIN = 16; /* MB */
 
-/* Min-max range is useful when exposing params via UCI (see sturddle.py) */
+/* Min-max range is useful when exposing params via UCI. */
 /****************************************************************************
  *              NAME                                VALUE  MIN      MAX
  ****************************************************************************/
@@ -174,10 +174,9 @@ DECLARE_PARAM(  EVAL_FUZZ,                            0,    0,     100)
 DECLARE_CONST(  FIFTY_MOVES_RULE,                     1,    0,       1)
 DECLARE_VALUE(  FUTILITY_PRUNING,                     1,    0,       1)
 DECLARE_VALUE(  MULTICUT,                             1,    0,       1)
-DECLARE_CONST(  PREALLOCATE_MOVE_COUNT,             192,    0,     512)
 #if DATAGEN
-DECLARE_PARAM(  DATAGEN_SCORE_THRESHOLD,              0,    0,   30000)
-DECLARE_PARAM(  DATAGEN_MIN_DEPTH,                   10, -100,     100)
+DECLARE_CONST(  DATAGEN_SCORE_THRESHOLD,              0,    0,   30000)
+DECLARE_CONST(  DATAGEN_MIN_DEPTH,                   10, -100,     100)
 #endif
 /* SEE */
 /* -1 disables pin awareness */
