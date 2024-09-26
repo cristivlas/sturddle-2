@@ -1263,7 +1263,7 @@ def read_config(fname='sturddle.cfg', echo=False):
 
 
 # ---------------------------------------------------------------------
-# optional / experimental FEN parsing (needs -DNATIVE_UCI at compile-time)
+# Call native C++ FEN parsing (needs -DNATIVE_UCI at compile-time)
 # ---------------------------------------------------------------------
 def board_from_fen(fen: str):
     board = BoardState()
@@ -1349,7 +1349,7 @@ def version():
 
 
 # ---------------------------------------------------------------------
-# Experimental: native C++ UCI implementation
+# Call native C++ UCI implementation
 # ---------------------------------------------------------------------
 def uci(name: str, debug: bool=False):
     cdef unordered_map[string, string] c_param
