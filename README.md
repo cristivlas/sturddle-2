@@ -20,6 +20,9 @@ If built with the `NATIVE_UCI` flag, invoke `main.py` to run the UCI engine.
 Without the `NATIVE_UCI` flag, run `sturddle.py` instead.
 
 ## Training the Neural Net
+I have trained the neural net on a large dataset that I generated and curated over a couple of years.
+
+To start from scratch:
 
 1) Start with games saved as PGN (downloaded from the Internet, or from engine tournaments).
 2) Generate sqlite3 database(s) of positions from PGN games, using: `tools/sqlite/mkposdb.py`.
@@ -28,9 +31,10 @@ scripts require a UCI engine for analysis (such Sturddle 1.xx, Stockfish, etc.).
 
 Alternatively:
 - Download PGNs from https://database.lichess.org/ and extract
-evaluations using `tools/sqlite/pgntoevals.py`.
+evaluations using `tools/sqlite/pgntoevals.py`, or
 - Download binpack files, convert them to plain using a development version
-of Stockfish, then use `tools/sqlite/plaintodb.py`.
+of Stockfish, then use `tools/sqlite/plaintodb.py`, or
+- Generate datasets with this engine, by compiling it with DATAGEN enabled (please refer to the source code for details).
 
 4) Generate HDF5 file(s) from database(s) produced by any of the methods above: use `tools/nnue/toh5.py`.
 
