@@ -302,7 +302,7 @@ using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
 static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
 
 /*
- * The accumulator takes the inputs and process them into two outputs,
+ * The accumulator takes the inputs and processes them into two outputs,
  * using (hidden) neural layers L1A and L1B. L1B processes only the 1st
  * 128 inputs, which correspond to kings and pawns. The output of L1B is
  * processed by the dynamic weights layer (attention layer). The outputs
@@ -342,33 +342,11 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
     else
     {
         auto& prev = NNUE_data[t][_ply - 1];
-    #if true
+
         if (prev.needs_update(_parent->state()))
         {
             _parent->eval_nnue_raw(true);
         }
-    #else
-        for (int ply = 0; ply < _ply; ++ply)
-        {
-            Context* const c = _context_stacks[t][ply].as_context()->_parent;
-            ASSERT(c->_ply == ply);
-
-            auto& a = NNUE_data[t][ply];
-            if (a.needs_update(c->state()))
-            {
-                if (ply == 0) /* c->is_root() */
-                {
-                    a.update(L1A, L1B, c->state());
-                }
-                else
-                {
-                    a.update(L1A, L1B, c->_parent->state(), c->state(), c->_move, NNUE_data[t][ply - 1]);
-                }
-                c->_eval_raw = SCORE_MIN;
-            }
-        }
-    #endif
-
         acc.update(L1A, L1B, _parent->state(), state(), _move, prev);
     }
 
@@ -1076,6 +1054,7 @@ namespace search
 #if !WITH_NNUE
     /*----------------------------------------------------------------------
      * Tactical evaluations.
+     * Hand-crafted evaluations are not compiled when using NNUE evals.
      * All tactical scores are computed from the white side's perspective.
      *----------------------------------------------------------------------*/
     static INLINE int eval_center(const State& state, int pc)
