@@ -34,6 +34,7 @@ class thread_pool
 {
 public:
     using mutex_type = std::mutex;
+    using task_type = typename Container::value_type;
     using thread_id_type = int;
 
     explicit thread_pool(size_t thread_count)
@@ -114,7 +115,7 @@ private:
 
         while (is_running())
         {
-            std::function<void()> task;
+            task_type task;
 
             {   /* mutex scope */
                 std::unique_lock<mutex_type> lock(_mutex);
@@ -142,7 +143,7 @@ private:
                 /* if task wraps a lambda, ensure that all variables captured
                  * by value go out of scope before decrementing _tasks_pending
                  */
-                task = nullptr;
+                task = task_type();
 
                 {
                     std::unique_lock<mutex_type> lock(_mutex);

@@ -1093,7 +1093,11 @@ static score_t search_iteration(Context& ctxt, TranspositionTable& table, score_
 /****************************************************************************
  * Lazy SMP. https://www.chessprogramming.org/Lazy_SMP
  ****************************************************************************/
+#if 0
 using ThreadPool = thread_pool<std::vector<std::function<void()>>, false>;
+#else
+using ThreadPool = thread_pool<std::vector<class SearchTask>, false>; // LIFO
+#endif
 
 static std::unique_ptr<ThreadPool> threads;
 
@@ -1117,6 +1121,35 @@ struct TaskData
     Context* _ctxt = nullptr;
     TranspositionTable _tt;
     ContextBuffer _raw_mem;
+};
+
+class SearchTask
+{
+    Context* _ctxt = nullptr;
+    TranspositionTable* _tt = nullptr;
+    score_t _score = SCORE_MIN;
+
+public:
+    SearchTask() = default;
+
+    SearchTask(Context* ctxt, TranspositionTable* tt, score_t score)
+        : _ctxt(ctxt)
+        , _tt(tt)
+        , _score(score)
+    {}
+
+    void operator()()
+    {
+        _tt->_tid = ThreadPool::thread_id();
+        search_iteration(*_ctxt, *_tt, _score);
+    }
+
+    void swap(SearchTask& other)
+    {
+        std::swap(_ctxt, other._ctxt);
+        std::swap(_tt, other._tt);
+        std::swap(_score, other._score);
+    }
 };
 
 
@@ -1169,10 +1202,14 @@ public:
             auto t_ctxt = _tables[i]._ctxt;
             auto tt = &_tables[i]._tt;
 
+        #if 0
             threads->push_task([t_ctxt, tt, score]() mutable {
                 tt->_tid = ThreadPool::thread_id();
                 search_iteration(*t_ctxt, *tt, score);
             });
+        #else
+            threads->push_task(SearchTask(t_ctxt, tt, score));
+        #endif
         }
     }
 
