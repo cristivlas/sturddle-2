@@ -587,6 +587,7 @@ namespace search
         ctxt->_is_null_move = _is_null_move;
         ctxt->_double_ext = _double_ext;
         ctxt->_extension = _extension;
+
         return ctxt;
     }
 
@@ -1743,7 +1744,8 @@ namespace search
         const int depth = this->depth();
 
         /* late move pruning */
-        if (depth > 0 && count >= LMP[depth] * late_move_prune_factor() && can_prune())
+        const int cutoff = LMP[depth] * late_move_prune_factor() + (tid() % 2 == 0);
+        if (depth > 0 && count >= cutoff && can_prune())
             return LMRAction::Prune;
 
         /* no reductions at very low depth and in qsearch */

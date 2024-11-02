@@ -243,7 +243,6 @@ namespace search
 
         INLINE void init() { clear(); shift(); increment_clock(); _eval_depth = 0; }
 
-        int _tid = 0;
         int _iteration = 0;
         int _eval_depth = 0;
         PV  _pv; /* principal variation */

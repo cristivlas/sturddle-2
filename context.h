@@ -253,11 +253,12 @@ namespace search
         score_t     _eval = SCORE_MIN; /* static eval */
         score_t     _eval_raw = SCORE_MIN; /* unscaled _eval */
 
-        int         _extension = 0; /* count pending fractional extensions */
+        int         _extension = 0; /* pending fractional extensions */
         int         _fifty = 0;
         int         _full_depth_count = late_move_reduction_count();
         int         _mate_detected = 0;
         int         _pruned_count = 0;
+        int         _tid = 0;       /* thread (task) id */
 
         Move        _move;          /* from parent to current state */
         BaseMove    _best_move;
@@ -265,7 +266,7 @@ namespace search
         BaseMove    _prev;          /* best move from previous iteration */
         BaseMove    _excluded;      /* singular extension search */
 
-        State*      _state = nullptr;
+        State*      _state = nullptr; /* state of the chess board */
         TT_Entry    _tt_entry;
         Square      _capture_square = Square::UNDEFINED;
 
@@ -377,7 +378,8 @@ namespace search
         INLINE void set_tt(TranspositionTable* tt) { _tt = tt; }
         bool        should_verify_null_move() const;
         int         singular_margin() const;
-        int         tid() const { return _tt ? _tt->_tid : 0; }
+        int         tid() const { return _tid; }
+
         static int  time_limit() { return _time_limit.load(std::memory_order_relaxed); }
         Color       turn() const { return state().turn; }
 
@@ -1038,6 +1040,7 @@ namespace search
             ctxt->_is_null_move = true;
         }
 
+        ctxt->_tid = _tid;
         ctxt->_algorithm = _algorithm;
         ctxt->_parent = this;
         ctxt->_max_depth = _max_depth;

@@ -799,6 +799,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         auto s_ctxt = ctxt.clone(buf, ctxt._ply + 2);
 
                         s_ctxt->set_tt(ctxt.get_tt());
+                        s_ctxt->_tid = ctxt.tid();
                         s_ctxt->_excluded = next_ctxt->_move;
                         s_ctxt->_max_depth = s_ctxt->_ply + (ctxt.depth() - 1) / 2;
                         s_ctxt->_alpha = s_beta - 1;
@@ -1133,17 +1134,15 @@ class SearchTask
 public:
     SearchTask() = default;
 
-    SearchTask(TaskData* data, size_t tid, score_t score)
+    SearchTask(TaskData* data, score_t score)
         : _data(data)
         , _score(score)
-    {
-        // Use the _tables index (passed by caller) as task id,
-        // to avoid overhead from accessing thread-local data.
-        _data->_tt._tid = tid;
-    }
+    {}
 
     INLINE void operator()() const
     {
+        _data->_ctxt->_tid = ThreadPool::thread_id();
+
         search_iteration(*_data->_ctxt, _data->_tt, _score);
     }
 
@@ -1210,7 +1209,7 @@ public:
                 search_iteration(*t_ctxt, *tt, score);
             });
         #else
-            threads->push_task(SearchTask(&_tables[i], i + 1, score));
+            threads->push_task(SearchTask(&_tables[i], score));
         #endif
         }
     }
