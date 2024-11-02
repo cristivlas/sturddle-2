@@ -1096,6 +1096,8 @@ static score_t search_iteration(Context& ctxt, TranspositionTable& table, score_
 #if 0
 using ThreadPool = thread_pool<std::vector<std::function<void()>>, false>;
 #else
+// Use explicit functor (SearchTask) to avoid overhead from std::function
+// type erasure.
 using ThreadPool = thread_pool<std::vector<class SearchTask>, false>; // LIFO
 #endif
 
@@ -1125,29 +1127,29 @@ struct TaskData
 
 class SearchTask
 {
-    Context* _ctxt = nullptr;
-    TranspositionTable* _tt = nullptr;
+    TaskData* _data = nullptr;
     score_t _score = SCORE_MIN;
 
 public:
     SearchTask() = default;
 
-    SearchTask(Context* ctxt, TranspositionTable* tt, score_t score)
-        : _ctxt(ctxt)
-        , _tt(tt)
+    SearchTask(TaskData* data, size_t tid, score_t score)
+        : _data(data)
         , _score(score)
-    {}
-
-    void operator()()
     {
-        _tt->_tid = ThreadPool::thread_id();
-        search_iteration(*_ctxt, *_tt, _score);
+        // Use the _tables index (passed by caller) as task id,
+        // to avoid overhead from accessing thread-local data.
+        _data->_tt._tid = tid;
     }
 
-    void swap(SearchTask& other)
+    INLINE void operator()() const
     {
-        std::swap(_ctxt, other._ctxt);
-        std::swap(_tt, other._tt);
+        search_iteration(*_data->_ctxt, _data->_tt, _score);
+    }
+
+    INLINE void swap(SearchTask& other)
+    {
+        std::swap(_data, other._data);
         std::swap(_score, other._score);
     }
 };
@@ -1198,17 +1200,17 @@ public:
             _tables[i]._ctxt->_max_depth += (i % 2) == 0;
             _tables[i]._ctxt->set_tt(&_tables[i]._tt);
 
+        #if 0
             /* pass context and TT pointers to thread task */
             auto t_ctxt = _tables[i]._ctxt;
             auto tt = &_tables[i]._tt;
 
-        #if 0
             threads->push_task([t_ctxt, tt, score]() mutable {
                 tt->_tid = ThreadPool::thread_id();
                 search_iteration(*t_ctxt, *tt, score);
             });
         #else
-            threads->push_task(SearchTask(t_ctxt, tt, score));
+            threads->push_task(SearchTask(&_tables[i], i + 1, score));
         #endif
         }
     }
