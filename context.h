@@ -567,7 +567,7 @@ namespace search
                 (_parent != nullptr)
                 && !is_pv_node()
                 && !_excluded
-                && (state().pushed_pawns_score <= 1)
+                && (state().pushed_pawns_score <= 2)
                 && !state().just_king_and_pawns()
                 && (_parent->_mate_detected == 0 || _parent->_mate_detected % 2)
                 && !is_check();
