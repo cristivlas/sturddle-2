@@ -1254,6 +1254,12 @@ namespace search
         }
         int time_limit = millisec / moves;
 
+        /* Apply per-move time bonus, if any */
+        if (const auto bonus = ctrl.increments[side_to_move])
+        {
+            time_limit += bonus;
+        }
+
         /*
          * If there's a time deficit, and search improved: lower the time limit.
          */
