@@ -914,8 +914,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         if (ctxt.depth() >= COUNTER_MOVE_MIN_DEPTH)
                             table.store_countermove(ctxt);
 
+                    #if KILLER_MOVE_HEURISTIC
                         if (ctxt._alpha + KILLER_MOVES_MARGIN / ctxt.depth() >= ctxt._beta)
                             table.store_killer_move(ctxt);
+                    #endif /* KILLER_MOVE_HEURISTIC */
 
                         if (next_ctxt->depth() >= HISTORY_MIN_DEPTH)
                             table.history_update_cutoffs(next_ctxt->_move);

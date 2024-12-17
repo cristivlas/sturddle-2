@@ -2056,8 +2056,12 @@ namespace search
             size_t      count,
             score_t     futility)
     {
+    #if KILLER_MOVE_HEURISTIC
         const KillerMoves* const killer_moves = (Phase == 2 && ctxt.depth() > 0)
             ? ctxt._tt->get_killer_moves(ctxt._ply) : nullptr;
+    #else
+        constexpr KillerMoves* const killer_moves = nullptr;
+    #endif /* KILLER_MOVE_HEURISTIC */
 
         /* Confidence bar for historical scores */
         const double hist_high = (Phase == 3) ? hist_thresholds[ctxt.iteration()] : 0;

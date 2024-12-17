@@ -78,7 +78,7 @@ using score_t = int;
   #define NATIVE_UCI                        false
 #endif /* NATIVE_UCI */
 
-#define KILLER_MOVE_HEURISTIC               true
+#define KILLER_MOVE_HEURISTIC               false
 
 #define MTDF_CSTAR_BISECT                   true
 
