@@ -87,7 +87,7 @@ namespace search
     template<std::size_t... I>
     static constexpr std::array<int, sizeof ... (I)> lmp(std::index_sequence<I...>)
     {
-        return { static_cast<int>(LMP_BASE + pow(I + .5, 1.9)) ... };
+        return { static_cast<int>(LMP_BASE + 2 * I + pow(I, 1.5)) ... };
     }
 
 
