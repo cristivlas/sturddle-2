@@ -239,11 +239,11 @@ void TranspositionTable::store(Context& ctxt, TT_Entry& entry, int depth)
 }
 
 
+#if KILLER_MOVE_HEURISTIC
 void TranspositionTable::store_killer_move(const Context& ctxt)
 {
     ASSERT(ctxt._score); /* do not store draws */
 
-#if KILLER_MOVE_HEURISTIC
     ASSERT(ctxt._ply < PLY_MAX);
 
     if (ctxt.depth() < KILLER_MOVES_MIN_DEPTH)
@@ -264,8 +264,8 @@ void TranspositionTable::store_killer_move(const Context& ctxt)
         killers[0]._score = ctxt._score;
         killers[0]._state = nullptr; /* prevent accidental use */
     }
-#endif /* KILLER_MOVE_HEURISTIC */
 }
+#endif /* KILLER_MOVE_HEURISTIC */
 
 
 inline void log_invalid_pv(
