@@ -1740,14 +1740,17 @@ namespace search
         ASSERT(!is_null_move());
         ASSERT(_parent);
 
+        if (count < _parent->_full_depth_count)
+            return LMRAction::None;
+
         const int depth = this->depth();
 
         /* late move pruning */
         if (depth > 0 && count >= LMP[depth] * late_move_prune_factor() && can_prune())
             return LMRAction::Prune;
 
-        /* no reductions at very low depth and in qsearch */
-        if (depth < 3 || count < _parent->_full_depth_count || !can_reduce())
+        /* no reductions at low depths and in qsearch */
+        if (depth < 3 || !can_reduce())
             return LMRAction::None;
 
         /* Lookup reduction in the Late Move Reduction table. */
@@ -1760,13 +1763,15 @@ namespace search
 
             if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * HALF_WINDOW && iteration() >= 13)
                 ++reduction;
+
             reduction -= _parent->history_count(_move) / HISTORY_COUNT_HIGH;
         }
 
-        if (is_capture() || (_move.from_square() == _parent->_capture_square))
+        if (is_capture())
             --reduction;
 
         reduction = std::max(1, reduction);
+
         if (reduction > depth && can_prune())
             return LMRAction::Prune;
 
