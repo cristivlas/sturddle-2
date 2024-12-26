@@ -1474,6 +1474,13 @@ namespace search
         #endif /* !SIMPLE_CAPTURES_ORDERING */
 
             move._score = capture_gain;
+
+            const auto pushed_pawn_score = chess::score_pushed_pawns(ctxt.state(), move.to_square());
+            if (pushed_pawn_score > 0)
+            {
+                ASSERT(ctxt.state().piece_type_at(move.to_square()) == chess::PieceType::PAWN);
+                move._score += CAPTURE_PUSHED_PAWN_BONUS * pow2(pushed_pawn_score);
+            }
         }
     }
 

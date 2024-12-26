@@ -152,21 +152,20 @@ namespace
  */
 struct LMR
 {
-    int _table[PLY_MAX][64] = { { 0 }, { 0 } };
+    static auto constexpr MAX_MOVE = 128;
+
+    int _table[PLY_MAX][MAX_MOVE] = { { 0 }, { 0 } };
 
     LMR()
     {
         for (int depth = 1; depth < PLY_MAX; ++depth)
         {
-            for (int moves = 1; moves < 64; ++moves)
+            for (int moves = 1; moves < MAX_MOVE; ++moves)
             {
                 const auto v = 0.5 + log(depth) * log(moves) / 2;
                 const auto e = (100 + depth) / 100.0;
 
                 _table[depth][moves] = int(pow(v, e));
-
-                // std::cout << "[" << depth << "][" << moves << "]: " << int(v);
-                // std::cout << ", " << int(pow(v, e)) << std::endl;
             }
         }
     }
@@ -1754,7 +1753,7 @@ namespace search
             return LMRAction::None;
 
         /* Lookup reduction in the Late Move Reduction table. */
-        auto reduction = LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)];
+        auto reduction = LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 127)];
 
         if (_move._group != MoveOrder::TACTICAL_MOVES)
         {
@@ -2049,6 +2048,13 @@ namespace search
         return { logistic(I) ... };
     }
 
+
+    static INLINE bool is_capture(const Move& move, const Context& ctxt)
+    {
+        return move._state ? (move._state->capture_value != 0) : ctxt.state().is_capture(move);
+    }
+
+
     /* Phase 3 */
     static const auto hist_thresholds = thresholds(std::make_index_sequence<PLY_MAX>{});
 
@@ -2118,7 +2124,7 @@ namespace search
             /* Captures and killer moves. */
             else if constexpr (Phase == 2)
             {
-                if (move._state ? move._state->capture_value : ctxt.state().is_capture(move))
+                if (is_capture(move, ctxt))
                 {
                     make_capture(ctxt, move);
                     ASSERT(move._group != MoveOrder::UNORDERED_MOVES);

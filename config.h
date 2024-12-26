@@ -187,6 +187,7 @@ DECLARE_ALIAS(  SMP_CORES, Threads,                   1,    1, THREAD_MAX)
 
 GROUP(Search)
 DECLARE_VALUE(  CAPTURES_SCALE,                      99,    0,     150)
+DECLARE_VALUE(  CAPTURE_PUSHED_PAWN_BONUS,           25,    0,    1200)
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
 DECLARE_VALUE(  DOUBLE_EXT_MARGIN,                 1354,    0,    2000)
 DECLARE_VALUE(  DOUBLE_EXT_MAX,                      12,    0,     100)

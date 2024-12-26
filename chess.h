@@ -1195,18 +1195,25 @@ namespace chess
         mutable _endgame = ENDGAME_UNKNOWN;
     }; /* State */
 
-    INLINE int score_pushed_pawns(const State& state, const BaseMove& move)
+
+    INLINE int score_pushed_pawns(const State& state, const Square& square)
     {
         static constexpr int scores[2][8] = {
             { 0, 3, 2, 1, 0, 0, 0, 0 },
             { 0, 0, 0, 0, 1, 2, 3, 0 },
         };
 
-        if (state.pawns & BB_SQUARES[move.to_square()])
+        if (state.pawns & BB_SQUARES[square])
         {
-            return scores[!state.turn][square_rank(move.to_square())];
+            return scores[!state.turn][square_rank(square)];
         }
         return 0;
+    }
+
+
+    INLINE int score_pushed_pawns(const State& state, const BaseMove& move)
+    {
+        return score_pushed_pawns(state, move.to_square());
     }
 
 
