@@ -104,7 +104,9 @@ std::string Config::_group;
 #define GROUP(x) Config::Group __##x(_TOSTR(x));
 
 Config::Namespace Config::_namespace = {
+#if PUSHED_PAWN_TUNING_ENABLED
     { "PUSHED_PAWN_BONUS", Config::Param{ &chess::PUSHED_PAWN_BONUS, 0, 100, "Weights"} },
+#endif /* PUSHED_PAWN_TUNING_ENABLED */
 
 #if MOBILITY_TUNING_ENABLED
     /* Piece mobility coefficients */

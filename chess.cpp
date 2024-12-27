@@ -47,7 +47,9 @@ namespace chess
     int WEIGHT[] = DEFAULT_WEIGHTS;
 #endif
 
+#if PUSHED_PAWN_TUNING_ENABLED
     int PUSHED_PAWN_BONUS = 10;
+#endif
 
     AttackMasks BB_DIAG_MASKS, BB_FILE_MASKS, BB_RANK_MASKS;
 

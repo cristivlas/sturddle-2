@@ -328,7 +328,11 @@ namespace chess
 #define DEFAULT_MOBILITY_WEIGHTS { 0, 0, 0, 7, 6, 5, 0 }
 #define DEFAULT_WEIGHTS { 0, 85, 319, 343, 522, 986, 20000 }
 
-extern int PUSHED_PAWN_BONUS;
+#if PUSHED_PAWN_TUNING_ENABLED
+    extern int PUSHED_PAWN_BONUS;
+#else
+    static constexpr int PUSHED_PAWN_BONUS = 10;
+#endif
 
 #if MOBILITY_TUNING_ENABLED
     extern int MOBILITY[7];
