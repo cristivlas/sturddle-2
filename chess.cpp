@@ -47,6 +47,8 @@ namespace chess
     int WEIGHT[] = DEFAULT_WEIGHTS;
 #endif
 
+    int PUSHED_PAWN_BONUS = 10;
+
     AttackMasks BB_DIAG_MASKS, BB_FILE_MASKS, BB_RANK_MASKS;
 
     Bitboard BB_KING_ATTACKS[64];

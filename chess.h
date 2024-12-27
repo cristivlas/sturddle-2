@@ -328,6 +328,7 @@ namespace chess
 #define DEFAULT_MOBILITY_WEIGHTS { 0, 0, 0, 7, 6, 5, 0 }
 #define DEFAULT_WEIGHTS { 0, 85, 319, 343, 522, 986, 20000 }
 
+extern int PUSHED_PAWN_BONUS;
 
 #if MOBILITY_TUNING_ENABLED
     extern int MOBILITY[7];
@@ -993,6 +994,9 @@ namespace chess
 #endif /* !TUNING_ENABLED */
 
 
+    int score_pushed_pawns(const struct State&, const Square&);
+
+
     struct State : public BoardPosition
     {
         int capture_value = 0;
@@ -1166,7 +1170,17 @@ namespace chess
 
         INLINE int piece_weight_at(Square square) const
         {
-            return weight(piece_type_at(square));
+            const auto piece_type = piece_type_at(square);
+            auto w = weight(piece_type);
+
+            if (piece_type == PAWN)
+            {
+                const auto pushed_pawn_score = ::chess::score_pushed_pawns(*this, square);
+                if (pushed_pawn_score > 0)
+                    w += PUSHED_PAWN_BONUS * pow2(pushed_pawn_score);
+            }
+
+            return w;
         }
 
         void set_piece_at(Square, PieceType, Color, PieceType promotion = PieceType::NONE);
