@@ -327,11 +327,12 @@ namespace chess
 
 #define DEFAULT_MOBILITY_WEIGHTS { 0, 0, 0, 7, 6, 5, 0 }
 #define DEFAULT_WEIGHTS { 0, 85, 319, 343, 522, 986, 20000 }
+static constexpr int pawn_bonus = 17;
 
 #if PUSHED_PAWN_TUNING_ENABLED
     extern int PUSHED_PAWN_BONUS;
 #else
-    static constexpr int PUSHED_PAWN_BONUS = 10;
+    static constexpr int PUSHED_PAWN_BONUS = pawn_bonus;
 #endif
 
 #if MOBILITY_TUNING_ENABLED
@@ -1167,9 +1168,9 @@ namespace chess
          * - use tables for game phases, use number of pawns to determine phase;
          * - leave weights alone and alter material eval (see eval_piece_grading).
          */
-        static INLINE constexpr int weight(PieceType piece_type)
+        INLINE int weight(PieceType piece_type) const
         {
-            return WEIGHT[piece_type];
+            return WEIGHT[piece_type] + (piece_type == PAWN) * (is_endgame() * pawn_bonus);
         }
 
         INLINE int piece_weight_at(Square square) const
