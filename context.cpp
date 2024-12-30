@@ -1590,34 +1590,32 @@ namespace search
      */
     void Context::extend()
     {
-        if (_extension || depth() >= MIN_EXT_DEPTH)
-        {
-            /*
-             * things that could add interestingness along the search path
-             * "what is ultimately to be reduced must first be expanded" Lao Tzu
-             */
-            _extension += state().pushed_pawns_score;
-            _extension += _move.from_square() == _parent->_capture_square;
-            _extension += is_recapture() * (is_pv_node() * (ONE_PLY - 1) + 1);
+        /*
+         * Things that could add interestingness along the search path
+         * "what is ultimately to be reduced must first be expanded" Lao Tzu
+         */
+        _extension += pow2(state().pushed_pawns_score);
 
-            /*
-             * extend if move has historically high cutoff percentages and counts
-             */
-            _extension += ONE_PLY
-                * (_move == _parent->_tt_entry._hash_move)
-                * (abs(_parent->_tt_entry._value) < MATE_HIGH)
-                * (_parent->history_count(_move) > HISTORY_COUNT_HIGH)
-                * (_parent->history_score(_move) > HISTORY_HIGH);
+        _extension += _move.from_square() == _parent->_capture_square;
+        _extension += is_recapture() * (is_pv_node() * (ONE_PLY / 2) + ONE_PLY / 2);
 
-            const auto double_extension_ok = (_double_ext <= DOUBLE_EXT_MAX);
-            const auto extend = std::min(1 + double_extension_ok, _extension / ONE_PLY);
+        /*
+         * Extend if move has historically high cutoff percentages and counts.
+         */
+        _extension += ONE_PLY
+            * (_move == _parent->_tt_entry._hash_move)
+            * (abs(_parent->_tt_entry._value) < MATE_HIGH)
+            * (_parent->history_count(_move) > HISTORY_COUNT_HIGH)
+            * (_parent->history_score(_move) > HISTORY_HIGH);
 
-            ASSERT(extend >= 0);
+        const auto double_extension_ok = (_double_ext <= DOUBLE_EXT_MAX);
+        const auto extend = std::min(1 + double_extension_ok, _extension / ONE_PLY);
 
-            _max_depth += extend;
-            _extension %= ONE_PLY;
-            _double_ext += extend > 1;
-        }
+        ASSERT(extend >= 0);
+
+        _max_depth += extend;
+        _extension %= ONE_PLY;
+        _double_ext += extend > 1;
 
         /* https://www.chessprogramming.org/Capture_Extensions */
         if (is_capture()

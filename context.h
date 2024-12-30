@@ -567,6 +567,7 @@ namespace search
                 (_parent != nullptr)
                 && !is_pv_node()
                 && !_excluded
+                && !is_recapture()
                 && (state().pushed_pawns_score <= 2)
                 && !state().just_king_and_pawns()
                 && (_parent->_mate_detected == 0 || _parent->_mate_detected % 2)
@@ -614,7 +615,9 @@ namespace search
             && (state().pushed_pawns_score <= 1)
             && !is_extended()
             && (_move.from_square() != _parent->_capture_square)
+        #if 0
             && !is_recapture()
+        #endif
             && !is_check();
     }
 
@@ -1254,12 +1257,6 @@ namespace search
         }
         int time_limit = millisec / moves;
 
-        /* Apply per-move time bonus, if any */
-        if (const auto bonus = ctrl.increments[side_to_move])
-        {
-            time_limit += bonus;
-        }
-
         /*
          * If there's a time deficit, and search improved: lower the time limit.
          */
@@ -1269,6 +1266,12 @@ namespace search
             && (ctrl.score >= 0 || ctrl.delta > TIME_CTRL_EVAL_THRESHOLD_HIGH))
         {
             time_limit += t_diff;
+        }
+
+        /* Apply per-move time bonus, if any */
+        if (const auto bonus = ctrl.increments[side_to_move])
+        {
+            time_limit += bonus;
         }
 
         _time_limit.store(std::max(1, time_limit), std::memory_order_relaxed);
