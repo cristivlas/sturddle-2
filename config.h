@@ -105,7 +105,7 @@ std::string Config::_group;
 
 Config::Namespace Config::_namespace = {
 #if PUSHED_PAWN_TUNING_ENABLED
-    { "PUSHED_PAWN_BONUS", Config::Param{ &chess::PUSHED_PAWN_BONUS, 0, 100, "Weights"} },
+    { "PAWN_BONUS", Config::Param{ &chess::PAWN_BONUS, 0, 100, "Weights"} },
 #endif /* PUSHED_PAWN_TUNING_ENABLED */
 
 #if MOBILITY_TUNING_ENABLED
