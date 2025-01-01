@@ -329,7 +329,7 @@ namespace search
         void shift();
 
         void history_update_cutoffs(const Move&);
-        void history_update_non_cutoffs(const Move&);
+        void history_update_non_cutoffs(const Move&, bool is_retry);
 
         void update_stats(const Context&);
 
@@ -385,7 +385,7 @@ namespace search
     }
 
 
-    INLINE void TranspositionTable::history_update_non_cutoffs(const Move& move)
+    INLINE void TranspositionTable::history_update_non_cutoffs(const Move& move, bool is_retry)
     {
         if (move)
         {
@@ -400,7 +400,14 @@ namespace search
             auto& counters = _hcounters[turn].lookup(pt, move);
         #endif /* USE_BUTTERFLY_TABLES */
 
-            ++counters.second;
+            if (is_retry && counters.second > 0)
+            {
+                counters.first = std::min(0, counters.first - 1);
+            }
+            else
+            {
+                ++counters.second;
+            }
         }
     }
 

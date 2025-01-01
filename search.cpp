@@ -932,7 +932,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             }
             else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_capture())
             {
-                table.history_update_non_cutoffs(next_ctxt->_move);
+                table.history_update_non_cutoffs(next_ctxt->_move, next_ctxt->is_retry());
             }
 
             /*

@@ -1156,7 +1156,15 @@ static constexpr int _pawn_bonus = 15;
          */
         INLINE void eval_apply_delta(const BaseMove& move, const State& prev)
         {
-            simple_score = prev.eval_incremental(move);
+            /*
+             * Reset the score when transitioning to end game,
+             * as pieces (pawns) may have different weights.
+             */
+            if (prev.is_endgame() != is_endgame())
+                simple_score = UNKNOWN_SCORE;
+            else
+                simple_score = prev.eval_incremental(move);
+
             eval_lazy();
         }
 
@@ -1185,7 +1193,6 @@ static constexpr int _pawn_bonus = 15;
                 if (pushed_pawn_score > 0)
                     w += PAWN_BONUS * pow2(pushed_pawn_score);
             }
-
             return w;
         }
 
