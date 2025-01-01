@@ -1594,10 +1594,10 @@ namespace search
          * Things that could add interestingness along the search path
          * "what is ultimately to be reduced must first be expanded" Lao Tzu
          */
-        _extension += pow2(state().pushed_pawns_score);
-
+        _extension += state().pushed_pawns_score;
         _extension += _move.from_square() == _parent->_capture_square;
-        _extension += is_recapture() * (is_pv_node() * (ONE_PLY / 2) + ONE_PLY / 2);
+        _extension += is_recapture() * (is_pv_node() * ONE_PLY / 4 + ONE_PLY / 8);
+        _extension += _is_singleton * ONE_PLY / 2;
 
         /*
          * Extend if move has historically high cutoff percentages and counts.

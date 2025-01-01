@@ -328,12 +328,12 @@ namespace chess
 #define DEFAULT_MOBILITY_WEIGHTS { 0, 0, 0, 7, 6, 5, 0 }
 #define DEFAULT_WEIGHTS { 0, 85, 319, 343, 522, 986, 20000 }
 
-static constexpr int pawn_bonus = 15;
+static constexpr int _pawn_bonus = 15;
 
 #if PUSHED_PAWN_TUNING_ENABLED
-    extern int PUSHED_PAWN_BONUS;
+    extern int PAWN_BONUS;
 #else
-    static constexpr int PUSHED_PAWN_BONUS = pawn_bonus;
+    static constexpr int PAWN_BONUS = _pawn_bonus;
 #endif
 
 #if MOBILITY_TUNING_ENABLED
@@ -1171,7 +1171,7 @@ static constexpr int pawn_bonus = 15;
          */
         INLINE int weight(PieceType piece_type) const
         {
-            return WEIGHT[piece_type] + (piece_type == PAWN) * (is_endgame() * pawn_bonus);
+            return WEIGHT[piece_type] + (piece_type == PAWN) * (is_endgame() * PAWN_BONUS);
         }
 
         INLINE int piece_weight_at(Square square) const
@@ -1183,7 +1183,7 @@ static constexpr int pawn_bonus = 15;
             {
                 const auto pushed_pawn_score = ::chess::score_pushed_pawns(*this, square);
                 if (pushed_pawn_score > 0)
-                    w += PUSHED_PAWN_BONUS * pow2(pushed_pawn_score);
+                    w += PAWN_BONUS * pow2(pushed_pawn_score);
             }
 
             return w;

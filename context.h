@@ -567,7 +567,6 @@ namespace search
                 (_parent != nullptr)
                 && !is_pv_node()
                 && !_excluded
-                && !is_recapture()
                 && (state().pushed_pawns_score <= 2)
                 && !state().just_king_and_pawns()
                 && (_parent->_mate_detected == 0 || _parent->_mate_detected % 2)
@@ -615,9 +614,7 @@ namespace search
             && (state().pushed_pawns_score <= 1)
             && !is_extended()
             && (_move.from_square() != _parent->_capture_square)
-        #if 0
             && !is_recapture()
-        #endif
             && !is_check();
     }
 

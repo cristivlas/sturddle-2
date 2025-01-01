@@ -48,7 +48,7 @@ namespace chess
 #endif
 
 #if PUSHED_PAWN_TUNING_ENABLED
-    int PUSHED_PAWN_BONUS = pawn_bonus;
+    int PAWN_BONUS = _pawn_bonus;
 #endif
 
     AttackMasks BB_DIAG_MASKS, BB_FILE_MASKS, BB_RANK_MASKS;
