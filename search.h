@@ -231,6 +231,8 @@ namespace search
 
         KillerMovesTable    _killer_moves; /* killer moves at each ply */
         HistoryCounters     _hcounters[2]; /* History heuristic counters. */
+        PieceMoveTable<int> _capt_history[2];
+
         static HashTable    _table;        /* shared hashtable */
 
     public:
@@ -328,8 +330,13 @@ namespace search
 
         void shift();
 
-        void history_update_cutoffs(const Move&);
+        void history_update_cutoffs(const Move&); /* update non-capture fail highs */
         void history_update_non_cutoffs(const Move&);
+
+        void capture_history_update_cutoffs(const Move&);
+        void capture_history_update_non_cutoffs(const Move&);
+
+        int capt_history(const Move&) const;
 
         void update_stats(const Context&);
 
@@ -424,6 +431,31 @@ namespace search
         ++counts.second;
     }
 
+    /*
+        https://www.chessprogramming.org/History_Heuristic#Capture_History
+    */
+    INLINE void TranspositionTable::capture_history_update_cutoffs(const Move& move)
+    {
+        const auto turn = !move._state->turn;
+        const auto pt = move._state->piece_type_at(move.to_square());
+        ++_capt_history[turn].lookup(pt, move);
+    }
+
+
+    INLINE void TranspositionTable::capture_history_update_non_cutoffs(const Move& move)
+    {
+        const auto turn = !move._state->turn;
+        const auto pt = move._state->piece_type_at(move.to_square());
+        --_capt_history[turn].lookup(pt, move);
+    }
+
+
+    INLINE int TranspositionTable::capt_history(const Move& move) const
+    {
+        const auto turn = !move._state->turn;
+        const auto pt = move._state->piece_type_at(move.to_square());
+        return _capt_history[turn].lookup(pt, move);
+    }
 
     template<typename C>
     INLINE BaseMove TranspositionTable::lookup_countermove(const C& ctxt) const

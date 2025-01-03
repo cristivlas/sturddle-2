@@ -921,6 +921,11 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                             table.history_update_cutoffs(next_ctxt->_move);
                     }
                 }
+                else if (next_ctxt->is_capture())
+                {
+                    table.capture_history_update_cutoffs(next_ctxt->_move);
+                }
+
                 if constexpr(EXTRA_STATS)
                     table._history_counters_hit += (next_ctxt->_move._group == MoveOrder::HISTORY_COUNTERS);
 
@@ -930,8 +935,13 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             {
                 continue;
             }
-            else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_capture())
+            else if (next_ctxt->is_capture())
             {
+                table.capture_history_update_non_cutoffs(next_ctxt->_move);
+            }
+            else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH)
+            {
+                ASSERT(!next_ctxt->is_capture());
                 table.history_update_non_cutoffs(next_ctxt->_move);
             }
 

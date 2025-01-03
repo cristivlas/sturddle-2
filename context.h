@@ -884,7 +884,9 @@ namespace search
     INLINE bool Context::is_recapture() const
     {
         ASSERT(_parent);
-        return _parent->is_capture() && (_move.to_square() == _parent->_move.to_square());
+        return _parent->is_capture()
+            && (_move.to_square() == _parent->_move.to_square())
+            && get_tt()->capt_history(_move) > 0;
     }
 
 
@@ -1252,13 +1254,8 @@ namespace search
 
             moves = std::max(ctrl.moves, std::max(2, moves_left));
         }
-        int time_limit = millisec / moves;
 
-        /* Apply per-move time bonus, if any */
-        if (const auto bonus = ctrl.increments[side_to_move])
-        {
-            time_limit += bonus;
-        }
+        int time_limit = millisec / moves;
 
         /*
          * If there's a time deficit, and search improved: lower the time limit.
@@ -1270,6 +1267,9 @@ namespace search
         {
             time_limit += t_diff;
         }
+
+        /* Apply per-move time bonus, if any */
+        time_limit += ctrl.increments[side_to_move];
 
         _time_limit.store(std::max(1, time_limit), std::memory_order_relaxed);
     }

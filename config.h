@@ -154,8 +154,10 @@ Config::Namespace Config::_namespace = {
 
 #if SMP && defined(CONFIG_IMPL)
     static auto THREAD_MAX = std::thread::hardware_concurrency();
+    static auto THREAD_VAL = std::min<int>(4, std::thread::hardware_concurrency());
 #else
     static constexpr int THREAD_MAX = 1;
+    static constexpr int THREAD_VAL = 1;
 #endif
 
 static constexpr int HASH_MIN = 16; /* MB */
@@ -183,7 +185,7 @@ DECLARE_CONST(  DATAGEN_MIN_DEPTH,                   10, -100,     100)
 DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 
-DECLARE_ALIAS(  SMP_CORES, Threads,                   1,    1, THREAD_MAX)
+DECLARE_ALIAS(  SMP_CORES, Threads,          THREAD_VAL,    1, THREAD_MAX)
 
 GROUP(Search)
 DECLARE_VALUE(  CAPTURES_SCALE,                      99,    0,     150)
