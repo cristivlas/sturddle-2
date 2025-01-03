@@ -886,7 +886,7 @@ namespace search
         ASSERT(_parent);
         return _parent->is_capture()
             && (_move.to_square() == _parent->_move.to_square())
-            && get_tt()->capt_history(_move) > 0;
+            && get_tt()->capture_history(_move) > 0;
     }
 
 

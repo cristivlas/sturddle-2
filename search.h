@@ -336,7 +336,8 @@ namespace search
         void capture_history_update_cutoffs(const Move&);
         void capture_history_update_non_cutoffs(const Move&);
 
-        int capt_history(const Move&) const;
+        int& capture_history_lookup(const Move&);
+        int capture_history(const Move&) const;
 
         void update_stats(const Context&);
 
@@ -436,26 +437,30 @@ namespace search
     */
     INLINE void TranspositionTable::capture_history_update_cutoffs(const Move& move)
     {
-        const auto turn = !move._state->turn;
-        const auto pt = move._state->piece_type_at(move.to_square());
-        ++_capt_history[turn].lookup(pt, move);
+        ++capture_history_lookup(move);
     }
 
 
     INLINE void TranspositionTable::capture_history_update_non_cutoffs(const Move& move)
     {
-        const auto turn = !move._state->turn;
-        const auto pt = move._state->piece_type_at(move.to_square());
-        --_capt_history[turn].lookup(pt, move);
+
+        --capture_history_lookup(move);
     }
 
 
-    INLINE int TranspositionTable::capt_history(const Move& move) const
+    INLINE int TranspositionTable::capture_history(const Move& move) const
+    {
+        return const_cast<TranspositionTable*>(this)->capture_history_lookup(move);
+    }
+
+
+    INLINE int& TranspositionTable::capture_history_lookup(const Move& move)
     {
         const auto turn = !move._state->turn;
         const auto pt = move._state->piece_type_at(move.to_square());
         return _capt_history[turn].lookup(pt, move);
     }
+
 
     template<typename C>
     INLINE BaseMove TranspositionTable::lookup_countermove(const C& ctxt) const
