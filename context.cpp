@@ -1599,7 +1599,9 @@ namespace search
              */
             _extension += state().pushed_pawns_score;
             _extension += _move.from_square() == _parent->_capture_square;
-            _extension += is_recapture() * (is_pv_node() * (ONE_PLY - 1) + 1);
+
+            const int ext_recapture = (is_recapture() && get_tt()->capture_history(_move) > 0);
+            _extension += ext_recapture * (is_pv_node() * (ONE_PLY - 1) + 1);
 
             /*
              * extend if move has historically high cutoff percentages and counts

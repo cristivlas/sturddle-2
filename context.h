@@ -884,9 +884,7 @@ namespace search
     INLINE bool Context::is_recapture() const
     {
         ASSERT(_parent);
-        return _parent->is_capture()
-            && (_move.to_square() == _parent->_move.to_square())
-            && get_tt()->capture_history(_move) > 0;
+        return _parent->is_capture() && (_move.to_square() == _parent->_move.to_square());
     }
 
 
