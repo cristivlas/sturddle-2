@@ -923,7 +923,9 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 }
                 else if (next_ctxt->is_capture())
                 {
+                #if CAPTURE_HISTORY
                     table.capture_history_update_cutoffs(next_ctxt->_move);
+                #endif
                 }
 
                 if constexpr(EXTRA_STATS)
@@ -937,7 +939,9 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             }
             else if (next_ctxt->is_capture())
             {
+            #if CAPTURE_HISTORY
                 table.capture_history_update_non_cutoffs(next_ctxt->_move);
+            #endif
             }
             else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH)
             {

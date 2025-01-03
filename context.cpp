@@ -385,8 +385,8 @@ void search::Context::eval_nnue()
 
         auto eval = evaluate_material();
 
-        /* stick with material eval if in quiescent search, or if heavily imbalanced */
-        if (state().just_king(!turn()) || (!is_qsearch() && abs(eval) <= NNUE_MAX_EVAL + LMP[depth()]))
+        /* stick with material eval if heavily imbalanced */
+        if (state().just_king(!turn()) || is_qsearch() || abs(eval) <= NNUE_MAX_EVAL + LMP[depth()])
         {
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
         }
@@ -1600,7 +1600,11 @@ namespace search
             _extension += state().pushed_pawns_score;
             _extension += _move.from_square() == _parent->_capture_square;
 
-            const int ext_recapture = (is_recapture() && get_tt()->capture_history(_move) > 0);
+            const int ext_recapture = is_recapture()
+        #if CAPTURE_HISTORY
+                && get_tt()->capture_history(_move) > 0
+        #endif
+                ;
             _extension += ext_recapture * (is_pv_node() * (ONE_PLY - 1) + 1);
 
             /*

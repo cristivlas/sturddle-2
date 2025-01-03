@@ -231,7 +231,10 @@ namespace search
 
         KillerMovesTable    _killer_moves; /* killer moves at each ply */
         HistoryCounters     _hcounters[2]; /* History heuristic counters. */
+
+    #if CAPTURE_HISTORY
         PieceMoveTable<int> _capt_history[2];
+    #endif /* CAPTURE_HISTORY */
 
         static HashTable    _table;        /* shared hashtable */
 
@@ -432,6 +435,8 @@ namespace search
         ++counts.second;
     }
 
+
+#if CAPTURE_HISTORY
     /*
         https://www.chessprogramming.org/History_Heuristic#Capture_History
     */
@@ -460,6 +465,7 @@ namespace search
         const auto pt = move._state->piece_type_at(move.to_square());
         return _capt_history[turn].lookup(pt, move);
     }
+#endif /* CAPTURE_HISTORY */
 
 
     template<typename C>
