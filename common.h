@@ -58,7 +58,7 @@ using score_t = int;
 #define ADAPTIVE_NULL_MOVE                  true
 
 /* Experimental */
-#define CAPTURE_HISTORY                     false
+#define CAPTURE_HISTORY                     true
 
 /*
  * Count valid moves made as nodes if true, otherwise use effectively

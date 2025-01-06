@@ -1599,13 +1599,7 @@ namespace search
              */
             _extension += state().pushed_pawns_score;
             _extension += _move.from_square() == _parent->_capture_square;
-
-            const int ext_recapture = is_recapture()
-        #if CAPTURE_HISTORY
-                && get_tt()->capture_history(_move) > 0
-        #endif
-                ;
-            _extension += ext_recapture * (is_pv_node() * (ONE_PLY - 1) + 1);
+            _extension += is_recapture() * (is_pv_node() * (ONE_PLY - 1) + 1);
 
             /*
              * extend if move has historically high cutoff percentages and counts
@@ -1617,6 +1611,8 @@ namespace search
                 * (_parent->history_score(_move) > HISTORY_HIGH);
 
             const auto double_extension_ok = (_double_ext <= DOUBLE_EXT_MAX);
+
+            // Convert fractional extensions
             const auto extend = std::min(1 + double_extension_ok, _extension / ONE_PLY);
 
             ASSERT(extend >= 0);
@@ -1624,6 +1620,14 @@ namespace search
             _max_depth += extend;
             _extension %= ONE_PLY;
             _double_ext += extend > 1;
+
+        #if CAPTURE_HISTORY
+            // Experimental extension based on capture history
+            if (is_pv_node() && is_capture() && get_tt()->capture_history(_move) > CAPTURES_HISTORY_THRESHOLD)
+            {
+                ++_max_depth;
+            }
+        #endif
         }
 
         /* https://www.chessprogramming.org/Capture_Extensions */
