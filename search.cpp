@@ -173,7 +173,11 @@ void TranspositionTable::clear()
     {
         _countermoves[color].clear();
         _hcounters[color].clear();
+    #if CAPTURE_HISTORY
+        _capt_history[color].clear();
+    #endif
     }
+    KillerMovesTable().swap(_killer_moves);
 }
 
 

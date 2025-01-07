@@ -1603,7 +1603,7 @@ namespace search
             if (is_recapture())
             {
                 _extension += 1;
-                int pv_recapture_ext = is_pv * (ONE_PLY + 1);
+                int pv_recapture_ext = is_pv * (ONE_PLY - 1);
 
             #if CAPTURE_HISTORY
                 // Experimental extension based on capture history
