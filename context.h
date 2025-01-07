@@ -309,7 +309,7 @@ namespace search
 
         score_t     static_eval();  /* use TT value if available, eval material otherwise */
 
-        void        extend();       /* fractional and other extensions */
+        void        extend(bool pv); /* fractional and other extensions */
         const Move* first_valid_move();
 
         score_t     futility_margin() const;

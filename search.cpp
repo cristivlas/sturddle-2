@@ -835,7 +835,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     }
                 #endif /* SINGULAR_EXTENSION */
 
-                    next_ctxt->extend(); /* apply fractional extensions */
+                    next_ctxt->extend(ctxt.is_pv_node()); /* apply fractional and other extensions */
                 }
 
                 /* Late-move reduction and pruning */

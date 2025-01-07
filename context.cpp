@@ -1589,7 +1589,7 @@ namespace search
      * but further down the tree may cause an extension when another
      * fractional extension causes the net extension to exceed one ply."
      */
-    void Context::extend()
+    void Context::extend(bool is_pv)
     {
         if (_extension || depth() >= MIN_EXT_DEPTH)
         {
@@ -1599,7 +1599,18 @@ namespace search
              */
             _extension += state().pushed_pawns_score;
             _extension += _move.from_square() == _parent->_capture_square;
-            _extension += is_recapture() * (is_pv_node() * (ONE_PLY - 1) + 1);
+
+            if (is_recapture())
+            {
+                _extension += 1;
+                int pv_recapture_ext = is_pv * (ONE_PLY + 1);
+
+            #if CAPTURE_HISTORY
+                // Experimental extension based on capture history
+                pv_recapture_ext *= get_tt()->capture_history(_move) > CAPTURES_HISTORY_THRESHOLD;
+            #endif
+                _extension += pv_recapture_ext;
+            }
 
             /*
              * extend if move has historically high cutoff percentages and counts
@@ -1620,14 +1631,6 @@ namespace search
             _max_depth += extend;
             _extension %= ONE_PLY;
             _double_ext += extend > 1;
-
-        #if CAPTURE_HISTORY
-            // Experimental extension based on capture history
-            if (is_pv_node() && is_capture() && get_tt()->capture_history(_move) > CAPTURES_HISTORY_THRESHOLD)
-            {
-                ++_max_depth;
-            }
-        #endif
         }
 
         /* https://www.chessprogramming.org/Capture_Extensions */
