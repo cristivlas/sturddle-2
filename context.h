@@ -273,7 +273,7 @@ namespace search
 
         bool        can_forward_prune() const;
 
-        template<bool PruneCaptures = false> bool can_prune() const;
+        template<bool PruneCaptures = false> bool can_prune(bool is_pv) const;
         template<bool PruneCaptures = false> bool can_prune_move(const Move&) const;
 
         bool        can_reduce() const;
@@ -577,7 +577,7 @@ namespace search
 
 
     template<bool PruneCaptures>
-    INLINE bool Context::can_prune() const
+    INLINE bool Context::can_prune(bool is_pv) const
     {
         ASSERT(_ply > 0);
         ASSERT(!is_null_move());
@@ -585,7 +585,7 @@ namespace search
         ASSERT(_move._state);
 
         return !is_extended()
-            && !is_pv_node()
+            && !is_pv
             && !is_repeated()
             && _parent->can_prune_move<PruneCaptures>(_move);
     }

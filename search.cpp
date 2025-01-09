@@ -761,7 +761,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     ASSERT(move_count > 0);
                     const auto val = futility - next_ctxt->evaluate_material();
 
-                    if ((val < ctxt._alpha || val < ctxt._score) && next_ctxt->can_prune<true>())
+                    if ((val < ctxt._alpha || val < ctxt._score) && next_ctxt->can_prune<true>(ctxt.is_pv_node()))
                     {
                         update_pruned(ctxt, *next_ctxt, table._futility_prune_count);
                         continue;
