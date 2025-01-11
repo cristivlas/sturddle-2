@@ -756,12 +756,12 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                 /* Futility pruning, 2nd pass. */
                 /* (1st pass happens during move generation) */
-                if (futility > 0)
+                if (futility > 0 && !ctxt.is_pv_node())
                 {
                     ASSERT(move_count > 0);
                     const auto val = futility - next_ctxt->evaluate_material();
 
-                    if ((val < ctxt._alpha || val < ctxt._score) && next_ctxt->can_prune<true>(ctxt.is_pv_node()))
+                    if ((val < ctxt._alpha || val < ctxt._score) && next_ctxt->can_prune<true>())
                     {
                         update_pruned(ctxt, *next_ctxt, table._futility_prune_count);
                         continue;
@@ -849,7 +849,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     continue;
                 }
 
-                if (!next_ctxt->is_retry())
+                if (!ctxt.is_pv_node() && !next_ctxt->is_retry())
                 {
                     ++move_count;
                     if (futility < 0)

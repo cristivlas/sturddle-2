@@ -273,7 +273,7 @@ namespace search
 
         bool        can_forward_prune() const;
 
-        template<bool PruneCaptures = false> bool can_prune(bool is_pv) const;
+        template<bool PruneCaptures = false> bool can_prune(bool is_pv = false) const;
         template<bool PruneCaptures = false> bool can_prune_move(const Move&) const;
 
         bool        can_reduce() const;
