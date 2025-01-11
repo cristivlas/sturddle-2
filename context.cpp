@@ -886,7 +886,7 @@ namespace search
      *
      * Called by eval_captures (if !STATIC_EXCHANGES).
      */
-    INLINE int do_captures(int tid, const State& state, Bitboard from_mask, Bitboard to_mask)
+    INLINE int do_captures(int tid, const State& state, Bitboard from_mask, Bitboard to_mask, int pat)
     {
         static constexpr auto ply = FIRST_EXCHANGE_PLY;
         const auto mask = to_mask & state.occupied_co(!state.turn) & ~state.kings;
@@ -943,7 +943,7 @@ namespace search
             ASSERT((state.kings & BB_SQUARES[move.to_square()]) == 0);
 
         #if !EXCHANGES_DETECT_CHECKMATE
-            if (move._score <= score)
+            if (move._score <= std::max(score, pat))
             {
                 if constexpr(DEBUG_CAPTURES)
                 {
@@ -1014,10 +1014,16 @@ namespace search
         score_t result;
 
         if constexpr(STATIC_EXCHANGES)
+        {
             result = estimate_captures(*state);
+        }
         else
-            result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL);
-
+        {
+            int standing_pat = is_valid(ctxt._eval) ? std::max(0, ctxt._alpha - ctxt._eval) : 0;
+            //if (standing_pat)
+            //    std::cout << standing_pat << std::endl;
+            result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL, standing_pat);
+        }
         ASSERT(result >= 0);
 
         if constexpr(DEBUG_CAPTURES)
