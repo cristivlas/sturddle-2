@@ -849,7 +849,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     continue;
                 }
 
-                if (!ctxt.is_pv_node() && !next_ctxt->is_retry())
+                if (!next_ctxt->is_retry())
                 {
                     ++move_count;
                     if (futility < 0)
