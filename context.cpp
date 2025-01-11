@@ -909,6 +909,9 @@ namespace search
             ASSERT(state.piece_type_at(move.from_square()));
 
             move._score = state.piece_weight_at(move.to_square());
+
+            /* subtract attacker value, to sort by gain */
+            move._score -= state.piece_weight_at(move.from_square());
         }
 
         /*
@@ -940,7 +943,6 @@ namespace search
             ASSERT((state.kings & BB_SQUARES[move.to_square()]) == 0);
 
         #if !EXCHANGES_DETECT_CHECKMATE
-            /* victim values less than what we got so far? bail */
             if (move._score <= score)
             {
                 if constexpr(DEBUG_CAPTURES)
@@ -961,36 +963,6 @@ namespace search
             if (!apply_capture(state, next_state, move))
                 continue;
 
-            ASSERT(move._score == next_state.capture_value);
-            ASSERT(next_state.capture_value > score || EXCHANGES_DETECT_CHECKMATE);
-
-            auto attacker_value = state.piece_weight_at(move.from_square());
-            auto gain = next_state.capture_value - attacker_value;
-
-            /*
-             * Worst case scenario the attacker gets captured, capturing
-             * side still has a nice gain; skip "playing" the exchanges.
-             */
-            if (gain > 0)
-            {
-            #if !EXCHANGES_DETECT_CHECKMATE
-                return gain;
-            #else
-                if (next_state.is_checkmate())
-                    return CHECKMATE - (ply + 1 - FIRST_EXCHANGE_PLY);
-
-                if constexpr(DEBUG_CAPTURES)
-                    Context::log_message(
-                        LogLevel::DEBUG,
-                        move.uci() + ": skip exchanges: " + std::to_string(gain));
-
-                if (gain > score)
-                    score = gain;
-
-                continue;
-            #endif /* EXCHANGES_DETECT_CHECKMATE */
-            }
-
             /****************************************************************/
             /* "play through" same square exchanges                         */
             next_state.castling_rights = 0; /* castling moves can't capture */
@@ -1003,6 +975,7 @@ namespace search
                 ply + 1);
             /****************************************************************/
 
+        #if EXCHANGES_DETECT_CHECKMATE
             if (other < MATE_LOW)
             {
                 if constexpr(DEBUG_CAPTURES)
@@ -1010,6 +983,8 @@ namespace search
 
                 return -other;
             }
+        #endif /* !EXCHANGES_DETECT_CHECKMATE */
+
             const auto value = next_state.capture_value - other;
 
             if (value > score)
@@ -1050,6 +1025,7 @@ namespace search
 
         return result;
     }
+
 
 #if !WITH_NNUE
     /*----------------------------------------------------------------------
