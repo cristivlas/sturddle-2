@@ -900,8 +900,9 @@ namespace search
         {
             return 0;
         }
+        bool standpat = true;
         /*
-         * 1) Go over the captures and assign the "victim" value to each move.
+         * 1) Go over the captures and score each move.
          */
         for (auto& move : moves)
         {
@@ -912,7 +913,13 @@ namespace search
 
             /* subtract attacker value, to sort by gain */
             move._score -= state.piece_weight_at(move.from_square());
+
+            if (move._score >= pat)
+                standpat = false;
         }
+
+        if (standpat)
+            return 0;
 
         /*
          * 2) Sort most valuable victims first.
@@ -943,7 +950,7 @@ namespace search
             ASSERT((state.kings & BB_SQUARES[move.to_square()]) == 0);
 
         #if !EXCHANGES_DETECT_CHECKMATE
-            if (move._score <= std::max(score, pat))
+            if (move._score <= score)
             {
                 if constexpr(DEBUG_CAPTURES)
                 {
@@ -1019,9 +1026,9 @@ namespace search
         }
         else
         {
-            int standing_pat = is_valid(ctxt._eval) ? std::max(0, ctxt._alpha - ctxt._eval) : 0;
-            //if (standing_pat)
-            //    std::cout << standing_pat << std::endl;
+            //int standing_pat = is_valid(ctxt._eval) ? std::max(0, ctxt._alpha - ctxt._eval) : 0;
+            int standing_pat = is_valid(ctxt._eval) ? ctxt._alpha - ctxt._eval : 0;
+
             result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL, standing_pat);
         }
         ASSERT(result >= 0);
