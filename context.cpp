@@ -919,7 +919,7 @@ namespace search
         }
 
         if (standpat)
-            return 0;
+            return pat;
 
         /*
          * 2) Sort most valuable victims first.
