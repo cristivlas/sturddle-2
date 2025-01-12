@@ -1443,7 +1443,7 @@ namespace search
         #else
             /* eval_exchanges */
             /* skip exchange evaluation if the capturer is worth less than the captured */
-
+        #if 0
             if (other >= capture_gain && abs(ctxt._score) < MATE_HIGH)
             {
                 other = eval_exchanges<false>(ctxt.tid(), move);
@@ -1462,6 +1462,7 @@ namespace search
             }
 
             capture_gain -= other;
+        #endif /* 0 */
 
             if (capture_gain < 0)
             {
