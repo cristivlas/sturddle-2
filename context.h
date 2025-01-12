@@ -1424,7 +1424,10 @@ namespace search
         /* captures of the last piece moved by the opponent are handled separately */
         ASSERT(move.to_square() != ctxt._move.to_square());
 
-        if (make_move<false>(ctxt, move))
+        ASSERT(is_valid(ctxt._eval));
+        int futility = ctxt.is_qsearch() * 100;
+
+        if (make_move<false>(ctxt, move, futility))
         {
             ASSERT(move._state->capture_value);
 
@@ -1552,9 +1555,6 @@ namespace search
 
         if (futility > 0)
         {
-            /* The futility margin is calculated after at least one move has been searched. */
-            ASSERT(_current > 0);
-
             const auto val = futility + move._state->simple_score * SIGN[!move._state->turn];
 
             if ((val < ctxt._alpha || val < ctxt._score) && ctxt.can_prune_move<true>(move))
