@@ -1425,7 +1425,12 @@ namespace search
         ASSERT(move.to_square() != ctxt._move.to_square());
 
         ASSERT(is_valid(ctxt._eval));
-        int futility = ctxt.is_qsearch() * 100;
+
+    #if 0
+        const int futility = ctxt.is_qsearch() * 100;
+    #else
+        constexpr int futility = 0;
+    #endif
 
         if (make_move<false>(ctxt, move, futility))
         {
@@ -1460,9 +1465,9 @@ namespace search
                     return;
                 }
             }
+        #endif /* 0 */
 
             capture_gain -= other;
-        #endif /* 0 */
 
             if (capture_gain < 0)
             {

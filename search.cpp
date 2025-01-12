@@ -756,7 +756,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                 /* Futility pruning, 2nd pass. */
                 /* (1st pass happens during move generation) */
-                if (futility > 0 && !ctxt.is_pv_node())
+                if (futility > 0 /* && !ctxt.is_pv_node() */)
                 {
                     ASSERT(move_count > 0);
                     const auto val = futility - next_ctxt->evaluate_material();
