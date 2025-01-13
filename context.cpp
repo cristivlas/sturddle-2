@@ -919,7 +919,9 @@ namespace search
         }
 
         if (standpat)
+        {
             return pat;
+        }
 
         /*
          * 2) Sort most valuable victims first.
@@ -1026,7 +1028,7 @@ namespace search
         }
         else
         {
-            const int standing_pat = is_valid(ctxt._eval) ? ctxt._alpha - ctxt._eval : 0;
+            const int standing_pat = (ctxt._ply > 1 && is_valid(ctxt._eval)) ? ctxt._alpha - ctxt._eval : 0;
 
             result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL, standing_pat);
         }
