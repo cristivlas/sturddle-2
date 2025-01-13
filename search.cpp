@@ -925,12 +925,12 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                             table.history_update_cutoffs(next_ctxt->_move);
                     }
                 }
+            #if CAPTURE_HISTORY
                 else if (next_ctxt->is_capture())
                 {
-                #if CAPTURE_HISTORY
                     table.capture_history_update_cutoffs(next_ctxt->_move);
-                #endif
                 }
+            #endif
 
                 if constexpr(EXTRA_STATS)
                     table._history_counters_hit += (next_ctxt->_move._group == MoveOrder::HISTORY_COUNTERS);
