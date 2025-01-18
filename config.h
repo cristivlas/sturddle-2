@@ -191,7 +191,8 @@ GROUP(Search)
 DECLARE_VALUE(  CAPTURES_SCALE,                      99,    0,     150)
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
 #if CAPTURE_HISTORY
-DECLARE_VALUE(  CAPTURES_HISTORY_THRESHOLD,           0,    0,   15000)
+DECLARE_VALUE(  CAPTURES_HISTORY_MAX_DEPTH,           8,    0,     100)
+DECLARE_VALUE(  CAPTURES_HISTORY_THRESHOLD,        5000,    0,   15000)
 #endif
 DECLARE_VALUE(  DOUBLE_EXT_MARGIN,                 1354,    0,    2000)
 DECLARE_VALUE(  DOUBLE_EXT_MAX,                      12,    0,     100)
@@ -202,7 +203,6 @@ DECLARE_VALUE(  LMP_BASE,                             2,    2,     100)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                261,    0,    1000)
 
-DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,     100)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
 #if WITH_NNUE
 DECLARE_VALUE(  NNUE_EVAL_TERM,                     645,    0,    1000)

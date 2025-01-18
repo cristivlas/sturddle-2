@@ -1581,7 +1581,7 @@ namespace search
      */
     void Context::extend(bool is_pv)
     {
-        if (_extension || depth() >= MIN_EXT_DEPTH)
+        if (true)
         {
             /*
              * things that could add interestingness along the search path
@@ -1596,8 +1596,13 @@ namespace search
                 int pv_recapture_ext = is_pv * (ONE_PLY - 1);
 
             #if CAPTURE_HISTORY
-                // Experimental extension based on capture history
-                pv_recapture_ext *= get_tt()->capture_history(_move) > CAPTURES_HISTORY_THRESHOLD;
+                /* Experimental extension based on capture history */
+                /* https://www.chessprogramming.org/Capture_Extensions */
+                const auto d = depth();
+                if (d > 0 && d < CAPTURES_HISTORY_MAX_DEPTH)
+                {
+                    pv_recapture_ext *= get_tt()->capture_history(_move) > CAPTURES_HISTORY_THRESHOLD;
+                }
             #endif
                 _extension += pv_recapture_ext;
             }
@@ -1613,16 +1618,17 @@ namespace search
 
             const auto double_extension_ok = (_double_ext <= DOUBLE_EXT_MAX);
 
-            // Convert fractional extensions
+            /* Convert fractional extensions to plies */
             const auto extend = std::min(1 + double_extension_ok, _extension / ONE_PLY);
 
             ASSERT(extend >= 0);
 
             _max_depth += extend;
             _extension %= ONE_PLY;
-            _double_ext += extend > 1;
+            _double_ext += std::max(extend - 1, 0);
         }
 
+        /* Rebel extensions idea */
         /* https://www.chessprogramming.org/Capture_Extensions */
         if (is_capture()
             && !is_extended()
