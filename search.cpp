@@ -754,8 +754,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 if constexpr(EXTRA_STATS)
                     table._history_counters += next_ctxt->_move._group == MoveOrder::HISTORY_COUNTERS;
 
-                /* Futility pruning, 2nd pass. */
-                /* (1st pass happens during move generation) */
+                /* Futility pruning, 2nd pass (1st pass happens during move generation) */
+                /* ctxt.is_pv_node() is redundant, futility_margin() returns 0 in PV. */
                 if (futility > 0 /* && !ctxt.is_pv_node() */)
                 {
                     ASSERT(move_count > 0);
@@ -769,10 +769,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 }
 
                 /*
-                 * Do not extend at root, or if already deeper than twice the depth at root
+                 * Extensions. Do not extend at root, or if already deeper
+                 * than twice the depth at root (to prevent runaways).
                  */
-
-                if (!ctxt.is_root() && ctxt._ply < root_depth * 2)
+                if (!ctxt.is_root() && !ctxt.is_qsearch() && ctxt._ply < root_depth * 2)
                 {
                 #if SINGULAR_EXTENSION
                    /*

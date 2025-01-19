@@ -1573,18 +1573,18 @@ namespace search
     }
 
 
-    /*
-     * Fractional extensions: https://www.chessprogramming.org/Extensions
-     * "[...] extension can be added that does not yet extend the search,
-     * but further down the tree may cause an extension when another
-     * fractional extension causes the net extension to exceed one ply."
-     */
     void Context::extend(bool is_pv)
     {
-        if (true)
+        /*
+         * Fractional extensions: https://www.chessprogramming.org/Extensions
+         * "[...] extension can be added that does not yet extend the search,
+         * but further down the tree may cause an extension when another
+         * fractional extension causes the net extension to exceed one ply."
+         */
+        if constexpr (FRACTIONAL_EXTENSIONS)
         {
             /*
-             * things that could add interestingness along the search path
+             * Things that could add interestingness along the search path.
              * "what is ultimately to be reduced must first be expanded" Lao Tzu
              */
             _extension += state().pushed_pawns_score;
@@ -1755,7 +1755,7 @@ namespace search
         if (depth > 0 && count >= LMP[depth] * late_move_prune_factor() && can_prune(is_pv_node()))
             return LMRAction::Prune;
 
-        /* no reductions at very low depth and in qsearch */
+        /* no reductions at very low depth */
         if (depth < 3 || count < _parent->_full_depth_count || !can_reduce())
             return LMRAction::None;
 
