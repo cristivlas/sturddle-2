@@ -255,7 +255,7 @@ namespace search
 
         int         _extension = 0; /* count pending fractional extensions */
         int         _fifty = 0;
-        int         _full_depth_count = late_move_reduction_count();
+        int         _full_depth_count = 0; /* number of moves where to start LMR */
         int         _mate_detected = 0;
         int         _pruned_count = 0;
 
@@ -350,7 +350,7 @@ namespace search
         float       late_move_prune_factor() const;
 
         LMRAction   late_move_reduce(int move_count);
-        static int  late_move_reduction_count();
+        void        init_late_move_reduction_count();
 
         static void load_nnue_model(const std::string& json_file_path); /* no-op if !WITH_NNUE */
         static void log_message(LogLevel, const std::string&, bool force = true);
@@ -950,9 +950,14 @@ namespace search
     }
 
 
-    /* static */ INLINE int Context::late_move_reduction_count()
+    INLINE void Context::init_late_move_reduction_count()
     {
-        return LATE_MOVE_REDUCTION_COUNT;
+        ASSERT(_full_depth_count == 0);
+    #if 0
+        _full_depth_count = LATE_MOVE_REDUCTION_COUNT;
+    #else
+        _full_depth_count = std::max(LATE_MOVE_REDUCTION_COUNT, depth() / 2);
+    #endif
     }
 
 
@@ -1004,7 +1009,7 @@ namespace search
         if (retry)
             next_ply<false>()->_move_maker.swap(temp);
 
-        auto ctxt = next_ply<true>();
+        auto ctxt = next_ply<true>(); /* construct a context object */
 
         if (move)
         {
@@ -1045,11 +1050,16 @@ namespace search
         ctxt->_double_ext = _double_ext;
         ctxt->_extension = _extension;
         ctxt->_is_retry = retry;
+
+        /* _max_depth and _ply set => depth() is valid: init LMR count */
+        ctxt->init_late_move_reduction_count();
+
         if (is_root())
         {
             ctxt->_is_singleton = !ctxt->is_null_move() && _move_maker.is_singleton(*this);
             _has_singleton = ctxt->_is_singleton;
         }
+
         ctxt->_futility_pruning = _futility_pruning && FUTILITY_PRUNING;
         ctxt->_multicut_allowed = _multicut_allowed && MULTICUT;
 

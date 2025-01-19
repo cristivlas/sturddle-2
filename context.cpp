@@ -1670,7 +1670,7 @@ namespace search
         _cutoff_move = Move();
 
         _extension = 0;
-        _full_depth_count = LATE_MOVE_REDUCTION_COUNT;
+        _full_depth_count = 0;
         _has_singleton = false;
 
         _max_depth = iteration();
@@ -1686,6 +1686,7 @@ namespace search
         _retry_next = false;
         _retry_beta = SCORE_MAX;
 
+        init_late_move_reduction_count();
         rewind(0, true);
     }
 
