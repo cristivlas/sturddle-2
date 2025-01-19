@@ -255,7 +255,7 @@ namespace search
 
         int         _extension = 0; /* count pending fractional extensions */
         int         _fifty = 0;
-        int         _full_depth_count = 0; /* number of moves where to start LMR */
+        int         _full_depth_count = LATE_MOVE_REDUCTION_COUNT; /* number of moves where to start LMR */
         int         _mate_detected = 0;
         int         _pruned_count = 0;
 
@@ -952,11 +952,11 @@ namespace search
 
     INLINE void Context::init_late_move_reduction_count()
     {
-        ASSERT(_full_depth_count == 0);
+        ASSERT(_full_depth_count == LATE_MOVE_REDUCTION_COUNT);
     #if 0
         _full_depth_count = LATE_MOVE_REDUCTION_COUNT;
     #else
-        _full_depth_count = std::max(LATE_MOVE_REDUCTION_COUNT, depth() / 2);
+        _full_depth_count = std::max(LATE_MOVE_REDUCTION_COUNT, depth() / 3);
     #endif
     }
 

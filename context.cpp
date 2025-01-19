@@ -587,6 +587,7 @@ namespace search
         ctxt->_is_null_move = _is_null_move;
         ctxt->_double_ext = _double_ext;
         ctxt->_extension = _extension;
+        ctxt->_full_depth_count = _full_depth_count;
         return ctxt;
     }
 
@@ -1670,7 +1671,7 @@ namespace search
         _cutoff_move = Move();
 
         _extension = 0;
-        _full_depth_count = 0;
+        _full_depth_count = LATE_MOVE_REDUCTION_COUNT;
         _has_singleton = false;
 
         _max_depth = iteration();
