@@ -1596,7 +1596,7 @@ namespace search
                 _extension += 1;
                 int pv_recapture_ext = is_pv * (ONE_PLY - 1);
 
-            #if CAPTURE_HISTORY
+            #if 0 || CAPTURE_HISTORY
                 /* Experimental extension based on capture history */
                 /* https://www.chessprogramming.org/Capture_Extensions */
                 const auto d = depth();
@@ -1774,7 +1774,11 @@ namespace search
             reduction -= _parent->history_count(_move) / HISTORY_COUNT_HIGH;
         }
 
-        if (is_capture() || (_move.from_square() == _parent->_capture_square))
+        if ((is_capture()
+            #if CAPTURE_HISTORY
+                && get_tt()->capture_history(_move) > CAPTURES_HISTORY_THRESHOLD
+            #endif
+             ) || (_move.from_square() == _parent->_capture_square))
             --reduction;
 
         reduction = std::max(1, reduction);
