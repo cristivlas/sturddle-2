@@ -1594,17 +1594,8 @@ namespace search
             if (is_recapture())
             {
                 _extension += 1;
-                int pv_recapture_ext = is_pv * (ONE_PLY - 1);
 
-            #if 0 || CAPTURE_HISTORY
-                /* Experimental extension based on capture history */
-                /* https://www.chessprogramming.org/Capture_Extensions */
-                const auto d = depth();
-                if (d > 0 && d < CAPTURES_HISTORY_MAX_DEPTH)
-                {
-                    pv_recapture_ext *= get_tt()->capture_history(_move) > CAPTURES_HISTORY_THRESHOLD;
-                }
-            #endif
+                const int pv_recapture_ext = is_pv * (ONE_PLY - 1);
                 _extension += pv_recapture_ext;
             }
 
@@ -1776,10 +1767,12 @@ namespace search
 
         if ((is_capture()
             #if CAPTURE_HISTORY
-                && get_tt()->capture_history(_move) > CAPTURES_HISTORY_THRESHOLD
+                && get_tt()->capture_history(_move) < CAPTURES_HISTORY_THRESHOLD
             #endif
              ) || (_move.from_square() == _parent->_capture_square))
+        {
             --reduction;
+        }
 
         reduction = std::max(1, reduction);
         if (reduction > depth && can_prune(is_pv_node()))
