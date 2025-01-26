@@ -1826,7 +1826,10 @@ namespace search
             return true;
         }
 
-        if (depth() > 0
+        if (depth() < -5)
+        {
+        }
+        else if (depth() > 0
             || is_null_move()
             || is_retry()
             || state().promotion
@@ -1837,7 +1840,9 @@ namespace search
              */
             || (_parent->_score < MATE_LOW && is_valid(_parent->_score) && is_last_move())
            )
+        {
             return false;
+        }
 
         /* treat it as leaf for now but retry and extend if it beats alpha */
         if (is_reduced())

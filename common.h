@@ -59,7 +59,7 @@ using score_t = int;
 
 /* Experimental, extend recaptures based on capture history */
 /* https://www.chessprogramming.org/Capture_Extensions */
-#define CAPTURE_HISTORY                     true
+#define CAPTURE_HISTORY                     false
 
 /*
  * Count valid moves made as nodes if true, otherwise use effectively
