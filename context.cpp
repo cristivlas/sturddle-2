@@ -1826,14 +1826,12 @@ namespace search
             return true;
         }
 
-        if (depth() < -5)
-        {
-        }
-        else if (depth() > 0
+        const int d = depth();
+
+        if (d > 0
             || is_null_move()
-            || is_retry()
             || state().promotion
-            || is_check()
+            || (d >= QSEARCH_MAX_DEPTH && (is_retry() || is_check()))
             /*
              * last move to search from current node, with score close to mate?
              * extend the search as to not miss a possible mate in the next move
