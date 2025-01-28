@@ -48,9 +48,6 @@ constexpr score_t CHECKMATE = SCORE_MAX - 1;
 
 constexpr score_t MATE_LOW  = -MATE_HIGH;
 
-/* Aspiration window */
-constexpr score_t HALF_WINDOW = 25;
-
 
 #if REFCOUNT_PARAM
 /* Instrumentation & debug: count parameter usage */
@@ -66,6 +63,26 @@ struct Val
 #else
 using Val = int;
 #endif /* REFCOUNT_PARAM */
+
+namespace search {
+static
+#if !FP_TUNING_ENABLED
+    constexpr
+#endif
+    int fp_margins[] = {
+        0,
+        76,
+        153,
+        233,
+        315,
+        399,
+        485,
+        573,
+        662,
+        754,
+        847,
+    };
+}
 
 #if defined(CONFIG_IMPL)
 #include <map>
@@ -122,6 +139,18 @@ Config::Namespace Config::_namespace = {
     { "ROOK", Config::Param{ &chess::WEIGHT[chess::PieceType::ROOK], 0, 700, "Weights" } },
     { "QUEEN", Config::Param{ &chess::WEIGHT[chess::PieceType::QUEEN], 0, 1300, "Weights" } },
 #endif /* WEIGHT_TUNING_ENABLED */
+
+#if FP_TUNING_ENABLED
+    { "FP_1", Config::Param{ &search::fp_margins[1], 0, 150, "Weights"} },
+    { "FP_2", Config::Param{ &search::fp_margins[2], 100, 200, "Weights"} },
+    { "FP_3", Config::Param{ &search::fp_margins[3], 200, 300, "Weights"} },
+    { "FP_4", Config::Param{ &search::fp_margins[4], 300, 350, "Weights"} },
+    { "FP_5", Config::Param{ &search::fp_margins[5], 350, 430, "Weights"} },
+    { "FP_6", Config::Param{ &search::fp_margins[6], 430, 550, "Weights"} },
+    { "FP_7", Config::Param{ &search::fp_margins[7], 550, 650, "Weights"} },
+    { "FP_8", Config::Param{ &search::fp_margins[8], 650, 750, "Weights"} },
+    { "FP_9", Config::Param{ &search::fp_margins[9], 750, 900, "Weights"} },
+#endif /* FP_TUNING_ENABLED */
 };
 #else
 
@@ -195,6 +224,10 @@ DECLARE_VALUE(  CAPTURES_HISTORY_THRESHOLD,        6500,    0,   15000)
 #endif
 DECLARE_VALUE(  DOUBLE_EXT_MARGIN,                 1354,    0,    2000)
 DECLARE_VALUE(  DOUBLE_EXT_MAX,                      12,    0,     100)
+
+/* Aspiration window */
+DECLARE_VALUE(  HALF_WINDOW,                         25,    5,     100)
+
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
 DECLARE_VALUE(  LMP_ALPHA,                           17,    0,     100)
 DECLARE_VALUE(  LMP_BETA,                            36,    1,     100)

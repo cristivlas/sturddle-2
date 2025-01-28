@@ -741,25 +741,18 @@ namespace search
     /*
      * Futility pruning margins.
      */
-    template<std::size_t... I>
-    static constexpr std::array<int, sizeof ... (I)> margins(std::index_sequence<I...>)
-    {
-        return { static_cast<int>(75 * I + pow(I, 1.99)) ... };
-    }
-
-
     INLINE score_t Context::futility_margin() const
     {
-        if (is_root() || !_futility_pruning || depth() < 1)
+        const int d = depth();
+
+        if (is_root() || !_futility_pruning || d < 1)
             return 0;
 
-        static const auto fp_margins = []() {
-            const auto m = margins(std::make_index_sequence<PLY_MAX>{});
-            //for (size_t i = 0; i != m.size(); ++i)
-            //    std::clog << i << ": " << m[i] << std::endl;
-            return m;
-        } ();
-        return fp_margins[depth()] * can_forward_prune();
+        if (d >= sizeof(fp_margins) / sizeof(fp_margins[0]))
+            return 0;
+
+        const int m = fp_margins[d];
+        return m * can_forward_prune();
     }
 
 
