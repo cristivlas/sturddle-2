@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1454,24 +1454,6 @@ namespace search
         #else
             /* eval_exchanges */
             /* skip exchange evaluation if the capturer is worth less than the captured */
-        #if 0
-            if (other >= capture_gain && abs(ctxt._score) < MATE_HIGH)
-            {
-                other = eval_exchanges<false>(ctxt.tid(), move);
-
-                if (EXCHANGES_DETECT_CHECKMATE && other < MATE_LOW)
-                {
-                    move._score = -other;
-                    move._group = MoveOrder::WINNING_CAPTURES;
-
-                    if (DEBUG_CAPTURES)
-                        ctxt.log_message(
-                            LogLevel::DEBUG,
-                            move.uci() + ": " + std::to_string(move._score) + " " + ctxt.epd());
-                    return;
-                }
-            }
-        #endif /* 0 */
 
             capture_gain -= other;
 

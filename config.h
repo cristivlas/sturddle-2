@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -215,7 +215,7 @@ DECLARE_VALUE(  NULL_MOVE_REDUCTION,                  4,    0,     100)
 DECLARE_VALUE(  NULL_MOVE_IMPROVEMENT_DIV,           72,    1,    1000)
 DECLARE_VALUE(  NULL_MOVE_MARGIN,                   611,    0,    1000)
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    17,    0,     100)
-DECLARE_PARAM(  QSEARCH_MAX_DEPTH,                   -5, -100,       0)
+DECLARE_VALUE(  QSEARCH_MAX_DEPTH,                   -8, -100,       0)
 DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  248,    0,     300)
 DECLARE_VALUE(  RAZOR_INTERCEPT,                    224,    0,     300)
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)

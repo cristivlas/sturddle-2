@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1832,11 +1832,13 @@ namespace search
             || is_null_move()
             || state().promotion
             || (d >= QSEARCH_MAX_DEPTH && (is_retry() || is_check()))
+        #if 0
             /*
              * last move to search from current node, with score close to mate?
              * extend the search as to not miss a possible mate in the next move
              */
             || (_parent->_score < MATE_LOW && is_valid(_parent->_score) && is_last_move())
+        #endif
            )
         {
             return false;
