@@ -748,7 +748,7 @@ namespace search
         if (is_root() || !_futility_pruning || d < 1)
             return 0;
 
-        if (d >= sizeof(fp_margins) / sizeof(fp_margins[0]))
+        if (d >= int(sizeof(fp_margins) / sizeof(fp_margins[0])))
             return 0;
 
         const int m = fp_margins[d];

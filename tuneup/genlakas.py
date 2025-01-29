@@ -73,7 +73,7 @@ if __name__ == '__main__':
 
     # construct list of tunable params
     tune_params = []
-    for name in args.tune:
+    for name in sorted(list(args.tune)):
         val, lo, hi, _ = params[name]
         tune_params.append(f"\\\n'{name}':{{'init':{val},'lower':{lo},'upper':{hi}}},")
 
