@@ -682,6 +682,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         const auto eval = ctxt._tt_entry._value;
     #endif
 
+        const int depth = ctxt.depth();
+
     #if REVERSE_FUTILITY_PRUNING
         /*
          * Reverse futility pruning: static eval stored in TT beats beta by a margin and
@@ -690,8 +692,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         if (   !ctxt.is_root()
             && !ctxt._excluded /* no reverse pruning during singular extension */
             && !ctxt.is_pv_node()
-            && ctxt.depth() > 0
-            && ctxt.depth() < 7
+            && depth > 0
+            && depth < 7
             && eval < MATE_HIGH
             && eval > ctxt._beta
                 + std::max<score_t>(REVERSE_FUTILITY_MARGIN * ctxt.depth(), ctxt.improvement())
@@ -705,7 +707,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     #endif /* REVERSE_FUTILITY_PRUNING */
 
     #if RAZORING
-        if (ctxt.depth() > 0
+        if (depth > 0
             && eval > SCORE_MIN
             && eval < ctxt._alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(ctxt.depth())
             && eval + eval_captures(ctxt) < ctxt._alpha)
@@ -723,16 +725,18 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         /* Reduce depth by 2 if PV node not found in the TT (idea from SF). */
         if (ctxt._ply
             && ctxt.is_pv_node()
-            && ctxt.depth() >= 6
+            && depth >= 6
             && !ctxt._tt_entry.is_valid()
             && ctxt.can_reduce()
            )
+        {
             ctxt._max_depth -= 2;
+        }
 
-        bool null_move = ctxt.is_null_move_ok();
+        bool do_null_move = ctxt.is_null_move_ok();
 
         if constexpr(EXTRA_STATS)
-            table._null_move_not_ok += !null_move;
+            table._null_move_not_ok += !do_null_move;
 
         const auto root_depth = table._iteration;
         int move_count = 0, futility = -1;
@@ -740,11 +744,11 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         score_t a = SCORE_MIN, b = SCORE_MAX, s = SCORE_MIN;
 
         /* iterate over moves */
-        while (auto next_ctxt = ctxt.next(null_move, futility, move_count))
+        while (auto next_ctxt = ctxt.next(do_null_move, futility, move_count))
         {
             if (next_ctxt->is_null_move())
             {
-                null_move = false;
+                do_null_move = false;
 
                 /* save, in case null-move verification fails */
                 a = ctxt._alpha, b = ctxt._beta, s = ctxt._score;

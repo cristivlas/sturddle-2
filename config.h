@@ -64,6 +64,7 @@ struct Val
 using Val = int;
 #endif /* REFCOUNT_PARAM */
 
+/* Futility pruning margins */
 namespace search {
 static
 #if !FP_TUNING_ENABLED
@@ -71,16 +72,22 @@ static
 #endif
     int fp_margins[] = {
         0,
-        76,
-        153,
-        233,
-        315,
-        399,
-        485,
-        573,
-        662,
-        754,
+        92,
+        143,
+        244,
+        325,
+        391,
+        504,
+        585,
+        682,
+        782,
         847,
+        943,
+        1040,
+        1139,
+        1240,
+        1343,
+        1448,
     };
 }
 
