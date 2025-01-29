@@ -1786,7 +1786,7 @@ namespace search
          * "Classical implementation assumes a re-search at full depth
          * if the reduced depth search returns a score above alpha."
          */
-        if (this->depth() < 13)
+        if (this->depth() < LMR_MAX_RETRY_DEPTH)
             _retry_above_alpha = RETRY::Reduced;
 
         if constexpr(EXTRA_STATS)

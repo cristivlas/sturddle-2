@@ -743,6 +743,7 @@ namespace search
      */
     INLINE score_t Context::futility_margin() const
     {
+        static_assert(sizeof(search::fp_margins) / sizeof(search::fp_margins[0]) > 16);
         const int d = depth();
 
         if (is_root() || !_futility_pruning || d < 1)

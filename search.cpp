@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -487,7 +487,7 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
      * regardless, but lower the count of cutoffs required to "succeed" if the position has
      * produced cutoffs before.
      */
-    const auto min_cutoffs = MULTICUT_C - (ctxt.depth() > 5
+    const auto min_cutoffs = MULTICUT_C - (ctxt.depth() > MULTICUT_MIN_DEPTH
         && ctxt._tt_entry.is_lower()
         && ctxt._tt_entry._value + MULTICUT_MARGIN >= ctxt._beta);
 
@@ -653,7 +653,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         return *p;
     }
 
-    if (!ctxt.is_pv_node() && /* !ctxt.is_retry() && */ ctxt._eval > ctxt._alpha && ctxt.depth() < 7)
+    if (!ctxt.is_pv_node() && ctxt._eval > ctxt._alpha && ctxt.depth() < MAX_ALPHA_EXT_DEPTH)
     {
         ++ctxt._max_depth;
     }
@@ -693,7 +693,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             && !ctxt._excluded /* no reverse pruning during singular extension */
             && !ctxt.is_pv_node()
             && depth > 0
-            && depth < 7
+            && depth < REVERSE_FUTILITY_MAX_DEPTH
             && eval < MATE_HIGH
             && eval > ctxt._beta
                 + std::max<score_t>(REVERSE_FUTILITY_MARGIN * ctxt.depth(), ctxt.improvement())
@@ -725,7 +725,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         /* Reduce depth by 2 if PV node not found in the TT (idea from SF). */
         if (ctxt._ply
             && ctxt.is_pv_node()
-            && depth >= 6
+            && depth >= MIN_TT_REDUCTION_DEPTH
             && !ctxt._tt_entry.is_valid()
             && ctxt.can_reduce()
            )
@@ -788,7 +788,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     * does not beat beta, it means the move is singular (the only cutoff
                     * in the current position).
                     */
-                    if (ctxt.depth() >= (ctxt.is_pv_node() ? 7 : 5)
+                    if (ctxt.depth() >= (ctxt.is_pv_node() ? SINGULAR_MIN_DEPTH_PV : SINGULAR_MIN_DEPTH_NON_PV)
                         && ctxt._tt_entry.is_lower()
                         && next_ctxt->_move._group == MoveOrder::BEST_MOVES
                         && abs(ctxt._tt_entry._value) < MATE_HIGH

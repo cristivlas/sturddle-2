@@ -104,6 +104,12 @@ struct Config
         const int   _min = 0;
         const int   _max = 0;
         std::string _group;
+
+        Param(Val* const vp, int min_val, int max_val, const std::string& group)
+            : _val(vp), _min(min_val), _max(max_val), _group(group) {
+            ASSERT_ALWAYS(_min <= *_val);
+            ASSERT_ALWAYS(_max >= *_val);
+        }
     };
 
     using Namespace = std::map<std::string, Param>;
@@ -157,6 +163,13 @@ Config::Namespace Config::_namespace = {
     { "FP_7", Config::Param{ &search::fp_margins[7], 550, 650, "Weights"} },
     { "FP_8", Config::Param{ &search::fp_margins[8], 650, 750, "Weights"} },
     { "FP_9", Config::Param{ &search::fp_margins[9], 750, 900, "Weights"} },
+    { "FP_10", Config::Param{ &search::fp_margins[10], 800, 900, "Weights"} },
+    { "FP_11", Config::Param{ &search::fp_margins[11], 900, 1050, "Weights"} },
+    { "FP_12", Config::Param{ &search::fp_margins[12], 1000, 1100, "Weights"} },
+    { "FP_13", Config::Param{ &search::fp_margins[13], 1100, 1200, "Weights"} },
+    { "FP_14", Config::Param{ &search::fp_margins[14], 1200, 1300, "Weights"} },
+    { "FP_15", Config::Param{ &search::fp_margins[15], 1300, 1400, "Weights"} },
+    { "FP_16", Config::Param{ &search::fp_margins[16], 1400, 1500, "Weights"} },
 #endif /* FP_TUNING_ENABLED */
 };
 #else
@@ -239,10 +252,14 @@ DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
 DECLARE_VALUE(  LMP_ALPHA,                           17,    0,     100)
 DECLARE_VALUE(  LMP_BETA,                            36,    1,     100)
 DECLARE_VALUE(  LMP_BASE,                             2,    2,     100)
+DECLARE_VALUE(  LMR_MAX_RETRY_DEPTH,                 13,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                261,    0,    1000)
-
+DECLARE_VALUE(  MAX_ALPHA_EXT_DEPTH,                  7,    0,     100)
+DECLARE_VALUE(  MIN_TT_REDUCTION_DEPTH,               6,    0,     100)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
+DECLARE_VALUE(  MULTICUT_MIN_DEPTH,                   5,    0,     100)
+
 #if WITH_NNUE
 DECLARE_VALUE(  NNUE_EVAL_TERM,                     645,    0,    1000)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      496,    0,    1000)
@@ -261,8 +278,11 @@ DECLARE_VALUE(  RAZOR_INTERCEPT,                    224,    0,     300)
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
 DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     500)
 DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             26,    0,     150)
+DECLARE_VALUE(  REVERSE_FUTILITY_MAX_DEPTH,           7,    0,     100)
 DECLARE_VALUE(  SINGULAR_ACCURACY_MARGIN,           288,    1,     500)
 DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                0,    0,     100)
+DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    0,     100)
+DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                7,    0,     100)
 DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_LOW,       -48, -150,       0)
 DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_HIGH,       12,    0,     150)
 DECLARE_VALUE(  WINDOW_COEFF,                         6,    0,     100)
