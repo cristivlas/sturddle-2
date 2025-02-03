@@ -947,7 +947,7 @@ namespace search
     INLINE void Context::init_late_move_reduction_count()
     {
         ASSERT(_full_depth_count == LATE_MOVE_REDUCTION_COUNT);
-        _full_depth_count = std::max(LATE_MOVE_REDUCTION_COUNT, depth() / 3);
+        _full_depth_count = std::max(LATE_MOVE_REDUCTION_COUNT, 2 * depth() / 3);
     }
 
 

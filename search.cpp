@@ -709,7 +709,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     #if RAZORING
         if (depth > 0
             && eval > SCORE_MIN
-            && eval < ctxt._alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(ctxt.depth())
+            && eval < ctxt._alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(depth)
             && eval + eval_captures(ctxt) < ctxt._alpha)
         {
             return ctxt._alpha;
@@ -724,9 +724,12 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
         /* Reduce depth by 2 if PV node not found in the TT (idea from SF). */
         if (ctxt._ply
-            && ctxt.is_pv_node()
             && depth >= MIN_TT_REDUCTION_DEPTH
-            && !ctxt._tt_entry.is_valid()
+            && ((ctxt.is_pv_node() && !ctxt._tt_entry.is_valid())
+        #if CAPTURE_HISTORY
+                || (ctxt.is_capture() && ctxt.get_tt()->capture_history(ctxt._move) < CAPTURES_HISTORY_THRESHOLD)
+        #endif
+               )
             && ctxt.can_reduce()
            )
         {
@@ -776,7 +779,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                  * Extensions. Do not extend at root, or if already deeper
                  * than twice the depth at root (to prevent runaways).
                  */
-                if (!ctxt.is_root() && !ctxt.is_qsearch() && ctxt._ply < root_depth * 2)
+                if (!ctxt.is_root() && ctxt._ply < root_depth * 2 && !next_ctxt->is_retry())
                 {
                 #if SINGULAR_EXTENSION
                    /*

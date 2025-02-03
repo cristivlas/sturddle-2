@@ -740,7 +740,7 @@ namespace search
         /* use top half of moves stacks */
         ASSERT(ply >= PLY_MAX);
 
-        if (size_t(ply) >= Context::MAX_MOVE)
+        if (ply >= PLY_MAX + MAX_EXCHANGE_DEPTH)
             return 0;
 
         mask &= ~state.kings;
@@ -1766,9 +1766,9 @@ namespace search
         }
 
         if ((is_capture()
-            #if CAPTURE_HISTORY
-                && get_tt()->capture_history(_move) < CAPTURES_HISTORY_THRESHOLD
-            #endif
+            // #if CAPTURE_HISTORY
+            //     && get_tt()->capture_history(_move) < CAPTURES_HISTORY_THRESHOLD
+            // #endif
              ) || (_move.from_square() == _parent->_capture_square))
         {
             --reduction;
