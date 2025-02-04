@@ -44,10 +44,10 @@
 
 /*
  * WITH_NNUE is on by default.
- * Turning it off enables HCE (hand-crafted evaluation) and results in more than ~1000 ELO loss.
+ * Turning it off enables HCE (hand-crafted evaluation) and results in > ~1000 ELO strength loss.
  *
- * Note: NNUE name is for historical reasons (inherited from version 1.04).
- * The current NN is redesigned from scratch.
+ * Note: "NNUE" naming is for historical reasons (inherited from version 1.04).
+ * The neural net is of original design and does not follow NNUE as implemented by other engines.
  */
 #if !defined(WITH_NNUE)
   #define WITH_NNUE false
