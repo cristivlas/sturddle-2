@@ -42,6 +42,13 @@
   #include <xmmintrin.h>
 #endif
 
+/*
+ * WITH_NNUE is on by default.
+ * Turning it off enables HCE (hand-crafted evaluation) and results in more than ~1000 ELO loss.
+ *
+ * Note: NNUE name is for historical reasons (inherited from version 1.04).
+ * The current NN is redesigned from scratch.
+ */
 #if !defined(WITH_NNUE)
   #define WITH_NNUE false
 #endif
