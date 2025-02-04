@@ -723,13 +723,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         }
 
         /* Reduce depth by 2 if PV node not found in the TT (idea from SF). */
-        if (ctxt._ply
+        if (!ctxt.is_root()
+            && ctxt.is_pv_node()
             && depth >= MIN_TT_REDUCTION_DEPTH
-            && ((ctxt.is_pv_node() && !ctxt._tt_entry.is_valid())
-        #if CAPTURE_HISTORY
-                || (ctxt.is_capture() && ctxt.get_tt()->capture_history(ctxt._move) < CAPTURES_HISTORY_THRESHOLD)
-        #endif
-               )
+            && !ctxt._tt_entry.is_valid()
             && ctxt.can_reduce()
            )
         {
@@ -779,7 +776,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                  * Extensions. Do not extend at root, or if already deeper
                  * than twice the depth at root (to prevent runaways).
                  */
-                if (!ctxt.is_root() && ctxt._ply < root_depth * 2 && !next_ctxt->is_retry())
+                if (!ctxt.is_root() && ctxt._ply < root_depth * 2)
                 {
                 #if SINGULAR_EXTENSION
                    /*
@@ -846,7 +843,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     }
                 #endif /* SINGULAR_EXTENSION */
 
-                    next_ctxt->extend(ctxt.is_pv_node()); /* apply fractional and other extensions */
+                    if (!next_ctxt->is_qsearch())
+                    {
+                        next_ctxt->extend(ctxt.is_pv_node()); /* apply fractional and other extensions */
+                    }
                 }
 
                 /* Late-move reduction and pruning */

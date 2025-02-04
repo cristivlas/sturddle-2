@@ -1766,9 +1766,9 @@ namespace search
         }
 
         if ((is_capture()
-            // #if CAPTURE_HISTORY
-            //     && get_tt()->capture_history(_move) < CAPTURES_HISTORY_THRESHOLD
-            // #endif
+            #if CAPTURE_HISTORY
+                && get_tt()->capture_history(_move) < CAPTURES_HISTORY_THRESHOLD
+            #endif
              ) || (_move.from_square() == _parent->_capture_square))
         {
             --reduction;
