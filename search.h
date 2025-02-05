@@ -336,11 +336,14 @@ namespace search
         void history_update_cutoffs(const Move&); /* update non-capture fail highs */
         void history_update_non_cutoffs(const Move&);
 
+
+#if CAPTURE_HISTORY
         void capture_history_update_cutoffs(const Move&);
         void capture_history_update_non_cutoffs(const Move&);
 
         int& capture_history_lookup(const Move&);
         int capture_history(const Move&) const;
+#endif /* CAPTURE_HISTORY */
 
         void update_stats(const Context&);
 

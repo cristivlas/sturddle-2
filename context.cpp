@@ -171,9 +171,6 @@ struct LMR
                 const auto e = (100 + depth) / 100.0;
 
                 _table[depth][moves] = int(pow(v, e));
-
-                // std::cout << "[" << depth << "][" << moves << "]: " << int(v);
-                // std::cout << ", " << int(pow(v, e)) << std::endl;
             }
         }
     }
@@ -833,7 +830,7 @@ namespace search
                     Context::log_message(LogLevel::DEBUG, out.str());
                 }
 
-                continue;
+                break; // moves are sorted by piece weight
             }
 
             /****************************************************************/

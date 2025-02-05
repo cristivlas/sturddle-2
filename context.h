@@ -485,7 +485,7 @@ namespace search
      * Evaluate same square exchanges. Called by make_captures.
      */
     template<bool StaticExchangeEvaluation>
-    INLINE score_t eval_exchanges(int tid, const Move& move)
+    INLINE score_t eval_exchanges(int tid, const Move& move, int value)
     {
         score_t val = 0;
 
@@ -502,7 +502,7 @@ namespace search
             else
             {
                 auto mask = chess::BB_SQUARES[move.to_square()];
-                val = do_exchanges<DEBUG_CAPTURES != 0>(*move._state, mask, 0, tid);
+                val = do_exchanges<DEBUG_CAPTURES != 0>(*move._state, mask, value, tid);
             }
         }
         return val;
@@ -1426,30 +1426,27 @@ namespace search
 
         ASSERT(is_valid(ctxt._eval));
 
-    #if 0
-        const int futility = ctxt.is_qsearch() * 100;
-    #else
-        constexpr int futility = 0;
-    #endif
-
-        if (make_move<false>(ctxt, move, futility))
+        if (make_move<false>(ctxt, move))
         {
             ASSERT(move._state->capture_value);
 
-            /*
-             * Now determine which capture group it belongs to.
-             */
             auto capture_gain = move._state->capture_value;
-            auto other = ctxt.state().piece_weight_at(move.from_square());
 
-        #if SIMPLE_CAPTURES_ORDERING
-            capture_gain -= other;
-            move._group = MoveOrder::CAPTURES;
-        #else
-            /* eval_exchanges */
-            /* skip exchange evaluation if the capturer is worth less than the captured */
+            if (ctxt.is_qsearch())
+            {
+                capture_gain -= ctxt.state().piece_weight_at(move.from_square());
+            }
+            else
+            {
+                capture_gain -= eval_exchanges<false>(ctxt.tid(), move, capture_gain);
 
-            capture_gain -= other;
+                /* SEE pruning */
+                if (capture_gain < 0 && ctxt.depth() <= 7)
+                {
+                    mark_as_pruned(ctxt, move);
+                    return;
+                }
+            }
 
             if (capture_gain < 0)
             {
@@ -1460,7 +1457,6 @@ namespace search
                 static_assert(MoveOrder::WINNING_CAPTURES + 1 == MoveOrder::EQUAL_CAPTURES);
                 move._group = MoveOrder::WINNING_CAPTURES + (capture_gain == 0);
             }
-        #endif /* !SIMPLE_CAPTURES_ORDERING */
 
             move._score = capture_gain;
         }
