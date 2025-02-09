@@ -128,6 +128,7 @@ if platform.startswith('win'):
             '-Ofast',
             '-Wno-unused-command-line-argument',
             '-Wno-unused-variable',
+            '-Wno-nan-infinity-disabled',
         ]
     else:
         link += ['/LTCG:OFF']

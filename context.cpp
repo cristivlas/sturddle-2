@@ -176,6 +176,33 @@ struct LMR
     }
 } LMR;
 
+
+/*
+ * Late-move pruning counts (initialization idea borrowed from Crafty)
+ */
+LMPTable::LMPTable() { init(); }
+
+void LMPTable::init()
+{
+    for (size_t i = 0; i != PLY_MAX; ++i)
+    {
+        const auto p = pow(i + .5, 1.9);
+        _table[0][i] = LMP_BASE / 100.0 + LMP_COEFF / 100.0 + p;
+        _table[1][i] = LMP_BASE_I / 100.0 + LMP_COEFF_I / 100.0 + p;
+    }
+}
+
+size_t LMPTable::count(bool has_improved, int depth) const
+{
+    ASSERT(depth >= 0);
+    ASSERT(depth < PLY_MAX);
+
+    return _table[has_improved][depth];
+}
+
+LMPTable LMP;
+
+
 /*---------------------------------------------------------------------------
  *
  * Configuration API, for tweaking parameters via Python scripts
@@ -248,9 +275,18 @@ void _set_param(const std::string& name, int value, bool echo)
         if (*iter->second._val != value)
         {
             *iter->second._val = value;
+            if (   name == "LMP_BASE"
+                || name == "LMP_BASE_I"
+                || name == "LMP_COEFF"
+                || name == "LMP_COEFF_I")
+            {
+                LMP.init();
+            }
 
             if (echo)
+            {
                 std::cout << "info string " << name << "=" << *iter->second._val << std::endl;
+            }
         }
     }
 }
@@ -390,7 +426,7 @@ void search::Context::eval_nnue()
         auto eval = evaluate_material();
 
         /* stick with material eval if heavily imbalanced */
-        if (state().just_king(!turn()) || is_qsearch() || abs(eval) <= NNUE_MAX_EVAL + LMP[depth()])
+        if (state().just_king(!turn()) || is_qsearch() || abs(eval) <= NNUE_MAX_EVAL + LMP.count(has_improved(), depth()))
         {
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
         }
@@ -1749,7 +1785,7 @@ namespace search
         const int depth = this->depth();
 
         /* late move pruning */
-        if (depth > 0 && count >= LMP[depth] * late_move_prune_factor() && can_prune(is_pv_node()))
+        if (depth > 0 && count >= LMP.count(has_improved(), depth) * late_move_prune_factor() && can_prune(is_pv_node()))
             return LMRAction::Prune;
 
         /* no reductions at very low depth */

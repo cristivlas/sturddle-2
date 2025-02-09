@@ -217,7 +217,7 @@ Config::Namespace Config::_namespace = {
 
 #if SMP && defined(CONFIG_IMPL)
     static auto THREAD_MAX = std::thread::hardware_concurrency();
-    static auto THREAD_VAL = std::min<int>(4, std::thread::hardware_concurrency());
+    static auto THREAD_VAL = std::min<int>(4, THREAD_MAX);
 #else
     static constexpr int THREAD_MAX = 1;
     static constexpr int THREAD_VAL = 1;
@@ -265,7 +265,10 @@ DECLARE_VALUE(  HALF_WINDOW,                         25,    5,     100)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
 DECLARE_VALUE(  LMP_ALPHA,                           17,    0,     100)
 DECLARE_VALUE(  LMP_BETA,                            36,    1,     100)
-DECLARE_VALUE(  LMP_BASE,                             2,    2,     100)
+DECLARE_VALUE(  LMP_BASE,                           200,  100,    1000)
+DECLARE_VALUE(  LMP_BASE_I,                         250,  100,    1000)
+DECLARE_VALUE(  LMP_COEFF,                          300,  100,    1000)
+DECLARE_VALUE(  LMP_COEFF_I,                        350,  100,    1000)
 DECLARE_VALUE(  LMR_MAX_RETRY_DEPTH,                 12,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                255,    0,    1000)
