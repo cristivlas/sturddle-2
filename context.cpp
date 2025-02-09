@@ -426,7 +426,7 @@ void search::Context::eval_nnue()
         auto eval = evaluate_material();
 
         /* stick with material eval if heavily imbalanced */
-        if (state().just_king(!turn()) || is_qsearch() || abs(eval) <= NNUE_MAX_EVAL + LMP.count(has_improved(), depth()))
+        if (state().just_king(!turn()) || is_qsearch() || abs(eval) <= NNUE_MAX_EVAL + LMR._table[depth()][0])
         {
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
         }

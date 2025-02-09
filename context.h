@@ -942,12 +942,18 @@ namespace search
      */
     INLINE float Context::late_move_prune_factor() const
     {
+    #if true
         const auto piece_count = chess::popcount(state().occupied());
 
         return 1 + (
             float(LMP_ALPHA) * move_count() / piece_count +
             float(LMP_BETA) * evaluate_material() / chess::max_material_delta()
         ) / (LMP_ALPHA + LMP_BETA);
+    #else
+
+        return 1.0;
+
+    #endif
     }
 
 
