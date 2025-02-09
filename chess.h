@@ -326,7 +326,7 @@ namespace chess
 
 
 #define DEFAULT_MOBILITY_WEIGHTS { 0, 0, 0, 7, 6, 5, 0 }
-#define DEFAULT_WEIGHTS { 0, 90, 328, 337, 520, 970, 20000 }
+#define DEFAULT_WEIGHTS { 0, 90, 322, 336, 517, 975, 20000 }
 
 #if MOBILITY_TUNING_ENABLED
     extern int MOBILITY[7];

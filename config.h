@@ -77,16 +77,16 @@ static
         242, /* 3 */
         325, /* 4 */
         388, /* 5 */
-        507, /* 6 */
-        587, /* 7 */
-        682, /* 8 */
-        780, /* 9 */
+        509, /* 6 */
+        588, /* 7 */
+        683, /* 8 */
+        779, /* 9 */
         846, /* 10 */
-        942, /* 11 */
-        1040, /* 12 */
-        1137, /* 13 */
-        1240, /* 14 */
-        1340, /* 15 */
+        944, /* 11 */
+        1039, /* 12 */
+        1136, /* 13 */
+        1239, /* 14 */
+        1339, /* 15 */
         1446, /* 16 */
         1555,
         1664,
@@ -263,24 +263,24 @@ DECLARE_VALUE(  DOUBLE_EXT_MAX,                      12,    0,     100)
 DECLARE_VALUE(  HALF_WINDOW,                         25,    5,     100)
 
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
-DECLARE_VALUE(  LMP_ALPHA,                           17,    0,     100)
-DECLARE_VALUE(  LMP_BETA,                            36,    1,     100)
-DECLARE_VALUE(  LMP_BASE,                           185,  100,    1000)
-DECLARE_VALUE(  LMP_BASE_I,                         205,  100,    1000)
-DECLARE_VALUE(  LMP_COEFF,                          105,  100,    1000)
-DECLARE_VALUE(  LMP_COEFF_I,                        115,  100,    1000)
+DECLARE_VALUE(  LMP_ALPHA,                           19,    0,     100)
+DECLARE_VALUE(  LMP_BETA,                            37,    1,     100)
+DECLARE_VALUE(  LMP_BASE,                           200,  100,    1000)
+DECLARE_VALUE(  LMP_BASE_I,                         211,  100,    1000)
+DECLARE_VALUE(  LMP_COEFF,                          118,  100,    1000)
+DECLARE_VALUE(  LMP_COEFF_I,                        104,  100,    1000)
 DECLARE_VALUE(  LMR_MAX_RETRY_DEPTH,                 12,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
-DECLARE_VALUE(  KILLER_MOVES_MARGIN,                255,    0,    1000)
+DECLARE_VALUE(  KILLER_MOVES_MARGIN,                229,    0,    1000)
 DECLARE_VALUE(  MAX_ALPHA_EXT_DEPTH,                  7,    0,     100)
 DECLARE_VALUE(  MAX_EXCHANGE_DEPTH,                   9,    0,     100)
 DECLARE_VALUE(  MIN_TT_REDUCTION_DEPTH,               6,    0,     100)
-DECLARE_VALUE(  MULTICUT_MARGIN,                    149,    0,    1000)
+DECLARE_VALUE(  MULTICUT_MARGIN,                    148,    0,    1000)
 DECLARE_VALUE(  MULTICUT_MIN_DEPTH,                   5,    0,     100)
 
 #if WITH_NNUE
-DECLARE_VALUE(  NNUE_EVAL_TERM,                     645,    0,    1000)
-DECLARE_VALUE(  NNUE_MAX_EVAL,                      496,    0,    1000)
+DECLARE_VALUE(  NNUE_EVAL_TERM,                     656,    0,    1000)
+DECLARE_VALUE(  NNUE_MAX_EVAL,                      498,    0,    1000)
 #endif /* WITH_NNUE */
 DECLARE_VALUE(  NNUE_ROOT_ORDER_THRESHOLD,           88,    0,     128)
 DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,               3,    0,     100)
@@ -288,7 +288,7 @@ DECLARE_VALUE(  NULL_MOVE_DEPTH_DIV,                  4,    1,     100)
 DECLARE_VALUE(  NULL_MOVE_DIV,                      278,    1,    1000)
 DECLARE_VALUE(  NULL_MOVE_REDUCTION,                  4,    0,     100)
 DECLARE_VALUE(  NULL_MOVE_IMPROVEMENT_DIV,           72,    1,    1000)
-DECLARE_VALUE(  NULL_MOVE_MARGIN,                   626,    0,    1000)
+DECLARE_VALUE(  NULL_MOVE_MARGIN,                   631,    0,    1000)
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    17,    0,     100)
 DECLARE_VALUE(  QSEARCH_MAX_DEPTH,                  -16, -100,       0)
 DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  248,    0,     300)
@@ -297,7 +297,7 @@ DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
 DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     500)
 DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             26,    0,     150)
 DECLARE_VALUE(  REVERSE_FUTILITY_MAX_DEPTH,           7,    0,     100)
-DECLARE_VALUE(  SINGULAR_ACCURACY_MARGIN,           291,    1,     500)
+DECLARE_VALUE(  SINGULAR_ACCURACY_MARGIN,           296,    1,     500)
 DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                0,    0,     100)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    0,     100)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                7,    0,     100)
