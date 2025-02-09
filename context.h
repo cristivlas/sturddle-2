@@ -1292,7 +1292,7 @@ namespace search
 
         return !ctxt.is_root()
             && ctxt.depth() > 1 /* do not LMP leaf nodes */
-            && _current >= LMP.count(ctxt.has_improved(), ctxt.depth() - 1) * ctxt.late_move_prune_factor()
+            && _current >= LMP.count(ctxt._parent->has_improved(), ctxt.depth() - 1)
             && ctxt.can_forward_prune();
     }
 
