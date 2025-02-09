@@ -520,17 +520,18 @@ namespace search
     }
 
 
-    INLINE void incremental_update(Move& move, const Context& ctxt)
+    INLINE bool incremental_update(Move& move, const Context& ctxt)
     {
         ASSERT(move._state);
 
         if (move._state->simple_score == State::UNKNOWN_SCORE)
         {
-            move._state->eval_apply_delta(move, ctxt.state());
+            return move._state->eval_apply_delta(move, ctxt.state());
         }
 
         /* post-condition */
         ASSERT(move._state->simple_score == move._state->eval_simple());
+        return true;
     }
 
 
@@ -614,7 +615,9 @@ namespace search
             && (state().pushed_pawns_score <= 1)
             && !is_extended()
             && (_move.from_square() != _parent->_capture_square)
+        #if 0
             && !is_recapture()
+        #endif
             && !is_check();
     }
 

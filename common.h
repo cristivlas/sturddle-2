@@ -194,11 +194,12 @@ namespace search
         HISTORY_COUNTERS = 10,
         TACTICAL_MOVES = 11, /* pushed pawns, checks, etc. */
         ROOT_MOVES = 12, /* root moves ordered by NNUE eval */
-        LATE_MOVES = 13, /* all other legal moves not covered above */
-        UNORDERED_MOVES = 14,
-        PRUNED_MOVES = 15,
-        QUIET_MOVES = 16,
-        ILLEGAL_MOVES = 17,
+        INCREMENTAL_LATE_MOVES = 13,
+        LATE_MOVES = 14, /* all other legal moves not covered above */
+        UNORDERED_MOVES = 15,
+        PRUNED_MOVES = 16,
+        QUIET_MOVES = 17,
+        ILLEGAL_MOVES = 18,
     };
 }
 

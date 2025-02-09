@@ -72,22 +72,36 @@ static
 #endif
     int fp_margins[] = {
         0,
-        92,
-        143,
-        244,
-        325,
-        391,
-        504,
-        585,
-        682,
-        782,
-        847,
-        943,
-        1040,
-        1139,
-        1240,
-        1343,
-        1448,
+        90, /* 1 */
+        142, /* 2 */
+        242, /* 3 */
+        325, /* 4 */
+        388, /* 5 */
+        507, /* 6 */
+        587, /* 7 */
+        682, /* 8 */
+        780, /* 9 */
+        846, /* 10 */
+        942, /* 11 */
+        1040, /* 12 */
+        1137, /* 13 */
+        1240, /* 14 */
+        1340, /* 15 */
+        1446, /* 16 */
+        1555,
+        1664,
+        1775,
+        1888, /* 20 */
+        2002,
+        2119,
+        2237,
+        2357,
+        2480, /* 25 */
+        2604,
+        2730,
+        2858,
+        2988,
+        3119, /* 30 */
     };
 }
 
@@ -254,11 +268,11 @@ DECLARE_VALUE(  LMP_BETA,                            36,    1,     100)
 DECLARE_VALUE(  LMP_BASE,                             2,    2,     100)
 DECLARE_VALUE(  LMR_MAX_RETRY_DEPTH,                 12,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
-DECLARE_VALUE(  KILLER_MOVES_MARGIN,                261,    0,    1000)
+DECLARE_VALUE(  KILLER_MOVES_MARGIN,                255,    0,    1000)
 DECLARE_VALUE(  MAX_ALPHA_EXT_DEPTH,                  7,    0,     100)
-DECLARE_VALUE(  MAX_EXCHANGE_DEPTH,                 100,    0,     100)
+DECLARE_VALUE(  MAX_EXCHANGE_DEPTH,                   9,    0,     100)
 DECLARE_VALUE(  MIN_TT_REDUCTION_DEPTH,               6,    0,     100)
-DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
+DECLARE_VALUE(  MULTICUT_MARGIN,                    149,    0,    1000)
 DECLARE_VALUE(  MULTICUT_MIN_DEPTH,                   5,    0,     100)
 
 #if WITH_NNUE
@@ -271,7 +285,7 @@ DECLARE_VALUE(  NULL_MOVE_DEPTH_DIV,                  4,    1,     100)
 DECLARE_VALUE(  NULL_MOVE_DIV,                      278,    1,    1000)
 DECLARE_VALUE(  NULL_MOVE_REDUCTION,                  4,    0,     100)
 DECLARE_VALUE(  NULL_MOVE_IMPROVEMENT_DIV,           72,    1,    1000)
-DECLARE_VALUE(  NULL_MOVE_MARGIN,                   611,    0,    1000)
+DECLARE_VALUE(  NULL_MOVE_MARGIN,                   626,    0,    1000)
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    17,    0,     100)
 DECLARE_VALUE(  QSEARCH_MAX_DEPTH,                  -16, -100,       0)
 DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  248,    0,     300)
@@ -280,7 +294,7 @@ DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
 DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     500)
 DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             26,    0,     150)
 DECLARE_VALUE(  REVERSE_FUTILITY_MAX_DEPTH,           7,    0,     100)
-DECLARE_VALUE(  SINGULAR_ACCURACY_MARGIN,           288,    1,     500)
+DECLARE_VALUE(  SINGULAR_ACCURACY_MARGIN,           291,    1,     500)
 DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                0,    0,     100)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    0,     100)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                7,    0,     100)

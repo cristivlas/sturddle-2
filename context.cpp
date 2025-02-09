@@ -2161,13 +2161,15 @@ namespace search
                     if (make_move<true>(ctxt, move, MoveOrder::TACTICAL_MOVES, hist_score))
                         ASSERT(move._score == hist_score);
                 }
-                else if (move._score >= HISTORY_LOW
+            #if 0
+                else if (hist_score >= HISTORY_LOW
                     && make_move<true>(ctxt, move, futility)
-                    && (move._state->has_fork(!move._state->turn) || is_direct_check(move)))
+                    && (is_direct_check(move) || move._state->has_fork(ctxt.turn())))
                 {
                     move._group = MoveOrder::TACTICAL_MOVES;
                     move._score = hist_score;
                 }
+            #endif
             }
             else /* Phase == 4 */
             {
@@ -2175,11 +2177,17 @@ namespace search
                 {
                     if (!WITH_NNUE || !ctxt.is_root() || count < size_t(NNUE_ROOT_ORDER_THRESHOLD))
                     {
-                        incremental_update(move, ctxt);
-                        move._group = MoveOrder::LATE_MOVES;
-                        move._score =
-                            ctxt.history_score(move) / (1 + HISTORY_LOW)
-                            + eval_material_and_piece_squares(*move._state);
+                        move._score = ctxt.history_score(move) / (1 + HISTORY_LOW);
+
+                        if (incremental_update(move, ctxt))
+                        {
+                            move._score += eval_material_and_piece_squares(*move._state);
+                            move._group = MoveOrder::INCREMENTAL_LATE_MOVES;
+                        }
+                        else
+                        {
+                            move._group = MoveOrder::LATE_MOVES;
+                        }
                     }
                 #if WITH_NNUE
                     else /* order by NNUE eval at root */

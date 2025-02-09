@@ -326,8 +326,7 @@ namespace chess
 
 
 #define DEFAULT_MOBILITY_WEIGHTS { 0, 0, 0, 7, 6, 5, 0 }
-#define DEFAULT_WEIGHTS { 0, 85, 319, 343, 522, 986, 20000 }
-
+#define DEFAULT_WEIGHTS { 0, 90, 328, 337, 520, 970, 20000 }
 
 #if MOBILITY_TUNING_ENABLED
     extern int MOBILITY[7];
@@ -1144,10 +1143,12 @@ namespace chess
         /*
          * Apply incremental material and piece squares evaluation.
          */
-        INLINE void eval_apply_delta(const BaseMove& move, const State& prev)
+        INLINE bool eval_apply_delta(const BaseMove& move, const State& prev)
         {
             simple_score = prev.eval_incremental(move);
+            const bool incremental = simple_score != UNKNOWN_SCORE;
             eval_lazy();
+            return incremental;
         }
 
         score_t eval_incremental(const BaseMove&) const;
