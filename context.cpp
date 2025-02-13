@@ -170,7 +170,7 @@ struct LMR
                 const auto v = 0.5 + log(depth) * log(moves) / 2;
                 const auto e = (100 + depth) / 100.0;
 
-                _table[depth][moves] = int(pow(v, e));
+                _table[depth][moves] = LMR_BASE / 100.0 + LMR_COEFF / 100.0 + int(pow(v, e));
             }
         }
     }
@@ -426,7 +426,7 @@ void search::Context::eval_nnue()
         auto eval = evaluate_material();
 
         /* stick with material eval if heavily imbalanced */
-        if (state().just_king(!turn()) || is_qsearch() || abs(eval) <= NNUE_MAX_EVAL)
+        if (state().just_king(!turn()) /* || is_qsearch() */ || abs(eval) <= NNUE_MAX_EVAL)
         {
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
         }
