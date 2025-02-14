@@ -937,23 +937,22 @@ namespace search
     }
 
 
-    /*
-     * A simple model of position complexity, used with late move prunning.
-     */
     INLINE float Context::late_move_prune_factor() const
     {
-    #if true
+    #if 0
+        /*
+         * A simple model of position complexity, used with late move prunning.
+         */
         const auto piece_count = chess::popcount(state().occupied());
 
-        return 1 + (
+        float factor =  1 + (
             float(LMP_ALPHA) * move_count() / piece_count +
             float(LMP_BETA) * evaluate_material() / chess::max_material_delta()
         ) / (LMP_ALPHA + LMP_BETA);
     #else
-
-        return 1.0;
-
+        const float factor = std::max(1.0, _tt_entry.is_valid() * 7.0 / iteration());
     #endif
+        return factor;
     }
 
 
@@ -1512,6 +1511,7 @@ namespace search
             return false;
         }
 
+    #if 0
         /* Late-move prune before making the move. */
         if constexpr(LateMovePrune)
         {
@@ -1521,12 +1521,13 @@ namespace search
                 return false;
             }
         }
-
+    #endif
         ctxt.state().clone_into(*move._state);
         ASSERT(move._state->capture_value == 0);
 
         move._state->apply_move(move);
 
+    #if 0
         if constexpr(LateMovePrune)
         {
             /* History-based pruning. */
@@ -1539,7 +1540,7 @@ namespace search
                 return false;
             }
         }
-
+    #endif
         if (_group_quiet_moves && is_quiet(*move._state))
         {
             _have_quiet_moves = true;

@@ -1782,8 +1782,13 @@ namespace search
         const int depth = this->depth();
 
         /* late move pruning */
-        if (depth > 0 && count >= LMP.count(has_improved(), depth) * late_move_prune_factor() && can_prune(is_pv_node()))
+        if (depth > 0
+            && count >= std::max<int>(_full_depth_count, LMP.count(has_improved(), depth) * late_move_prune_factor())
+            && can_prune(is_pv_node())
+           )
+        {
             return LMRAction::Prune;
+        }
 
         /* no reductions at very low depth */
         if (depth < 3 || count < _parent->_full_depth_count || !can_reduce())
