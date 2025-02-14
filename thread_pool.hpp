@@ -37,7 +37,7 @@ public:
     using thread_id_type = int;
 
     explicit thread_pool(size_t thread_count)
-        : _running(true)
+        : _running(thread_count > 0)
         , _tasks_pending(0)
     {
         for (size_t i = 0; i != thread_count; ++i)
