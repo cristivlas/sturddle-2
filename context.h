@@ -800,7 +800,7 @@ namespace search
     {
         if (_improvement < 0)
         {
-            if (_ply < 2 || _excluded || is_promotion())
+            if (!_parent || !_parent->_parent || _excluded /* || is_promotion() */)
             {
                 _improvement = 0;
             }
