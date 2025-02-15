@@ -1288,14 +1288,15 @@ namespace search
     INLINE bool MoveMaker::can_late_move_prune(const Context& ctxt) const
     {
         ASSERT(_phase > 1);
-
+#if 0
         return !ctxt.is_root()
             && ctxt.depth() > 1 /* do not LMP leaf nodes */
             && _current >= static_cast<int>(LMP.count(ctxt._parent->has_improved(), ctxt.depth() - 1))
             && ctxt.can_forward_prune();
+#else
+        return true;
+#endif
     }
-
-
 
     /*
      * MoveMaker Helper Class
