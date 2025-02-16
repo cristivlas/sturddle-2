@@ -161,7 +161,9 @@ struct LMR
 {
     int _table[PLY_MAX][64] = { { 0 }, { 0 } };
 
-    LMR()
+    LMR() { init(); }
+
+    void init()
     {
         for (int depth = 1; depth < PLY_MAX; ++depth)
         {
@@ -278,6 +280,11 @@ void _set_param(const std::string& name, int value, bool echo)
                 || name == "LMP_COEFF_I")
             {
                 LMP.init();
+            }
+
+            if (name == "LMR_BASE" || name == "LMR_COEFF")
+            {
+                LMR.init();
             }
 
             if (echo)
