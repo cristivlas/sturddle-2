@@ -817,7 +817,7 @@ namespace search
                 if (_tt_entry.is_valid() && prev->_tt_entry.is_valid() && is_valid(_tt_entry._value) && is_valid(prev->_tt_entry._value))
                 {
                     // Sign reversed, values are from STM's perspective.
-                    _improvement = std::max(0, prev->_tt_entry._eval - _tt_entry._eval);
+                    _improvement = std::max(0, prev->_tt_entry._value - _tt_entry._value);
                 }
                 else if (abs(eval) < MATE_HIGH && abs(prev_eval) < MATE_HIGH)
                 {
