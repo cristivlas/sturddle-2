@@ -794,7 +794,7 @@ namespace search
 
 
     /*
-     * Improvement for the side that just moved.
+     * Improvement for the side that just moved -- not STM!
      */
     INLINE score_t Context::improvement() const
     {
@@ -814,9 +814,14 @@ namespace search
                 const auto eval = static_eval();
                 const auto prev_eval = prev->static_eval();
             #endif /* WITH_NNUE */
-
-                if (abs(eval) < MATE_HIGH && abs(prev_eval) < MATE_HIGH)
+                if (_tt_entry.is_valid() && prev->_tt_entry.is_valid() && is_valid(_tt_entry._value) && is_valid(prev->_tt_entry._value))
                 {
+                    // Sign reversed, values are from STM's perspective.
+                    _improvement = std::max(0, prev->_tt_entry._eval - _tt_entry._eval);
+                }
+                else if (abs(eval) < MATE_HIGH && abs(prev_eval) < MATE_HIGH)
+                {
+                    // Sign reversed because evals are from the point of vue of STM
                     _improvement = std::max(0, prev_eval - eval);
                 }
                 else
@@ -1361,12 +1366,13 @@ namespace search
 
         while (move->_group == MoveOrder::UNORDERED_MOVES)
         {
+        #if 0
             if (_phase > 2 && can_late_move_prune(ctxt))
             {
                 mark_as_pruned(ctxt, *move);
                 return nullptr;
             }
-
+        #endif
             order_moves(ctxt, index, futility);
             move = &moves_list[index];
         }
