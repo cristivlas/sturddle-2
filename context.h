@@ -955,7 +955,7 @@ namespace search
             float(LMP_BETA) * evaluate_material() / chess::max_material_delta()
         ) / (LMP_ALPHA + LMP_BETA);
     #else
-        const float factor = std::max(1.0, _tt_entry.is_valid() * (1.0 * LMP_ITERATION) / iteration());
+        const float factor = std::max(1.0, _tt_entry.is_lower() * (1.0 * LMP_ITERATION) / iteration());
     #endif
         return factor;
     }
