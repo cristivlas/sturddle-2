@@ -626,7 +626,9 @@ struct Info : public search::IterationInfo
     {
         constexpr auto TIME_LOW = 25; /* millisec */
         const auto time_limit = search::Context::time_limit();
-        brief = (time_limit >= 0 && time_limit <= milliseconds + TIME_LOW);
+
+        brief = (time_limit >= 0 && time_limit <= milliseconds + TIME_LOW) || !ctxt._best_move;
+
         if (!brief)
         {
             const auto& ctxt_pv = ctxt.get_pv();
