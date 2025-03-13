@@ -449,6 +449,7 @@ bool verify_null_move(Context& ctxt, Context& null_move_ctxt)
 }
 
 
+#if MULTICUT
 /*
  * https://www.chessprogramming.org/Multi-Cut
  */
@@ -456,7 +457,7 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
 {
     if (ctxt.is_root()
         || !ctxt._multicut_allowed
-        || ctxt.depth() <= 5
+        || ctxt.depth() <= MULTICUT_MIN_DEPTH
         || ctxt.is_pv_node()
         || ctxt._excluded
         || ctxt.is_mate_bound()
@@ -475,6 +476,7 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
         return false;
 
     int move_count = 0, cutoffs = 0;
+
     const auto reduction = (ctxt.depth() - 1) / 2;
 
     BaseMove best_move;
@@ -487,9 +489,7 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
      * regardless, but lower the count of cutoffs required to "succeed" if the position has
      * produced cutoffs before.
      */
-    const auto min_cutoffs = MULTICUT_C - (ctxt.depth() > MULTICUT_MIN_DEPTH
-        && ctxt._tt_entry.is_lower()
-        && ctxt._tt_entry._value + MULTICUT_MARGIN >= ctxt._beta);
+    const auto min_cutoffs = MULTICUT_C - (ctxt._tt_entry.is_lower() && ctxt._tt_entry._value + MULTICUT_MARGIN >= ctxt._beta);
 
     while (auto next_ctxt = ctxt.next(false, 0, move_count))
     {
@@ -532,6 +532,7 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
 
     return false;
 }
+#endif /* MULTICUT */
 
 
 /*
@@ -716,11 +717,13 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         }
     #endif /* RAZORING */
 
+    #if MULTICUT
         if (multicut(ctxt, table))
         {
             ASSERT(ctxt._score < SCORE_MAX);
             return ctxt._score;
         }
+    #endif /* MULTICUT */
 
         /* Reduce depth by 2 if PV node not found in the TT (idea from SF). */
         if (!ctxt.is_root()

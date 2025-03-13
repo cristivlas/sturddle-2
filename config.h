@@ -238,7 +238,7 @@ DECLARE_PARAM(  EVAL_FUZZ,                            0,    0,     100)
 #endif
 DECLARE_CONST(  FIFTY_MOVES_RULE,                     1,    0,       1)
 DECLARE_VALUE(  FUTILITY_PRUNING,                     1,    0,       1)
-DECLARE_VALUE(  MULTICUT,                             1,    0,       1)
+
 #if DATAGEN
 DECLARE_CONST(  DATAGEN_SCORE_THRESHOLD,              0,    0,   30000)
 DECLARE_CONST(  DATAGEN_MIN_DEPTH,                   10, -100,     100)
@@ -270,20 +270,21 @@ DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
 DECLARE_VALUE(  LMP_ALPHA,                           19,    0,     100)
 DECLARE_VALUE(  LMP_BETA,                            37,    1,     100)
 #endif
-DECLARE_VALUE(  LMP_BASE,                           181,  100,    1000)
-DECLARE_VALUE(  LMP_BASE_I,                         302,  100,    1000)
-DECLARE_VALUE(  LMP_COEFF,                          180,  100,    1000)
-DECLARE_VALUE(  LMP_COEFF_I,                        165,  100,    1000)
-DECLARE_VALUE(  LMP_ITERATION,                       11,    1,     100)
+DECLARE_VALUE(  LMP_BASE,                           193,  100,    1000)
+DECLARE_VALUE(  LMP_BASE_I,                         301,  100,    1000)
+DECLARE_VALUE(  LMP_COEFF,                          221,  100,    1000)
+DECLARE_VALUE(  LMP_COEFF_I,                        293,  100,    1000)
+DECLARE_VALUE(  LMP_ITERATION,                       12,    1,     100)
 DECLARE_VALUE(  LMR_BASE,                            72,    0,    1000)
 DECLARE_VALUE(  LMR_COEFF,                           57,    0,    1000)
 DECLARE_VALUE(  LMR_MAX_RETRY_DEPTH,                 12,    0,     100)
 DECLARE_VALUE(  MAX_ALPHA_EXT_DEPTH,                  7,    0,     100)
 DECLARE_VALUE(  MAX_EXCHANGE_DEPTH,                   9,    0,     100)
 DECLARE_VALUE(  MIN_TT_REDUCTION_DEPTH,               6,    0,     100)
+#if MULTICUT
 DECLARE_VALUE(  MULTICUT_MARGIN,                    148,    0,    1000)
-DECLARE_VALUE(  MULTICUT_MIN_DEPTH,                   5,    0,     100)
-
+DECLARE_VALUE(  MULTICUT_MIN_DEPTH,                  15,    0,     100)
+#endif /* MULTICUT */
 #if WITH_NNUE
 DECLARE_VALUE(  NNUE_EVAL_TERM,                     655,    0,    1000)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      499,    0,    1000)
@@ -321,7 +322,9 @@ DECLARE_VALUE(  HISTORY_SCORE_MUL,                  259,    0,    1000)
 DECLARE_VALUE(  HISTORY_HIGH,                        92,    0,     100)
 DECLARE_VALUE(  HISTORY_LOW,                         65,    0, HISTORY_HIGH)
 DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,     100)
+#if 0
 DECLARE_VALUE(  HISTORY_PRUNE,                       67,    0,     100)
+#endif
 /****************************************************************************/
 #if !WITH_NNUE
 GROUP(Eval)
