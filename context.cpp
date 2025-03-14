@@ -965,7 +965,7 @@ namespace search
 
         if (standpat)
         {
-            return pat;
+            return 0; /* No capturing move can raise the score over alpha. */
         }
 
         /*
@@ -1012,6 +1012,9 @@ namespace search
 
             if constexpr(DEBUG_CAPTURES)
                 Context::log_message(LogLevel::DEBUG, "*** " + move.uci());
+
+            if (move._score < 0)
+                continue; /* ignore more valuable pieces capturing less valuable */
 
             /****************************************************************/
             if (!apply_capture(state, next_state, move))
@@ -1060,6 +1063,9 @@ namespace search
 
     score_t eval_captures(Context& ctxt)
     {
+        if (ctxt._tt_entry.is_valid() && ctxt.depth() <= ctxt._tt_entry._depth)
+            return ctxt._tt_entry._captures;
+
         if constexpr(DEBUG_CAPTURES)
             ctxt.log_message(LogLevel::DEBUG, "eval_captures");
 
@@ -1075,13 +1081,14 @@ namespace search
         {
             const int standing_pat = (ctxt._ply > 1 && is_valid(ctxt._eval)) ? ctxt._alpha - ctxt._eval : 0;
 
-            result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL, standing_pat);
+            result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL, std::max(0, standing_pat));
         }
         ASSERT(result >= 0);
 
         if constexpr(DEBUG_CAPTURES)
             ctxt.log_message(LogLevel::DEBUG, "captures: " + std::to_string(result));
 
+        ctxt._tt_entry._captures = result;
         return result;
     }
 

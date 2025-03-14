@@ -1453,6 +1453,12 @@ namespace search
 
             auto capture_gain = move._state->capture_value;
 
+            if (ctxt.get_tt()->lookup_captures(*move._state, ctxt.depth() + 1, move._score))
+            {
+                move._score = capture_gain - move._score;
+                return;
+            }
+
             if (ctxt.is_qsearch())
             {
                 capture_gain -= ctxt.state().piece_weight_at(move.from_square());

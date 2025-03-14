@@ -283,7 +283,8 @@ DECLARE_VALUE(  MAX_EXCHANGE_DEPTH,                   9,    0,     100)
 DECLARE_VALUE(  MIN_TT_REDUCTION_DEPTH,               6,    0,     100)
 #if MULTICUT
 DECLARE_VALUE(  MULTICUT_MARGIN,                    148,    0,    1000)
-DECLARE_VALUE(  MULTICUT_MIN_DEPTH,                  15,    0,     100)
+DECLARE_VALUE(  MULTICUT_MAX_DEPTH,                  11,    0,     100)
+DECLARE_VALUE(  MULTICUT_MIN_DEPTH,                   5,    0,     100)
 #endif /* MULTICUT */
 #if WITH_NNUE
 DECLARE_VALUE(  NNUE_EVAL_TERM,                     655,    0,    1000)

@@ -163,6 +163,7 @@ namespace search
         BaseMove    _hash_move;
         int16_t     _eval = SCORE_MIN; /* static */
         int16_t     _value = SCORE_MIN;
+        int16_t     _captures = 0;
         uint64_t    _hash = 0;
 
         INLINE bool is_lower() const { return _type == TT_Type::LOWER; }
@@ -306,6 +307,20 @@ namespace search
         {
             auto p = _table.lookup_read(state);
             return p ? p->is_lower() : false;
+        }
+
+        template <typename V>
+        INLINE bool lookup_captures(const State& state, int depth, V& value) const
+        {
+            if (auto p = _table.lookup_read(state))
+            {
+                if (p->is_valid() && depth <= p->_depth)
+                {
+                    value = p->_captures;
+                    return true;
+                }
+            }
+            return false;
         }
 
         template<TT_Type=TT_Type::NONE, typename C=struct Context>

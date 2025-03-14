@@ -240,6 +240,7 @@ void TranspositionTable::store(Context& ctxt, TT_Entry& entry, int depth)
     entry._hash = ctxt.state().hash();
     entry._depth = depth;
     entry._age = _table.clock();
+    entry._captures = ctxt._tt_entry._captures;
 }
 
 
@@ -458,6 +459,7 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
     if (ctxt.is_root()
         || !ctxt._multicut_allowed
         || ctxt.depth() <= MULTICUT_MIN_DEPTH
+        || ctxt.depth() > MULTICUT_MAX_DEPTH
         || ctxt.is_pv_node()
         || ctxt._excluded
         || ctxt.is_mate_bound()
