@@ -956,20 +956,22 @@ namespace search
 
             move._score = state.piece_weight_at(move.to_square());
 
-            /* subtract attacker value, to sort by gain */
-            move._score -= state.piece_weight_at(move.from_square());
-
             if (move._score >= pat)
                 standpat = false;
+
+            /* Subtract attacker value to sort by gain. */
+            move._score -= state.piece_weight_at(move.from_square());
+
         }
 
         if (standpat)
         {
-            return 0; /* No capturing move can raise the score over alpha. */
+            return 0; /* No capture can raise the score over alpha, don't bother with exchanges. */
         }
 
         /*
-         * 2) Sort most valuable victims first.
+         * 2) Sort by weight diff between capture and attacker, descending
+         * i.e. most-valuable-victim / least-valuable attacker first.
          */
         insertion_sort(moves.begin(), moves.end(), [](const Move& lhs, const Move& rhs) {
             return lhs._score > rhs._score;
@@ -1076,9 +1078,9 @@ namespace search
         }
         else
         {
-            const int standing_pat = (ctxt._ply > 1 && is_valid(ctxt._eval)) ? ctxt._alpha - score : 0;
+            const int standing_pat = (ctxt._ply > 1 && is_valid(ctxt._eval)) ? ctxt._alpha - score : SCORE_MIN;
 
-            result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL, std::max(0, standing_pat));
+            result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL, standing_pat);
         }
         ASSERT(result >= 0);
 
@@ -1730,7 +1732,7 @@ namespace search
         rewind(0, true);
     }
 
-#if 0
+#if !defined(NEW_WINDOW_DELTA)
     static INLINE int window_delta(int iteration, int depth, double score)
     {
         return HALF_WINDOW * pow2(iteration) + WINDOW_COEFF * depth * log(0.001 + abs(score) / WINDOW_DIV);
