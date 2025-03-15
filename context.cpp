@@ -1061,7 +1061,7 @@ namespace search
     }
 
 
-    score_t eval_captures(Context& ctxt)
+    score_t eval_captures(Context& ctxt, score_t score)
     {
         if (ctxt._tt_entry.is_valid() && ctxt.depth() <= ctxt._tt_entry._depth)
             return ctxt._tt_entry._captures;
@@ -1079,7 +1079,7 @@ namespace search
         }
         else
         {
-            const int standing_pat = (ctxt._ply > 1 && is_valid(ctxt._eval)) ? ctxt._alpha - ctxt._eval : 0;
+            const int standing_pat = (ctxt._ply > 1 && is_valid(ctxt._eval)) ? ctxt._alpha - score : 0;
 
             result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL, std::max(0, standing_pat));
         }
@@ -1733,12 +1733,22 @@ namespace search
         rewind(0, true);
     }
 
-
+#if 0
     static INLINE int window_delta(int iteration, int depth, double score)
     {
         return HALF_WINDOW * pow2(iteration) + WINDOW_COEFF * depth * log(0.001 + abs(score) / WINDOW_DIV);
     }
+#else
 
+    static int window_delta(int iteration, int depth, double score)
+    {
+        const auto base = static_cast<int>(WINDOW_BASE_INCREMENT * std::pow(WINDOW_BASE_MULTIPLIER / 10.0, iteration));
+        const int adjustment = WINDOW_DEPTH_SCALING * depth;
+        const int score_factor = static_cast<int>(std::tanh(score / 100.0) * WINDOW_SCORE_SCALING);
+
+        return base + adjustment + score_factor;
+    }
+#endif
 
     void Context::set_search_window(score_t score, score_t& prev_score)
     {

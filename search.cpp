@@ -713,7 +713,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         if (depth > 0
             && eval > SCORE_MIN
             && eval < ctxt._alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(depth)
-            && eval + eval_captures(ctxt) < ctxt._alpha)
+            && eval + eval_captures(ctxt, eval) < ctxt._alpha)
         {
             return ctxt._alpha;
         }
