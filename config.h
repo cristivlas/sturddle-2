@@ -272,8 +272,8 @@ DECLARE_VALUE(  LMP_BASE_I,                         301,  100,    1000)
 DECLARE_VALUE(  LMP_COEFF,                          221,  100,    1000)
 DECLARE_VALUE(  LMP_COEFF_I,                        293,  100,    1000)
 DECLARE_VALUE(  LMP_ITERATION,                       12,    1,     100)
-DECLARE_VALUE(  LMR_BASE,                            72,    0,    1000)
-DECLARE_VALUE(  LMR_COEFF,                           57,    0,    1000)
+DECLARE_VALUE(  LMR_BASE,                            62,    0,    1000)
+DECLARE_VALUE(  LMR_COEFF,                           67,    0,    1000)
 DECLARE_VALUE(  LMR_MAX_RETRY_DEPTH,                 12,    0,     100)
 DECLARE_VALUE(  MAX_ALPHA_EXT_DEPTH,                  7,    0,     100)
 DECLARE_VALUE(  MAX_EXCHANGE_DEPTH,                   9,    0,     100)
@@ -310,9 +310,9 @@ DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_LOW,       -48, -150,       0)
 DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_HIGH,       12,    0,     150)
 
 /*** Aspiration window ***/
-DECLARE_VALUE(  HALF_WINDOW,                         46,    5,     100)
+DECLARE_VALUE(  HALF_WINDOW,                         38,    5,     100)
 
-#define NEW_WINDOW_DELTA
+#define NEW_WINDOW_DELTA // Use the new, experimental window_delta
 
 #if !defined (NEW_WINDOW_DELTA)
 DECLARE_VALUE(  WINDOW_COEFF,                         6,    0,     100)
@@ -320,19 +320,19 @@ DECLARE_VALUE(  WINDOW_DIV,                          67,    1,     200)
 #else
 // Represents exponential growth factor (1.1x to 1.5x in fixed-point).
 // Higher values make iteration growth more aggressive.
-DECLARE_VALUE(  WINDOW_BASE_MULTIPLIER,               12,   11,     15)
+DECLARE_VALUE(  WINDOW_BASE_MULTIPLIER,              12,   11,      15)
 
 // Initial base window size (in centi-pawns).
 // Lower values keep early iterations tighter.
-DECLARE_VALUE(  WINDOW_BASE_INCREMENT,                19,    5,     50)
+DECLARE_VALUE(  WINDOW_BASE_INCREMENT,               18,    5,      50)
 
 // Controls how much the window expands with depth.
 // Larger values give more weight to deeper searches.
-DECLARE_VALUE(  WINDOW_DEPTH_SCALING,                  4,    2,     10)
+DECLARE_VALUE(  WINDOW_DEPTH_SCALING,                 5,    2,      10)
 
 // Determines how much the score influences the window.
 // Higher values make score fluctuations affect the window more.
-DECLARE_VALUE(  WINDOW_SCORE_SCALING,                 52,   20,    100)
+DECLARE_VALUE(  WINDOW_SCORE_SCALING,                61,   20,     100)
 #endif
 
 GROUP(MoveOrdering)
