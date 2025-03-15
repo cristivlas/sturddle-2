@@ -309,20 +309,6 @@ namespace search
             return p ? p->is_lower() : false;
         }
 
-        template <typename V>
-        INLINE bool lookup_captures(const State& state, int depth, V& value) const
-        {
-            if (auto p = _table.lookup_read(state))
-            {
-                if (p->is_valid() && depth <= p->_depth)
-                {
-                    value = p->_captures;
-                    return true;
-                }
-            }
-            return false;
-        }
-
         template<TT_Type=TT_Type::NONE, typename C=struct Context>
         void store(C& ctxt, int depth);
 
