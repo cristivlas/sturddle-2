@@ -1013,9 +1013,6 @@ namespace search
             if constexpr(DEBUG_CAPTURES)
                 Context::log_message(LogLevel::DEBUG, "*** " + move.uci());
 
-            if (move._score < 0)
-                continue; /* ignore more valuable pieces capturing less valuable */
-
             /****************************************************************/
             if (!apply_capture(state, next_state, move))
                 continue;
