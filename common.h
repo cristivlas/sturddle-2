@@ -170,10 +170,11 @@ constexpr size_t DEFAULT_HASH_TABLE_SIZE =  32;
 
 constexpr int ENDGAME_PIECE_COUNT           = 12;
 
+#if MULTICUT
 /* https://www.chessprogramming.org/Multi-Cut */
 constexpr int MULTICUT_M                    = 6;
 constexpr int MULTICUT_C                    = 3;
-
+#endif /* MULTICUT */
 
 namespace search
 {

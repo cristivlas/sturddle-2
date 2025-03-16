@@ -219,8 +219,9 @@ Config::Namespace Config::_namespace = {
     static auto THREAD_MAX = std::thread::hardware_concurrency();
     static auto THREAD_VAL = std::min<int>(4, THREAD_MAX);
 #else
-    static constexpr int THREAD_MAX = 1;
-    static constexpr int THREAD_VAL = 1;
+    // static constexpr int THREAD_MAX = 1;
+    // static constexpr int THREAD_VAL = 1;
+
 #endif
 
 static constexpr int HASH_MIN = 16; /* MB */
@@ -248,8 +249,11 @@ DECLARE_CONST(  DATAGEN_MIN_DEPTH,                   10, -100,     100)
 DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 
+#if SMP
 DECLARE_ALIAS(  SMP_CORES, Threads,          THREAD_VAL,    1, THREAD_MAX)
-
+#else
+static constexpr int SMP_CORES = 1;
+#endif
 GROUP(Search)
 DECLARE_VALUE(  CAPTURES_SCALE,                      99,    0,     150)
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
@@ -263,10 +267,6 @@ DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                229,    0,    1000)
 DECLARE_VALUE(  IMPROVEMENT_MARGIN,                   2,    0,     200)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
-#if 0
-DECLARE_VALUE(  LMP_ALPHA,                           19,    0,     100)
-DECLARE_VALUE(  LMP_BETA,                            37,    1,     100)
-#endif
 DECLARE_VALUE(  LMP_BASE,                           193,  100,    1000)
 DECLARE_VALUE(  LMP_BASE_I,                         301,  100,    1000)
 DECLARE_VALUE(  LMP_COEFF,                          221,  100,    1000)

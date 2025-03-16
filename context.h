@@ -944,19 +944,7 @@ namespace search
 
     INLINE float Context::late_move_prune_factor() const
     {
-    #if 0
-        /*
-         * A simple model of position complexity, used with late move prunning.
-         */
-        const auto piece_count = chess::popcount(state().occupied());
-
-        float factor =  1 + (
-            float(LMP_ALPHA) * move_count() / piece_count +
-            float(LMP_BETA) * evaluate_material() / chess::max_material_delta()
-        ) / (LMP_ALPHA + LMP_BETA);
-    #else
         const float factor = std::max(1.0, _tt_entry.is_lower() * (1.0 * LMP_ITERATION) / iteration());
-    #endif
         return factor;
     }
 
