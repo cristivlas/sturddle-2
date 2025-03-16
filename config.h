@@ -296,8 +296,8 @@ DECLARE_VALUE(  NULL_MOVE_IMPROVEMENT_DIV,           62,    1,    1000)
 DECLARE_VALUE(  NULL_MOVE_MARGIN,                   630,    0,    1000)
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    17,    0,     100)
 DECLARE_VALUE(  QSEARCH_MAX_DEPTH,                  -16, -100,       0)
-DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  248,    0,     300)
-DECLARE_VALUE(  RAZOR_INTERCEPT,                    224,    0,     300)
+DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  426,    0,     500)
+DECLARE_VALUE(  RAZOR_INTERCEPT,                    258,    0,     500)
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
 DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     500)
 DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             26,    0,     150)
@@ -310,9 +310,9 @@ DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_LOW,       -48, -150,       0)
 DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_HIGH,       12,    0,     150)
 
 /*** Aspiration window ***/
-DECLARE_VALUE(  HALF_WINDOW,                         38,    5,     100)
+DECLARE_VALUE(  HALF_WINDOW,                         46,    5,     100)
 
-#define NEW_WINDOW_DELTA // Use the new, experimental window_delta
+// #define NEW_WINDOW_DELTA // Use the new, experimental window_delta
 
 #if !defined (NEW_WINDOW_DELTA)
 DECLARE_VALUE(  WINDOW_COEFF,                         6,    0,     100)
@@ -324,15 +324,15 @@ DECLARE_VALUE(  WINDOW_BASE_MULTIPLIER,              12,   11,      15)
 
 // Initial base window size (in centi-pawns).
 // Lower values keep early iterations tighter.
-DECLARE_VALUE(  WINDOW_BASE_INCREMENT,               18,    5,      50)
+DECLARE_VALUE(  WINDOW_BASE_INCREMENT,               17,    5,      50)
 
 // Controls how much the window expands with depth.
 // Larger values give more weight to deeper searches.
-DECLARE_VALUE(  WINDOW_DEPTH_SCALING,                 5,    2,      10)
+DECLARE_VALUE(  WINDOW_DEPTH_SCALING,                 6,    2,      10)
 
 // Determines how much the score influences the window.
 // Higher values make score fluctuations affect the window more.
-DECLARE_VALUE(  WINDOW_SCORE_SCALING,                61,   20,     100)
+DECLARE_VALUE(  WINDOW_SCORE_SCALING,                54,   20,     100)
 #endif
 
 GROUP(MoveOrdering)

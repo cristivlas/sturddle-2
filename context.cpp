@@ -1062,7 +1062,7 @@ namespace search
 
     score_t eval_captures(Context& ctxt, score_t score)
     {
-        if (ctxt._tt_entry.is_valid() && ctxt.depth() <= ctxt._tt_entry._depth)
+        if (ctxt._tt_entry._captures && ctxt._tt_entry.is_valid())
             return ctxt._tt_entry._captures;
 
         if constexpr(DEBUG_CAPTURES)

@@ -140,7 +140,7 @@ namespace search
     static constexpr auto LOCK_FAIL = std::memory_order_acquire;
 
 
-    template <typename T, T Locked = std::numeric_limits<T>::max()>
+    template <bool MT, typename T, T Locked = std::numeric_limits<T>::max()>
     class UniqueLock : public BaseLock<T>
     {
     public:
@@ -149,33 +149,32 @@ namespace search
 
         explicit UniqueLock(std::atomic<T> &mutex) : BaseLock<T>(mutex)
         {
-#if SMP
-            int i = 0;
-
-            for (T unlocked = T();
-                 !this->_mutex->compare_exchange_weak(unlocked, Locked, LOCK_OK, LOCK_FAIL);
-                 unlocked = T())
+            if constexpr(MT)
             {
-                if (++i > SPIN_LOCK_MAX_RETRY)
-                    return;
+                int i = 0;
+
+                for (T unlocked = T();
+                    !this->_mutex->compare_exchange_weak(unlocked, Locked, LOCK_OK, LOCK_FAIL);
+                    unlocked = T())
+                {
+                    if (++i > SPIN_LOCK_MAX_RETRY)
+                        return;
+                }
             }
-#endif /* SMP */
 
             this->_locked = true;
         }
 
         ~UniqueLock()
         {
-#if SMP
-            if (this->_locked)
+            if (MT && this->_locked)
             {
                 this->_mutex->store(T(), std::memory_order_seq_cst);
             }
-#endif /* SMP */
         }
     };
 
-    template <typename T, T MaxShare, bool Blocking = true>
+    template <bool MT, typename T, T MaxShare, bool Blocking = true>
     class SharedLock : public BaseLock<T>
     {
     public:
@@ -184,42 +183,77 @@ namespace search
 
         explicit SharedLock(std::atomic<T> &mutex) : BaseLock<T>(mutex)
         {
-#if SMP
-            while (true)
+            if constexpr (MT)
             {
-                for (T i = T(); i < MaxShare; )
+                while (true)
                 {
-                    const auto j = i + 1;
-                    if (this->_mutex->compare_exchange_weak(i, j, LOCK_OK, LOCK_FAIL))
+                    for (T i = T(); i < MaxShare; )
                     {
-                        this->_locked = true;
-                        return;
+                        const auto j = i + 1;
+                        if (this->_mutex->compare_exchange_weak(i, j, LOCK_OK, LOCK_FAIL))
+                        {
+                            this->_locked = true;
+                            return;
+                        }
+                        if constexpr(Blocking)
+                            ;
+                        else if (i > MaxShare)
+                            break;
                     }
-                    if constexpr(Blocking)
-                        ;
-                    else if (i > MaxShare)
-                        break;
                 }
             }
-#else
-            this->_locked = true;
-#endif /* SMP */
+            else
+            {
+                this->_locked = true;
+            }
         }
 
         ~SharedLock()
         {
-#if SMP
-            if (this->_locked)
+            if (MT && this->_locked)
             {
                 auto value = --(*this->_mutex);
                 ASSERT(value >= T());
             }
-#endif /* SMP */
         }
     };
 
 
-    template <typename T>
+    template <bool MT>
+    struct count {
+        std::atomic<size_t> _value = std::atomic<size_t>(0);
+
+        void increment() {
+            _value.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        operator size_t() const {
+            return _value;
+        }
+
+        void clear() {
+            _value = 0;
+        }
+    };
+
+    template <>
+    struct count<false> {
+        size_t _value = 0;
+        void increment() {
+            ++_value;
+        }
+
+        operator size_t() const {
+            return _value;
+        }
+
+        void clear() {
+            _value = 0;
+        }
+    };
+
+
+    template <bool MT, typename T>
     class hash_table
     {
         template <size_t S>
@@ -242,11 +276,11 @@ namespace search
         using bucket_t = Bucket<CACHE_LINE_SIZE / sizeof(T)>;
         using data_t = std::vector<bucket_t, cache_line_allocator<bucket_t>>;
 
-        using shared_lock_t = SharedLock<typename bucket_t::lock_state_t, HASH_TABLE_MAX_READERS>;
-        using unique_lock_t = UniqueLock<typename bucket_t::lock_state_t>;
+        using shared_lock_t = SharedLock<MT, typename bucket_t::lock_state_t, HASH_TABLE_MAX_READERS>;
+        using unique_lock_t = UniqueLock<MT, typename bucket_t::lock_state_t>;
 
         uint8_t _clock = 0;
-        count_t _used = 0;
+        count<MT> _used;
         data_t _data; /* table entries */
 
     private:
@@ -267,7 +301,11 @@ namespace search
 
         INLINE bucket_t &get_bucket(uint64_t hash)
         {
+        #if 0
             return _data[scramble64(hash) % _data.size()];
+        #else
+            return _data[hash % _data.size()];
+        #endif
         }
 
     public:
@@ -327,7 +365,8 @@ namespace search
         {
             if (_used)
                 std::fill_n(&_data[0], _data.size(), bucket_t());
-            _used = 0;
+
+            _used.clear();
         }
 
         INLINE uint8_t clock() const { return _clock; }
@@ -335,11 +374,7 @@ namespace search
 
         INLINE void increment_usage()
         {
-#if SMP
-            _used.fetch_add(1, std::memory_order_relaxed);
-#else
-            ++_used;
-#endif
+            _used.increment();
         }
 
         INLINE size_t size() const { return _used; }
