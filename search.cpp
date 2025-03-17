@@ -978,7 +978,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 && move_score < MATE_HIGH
                 && move_score < table._w_alpha
                 && ctxt.tid() == 0 /* main thread */
-                && ctxt.evaluate<false>() < table._w_alpha)
+                /* && ctxt.evaluate<false>() < table._w_alpha*/ )
             {
                 ASSERT(!next_ctxt->is_null_move());
                 table._reset_window = true;
@@ -1075,7 +1075,7 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
 
         ASSERT(g < SCORE_MAX); /* sanity check */
 
-        if (ctxt.is_cancelled())
+        if (ctxt.is_cancelled() || table._reset_window)
             break;
 
         if (g < b)
