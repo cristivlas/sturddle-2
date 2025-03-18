@@ -944,8 +944,8 @@ namespace search
 
     INLINE float Context::late_move_prune_factor() const
     {
-        const float factor = std::max(1.0, _tt_entry.is_lower() * (1.0 * LMP_ITERATION) / iteration());
-        return factor;
+        const auto& e = _parent->_tt_entry;
+        return (e._depth <= 6 || !e.is_lower()) ? 1.0 : std::max(0.5f, std::min(1.0f, float(e._depth) / depth()));
     }
 
 
