@@ -469,7 +469,7 @@ namespace search
     int do_exchanges(const State&, Bitboard, score_t, int tid, int ply = FIRST_EXCHANGE_PLY);
 
 
-    extern score_t eval_captures(Context& ctxt);
+    extern score_t eval_captures(Context& ctxt, score_t);
 
     using PieceSquares = std::array<Square, 32>;
 
@@ -703,7 +703,7 @@ namespace search
             if (abs(score) < CAPTURES_THRESHOLD)
             {
                 /* 3. Captures */
-                const auto capt = eval_captures(*this);
+                const auto capt = eval_captures(*this, score);
 
                 ASSERT(capt <= CHECKMATE);
 

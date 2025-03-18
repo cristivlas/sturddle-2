@@ -886,7 +886,7 @@ namespace search
      *
      * Called by eval_captures (if !STATIC_EXCHANGES).
      */
-    INLINE int do_captures(int tid, const State& state, Bitboard from_mask, Bitboard to_mask)
+    INLINE int do_captures(int tid, const State& state, Bitboard from_mask, Bitboard to_mask, score_t standpat_threshold)
     {
         static constexpr auto ply = FIRST_EXCHANGE_PLY;
         const auto mask = to_mask & state.occupied_co(!state.turn) & ~state.kings;
@@ -900,6 +900,9 @@ namespace search
         {
             return 0;
         }
+
+        bool standpat = true;
+
         /*
          * 1) Go over the captures and assign the "victim" value to each move.
          */
@@ -909,10 +912,18 @@ namespace search
             ASSERT(state.piece_type_at(move.from_square()));
 
             move._score = state.piece_weight_at(move.to_square());
+
+            if (move._score >= standpat_threshold)
+                standpat = false;
+
+            move._score -= state.piece_weight_at(move.from_square());
         }
 
+        if (standpat)
+            return 0;
+
         /*
-         * 2) Sort most valuable victims first.
+         * 2) Sort most valuable victims, least valuable attacker first.
          */
         insertion_sort(moves.begin(), moves.end(), [](const Move& lhs, const Move& rhs) {
             return lhs._score > rhs._score;
@@ -961,11 +972,12 @@ namespace search
             if (!apply_capture(state, next_state, move))
                 continue;
 
-            ASSERT(move._score == next_state.capture_value);
+            //ASSERT(move._score == next_state.capture_value);
             ASSERT(next_state.capture_value > score || EXCHANGES_DETECT_CHECKMATE);
 
-            auto attacker_value = state.piece_weight_at(move.from_square());
-            auto gain = next_state.capture_value - attacker_value;
+            //const auto attacker_value = state.piece_weight_at(move.from_square());
+            //const auto gain = next_state.capture_value - attacker_value;
+            const auto gain = move._score;
 
             /*
              * Worst case scenario the attacker gets captured, capturing
@@ -978,15 +990,12 @@ namespace search
             #else
                 if (next_state.is_checkmate())
                     return CHECKMATE - (ply + 1 - FIRST_EXCHANGE_PLY);
-
                 if constexpr(DEBUG_CAPTURES)
                     Context::log_message(
                         LogLevel::DEBUG,
                         move.uci() + ": skip exchanges: " + std::to_string(gain));
-
                 if (gain > score)
                     score = gain;
-
                 continue;
             #endif /* EXCHANGES_DETECT_CHECKMATE */
             }
@@ -1029,7 +1038,7 @@ namespace search
     }
 
 
-    score_t eval_captures(Context& ctxt)
+    score_t eval_captures(Context& ctxt, score_t score)
     {
         if (is_valid(ctxt._tt_entry._captures))
             return ctxt._tt_entry._captures;
@@ -1042,9 +1051,14 @@ namespace search
         score_t result;
 
         if constexpr(STATIC_EXCHANGES)
+        {
             result = estimate_captures(*state);
+        }
         else
-            result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL);
+        {
+            const int standpat_threshold = ctxt._ply > 1 ? ctxt._alpha - score : SCORE_MIN;
+            result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL, standpat_threshold);
+        }
 
         ASSERT(result >= 0);
 
