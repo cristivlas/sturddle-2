@@ -90,7 +90,7 @@ using score_t = int;
 
 #define MTDF_REORDER_MOVES                  true
 
-#define MULTICUT                            false
+#define MULTICUT                            true
 
 #define RAZORING                            true
 

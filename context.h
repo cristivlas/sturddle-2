@@ -945,7 +945,7 @@ namespace search
     INLINE float Context::late_move_prune_factor() const
     {
         const auto& e = _parent->_tt_entry;
-        return (e._depth <= 6 || !e.is_lower()) ? 1.0 : std::max(0.5f, std::min(1.0f, float(e._depth) / depth()));
+        return 1.0 + (e.is_lower() * float(e._depth) / (depth() + 1));
     }
 
 
