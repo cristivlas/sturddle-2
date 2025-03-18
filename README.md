@@ -47,7 +47,7 @@ loaded into the engine at runtime by using the UCI command:
 <code>setoption name NNUEModel value YOUR-JSON-FILE-HERE</code>.
 
 Note that the name NNUE used here only means that the neural net is updated efficiently (i.e. in an
-incremental fashion). The model is original and consists of a relatively small number of parameters (485761).
+incremental fashion). The model is original and consists of a relatively small number of parameters (596113).
 
 # Neural Net Architecture
 ![plot](./model.png)

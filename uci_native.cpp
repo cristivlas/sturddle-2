@@ -42,7 +42,14 @@ static void raise_runtime_error(const char* err)
 #define OUTPUT_POOL false
 
 using ThreadPool = thread_pool<>;
-static auto _compute_pool(std::make_unique<ThreadPool>(1));
+
+#if OUTPUT_POOL || BACKGROUND_SEARCH
+static constexpr size_t initial_thread_count = 1;
+#else
+static constexpr size_t initial_thread_count = 0;
+#endif /* OUTPUT_POOL || BACKGROUND_SEARCH */
+
+static auto _compute_pool(std::make_unique<ThreadPool>(initial_thread_count));
 
 static constexpr auto INFINITE = -1;
 static std::string g_out; /* global output buffer */
@@ -358,23 +365,21 @@ namespace
             const auto filename = generate_unique_filename(g_data_dir, ".csv");
             log_info(std::format("Writing {} positions to: {}", data.size(), filename));
 
-            //_compute_pool->push_task([filename, data] {
-                std::ofstream of(filename);
-                if (!of)
+            std::ofstream of(filename);
+            if (!of)
+            {
+                log_error("Could not open file.");
+            }
+            else
+            {
+                for (const auto& pos : data)
                 {
-                    log_error("Could not open file.");
+                    of << search::Context::epd(pos.first) << "," << std::get<0>(pos.second)
+                    << "," << std::get<1>(pos.second) << "," << std::get<2>(pos.second)
+                    << std::endl;
                 }
-                else
-                {
-                    for (const auto& pos : data)
-                    {
-                        of << search::Context::epd(pos.first) << "," << std::get<0>(pos.second)
-                        << "," << std::get<1>(pos.second) << "," << std::get<2>(pos.second)
-                        << std::endl;
-                    }
-                    of.flush();
-                }
-            //});
+                of.flush();
+            }
         }
     }
 #else
@@ -406,6 +411,9 @@ public:
         search::Context::_on_move = on_move;
 
         refresh_options();
+        if (_ponder)
+            ensure_background_thread();
+
         _options.emplace("algorithm", std::make_shared<OptionAlgo>(_algorithm));
         _options.emplace("best opening", std::make_shared<OptionBool>("Best Opening", _best_book_move));
         _options.emplace("debug", std::make_shared<OptionBool>("Debug", _debug));
@@ -443,6 +451,15 @@ private:
     static void on_move(PyObject *, const std::string&, int);
 
 private:
+    void ensure_background_thread()
+    {
+        if (_compute_pool->get_thread_count() == 0)
+        {
+            _compute_pool = std::make_unique<ThreadPool>(1);
+            log_info("Initialized thread pool");
+        }
+    }
+
     /** position() helper */
     template <typename T> INLINE void apply_moves(const T &moves)
     {
@@ -609,7 +626,9 @@ struct Info : public search::IterationInfo
     {
         constexpr auto TIME_LOW = 25; /* millisec */
         const auto time_limit = search::Context::time_limit();
-        brief = (time_limit >= 0 && time_limit <= milliseconds + TIME_LOW);
+
+        brief = (time_limit >= 0 && time_limit <= milliseconds + TIME_LOW) || !ctxt._best_move;
+
         if (!brief)
         {
             const auto& ctxt_pv = ctxt.get_pv();
@@ -921,6 +940,8 @@ void UCI::go(const Arguments &args)
     else if (do_analysis && !explicit_movetime)
     {
         ctxt->set_time_limit_ms(INFINITE);
+
+        ensure_background_thread();
         _compute_pool->push_task([this]{
             search();
             output_best_move();
@@ -964,7 +985,7 @@ void UCI::go(const Arguments &args)
                 ctxt->set_time_ctrl(ctrl);
             }
         };
-    #if 0
+    #if BACKGROUND_SEARCH
         /* search asynchronously on the background thread */
         _compute_pool->push_task([this, movetime] {
             _score = search(set_time_limt);
@@ -976,7 +997,7 @@ void UCI::go(const Arguments &args)
         _score = search(set_time_limit);
         /* Do not request to ponder below 100 ms per move. */
         output_best_move(movetime >= 100);
-    #endif
+    #endif /* !BACKGROUND_SEARCH */
     }
 }
 
@@ -1133,6 +1154,9 @@ void UCI::setoption(const Arguments &args)
         iter->second->set(join(" ", value));
     else
         log_warning(__func__ + (": \"" + opt_name + "\": not found"));
+
+    if (_ponder)
+        ensure_background_thread();
 }
 
 void UCI::stop(bool flush)

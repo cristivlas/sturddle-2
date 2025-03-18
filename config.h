@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -152,11 +152,14 @@ Config::Namespace Config::_namespace = {
 #endif /* TUNING_ENABLED */
 
 
-#if SMP && defined(CONFIG_IMPL)
-    static auto THREAD_MAX = std::thread::hardware_concurrency();
+#if SMP
+    #if defined(CONFIG_IMPL)
+        static const auto THREAD_MAX = std::thread::hardware_concurrency();
+        static const auto THREAD_VAL = std::min<int>(4, THREAD_MAX);
+    #endif
 #else
-    static constexpr int THREAD_MAX = 1;
-#endif
+    static constexpr int SMP_CORES = 1;
+#endif /* SMP */
 
 static constexpr int HASH_MIN = 16; /* MB */
 
@@ -183,7 +186,9 @@ DECLARE_CONST(  DATAGEN_MIN_DEPTH,                   10, -100,     100)
 DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 
-DECLARE_ALIAS(  SMP_CORES, Threads,                   1,    1, THREAD_MAX)
+#if SMP
+DECLARE_ALIAS(  SMP_CORES, Threads,                   1, THREAD_VAL, THREAD_MAX)
+#endif /* SMP */
 
 GROUP(Search)
 DECLARE_VALUE(  CAPTURES_SCALE,                      99,    0,     150)

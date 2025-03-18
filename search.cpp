@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -236,6 +236,7 @@ void TranspositionTable::store(Context& ctxt, TT_Entry& entry, int depth)
     entry._hash = ctxt.state().hash();
     entry._depth = depth;
     entry._age = _table.clock();
+    entry._captures = ctxt._tt_entry._captures;
 }
 
 
@@ -1045,7 +1046,7 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
 
         ASSERT(g < SCORE_MAX); /* sanity check */
 
-        if (ctxt.is_cancelled())
+        if (ctxt.is_cancelled() || table._reset_window)
             break;
 
         if (g < b)
