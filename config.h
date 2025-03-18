@@ -218,11 +218,7 @@ Config::Namespace Config::_namespace = {
 #if SMP && defined(CONFIG_IMPL)
     static auto THREAD_MAX = std::thread::hardware_concurrency();
     static auto THREAD_VAL = std::min<int>(4, THREAD_MAX);
-#else
-    // static constexpr int THREAD_MAX = 1;
-    // static constexpr int THREAD_VAL = 1;
-
-#endif
+#endif /* SMP */
 
 static constexpr int HASH_MIN = 16; /* MB */
 
@@ -263,8 +259,10 @@ DECLARE_VALUE(  CAPTURES_HISTORY_THRESHOLD,        6500,    0,   15000)
 DECLARE_VALUE(  DOUBLE_EXT_MARGIN,                 1354,    0,    2000)
 DECLARE_VALUE(  DOUBLE_EXT_MAX,                      12,    0,     100)
 
+#if KILLER_MOVE_HEURISTIC
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                229,    0,    1000)
+#endif /* KILLER_MOVE_HEURISTIC */
 DECLARE_VALUE(  IMPROVEMENT_MARGIN,                   2,    0,     200)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
 DECLARE_VALUE(  LMP_BASE,                           193,  100,    1000)
@@ -295,16 +293,27 @@ DECLARE_VALUE(  NULL_MOVE_IMPROVEMENT_DIV,           62,    1,    1000)
 DECLARE_VALUE(  NULL_MOVE_MARGIN,                   630,    0,    1000)
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    17,    0,     100)
 DECLARE_VALUE(  QSEARCH_MAX_DEPTH,                  -16, -100,       0)
+
+#if RAZORING
 DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  426,    0,     500)
 DECLARE_VALUE(  RAZOR_INTERCEPT,                    258,    0,     500)
+#endif /* RAZORING */
+
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
 DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     500)
+
+#if REVERSE_FUTILITY_PRUNING
 DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             26,    0,     150)
 DECLARE_VALUE(  REVERSE_FUTILITY_MAX_DEPTH,           7,    0,     100)
+#endif /* REVERSE_FUTILITY_PRUNING */
+
+#if SINGULAR_EXTENSION
 DECLARE_VALUE(  SINGULAR_ACCURACY_MARGIN,           296,    1,     500)
 DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                0,    0,     100)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    0,     100)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                7,    0,     100)
+#endif /* SINGULAR_EXTENSION */
+
 DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_LOW,       -48, -150,       0)
 DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_HIGH,       12,    0,     150)
 
