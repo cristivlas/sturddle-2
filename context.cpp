@@ -931,7 +931,7 @@ namespace search
      *
      * Called by eval_captures (if !STATIC_EXCHANGES).
      */
-    INLINE int do_captures(int tid, const State& state, Bitboard from_mask, Bitboard to_mask, int pat)
+    INLINE int do_captures(int tid, const State& state, Bitboard from_mask, Bitboard to_mask, score_t standpat_threshold)
     {
         static constexpr auto ply = FIRST_EXCHANGE_PLY;
         const auto mask = to_mask & state.occupied_co(!state.turn) & ~state.kings;
@@ -956,7 +956,7 @@ namespace search
 
             move._score = state.piece_weight_at(move.to_square());
 
-            if (move._score >= pat)
+            if (move._score >= standpat_threshold)
                 standpat = false;
 
             /* Subtract attacker value to sort by gain. */
@@ -1019,6 +1019,11 @@ namespace search
             if (!apply_capture(state, next_state, move))
                 continue;
 
+        #if !EXCHANGES_DETECT_CHECKMATE
+            if (move._score > 0)
+                return move._score;
+        #endif /* !EXCHANGES_DETECT_CHECKMATE */
+
             /****************************************************************/
             /* "play through" same square exchanges                         */
             next_state.castling_rights = 0; /* castling moves can't capture */
@@ -1078,9 +1083,8 @@ namespace search
         }
         else
         {
-            const int standing_pat = (ctxt._ply > 1 && is_valid(ctxt._eval)) ? ctxt._alpha - score : SCORE_MIN;
-
-            result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL, standing_pat);
+            const int standpat_threshold = ctxt._ply > 1 ? ctxt._alpha - score : SCORE_MIN;
+            result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL, standpat_threshold);
         }
         ASSERT(result >= 0);
 
