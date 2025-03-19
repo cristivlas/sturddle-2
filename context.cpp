@@ -825,7 +825,7 @@ namespace search
                     Context::log_message(LogLevel::DEBUG, out.str());
                 }
 
-                continue;
+                break; // moves are sorted by piece weight
             }
 
             /****************************************************************/

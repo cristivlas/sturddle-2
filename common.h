@@ -90,8 +90,6 @@ using score_t = int;
 
 #define REVERSE_FUTILITY_PRUNING            true
 
-#define SIMPLE_CAPTURES_ORDERING            false
-
 /*
  * https://www.chessprogramming.org/Singular_Extensions
  */
@@ -183,7 +181,6 @@ namespace search
         PROMOTIONS = 4,
         LAST_MOVED_CAPTURE = 5,
         WINNING_CAPTURES = 6,
-        CAPTURES = WINNING_CAPTURES, /* used with SIMPLE_CAPTURES_ORDERING */
         EQUAL_CAPTURES = 7,
         KILLER_MOVES = 8,
         LOSING_CAPTURES = 9,
