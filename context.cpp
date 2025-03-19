@@ -1951,9 +1951,37 @@ namespace search
                     break;
                 }
 
+            #if 0
                 move._score = 0;
                 move._group = MoveOrder::UNORDERED_MOVES;
+            #else
+
+                switch (move._group)
+                {
+                    case MoveOrder::PREV_ITER:
+                    case MoveOrder::BEST_MOVES:
+                    case MoveOrder::HASH_MOVES:
+                        move._score = 0;
+                        move._group = MoveOrder::UNORDERED_MOVES;
+                }
+
+                if (move == ctxt._prev)
+                {
+                    move._group = ctxt._ply < 3 ? MoveOrder::PREV_ITER : MoveOrder::HASH_MOVES;
+                    move._score = ctxt._score;
+                }
+                else if (move == ctxt._tt_entry._best_move)
+                {
+                    move._group = MoveOrder::BEST_MOVES;
+                }
+                else if (move == ctxt._tt_entry._hash_move)
+                {
+                    move._group = MoveOrder::HASH_MOVES;
+                    move._score = ctxt._tt_entry._value;
+                }
+            #endif /* 0 */
             }
+            sort_moves(ctxt, 0, _count);
         }
 
         if (where >= 0)
@@ -2101,7 +2129,7 @@ namespace search
             {
                 if (move == ctxt._prev)
                 {
-                    make_move<false>(ctxt, move, ctxt._ply < 3 ? MoveOrder::PREV_ITER : MoveOrder::HASH_MOVES);
+                    make_move<false>(ctxt, move, ctxt._ply < 3 ? MoveOrder::PREV_ITER : MoveOrder::HASH_MOVES, ctxt._score);
                 }
                 else if (move == ctxt._tt_entry._best_move)
                 {
