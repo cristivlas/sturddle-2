@@ -1685,7 +1685,7 @@ namespace search
         _max_depth = iteration();
 
         _mate_detected = 0;
-        _multicut_allowed = true;
+        _multicut_allowed = MULTICUT;
 
         _null_move_allowed[WHITE] = true;
         _null_move_allowed[BLACK] = true;

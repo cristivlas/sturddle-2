@@ -484,9 +484,10 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
      * regardless, but lower the count of cutoffs required to "succeed" if the position has
      * produced cutoffs before.
      */
-    const auto min_cutoffs = MULTICUT_C - (ctxt.depth() > 5
-        && ctxt._tt_entry.is_lower()
-        && ctxt._tt_entry._value + MULTICUT_MARGIN >= ctxt._beta);
+    const auto min_cutoffs = MULTICUT_C - (
+        /* ctxt.depth() > 5 && */ ctxt._tt_entry.is_lower()
+        && ctxt._tt_entry._value + MULTICUT_MARGIN >= ctxt._beta
+    );
 
     while (auto next_ctxt = ctxt.next(false, 0, move_count))
     {

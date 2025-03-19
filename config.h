@@ -49,7 +49,7 @@ constexpr score_t CHECKMATE = SCORE_MAX - 1;
 constexpr score_t MATE_LOW  = -MATE_HIGH;
 
 /* Aspiration window */
-constexpr score_t HALF_WINDOW = 25;
+constexpr score_t HALF_WINDOW = 45;
 
 
 #if REFCOUNT_PARAM
@@ -176,7 +176,7 @@ DECLARE_PARAM(  EVAL_FUZZ,                            0,    0,     100)
 #endif
 DECLARE_CONST(  FIFTY_MOVES_RULE,                     1,    0,       1)
 DECLARE_VALUE(  FUTILITY_PRUNING,                     1,    0,       1)
-DECLARE_VALUE(  MULTICUT,                             1,    0,       1)
+DECLARE_VALUE(  MULTICUT,                             0,    0,       1)
 #if DATAGEN
 DECLARE_CONST(  DATAGEN_SCORE_THRESHOLD,              0,    0,   30000)
 DECLARE_CONST(  DATAGEN_MIN_DEPTH,                   10, -100,     100)

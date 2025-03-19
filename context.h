@@ -243,7 +243,7 @@ namespace search
         bool        _is_pv = false;
         bool        _is_retry = false;
         bool        _is_singleton = false;
-        bool        _multicut_allowed = true;
+        bool        _multicut_allowed = MULTICUT;
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
         bool        _retry_next = false;
