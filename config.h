@@ -25,7 +25,7 @@
  * search and evaluation functions, and infrastructure for exposing
  * them to Python scripts for the purpose of tuning the engine.
  *
- * To expose ALL settings, compile with -DTUNING_ENABLED -DMOBILITY_TUNING_ENABLED
+ * To expose ALL settings, compile with -DTUNING_ENABLED -DWEIGHT_TUNING_ENABLED
  *
  * To cherry-pick, replace DECLARE_VALUE with DECLARE_PARAM
  */
@@ -105,7 +105,7 @@ std::string Config::_group;
 
 Config::Namespace Config::_namespace = {
 #if MOBILITY_TUNING_ENABLED
-    /* Piece mobility coefficients */
+    /*** DEPRECATE Piece mobility coefficients ***/
     { "MOBILITY_PAWN", Config::Param{ &chess::MOBILITY[chess::PieceType::PAWN], 0, 50, "Weights" } },
     { "MOBILITY_KNIGHT", Config::Param{ &chess::MOBILITY[chess::PieceType::KNIGHT], 0, 50, "Weights" } },
     { "MOBILITY_BISHOP", Config::Param{ &chess::MOBILITY[chess::PieceType::BISHOP], 0, 50, "Weights" } },
