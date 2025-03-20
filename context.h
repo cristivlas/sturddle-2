@@ -1428,7 +1428,18 @@ namespace search
 
         ASSERT(is_valid(ctxt._eval));
 
-        if (make_move<false>(ctxt, move))
+        if (move._state
+            && (move._old_group == MoveOrder::LOSING_CAPTURES
+             || move._old_group == MoveOrder::WINNING_CAPTURES
+             || move._old_group == MoveOrder::EQUAL_CAPTURES)
+           )
+        {
+            move._group = move._old_group;
+            move._score = move._old_score;
+            _need_sort = true;
+            _have_move = true;
+        }
+        else if (make_move<false>(ctxt, move))
         {
             ASSERT(move._state->capture_value);
 
@@ -1443,11 +1454,11 @@ namespace search
                 capture_gain -= eval_exchanges<false>(ctxt.tid(), move, capture_gain);
 
                 /* SEE pruning */
-                if (capture_gain < 0 && ctxt.depth() <= 7)
-                {
-                    mark_as_pruned(ctxt, move);
-                    return;
-                }
+                // if (capture_gain < 0 && !ctxt.is_root() && ctxt.depth() <= 7 && !ctxt.is_check())
+                // {
+                //     mark_as_pruned(ctxt, move);
+                //     return;
+                // }
             }
 
             if (capture_gain < 0)

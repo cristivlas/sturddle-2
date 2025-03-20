@@ -1950,10 +1950,12 @@ namespace search
                     _count = i;
                     break;
                 }
+                move._old_score = move._score;
+                move._old_group = move._group;
+
                 move._score = 0;
                 move._group = MoveOrder::UNORDERED_MOVES;
             }
-            sort_moves(ctxt, 0, _count);
         }
 
         if (where >= 0)
@@ -2153,6 +2155,12 @@ namespace search
                 if (hist_score > hist_high)
                 {
                     make_move<true>(ctxt, move, MoveOrder::HISTORY_COUNTERS, hist_score);
+                }
+                else if (move._state && move._old_group == MoveOrder::TACTICAL_MOVES)
+                {
+                    move._group = MoveOrder::TACTICAL_MOVES;
+                    move._score = move._old_score;
+                    _have_move = _need_sort = true;
                 }
                 else if (ctxt.is_counter_move(move)
                     || move.from_square() == ctxt._capture_square
