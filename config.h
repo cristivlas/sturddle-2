@@ -211,15 +211,15 @@ DECLARE_VALUE(  NULL_MOVE_DIV,                      278,    1,    1000)
 DECLARE_VALUE(  NULL_MOVE_REDUCTION,                  4,    0,     100)
 DECLARE_VALUE(  NULL_MOVE_IMPROVEMENT_DIV,           72,    1,    1000)
 DECLARE_VALUE(  NULL_MOVE_MARGIN,                   611,    0,    1000)
-DECLARE_PARAM(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    17,    0,     100)
+DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,     100)
 DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  248,    0,     300)
 DECLARE_VALUE(  RAZOR_INTERCEPT,                    224,    0,     300)
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
 DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     500)
 DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             33,    0,     150)
 /* SEE */
-DECLARE_PARAM(  SEE_PRUNING,                          1,    0,       1)
-DECLARE_PARAM(  SEE_PRUNING_DEPTH,                    7,    1,      20)
+DECLARE_VALUE(  SEE_PRUNING,                          1,    0,       1)
+DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    6,    1,      20)
 /* -1 disables pin awareness */
 DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 

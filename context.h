@@ -1434,6 +1434,7 @@ namespace search
              || move._old_group == MoveOrder::EQUAL_CAPTURES)
            )
         {
+            /* Use values from before rewind / reorder */
             move._group = move._old_group;
             move._score = move._old_score;
             _need_sort = true;
@@ -1445,16 +1446,22 @@ namespace search
 
             auto capture_gain = move._state->capture_value;
 
+        #if 0
             if (ctxt.is_qsearch())
             {
                 capture_gain -= ctxt.state().piece_weight_at(move.from_square());
             }
             else
+        #endif
             {
                 capture_gain -= eval_exchanges<false>(ctxt.tid(), move, capture_gain);
 
-                /* SEE pruning */
-                if (SEE_PRUNING && capture_gain < 0 && !ctxt.is_root() && ctxt.depth() <= SEE_PRUNING_DEPTH && !ctxt.is_check())
+                if (SEE_PRUNING
+                    && capture_gain < 0
+                    && !ctxt.is_root()
+                    && ctxt.depth() > 0
+                    && ctxt.depth() <= SEE_PRUNING_DEPTH
+                    && !ctxt.is_check())
                 {
                      mark_as_pruned(ctxt, move);
                      return;

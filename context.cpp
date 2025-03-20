@@ -972,11 +972,9 @@ namespace search
             if (!apply_capture(state, next_state, move))
                 continue;
 
-            //ASSERT(move._score == next_state.capture_value);
             ASSERT(next_state.capture_value > score || EXCHANGES_DETECT_CHECKMATE);
+            ASSERT(move._score == next_state.capture_value - state.piece_weight_at(move.from_square()));
 
-            //const auto attacker_value = state.piece_weight_at(move.from_square());
-            //const auto gain = next_state.capture_value - attacker_value;
             const auto gain = move._score;
 
             /*
@@ -2103,7 +2101,7 @@ namespace search
             {
                 if (move == ctxt._prev)
                 {
-                    make_move<false>(ctxt, move, ctxt._ply < 3 ? MoveOrder::PREV_ITER : MoveOrder::HASH_MOVES, ctxt._score);
+                    make_move<false>(ctxt, move, ctxt._ply < 3 ? MoveOrder::PREV_ITER : MoveOrder::HASH_MOVES);
                 }
                 else if (move == ctxt._tt_entry._best_move)
                 {
