@@ -1699,7 +1699,7 @@ namespace search
 
     static INLINE int window_delta(int iteration, int depth, double score)
     {
-        return HALF_WINDOW * pow2(iteration) + WINDOW_COEFF * depth * log(0.001 + abs(score) / WINDOW_DIV);
+        return WINDOW_HALF * pow2(iteration) + WINDOW_COEFF * depth * log(0.001 + abs(score) / WINDOW_DIV);
     }
 
 
@@ -1735,8 +1735,8 @@ namespace search
             const score_t delta = score - prev_score;
             prev_score = score;
 
-            _alpha = std::max<score_t>(SCORE_MIN, score - std::max(HALF_WINDOW, delta));
-            _beta = std::min<score_t>(SCORE_MAX, score + std::max(HALF_WINDOW, -delta));
+            _alpha = std::max<score_t>(SCORE_MIN, score - std::max(WINDOW_HALF, delta));
+            _beta = std::min<score_t>(SCORE_MAX, score + std::max(WINDOW_HALF, -delta));
         }
 
         /* save iteration bounds */
@@ -1774,7 +1774,7 @@ namespace search
             reduction += !_parent->has_improved();
             reduction -= 2 * _parent->is_counter_move(_move);
 
-            if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * HALF_WINDOW && iteration() >= 13)
+            if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= 13)
                 ++reduction;
             reduction -= _parent->history_count(_move) / HISTORY_COUNT_HIGH;
         }

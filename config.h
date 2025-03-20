@@ -48,9 +48,6 @@ constexpr score_t CHECKMATE = SCORE_MAX - 1;
 
 constexpr score_t MATE_LOW  = -MATE_HIGH;
 
-/* Aspiration window */
-constexpr score_t HALF_WINDOW = 45;
-
 
 #if REFCOUNT_PARAM
 /* Instrumentation & debug: count parameter usage */
@@ -228,8 +225,11 @@ DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                0,    0,     100)
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_LOW,       -48, -150,       0)
 DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_HIGH,       12,    0,     150)
+
+/* Aspiration window */
 DECLARE_VALUE(  WINDOW_COEFF,                         6,    0,     100)
 DECLARE_VALUE(  WINDOW_DIV,                          67,    1,     200)
+DECLARE_PARAM(  WINDOW_HALF,                         45,    5,     200)
 
 GROUP(MoveOrdering)
 DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 223,    0,     500)
