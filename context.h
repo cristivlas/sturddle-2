@@ -1491,7 +1491,10 @@ namespace search
 
             move._state = &Context::states(ctxt.tid(), ctxt._ply)[_state_index++];
         }
-        else if (move._old_group == MoveOrder::ILLEGAL_MOVES || move._state->is_check(!move._state->turn))
+        /* Check legality in case this was a quiet, or previously pruned move */
+        else if (move._old_group == MoveOrder::ILLEGAL_MOVES
+            || ((move._old_group == MoveOrder::UNDEFINED || move._old_group >= MoveOrder::UNORDERED_MOVES)
+                && move._state->is_check(!move._state->turn)))
         {
             mark_as_illegal(move);
             return false;
@@ -1511,7 +1514,7 @@ namespace search
             mark_as_illegal(move);
             return false;
         }
-        else if (move._old_group == MoveOrder::QUIET_MOVES)
+        else if (move._old_group == MoveOrder::QUIET_MOVES && _group_quiet_moves)
         {
             _have_quiet_moves = true;
             move._group = MoveOrder::QUIET_MOVES;
