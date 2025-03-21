@@ -756,8 +756,6 @@ namespace search
 
         static const auto fp_margins = []() {
             const auto m = margins(std::make_index_sequence<PLY_MAX>{});
-            //for (size_t i = 0; i != m.size(); ++i)
-            //    std::clog << i << ": " << m[i] << std::endl;
             return m;
         } ();
         return fp_margins[depth()] * can_forward_prune();
@@ -1327,6 +1325,11 @@ namespace search
         else
         {
             ASSERT(_current == _count || ctxt.moves()[_current]._group >= PRUNED_MOVES);
+
+            /* Finished iterating? rewind, for the side-effect of caching move scores. */
+            rewind(ctxt, 0, true);
+
+            _current = _count; /* prevent accidental wrap-around */
         }
         return move;
     }

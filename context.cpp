@@ -164,9 +164,6 @@ struct LMR
                 const auto e = (100 + depth) / 100.0;
 
                 _table[depth][moves] = int(pow(v, e));
-
-                // std::cout << "[" << depth << "][" << moves << "]: " << int(v);
-                // std::cout << ", " << int(pow(v, e)) << std::endl;
             }
         }
     }
@@ -1963,9 +1960,10 @@ namespace search
 
             _phase = 0;
 
+            auto& moves_list = ctxt.moves();
             for (int i = 0; i != _count; ++i)
             {
-                auto& move = ctxt.moves()[i];
+                auto& move = moves_list[i];
 
                 if (move._state == nullptr)
                 {
@@ -1985,6 +1983,8 @@ namespace search
                 move._score = 0;
                 move._group = MoveOrder::UNORDERED_MOVES;
             }
+
+            _moves_cache[ctxt.tid()].write(ctxt.state(), moves_list);
         }
 
         if (where >= 0)
