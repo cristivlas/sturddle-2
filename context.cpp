@@ -1946,6 +1946,23 @@ namespace search
     /*---------------------------------------------------------------------
      * MoveMaker
      *---------------------------------------------------------------------*/
+
+    /* Save _old_group and _old_score to cache */
+    void MoveMaker::cache_scores(Context& ctxt)
+    {
+        for (auto& move: ctxt.moves())
+        {
+            if (move._group == MoveOrder::ILLEGAL_MOVES)
+                break;
+
+            move._old_score = move._score;
+            move._old_group = move._group;
+        }
+
+        _moves_cache[ctxt.tid()].write(ctxt.state(), ctxt.moves());
+    }
+
+
     int MoveMaker::rewind(Context& ctxt, int where, bool force_reorder)
     {
         ensure_moves(ctxt);
@@ -1984,7 +2001,6 @@ namespace search
                 move._group = MoveOrder::UNORDERED_MOVES;
             }
 
-            _moves_cache[ctxt.tid()].write(ctxt.state(), moves_list);
         }
 
         if (where >= 0)

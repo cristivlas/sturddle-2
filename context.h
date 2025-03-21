@@ -110,6 +110,9 @@ namespace search
          * upperbound of legal moves, which may include pruned and quiet moves
          */
         int count() const { return _count; }
+
+        void cache_scores(Context&);
+
         int current(Context&);
 
         bool has_moves(Context&);
@@ -1327,11 +1330,7 @@ namespace search
         else
         {
             ASSERT(_current == _count || ctxt.moves()[_current]._group >= PRUNED_MOVES);
-
-            /* Finished iterating? rewind, for the side-effect of caching move scores. */
-            rewind(ctxt, 0, true);
-
-            _current = _count; /* prevent accidental wrap-around */
+            cache_scores(ctxt);
         }
         return move;
     }
