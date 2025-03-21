@@ -2120,11 +2120,7 @@ namespace search
 
             if constexpr (Phase == 1)  /* best moves from previous iteration and from hashtable */
             {
-                if (move._old_group > MoveOrder::UNDEFINED && move._old_group <= MoveOrder::LAST_MOVED_CAPTURE)
-                {
-                    remake_move(ctxt, move);
-                }
-                else if (move == ctxt._prev)
+                if (move == ctxt._prev)
                 {
                     make_move<false>(ctxt, move, ctxt._ply < 3 ? MoveOrder::PREV_ITER : MoveOrder::HASH_MOVES);
                 }
@@ -2160,13 +2156,6 @@ namespace search
                 {
                     make_capture(ctxt, move);
                     ASSERT(move._group != MoveOrder::UNORDERED_MOVES);
-                }
-                else if (move._old_group == MoveOrder::KILLER_MOVES)
-                {
-                    remake_move(ctxt, move);
-
-                    if constexpr(EXTRA_STATS)
-                        ++ctxt.get_tt()->_killers;
                 }
                 else if (auto k_move = match_killer(killer_moves, move))
                 {
