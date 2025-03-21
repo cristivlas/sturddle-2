@@ -1612,7 +1612,6 @@ namespace search
             ASSERT(move._state->capture_value == 0);
 
             move._state->apply_move(move);
-            incremental_update(move, ctxt);
         }
 
         _need_sort = true;
