@@ -944,7 +944,7 @@ namespace search
 
             move._score = state.piece_weight_at(move.to_square());
 
-            if (move._score >= standpat_threshold)
+            if (move._score + STANDPAT_MARGIN >= standpat_threshold)
                 standpat = false;
 
             move._score -= state.piece_weight_at(move.from_square());
@@ -1069,7 +1069,7 @@ namespace search
 
     score_t eval_captures(Context& ctxt, score_t score)
     {
-        if (is_valid(ctxt._tt_entry._captures))
+        if (is_valid(ctxt._tt_entry._captures) && ctxt._tt_entry._depth >= ctxt.depth())
             return ctxt._tt_entry._captures;
 
         if constexpr(DEBUG_CAPTURES)
