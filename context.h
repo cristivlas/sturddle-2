@@ -288,6 +288,7 @@ namespace search
 
         static int64_t elapsed_milliseconds();
 
+        void        ensure_prev_move();
         static void ensure_stacks();
 
         std::string epd() const { return epd(state()); }
@@ -1445,40 +1446,31 @@ namespace search
             ASSERT(move._state->capture_value);
 
             auto capture_gain = move._state->capture_value;
+            capture_gain -= eval_exchanges<false>(ctxt.tid(), move, capture_gain);
 
-        #if 0
-            if (ctxt.is_qsearch())
+            if (SEE_PRUNING
+                && capture_gain < 0
+                && !ctxt.is_root()
+                && ctxt.depth() > 0
+                && ctxt.depth() <= SEE_PRUNING_DEPTH
+                && !ctxt.is_check())
             {
-                capture_gain -= ctxt.state().piece_weight_at(move.from_square());
+                mark_as_pruned(ctxt, move);
             }
             else
-        #endif
             {
-                capture_gain -= eval_exchanges<false>(ctxt.tid(), move, capture_gain);
-
-                if (SEE_PRUNING
-                    && capture_gain < 0
-                    && !ctxt.is_root()
-                    && ctxt.depth() > 0
-                    && ctxt.depth() <= SEE_PRUNING_DEPTH
-                    && !ctxt.is_check())
+                if (capture_gain < 0)
                 {
-                     mark_as_pruned(ctxt, move);
-                     return;
+                    move._group = MoveOrder::LOSING_CAPTURES;
                 }
-            }
+                else
+                {
+                    static_assert(MoveOrder::WINNING_CAPTURES + 1 == MoveOrder::EQUAL_CAPTURES);
+                    move._group = MoveOrder::WINNING_CAPTURES + (capture_gain == 0);
+                }
 
-            if (capture_gain < 0)
-            {
-                move._group = MoveOrder::LOSING_CAPTURES;
+                move._score = capture_gain;
             }
-            else
-            {
-                static_assert(MoveOrder::WINNING_CAPTURES + 1 == MoveOrder::EQUAL_CAPTURES);
-                move._group = MoveOrder::WINNING_CAPTURES + (capture_gain == 0);
-            }
-
-            move._score = capture_gain;
         }
     }
 

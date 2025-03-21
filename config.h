@@ -229,7 +229,7 @@ DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_HIGH,       12,    0,     150)
 /* Aspiration window */
 DECLARE_VALUE(  WINDOW_COEFF,                         6,    0,     100)
 DECLARE_VALUE(  WINDOW_DIV,                          67,    1,     200)
-DECLARE_PARAM(  WINDOW_HALF,                         45,    5,     200)
+DECLARE_VALUE(  WINDOW_HALF,                         45,    5,     200)
 
 GROUP(MoveOrdering)
 DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 223,    0,     500)

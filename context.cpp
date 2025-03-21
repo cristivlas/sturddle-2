@@ -591,6 +591,37 @@ namespace search
     }
 
 
+    /*
+     * Lookup move in the principal variation from the previous iteration.
+     * https://www.chessprogramming.org/PV-Move
+     */
+    static INLINE const BaseMove* lookup_pv(const Context& ctxt)
+    {
+        ASSERT(ctxt.get_tt());
+
+        const auto& pv = ctxt.get_tt()->get_pv();
+        const size_t ply = ctxt._ply;
+
+        if (ply + 1 >= pv.size())
+            return nullptr;
+
+        return (pv[ply] == ctxt._move) ? &pv[ply + 1] : nullptr;
+    }
+
+
+    /* Populate prev move from the Principal Variation, if missing. */
+    void Context::ensure_prev_move()
+    {
+        if (!is_root() && !_prev && !is_null_move() && !_excluded)
+        {
+            if (const auto move = lookup_pv(*this))
+            {
+                _prev = *move;
+            }
+        }
+    }
+
+
     /* static */ void Context::ensure_stacks()
     {
         const size_t n_threads(SMP_CORES);
@@ -1970,25 +2001,6 @@ namespace search
     }
 
 
-    /*
-     * Lookup move in the principal variation from the previous iteration.
-     * https://www.chessprogramming.org/PV-Move
-     */
-    static INLINE const BaseMove* lookup_pv(const Context& ctxt)
-    {
-        if (!ctxt.get_tt() || !ctxt._move)
-            return nullptr;
-
-        const auto& pv = ctxt.get_tt()->get_pv();
-        const size_t ply = ctxt._ply;
-
-        if (ply + 1 >= pv.size())
-            return nullptr;
-
-        return pv[ply] == ctxt._move ? &pv[ply + 1] : nullptr;
-    }
-
-
     void MoveMaker::generate_unordered_moves(Context& ctxt)
     {
         /* pre-conditions */
@@ -2028,13 +2040,6 @@ namespace search
          * all legal moves are about getting out of check.
          */
         _group_quiet_moves = (ctxt.depth() <= 0 && !ctxt.is_check());
-
-        /* Populate _prev move from the Principal Variation, if missing. */
-        if (!ctxt._prev * ctxt._ply * !ctxt.is_null_move() * !ctxt._excluded)
-        {
-            if (const auto move = lookup_pv(ctxt))
-                ctxt._prev = *move;
-        }
     }
 
 

@@ -712,6 +712,9 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         }
     #endif /* RAZORING */
 
+        ASSERT(ctxt._prev || !ctxt.is_root() || ctxt.iteration() <= 1);
+        ctxt.ensure_prev_move();
+
         if (multicut(ctxt, table))
         {
             ASSERT(ctxt._score < SCORE_MAX);
