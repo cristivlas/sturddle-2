@@ -1432,17 +1432,12 @@ namespace search
 
         ASSERT(is_valid(ctxt._eval));
 
-        if (move._state
-            && (move._old_group == MoveOrder::LOSING_CAPTURES
-             || move._old_group == MoveOrder::WINNING_CAPTURES
-             || move._old_group == MoveOrder::EQUAL_CAPTURES)
-           )
+        if (move._old_group == MoveOrder::LOSING_CAPTURES
+            || move._old_group == MoveOrder::WINNING_CAPTURES
+            || move._old_group == MoveOrder::EQUAL_CAPTURES)
         {
             /* Use values from before rewind / reorder */
-            move._group = move._old_group;
-            move._score = move._old_score;
-            _need_sort = true;
-            _have_move = true;
+            make_move<false>(ctxt, move, static_cast<MoveOrder>(move._old_group), move._old_score);
         }
         else if (make_move<false>(ctxt, move))
         {

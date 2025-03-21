@@ -2159,11 +2159,9 @@ namespace search
                 {
                     make_move<true>(ctxt, move, MoveOrder::HISTORY_COUNTERS, hist_score);
                 }
-                else if (move._state && move._old_group == MoveOrder::TACTICAL_MOVES)
+                else if (move._old_group == MoveOrder::TACTICAL_MOVES)
                 {
-                    move._group = MoveOrder::TACTICAL_MOVES;
-                    move._score = move._old_score;
-                    _have_move = _need_sort = true;
+                    make_move<false>(ctxt, move, MoveOrder::TACTICAL_MOVES, move._old_score);
                 }
                 else if (ctxt.is_counter_move(move)
                     || move.from_square() == ctxt._capture_square
