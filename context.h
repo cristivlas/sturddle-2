@@ -1600,7 +1600,7 @@ namespace search
     }
 
 
-    /* Remake previously rewound move. */
+    /* Remake previously rewound, or cached move. */
     INLINE void MoveMaker::remake_move(Context& ctxt, Move& move)
     {
         if (move._state == nullptr)
