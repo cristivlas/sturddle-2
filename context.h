@@ -144,6 +144,8 @@ namespace search
         template<bool LateMovePrune> bool make_move(Context&, Move&, score_t futility = 0);
         template<bool LateMovePrune> bool make_move(Context&, Move&, MoveOrder, float = 0);
 
+        void remake_move(Context&, Move&);
+
         void mark_as_illegal(Move&);
         void mark_as_pruned(Context&, Move&);
 
@@ -1437,7 +1439,7 @@ namespace search
             || move._old_group == MoveOrder::EQUAL_CAPTURES)
         {
             /* Use values from before rewind / reorder */
-            make_move<false>(ctxt, move, static_cast<MoveOrder>(move._old_group), move._old_score);
+            remake_move(ctxt, move);
         }
         else if (make_move<false>(ctxt, move))
         {
@@ -1497,6 +1499,9 @@ namespace search
         }
         else
         {
+            if constexpr(COUNT_VALID_MOVES_AS_NODES)
+                ++ctxt.get_tt()->_nodes;
+
             return (_have_move = true);
         }
 
@@ -1593,6 +1598,34 @@ namespace search
         move._score = score;
 
         return true;
+    }
+
+
+    /* Remake previously rewound move. */
+    INLINE void MoveMaker::remake_move(Context& ctxt, Move& move)
+    {
+        if (move._state == nullptr)
+        {
+            ASSERT(_state_index < Context::states(ctxt.tid(), ctxt._ply).size());
+            move._state = &Context::states(ctxt.tid(), ctxt._ply)[_state_index++];
+
+            ctxt.state().clone_into(*move._state);
+            ASSERT(move._state->capture_value == 0);
+
+            move._state->apply_move(move);
+            incremental_update(move, ctxt);
+        }
+
+        _need_sort = true;
+        _have_move = true;
+
+        move._group = static_cast<MoveOrder>(move._old_group);
+        move._score = move._old_score;
+
+        if constexpr(COUNT_VALID_MOVES_AS_NODES)
+        {
+            ++ctxt.get_tt()->_nodes;
+        }
     }
 
 

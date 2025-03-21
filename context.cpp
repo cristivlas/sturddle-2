@@ -2161,7 +2161,7 @@ namespace search
                 }
                 else if (move._old_group == MoveOrder::TACTICAL_MOVES)
                 {
-                    make_move<false>(ctxt, move, MoveOrder::TACTICAL_MOVES, move._old_score);
+                    remake_move(ctxt, move);
                 }
                 else if (ctxt.is_counter_move(move)
                     || move.from_square() == ctxt._capture_square
