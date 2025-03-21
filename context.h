@@ -1491,7 +1491,7 @@ namespace search
 
             move._state = &Context::states(ctxt.tid(), ctxt._ply)[_state_index++];
         }
-        else if (move._state->is_check(!move._state->turn))
+        else if (move._old_group == MoveOrder::ILLEGAL_MOVES || move._state->is_check(!move._state->turn))
         {
             mark_as_illegal(move);
             return false;
@@ -1502,6 +1502,20 @@ namespace search
                 ++ctxt.get_tt()->_nodes;
 
             return (_have_move = true);
+        }
+
+        /* Check the old group (saved to cache or from before rewinding) */
+        /* NB: do not filter out old pruned moves, as LMP is path-dependent. */
+        if (move._old_group == MoveOrder::ILLEGAL_MOVES)
+        {
+            mark_as_illegal(move);
+            return false;
+        }
+        else if (move._old_group == MoveOrder::QUIET_MOVES)
+        {
+            _have_quiet_moves = true;
+            move._group = MoveOrder::QUIET_MOVES;
+            return false;
         }
 
         /* Capturing the king is an illegal move (Louis XV?) */

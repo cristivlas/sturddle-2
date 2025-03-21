@@ -1952,9 +1952,6 @@ namespace search
     {
         for (auto& move: ctxt.moves())
         {
-            if (move._group == MoveOrder::ILLEGAL_MOVES)
-                break;
-
             move._old_score = move._score;
             move._old_group = move._group;
         }
