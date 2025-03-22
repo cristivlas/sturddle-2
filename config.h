@@ -148,6 +148,7 @@ Config::Namespace Config::_namespace = {
 
 #endif /* TUNING_ENABLED */
 
+static constexpr int HASH_MIN = 16; /* MB */
 
 #if SMP
     #if defined(CONFIG_IMPL)
@@ -158,30 +159,28 @@ Config::Namespace Config::_namespace = {
     static constexpr int SMP_CORES = 1;
 #endif /* SMP */
 
-static constexpr int HASH_MIN = 16; /* MB */
-
 /* Min-max range is useful when exposing params via UCI. */
 /****************************************************************************
  *              NAME                                VALUE  MIN      MAX
  ****************************************************************************/
 
 GROUP(Settings)
+#if SMP
+    DECLARE_ALIAS( SMP_CORES, Threads,         THREAD_VAL,  1,  THREAD_MAX)
+#endif
+
 DECLARE_VALUE(  ASPIRATION_WINDOW,                    1,    0,       1)
 DECLARE_CONST(  DEBUG_CAPTURES,                       0,    0,       1)
+#if DATAGEN
+    DECLARE_CONST(  DATAGEN_SCORE_THRESHOLD,          0,    0,   30000)
+    DECLARE_CONST(  DATAGEN_MIN_DEPTH,                10, -100,    100)
+#endif
 #if EVAL_FUZZ_ENABLED
-DECLARE_PARAM(  EVAL_FUZZ,                            0,    0,     100)
+    DECLARE_PARAM(  EVAL_FUZZ,                        0,    0,     100)
 #endif
 DECLARE_CONST(  FIFTY_MOVES_RULE,                     1,    0,       1)
 DECLARE_VALUE(  FUTILITY_PRUNING,                     1,    0,       1)
 DECLARE_VALUE(  MULTICUT,                             1,    0,       1)
-#if DATAGEN
-DECLARE_CONST(  DATAGEN_SCORE_THRESHOLD,              0,    0,   30000)
-DECLARE_CONST(  DATAGEN_MIN_DEPTH,                   10, -100,     100)
-#endif
-
-#if SMP
-DECLARE_ALIAS(  SMP_CORES, Threads,                   1, THREAD_VAL, THREAD_MAX)
-#endif /* SMP */
 
 GROUP(Search)
 DECLARE_VALUE(  CAPTURES_SCALE,                      99,    0,     150)
