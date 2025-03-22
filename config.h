@@ -173,7 +173,7 @@ DECLARE_VALUE(  ASPIRATION_WINDOW,                    1,    0,       1)
 DECLARE_CONST(  DEBUG_CAPTURES,                       0,    0,       1)
 #if DATAGEN
     DECLARE_CONST(  DATAGEN_SCORE_THRESHOLD,          0,    0,   30000)
-    DECLARE_CONST(  DATAGEN_MIN_DEPTH,                10, -100,    100)
+    DECLARE_CONST(  DATAGEN_MIN_DEPTH,               10, -100,     100)
 #endif
 #if EVAL_FUZZ_ENABLED
     DECLARE_PARAM(  EVAL_FUZZ,                        0,    0,     100)
@@ -221,8 +221,8 @@ DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 
 DECLARE_VALUE(  SINGULAR_ACCURACY_MARGIN,           288,    1,     500)
 DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                0,    0,     100)
-DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 
+DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 DECLARE_VALUE(  STANDPAT_MARGIN,                     74,    0,    1000)
 
 DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_LOW,       -48, -150,       0)
@@ -245,6 +245,7 @@ DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,     100)
 DECLARE_VALUE(  HISTORY_PRUNE,                       67,    0,     100)
 /****************************************************************************/
 #if !WITH_NNUE
+/* HCE tunable parameters */
 GROUP(Eval)
 DECLARE_VALUE(  BISHOP_PAIR,                         53,    0,     100)
 DECLARE_VALUE(  CASTLING_RIGHTS_BONUS,               32,    0,     100)
