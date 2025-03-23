@@ -273,7 +273,6 @@ namespace search
         size_t _null_move_cutoffs = 0;
         size_t _null_move_failed = 0;
         size_t _null_move_not_ok = 0;
-        size_t _qsnodes = 0;
         size_t _reductions = 0;
         size_t _retry_reductions = 0;
 

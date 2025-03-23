@@ -98,7 +98,7 @@ namespace
         std::vector<Entry> _data;
 
     public:
-        explicit MovesCache(size_t size = 1031) : _data(size)
+        explicit MovesCache(size_t size = 4007) : _data(size)
         {
         }
 
@@ -382,15 +382,15 @@ void search::Context::eval_nnue()
 
         auto eval = evaluate_material();
 
-        /* stick with material eval if in quiescent search, or if heavily imbalanced */
-        if (state().just_king(!turn()) || (!is_qsearch() && abs(eval) <= NNUE_MAX_EVAL + LMP[depth()]))
+        /* stick with material eval when heavily imbalanced */
+        if (state().just_king(!turn()) || abs(eval) <= NNUE_MAX_EVAL + LMP[depth()])
         {
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
         }
 
         eval += eval_fuzz();
 
-        if (is_qsearch())
+        if (GROUP_QUIET_MOVES && is_leaf_extended())
             _eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
         else
             _eval = eval; /* assume NNUE eval already accounts for insufficient material */
@@ -2047,12 +2047,14 @@ namespace search
         if (states_vec.size() < size_t(_count))
             states_vec.resize(_count);
 
+    #if GROUP_QUIET_MOVES
         /*
          * In quiescent search, only quiet moves are interesting.
          * If in check, no need to determine "quieteness", since
          * all legal moves are about getting out of check.
          */
         _group_quiet_moves = (ctxt.depth() <= 0 && !ctxt.is_check());
+    #endif /* GROUP_QUIET_MOVES */
     }
 
 

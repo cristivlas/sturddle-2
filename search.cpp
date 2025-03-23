@@ -165,7 +165,6 @@ void TranspositionTable::clear()
     _null_move_cutoffs = 0;
     _null_move_failed = 0;
     _null_move_not_ok = 0;
-    _qsnodes = 0;
     _reductions = 0;
     _retry_reductions = 0;
 
@@ -200,9 +199,6 @@ void TranspositionTable::clear()
 
 void TranspositionTable::update_stats(const Context& ctxt)
 {
-    if (ctxt.is_qsearch())
-        ++_qsnodes;
-
     if (ctxt.is_check())
         ++_check_nodes;
 
@@ -762,7 +758,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     ASSERT(move_count > 0);
                     const auto val = futility - next_ctxt->evaluate_material();
 
-                    if ((val < ctxt._alpha || val < ctxt._score) && next_ctxt->can_prune<true>())
+                    if (val < ctxt._alpha && next_ctxt->can_prune<true>())
                     {
                         update_pruned(ctxt, *next_ctxt, table._futility_prune_count);
                         continue;
@@ -990,11 +986,13 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         }
     }
 
+    if (GROUP_QUIET_MOVES && ctxt.is_leaf_extended())
+        {}
     /*
      * The conventional wisdom is to not store root nodes
      * (https://www.stmintz.com/ccc/index.php?id=93686)
      */
-    if (ctxt._score && !ctxt.is_root() && !ctxt._excluded && !ctxt.is_qsearch() && !ctxt.is_cancelled())
+    else if (ctxt._score && !ctxt.is_root() && !ctxt._excluded && !ctxt.is_cancelled())
         table.store(ctxt, ctxt.depth());
 
     if constexpr(EXTRA_STATS)

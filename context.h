@@ -344,7 +344,7 @@ namespace search
         INLINE bool is_promotion() const { return state().promotion; }
         INLINE bool is_pv_node() const { return _is_pv; }
         bool        is_pvs_ok() const;
-        INLINE bool is_qsearch() const { return _ply > _max_depth; }
+        INLINE bool is_leaf_extended() const { return _ply > _max_depth; }
         bool        is_recapture() const;
         bool        is_reduced() const;
         int         is_repeated() const;
@@ -868,7 +868,6 @@ namespace search
             || _null_move_allowed[turn()] == false
             || _excluded
             || is_null_move() /* consecutive null moves are not allowed */
-            || is_qsearch()
             || is_pv_node()
             || is_mate_bound()
             || is_repeated()
@@ -879,7 +878,7 @@ namespace search
 
         ASSERT(depth() >= 0);
         return static_eval() >= _beta
-            - NULL_MOVE_DEPTH_WEIGHT * depth()
+            - NULL_MOVE_DEPTH_WEIGHT * std::max(0, depth())
             - improvement() / NULL_MOVE_IMPROVEMENT_DIV
             + NULL_MOVE_MARGIN;
     }
@@ -1433,7 +1432,7 @@ namespace search
 
         ASSERT(is_valid(ctxt._eval));
 
-        if (move._old_group == MoveOrder::LOSING_CAPTURES
+        if (   move._old_group == MoveOrder::LOSING_CAPTURES
             || move._old_group == MoveOrder::WINNING_CAPTURES
             || move._old_group == MoveOrder::EQUAL_CAPTURES)
         {
@@ -1485,16 +1484,32 @@ namespace search
 
         _need_sort = true;
 
+        /* Check the old group (saved to cache or from before rewinding) */
+        /* NB: do not filter out old pruned moves, they are path-dependent. */
+        if (move._old_group == MoveOrder::ILLEGAL_MOVES)
+        {
+            mark_as_illegal(move);
+            return false;
+        }
+    #if GROUP_QUIET_MOVES
+        else if (move._old_group == MoveOrder::QUIET_MOVES && _group_quiet_moves)
+        {
+            _have_quiet_moves = true;
+            move._group = MoveOrder::QUIET_MOVES;
+            return false;
+        }
+    #endif /* GROUP_QUIET_MOVES */
+
         if (move._state == nullptr)
         {
+            /* Ensure that there's a board state associated with the move. */
             ASSERT(_state_index < Context::states(ctxt.tid(), ctxt._ply).size());
 
             move._state = &Context::states(ctxt.tid(), ctxt._ply)[_state_index++];
         }
         /* Check legality in case this was a quiet, or previously pruned move */
-        else if (move._old_group == MoveOrder::ILLEGAL_MOVES
-            || ((move._old_group == MoveOrder::UNDEFINED || move._old_group >= MoveOrder::UNORDERED_MOVES)
-                && move._state->is_check(!move._state->turn)))
+        else if ((move._old_group == MoveOrder::UNDEFINED || move._old_group >= MoveOrder::UNORDERED_MOVES)
+            && move._state->is_check(!move._state->turn))
         {
             mark_as_illegal(move);
             return false;
@@ -1505,20 +1520,6 @@ namespace search
                 ++ctxt.get_tt()->_nodes;
 
             return (_have_move = true);
-        }
-
-        /* Check the old group (saved to cache or from before rewinding) */
-        /* NB: do not filter out old pruned moves, as LMP is path-dependent. */
-        if (move._old_group == MoveOrder::ILLEGAL_MOVES)
-        {
-            mark_as_illegal(move);
-            return false;
-        }
-        else if (move._old_group == MoveOrder::QUIET_MOVES && _group_quiet_moves)
-        {
-            _have_quiet_moves = true;
-            move._group = MoveOrder::QUIET_MOVES;
-            return false;
         }
 
         /* Capturing the king is an illegal move (Louis XV?) */
@@ -1556,12 +1557,14 @@ namespace search
             }
         }
 
+    #if GROUP_QUIET_MOVES
         if (_group_quiet_moves && is_quiet(*move._state))
         {
             _have_quiet_moves = true;
             move._group = MoveOrder::QUIET_MOVES;
             return false;
         }
+    #endif /* GROUP_QUIET_MOVES */
 
         incremental_update(move, ctxt);
 
@@ -1575,7 +1578,7 @@ namespace search
 
             const auto val = futility + move._state->simple_score * SIGN[!move._state->turn];
 
-            if ((val < ctxt._alpha || val < ctxt._score) && ctxt.can_prune_move<true>(move))
+            if (val < ctxt._alpha && ctxt.can_prune_move<true>(move))
             {
                 if constexpr(EXTRA_STATS)
                     ++ctxt.get_tt()->_futility_prune_count;

@@ -836,7 +836,6 @@ cdef extern from 'search.h' namespace 'search':
         const   size_t _nps
         const   size_t _null_move_cutoffs
         const   size_t _null_move_failed
-        const   size_t _qsnodes
         const   size_t _reductions
         const   size_t _retry_reductions
         const   score_t _w_alpha
@@ -883,7 +882,6 @@ cdef task_stats(const TranspositionTable& table):
         'null-move-cutoffs': table._null_move_cutoffs,
         'null-move-fail': table._null_move_failed,
         'null-move-not-ok': table._null_move_not_ok,
-        'qs-nodes': table._qsnodes,
         'reductions': table._reductions,
         'retry-reductions': table._retry_reductions,
         'tt-hits': table._hits,
