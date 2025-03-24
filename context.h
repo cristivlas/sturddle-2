@@ -203,6 +203,19 @@ namespace search
         score_t delta;      /* score difference from last search */
     };
 
+    enum class PruneReason : uint8_t
+    {
+        PRUNE_NONE,
+        PRUNE_END_TABLES,
+        PRUNE_LMP,
+        PRUNE_FUTILITY,
+        PRUNE_MULTICUT,
+        PRUNE_RAZOR,
+        PRUNE_REVERSE_FUTILITY,
+        PRUNE_SINGULAR,
+        PRUNE_TT,
+    };
+
 
     /*
      * The context of a searched node.
@@ -263,6 +276,7 @@ namespace search
         int         _full_depth_count = late_move_reduction_count();
         int         _mate_detected = 0;
         int         _pruned_count = 0;
+        PruneReason _prune_reason = PruneReason::PRUNE_NONE;
 
         Move        _move;          /* from parent to current state */
         BaseMove    _best_move;
@@ -1123,6 +1137,7 @@ namespace search
 
             if (temp.count() >= 0)
             {
+                /* Reuse previously generated moves */
                 ctxt->_move_maker.swap(temp);
                 ASSERT(temp.count() == -1);
 

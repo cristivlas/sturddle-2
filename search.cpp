@@ -643,7 +643,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     {
         ASSERT(ctxt._score == *p);
         ASSERT(!ctxt._excluded);
-
+        ctxt._prune_reason = PruneReason::PRUNE_TT;
         return *p;
     }
 
@@ -663,6 +663,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     {
         table.store<TT_Type::EXACT>(ctxt, ctxt.depth() + 2 * ctxt.tb_cardinality());
         ctxt._eval_raw = ctxt._score;
+        ctxt._prune_reason = PruneReason::PRUNE_END_TABLES;
         return ctxt._score;
     }
     else
@@ -694,6 +695,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             ASSERT(eval > SCORE_MIN);
             ASSERT(eval < SCORE_MAX);
 
+            ctxt._prune_reason = PruneReason::PRUNE_REVERSE_FUTILITY;
             return eval;
         }
     #endif /* REVERSE_FUTILITY_PRUNING */
@@ -704,6 +706,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             && eval < ctxt._alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(ctxt.depth())
             && eval + eval_captures(ctxt, eval) < ctxt._alpha)
         {
+            ctxt._prune_reason = PruneReason::PRUNE_RAZOR;
             return ctxt._alpha;
         }
     #endif /* RAZORING */
@@ -714,6 +717,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         if (multicut(ctxt, table))
         {
             ASSERT(ctxt._score < SCORE_MAX);
+            ctxt._prune_reason = PruneReason::PRUNE_MULTICUT;
             return ctxt._score;
         }
 
@@ -760,6 +764,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                     if (val < ctxt._alpha && next_ctxt->can_prune<true>())
                     {
+                        next_ctxt->_prune_reason = PruneReason::PRUNE_FUTILITY;
                         update_pruned(ctxt, *next_ctxt, table._futility_prune_count);
                         continue;
                     }
@@ -827,6 +832,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                          */
                         else if (s_beta >= ctxt._beta)
                         {
+                            ctxt._prune_reason = PruneReason::PRUNE_SINGULAR;
                             return s_beta;
                         }
                         else if (ctxt._tt_entry._value >= ctxt._beta && next_ctxt->can_reduce())
@@ -842,6 +848,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 /* Late-move reduction and pruning */
                 if (move_count && next_ctxt->late_move_reduce(move_count) == LMRAction::Prune)
                 {
+                    next_ctxt->_prune_reason = PruneReason::PRUNE_LMP;
                     update_pruned(ctxt, *next_ctxt, table._late_move_prune_count);
                     continue;
                 }

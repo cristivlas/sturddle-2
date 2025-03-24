@@ -670,7 +670,13 @@ namespace search
             {
                 if (!next_ctxt->is_null_move())
                 {
-                    if (next_ctxt->_retry_above_alpha == RETRY::Reduced)
+                    if (next_ctxt->_prune_reason == PruneReason::PRUNE_TT
+                        && next_ctxt->_tt_entry._depth >= depth() + 1)
+                    {
+                        /* Do not retry */
+                        ASSERT(next_ctxt->_tt_entry.is_valid());
+                    }
+                    else if (next_ctxt->_retry_above_alpha == RETRY::Reduced)
                     {
                         ASSERT(!next_ctxt->is_retry());
                         _retry_next = true;
@@ -1701,7 +1707,6 @@ namespace search
         ASSERT(is_root());
         ASSERT(!_is_null_move);
         ASSERT(_tt->_w_alpha <= _alpha);
-
         ASSERT(_retry_above_alpha == RETRY::None);
 
         _best_move = BaseMove();
@@ -1722,6 +1727,8 @@ namespace search
 
         _null_move_allowed[WHITE] = true;
         _null_move_allowed[BLACK] = true;
+
+        _prune_reason = PruneReason::PRUNE_NONE;
 
         _repetitions = -1;
 
@@ -1976,7 +1983,6 @@ namespace search
 
         if (force_reorder)
         {
-            ASSERT(!ctxt.is_retry());
             ASSERT(where == 0);
 
             _phase = 0;
