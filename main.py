@@ -114,7 +114,7 @@ if __name__ == '__main__':
     engine = load_engine()
     assert engine, 'Failed to load engine.'
     try:
-        engine.uci('Sturddle UCI', debug=args.verbose)
+        engine.uci('Sturddle', debug=args.verbose)
     except KeyboardInterrupt:
         pass
     except Exception as e:
