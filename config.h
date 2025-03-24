@@ -215,7 +215,7 @@ DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     500)
 DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             33,    0,     150)
 /* SEE */
 DECLARE_VALUE(  SEE_PRUNING,                          1,    0,       1)
-DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    6,    1,      20)
+DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
 /* -1 disables pin awareness */
 DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 
@@ -223,7 +223,7 @@ DECLARE_VALUE(  SINGULAR_ACCURACY_MARGIN,           288,    1,     500)
 DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                0,    0,     100)
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
-DECLARE_VALUE(  STANDPAT_MARGIN,                     74,    0,    1000)
+DECLARE_VALUE(  STANDPAT_MARGIN,                     85,    0,    1000)
 
 DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_LOW,       -48, -150,       0)
 DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_HIGH,       12,    0,     150)
@@ -231,7 +231,7 @@ DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_HIGH,       12,    0,     150)
 /* Aspiration window */
 DECLARE_VALUE(  WINDOW_COEFF,                         6,    0,     100)
 DECLARE_VALUE(  WINDOW_DIV,                          67,    1,     200)
-DECLARE_VALUE(  WINDOW_HALF,                         46,    5,     200)
+DECLARE_VALUE(  WINDOW_HALF,                         25,    5,     200)
 
 GROUP(MoveOrdering)
 DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 223,    0,     500)
