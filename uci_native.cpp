@@ -1197,9 +1197,9 @@ void uci_loop(Params params)
     const auto debug = params["debug"];
 
 #if WITH_NNUE
-    output<false>(std::format("{}-{} {}", name, version, nnue::instrset));
+    output<false>(std::format("{} {} {}", name, version, nnue::instrset));
 #else
-    output<false>(std::format("{}-{}", name, version));
+    output<false>(std::format("{} {}", name, version));
 #endif /* WITH_NNUE */
 
     _debug = (debug == "true");
