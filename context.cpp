@@ -107,18 +107,20 @@ namespace
             std::vector<Entry>(_data.size()).swap(_data);
         }
 
-        INLINE bool lookup(const State& state, MovesList& moves) // non-const due to locking
+        INLINE bool lookup(const State& state, MovesList& moves)
         {
-            const auto hash = scramble64(state.hash());
+            const auto hash = state.hash();
+            const auto slot = scramble64(hash);
 
             for (size_t j = 0; j < BUCKET_SIZE; ++j)
             {
-                const auto i = (hash + j) % _data.size();
+                const auto i = (slot + j) % _data.size();
                 auto& entry = _data[i];
-                if (state.hash() == entry._state.hash() && state == entry._state)
+                if (hash == entry._state.hash() && state == entry._state)
                 {
                     ++entry._use_count;
                     moves.assign(entry._moves.begin(), entry._moves.end());
+
                     return true;
                 }
             }
@@ -127,17 +129,20 @@ namespace
 
         INLINE void write(const State& state, const MovesList& moves)
         {
-            const auto hash = scramble64(state.hash());
+            const auto hash = state.hash();
+            const auto slot = scramble64(hash);
 
             for (size_t j = 0; j < BUCKET_SIZE; ++j)
             {
-                const auto i = (hash + j) % _data.size();
+                const auto i = (slot + j) % _data.size();
                 auto& entry = _data[i];
-                if (++entry._write_attempts > 2 * entry._use_count)
+
+                if (hash == entry._state.hash() || ++entry._write_attempts > 2 * entry._use_count)
                 {
                     entry._moves.assign(moves.begin(), moves.end());
+                    if (hash != entry._state.hash())
+                        entry._use_count = 0;
                     entry._state = state;
-                    entry._use_count = 0;
                     entry._write_attempts = 0;
                     break;
                 }
