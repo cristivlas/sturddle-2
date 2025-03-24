@@ -1175,7 +1175,7 @@ void UCI::stop(bool flush)
 void UCI::uci()
 {
     std::ios_base::sync_with_stdio(false);
-    output<false>(std::format("id name {}-{}", _name, _version));
+    output<false>(std::format("id name {} {}", _name, _version));
     output<false>("id author Cristian Vlasceanu");
 
     refresh_options();
