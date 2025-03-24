@@ -770,10 +770,12 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     }
                 }
 
+                if (!ctxt._best_move)
+                    ctxt._best_move = next_ctxt->_move;
+
                 /*
                  * Do not extend at root, or if already deeper than twice the depth at root
                  */
-
                 if (!ctxt.is_root() && ctxt._ply < root_depth * 2)
                 {
                 #if SINGULAR_EXTENSION
