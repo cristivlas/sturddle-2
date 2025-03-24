@@ -1085,6 +1085,8 @@ static score_t search_iteration(Context& ctxt, TranspositionTable& table, score_
         ctxt._prev = ctxt._best_move; /* save for next iteration */
         table.store_pv(ctxt);
     }
+    else if (ctxt._prev)
+        ctxt._best_move = ctxt._prev;
     else
         table._pv.clear();
 
