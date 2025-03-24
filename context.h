@@ -865,6 +865,7 @@ namespace search
     INLINE bool Context::is_null_move_ok()
     {
         if (is_root()
+            || depth() < 0
             || _null_move_allowed[turn()] == false
             || _excluded
             || is_null_move() /* consecutive null moves are not allowed */
@@ -876,9 +877,8 @@ namespace search
            )
             return false;
 
-        ASSERT(depth() >= 0);
         return static_eval() >= _beta
-            - NULL_MOVE_DEPTH_WEIGHT * std::max(0, depth())
+            - NULL_MOVE_DEPTH_WEIGHT * depth()
             - improvement() / NULL_MOVE_IMPROVEMENT_DIV
             + NULL_MOVE_MARGIN;
     }

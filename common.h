@@ -78,7 +78,7 @@ using score_t = int;
   #define NATIVE_UCI                        false
 #endif /* NATIVE_UCI */
 
-#define GROUP_QUIET_MOVES                   false
+#define GROUP_QUIET_MOVES                   true
 
 #define KILLER_MOVE_HEURISTIC               true
 
@@ -192,9 +192,7 @@ namespace search
         LATE_MOVES = 13, /* all other legal moves not covered above */
         UNORDERED_MOVES = 14,
         PRUNED_MOVES = 15,
-    #if GROUP_QUIET_MOVES
         QUIET_MOVES = 16,
-    #endif
         ILLEGAL_MOVES = 17,
     };
 }

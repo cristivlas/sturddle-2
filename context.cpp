@@ -109,7 +109,7 @@ namespace
 
         INLINE bool lookup(const State& state, MovesList& moves) // non-const due to locking
         {
-            const auto hash = state.hash();
+            const auto hash = scramble64(state.hash());
 
             for (size_t j = 0; j < BUCKET_SIZE; ++j)
             {
@@ -127,7 +127,7 @@ namespace
 
         INLINE void write(const State& state, const MovesList& moves)
         {
-            const auto hash = state.hash();
+            const auto hash = scramble64(state.hash());
 
             for (size_t j = 0; j < BUCKET_SIZE; ++j)
             {

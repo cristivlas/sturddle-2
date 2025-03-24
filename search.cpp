@@ -986,13 +986,11 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         }
     }
 
-    if (GROUP_QUIET_MOVES && ctxt.is_leaf_extended())
-        {}
     /*
      * The conventional wisdom is to not store root nodes
      * (https://www.stmintz.com/ccc/index.php?id=93686)
      */
-    else if (ctxt._score && !ctxt.is_root() && !ctxt._excluded && !ctxt.is_cancelled())
+    if (ctxt._score && !ctxt.is_root() && ctxt.depth() > 0 && !ctxt._excluded && !ctxt.is_cancelled())
         table.store(ctxt, ctxt.depth());
 
     if constexpr(EXTRA_STATS)
