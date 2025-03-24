@@ -383,17 +383,17 @@ void search::Context::eval_nnue()
         auto eval = evaluate_material();
 
         /* stick with material eval when heavily imbalanced */
-        if (state().just_king(!turn()) || abs(eval) <= NNUE_MAX_EVAL + LMP[depth()])
+        if (state().just_king(!turn())
+            || (!is_leaf_extended() && abs(eval) <= NNUE_MAX_EVAL + pow2(depth())))
         {
+            /* NOTE: assume NNUE eval already accounts for insufficient material */
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
         }
-
-        eval += eval_fuzz();
-
-        if (GROUP_QUIET_MOVES && is_leaf_extended())
-            _eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
         else
-            _eval = eval; /* assume NNUE eval already accounts for insufficient material */
+        {
+            eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
+        }
+        _eval = eval + eval_fuzz();
     }
 }
 
