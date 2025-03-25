@@ -1708,6 +1708,7 @@ namespace search
         ASSERT(!_is_null_move);
         ASSERT(_tt->_w_alpha <= _alpha);
         ASSERT(_retry_above_alpha == RETRY::None);
+        ASSERT(_prune_reason == PruneReason::PRUNE_NONE);
 
         _best_move = BaseMove();
         _cancel = false;
