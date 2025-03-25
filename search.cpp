@@ -712,7 +712,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         }
     #endif /* RAZORING */
 
-        ASSERT(ctxt._prev || !ctxt.is_root() || ctxt.iteration() <= 1);
         ctxt.ensure_prev_move();
 
         if (multicut(ctxt, table))
@@ -770,9 +769,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         continue;
                     }
                 }
-
-                if (!ctxt._best_move)
-                    ctxt._best_move = next_ctxt->_move;
 
                 /*
                  * Do not extend at root, or if already deeper than twice the depth at root

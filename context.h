@@ -273,7 +273,6 @@ namespace search
 
         int         _extension = 0; /* count pending fractional extensions */
         int         _fifty = 0;
-        int         _full_depth_count = late_move_reduction_count();
         int         _mate_detected = 0;
         int         _pruned_count = 0;
         PruneReason _prune_reason = PruneReason::PRUNE_NONE;
@@ -606,6 +605,7 @@ namespace search
 
         return !is_extended()
             && !is_pv_node()
+         // && !is_retry()
             && !is_repeated()
             && _parent->can_prune_move<PruneCaptures>(_move);
     }

@@ -671,7 +671,7 @@ namespace search
                 if (!next_ctxt->is_null_move())
                 {
                     if (next_ctxt->_prune_reason == PruneReason::PRUNE_TT
-                        && next_ctxt->_tt_entry._depth >= depth() + 1)
+                        && next_ctxt->_tt_entry._depth >= depth() - 1)
                     {
                         /* Do not retry */
                         ASSERT(next_ctxt->_tt_entry.is_valid());
@@ -683,9 +683,6 @@ namespace search
 
                         if constexpr(EXTRA_STATS)
                             ++_tt->_retry_reductions;
-
-                        /* increment, so that late_move_reduce() skips it */
-                        _full_depth_count = next_move_index() + 1;
                     }
                     else if (next_ctxt->_retry_above_alpha == RETRY::PVS && score < _beta)
                     {
@@ -1718,7 +1715,6 @@ namespace search
         _cutoff_move = Move();
 
         _extension = 0;
-        _full_depth_count = LATE_MOVE_REDUCTION_COUNT;
         _has_singleton = false;
 
         _max_depth = iteration();
@@ -1806,7 +1802,7 @@ namespace search
             return LMRAction::Prune;
 
         /* no reductions at very low depth and in qsearch */
-        if (depth < 3 || count < _parent->_full_depth_count || !can_reduce())
+        if (depth < 3 || count < LATE_MOVE_REDUCTION_COUNT || !can_reduce())
             return LMRAction::None;
 
         /* Lookup reduction in the Late Move Reduction table. */
@@ -1984,6 +1980,7 @@ namespace search
 
         if (force_reorder)
         {
+            ASSERT(!ctxt.is_retry());
             ASSERT(where == 0);
 
             _phase = 0;
