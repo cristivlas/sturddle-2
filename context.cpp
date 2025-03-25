@@ -127,7 +127,7 @@ namespace
             return false;
         }
 
-        INLINE void write(const State& state, const MovesList& moves)
+        INLINE void write(const State& state, const MovesList& moves, bool force_write = false)
         {
             const auto hash = state.hash();
             const auto slot = scramble64(hash);
@@ -137,7 +137,9 @@ namespace
                 const auto i = (slot + j) % _data.size();
                 auto& entry = _data[i];
 
-                if (hash == entry._state.hash() || ++entry._write_attempts > 2 * entry._use_count)
+                if (force_write /* bypass eviction mechanism and forcefully write */
+                    || hash == entry._state.hash()
+                    || ++entry._write_attempts > 2 * entry._use_count)
                 {
                     entry._moves.assign(moves.begin(), moves.end());
                     if (hash != entry._state.hash())
@@ -1954,6 +1956,12 @@ namespace search
     }
 
 
+    void Context::cache_moves(bool force_write)
+    {
+        _moves_cache[tid()].write(state(), moves(), force_write);
+    }
+
+
     /*---------------------------------------------------------------------
      * MoveMaker
      *---------------------------------------------------------------------*/
@@ -1967,7 +1975,7 @@ namespace search
             move._old_group = move._group;
         }
 
-        _moves_cache[ctxt.tid()].write(ctxt.state(), ctxt.moves());
+        ctxt.cache_moves();
     }
 
 

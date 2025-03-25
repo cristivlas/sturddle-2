@@ -106,17 +106,16 @@ namespace search
 
         const Move* get_next_move(Context& ctxt, score_t futility = 0);
 
-        /*
-         * upperbound of legal moves, which may include pruned and quiet moves
-         */
+        /* Return upperbound of legal moves, which may include pruned and quiet moves. */
         int count() const { return _count; }
 
         void cache_scores(Context&);
 
         int current(Context&);
 
+        bool group_quiet_moves() const { return _group_quiet_moves; }
         bool has_moves(Context&);
-        bool have_skipped_moves() { return _have_pruned_moves || _have_quiet_moves; }
+        bool have_skipped_moves() const { return _have_pruned_moves || _have_quiet_moves; }
         bool is_last(Context&);
         bool is_singleton(Context&);
 
@@ -287,6 +286,8 @@ namespace search
         TT_Entry    _tt_entry;
         Square      _capture_square = Square::UNDEFINED;
 
+        void        cache_moves(bool force_write /* bypass eviction strategy */ = false);
+
         static void cancel() { _cancel.store(true, std::memory_order_relaxed); }
 
         bool        can_forward_prune() const;
@@ -295,6 +296,7 @@ namespace search
         template<bool PruneCaptures = false> bool can_prune_move(const Move&) const;
 
         bool        can_reduce() const;
+        bool        can_reuse_moves() const;
 
         int64_t     check_time_and_update_nps(); /* return elapsed milliseconds */
 
@@ -636,6 +638,12 @@ namespace search
             && (_move.from_square() != _parent->_capture_square)
             && !is_recapture()
             && !is_check();
+    }
+
+
+    INLINE bool Context::can_reuse_moves() const
+    {
+        return !_move_maker.have_skipped_moves() && !_move_maker.group_quiet_moves();
     }
 
 
@@ -1017,11 +1025,21 @@ namespace search
         ASSERT(null_move || move->_group != MoveOrder::UNDEFINED);
         ASSERT(null_move || move->_group < MoveOrder::UNORDERED_MOVES);
 
+        /* Save previously generated moves for reuse on retry */
         MoveMaker temp;
         if (retry)
-            next_ply<false>()->_move_maker.swap(temp);
+        {
+            const auto ctxt = next_ply<false>();
+            if (ctxt->move_count() >= 0)
+            {
+                if (ctxt->can_reuse_moves())
+                    ctxt->_move_maker.swap(temp);
+                else
+                    ctxt->cache_moves(true /* force write */);
+            }
+        }
 
-        auto ctxt = next_ply<true>();
+        auto ctxt = next_ply<true>(); /* Construct new context */
 
         if (move)
         {
