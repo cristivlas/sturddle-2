@@ -1956,28 +1956,23 @@ namespace search
     }
 
 
-    void Context::cache_moves(bool force_write)
+    void Context::cache_scores(bool force_write)
     {
-        _moves_cache[tid()].write(state(), moves(), force_write);
+        auto& moves_list = moves();
+
+        for (auto& move: moves_list)
+        {
+            move._old_score = move._score;
+            move._old_group = move._group;
+        }
+
+        _moves_cache[tid()].write(state(), moves_list, force_write);
     }
 
 
     /*---------------------------------------------------------------------
      * MoveMaker
      *---------------------------------------------------------------------*/
-
-    /* Save _old_group and _old_score to cache */
-    void MoveMaker::cache_scores(Context& ctxt)
-    {
-        for (auto& move: ctxt.moves())
-        {
-            move._old_score = move._score;
-            move._old_group = move._group;
-        }
-
-        ctxt.cache_moves();
-    }
-
 
     int MoveMaker::rewind(Context& ctxt, int where, bool force_reorder)
     {

@@ -109,8 +109,6 @@ namespace search
         /* Return upperbound of legal moves, which may include pruned and quiet moves. */
         int count() const { return _count; }
 
-        void cache_scores(Context&);
-
         int current(Context&);
 
         bool group_quiet_moves() const { return _group_quiet_moves; }
@@ -286,7 +284,7 @@ namespace search
         TT_Entry    _tt_entry;
         Square      _capture_square = Square::UNDEFINED;
 
-        void        cache_moves(bool force_write /* bypass eviction strategy */ = false);
+        void        cache_scores(bool force_write /* bypass eviction strategy */ = false);
 
         static void cancel() { _cancel.store(true, std::memory_order_relaxed); }
 
@@ -296,6 +294,7 @@ namespace search
         template<bool PruneCaptures = false> bool can_prune_move(const Move&) const;
 
         bool        can_reduce() const;
+
         bool        can_reuse_moves() const;
 
         int64_t     check_time_and_update_nps(); /* return elapsed milliseconds */
@@ -1035,7 +1034,7 @@ namespace search
                 if (ctxt->can_reuse_moves())
                     ctxt->_move_maker.swap(temp);
                 else
-                    ctxt->cache_moves(true /* force write */);
+                    ctxt->cache_scores(true /* force write */);
             }
         }
 
@@ -1362,7 +1361,7 @@ namespace search
         else
         {
             ASSERT(_current == _count || ctxt.moves()[_current]._group >= PRUNED_MOVES);
-            cache_scores(ctxt);
+            ctxt.cache_scores();
         }
         return move;
     }
