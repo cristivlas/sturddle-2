@@ -1,7 +1,7 @@
 # distutils: language = c++
 # cython: language_level = 3
 """
-Sturddle Chess Engine (c) 2022, 2023, 2024 Cristian Vlasceanu.
+Sturddle Chess Engine (c) 2022 - 2025 Cristian Vlasceanu.
 -------------------------------------------------------------------------
 
 This program is free software: you can redistribute it and/or modify

@@ -403,7 +403,7 @@ public:
         , _use_opening_book(search::Context::_book_init(_book))
     {
         search::Context::_history = std::make_unique<search::History>();
-        // log_debug(std::format("TT_Entry size: {}", sizeof(search::TT_Entry)));
+        log_debug(std::format("TT_Entry size: {}", sizeof(search::TT_Entry)));
 
         set_start_position();
 
