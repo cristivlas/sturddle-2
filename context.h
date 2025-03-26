@@ -373,7 +373,7 @@ namespace search
         LMRAction   late_move_reduce(int move_count);
 
         static void load_nnue_model(const std::string& json_file_path); /* no-op if !WITH_NNUE */
-        static void log_message(LogLevel, const std::string&, bool force = true);
+        static void log_message(LogLevel, const std::string&, bool force = false);
 
         int         move_count() const { return _move_maker.count(); }
         int64_t     nanosleep(int nanosec);

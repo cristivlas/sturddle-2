@@ -1,7 +1,7 @@
 import math
 import sys
 
-def calculate_elo_rating(losses, wins, draws):
+def calculate_elo_rating(wins, losses, draws):
     """
     Calculate ELO rating and confidence margin from game results.
 
@@ -36,7 +36,7 @@ def calculate_elo_rating(losses, wins, draws):
 def main():
     # Check if correct number of arguments is provided
     if len(sys.argv) != 4:
-        print("Usage: python elo_calculator.py <losses> <wins> <draws>")
+        print("Usage: python elo_calculator.py <wins> <losses> <draws>")
         sys.exit(1)
 
     try:
@@ -49,7 +49,7 @@ def main():
         sys.exit(1)
 
     # Calculate and display results
-    result = calculate_elo_rating(losses, wins, draws)
+    result = calculate_elo_rating(wins, losses, draws)
 
     print(f"\nGame Results: {wins} wins, {losses} losses, {draws} draws")
     print(f"Total Games: {result['total_games']}")

@@ -82,7 +82,8 @@ def _configure_logging(args):
         log.removeHandler(h)
     format = '%(asctime)s %(levelname)-8s %(process)d %(message)s'
     filename = f'{args.logfile}.{os.getpid()}' if args.separate_logs else args.logfile
-    logging.basicConfig(level=logging.INFO, filename=filename, format=format)
+    level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(level=level, filename=filename, format=format)
 
 '''
 Workaround for --onefile executable built with PyInstaller:
