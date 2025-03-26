@@ -1287,7 +1287,7 @@ def _tb_init():
         except:
             pass
 
-    log_message(2, f'_tb_init: {syzygy_path_list} {_tb_paths}'.encode(), False)
+    log_message(1, f'_tb_init: {syzygy_path_list} {_tb_paths}'.encode(), False)
     Context.set_syzygy_path(os.pathsep.join(_tb_paths).encode())
     if not _tb_paths:
         Context.set_tb_cardinality(0)
