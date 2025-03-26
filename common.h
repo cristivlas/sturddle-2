@@ -82,6 +82,8 @@ using score_t = int;
 
 #define KILLER_MOVE_HEURISTIC               true
 
+#define LOG_ENABLED                         false
+
 #define MTDF_CSTAR_BISECT                   true
 
 #define MTDF_REORDER_MOVES                  true
