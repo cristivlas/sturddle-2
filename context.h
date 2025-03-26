@@ -200,6 +200,7 @@ namespace search
         score_t delta;      /* score difference from last search */
     };
 
+
     enum class PruneReason : uint8_t
     {
         PRUNE_NONE,
@@ -370,7 +371,6 @@ namespace search
         float       late_move_prune_factor() const;
 
         LMRAction   late_move_reduce(int move_count);
-        static int  late_move_reduction_count();
 
         static void load_nnue_model(const std::string& json_file_path); /* no-op if !WITH_NNUE */
         static void log_message(LogLevel, const std::string&, bool force = true);
@@ -974,12 +974,6 @@ namespace search
     }
 
 
-    /* static */ INLINE int Context::late_move_reduction_count()
-    {
-        return LATE_MOVE_REDUCTION_COUNT;
-    }
-
-
     /*
      * Reduction formula based on ideas from SF and others.
      */
@@ -1321,9 +1315,6 @@ namespace search
     }
 
 
-    /*
-     * MoveMaker Helper Class
-     */
     INLINE int MoveMaker::current(Context& ctxt)
     {
         ensure_moves(ctxt);
