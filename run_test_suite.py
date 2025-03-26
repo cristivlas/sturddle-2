@@ -129,7 +129,8 @@ def search(algo_class, name, board, expected, depths, **kwargs):
     except:
         e = n = 0
 
-    nps = n / timer.seconds_elapsed()
+    secs = timer.seconds_elapsed()
+    nps = n / secs if secs else n
     u = algo.tt_usage
     stats = f'|{d:3d} {t:2d} ({a:4.1f})| {e:8d} | {n:9d} |{u:6.2f}% | {nps/1000:8.1f} knps |'
     if uci in expected or san in expected:

@@ -1135,6 +1135,7 @@ namespace search
             }
             else if (ctxt->is_retry() && _retry_beta < _beta)
             {
+                ASSERT(_algorithm == Algorithm::NEGASCOUT);
                 ctxt->_beta = _retry_beta;
                 _retry_beta = SCORE_MAX;
             }
