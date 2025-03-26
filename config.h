@@ -191,6 +191,10 @@ DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
 DECLARE_VALUE(  LMP_ALPHA,                           17,    0,     100)
 DECLARE_VALUE(  LMP_BETA,                            36,    1,     100)
 DECLARE_VALUE(  LMP_BASE,                             2,    2,     100)
+
+DECLARE_VALUE(  LMR_BASE,                            62,    0,    1000)
+DECLARE_VALUE(  LMR_COEFF,                           67,    0,    1000)
+
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                261,    0,    1000)
 
@@ -199,6 +203,8 @@ DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
 #if WITH_NNUE
 DECLARE_VALUE(  NNUE_EVAL_TERM,                     645,    0,    1000)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      496,    0,    1000)
+DECLARE_VALUE(  NNUE_MAX_EVAL_EG,                   496,    0,    1000)
+
 #endif /* WITH_NNUE */
 DECLARE_VALUE(  NNUE_ROOT_ORDER_THRESHOLD,           88,    0,     128)
 DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,               3,    0,     100)
@@ -231,7 +237,7 @@ DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_HIGH,       12,    0,     150)
 /* Aspiration window */
 DECLARE_VALUE(  WINDOW_COEFF,                         6,    0,     100)
 DECLARE_VALUE(  WINDOW_DIV,                          67,    1,     200)
-DECLARE_VALUE(  WINDOW_HALF,                         25,    5,     200)
+DECLARE_VALUE(  WINDOW_HALF,                         21,    5,     200)
 
 GROUP(MoveOrdering)
 DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 223,    0,     500)

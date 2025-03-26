@@ -75,6 +75,7 @@ if __name__ == '__main__':
     tune_params = []
     for name in sorted(list(args.tune)):
         val, lo, hi, _ = params[name]
+        val = (val + lo) / 2
         tune_params.append(f"\\\n'{name}':{{'init':{val},'lower':{lo},'upper':{hi}}},")
 
     # construct time control arguments

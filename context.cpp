@@ -167,10 +167,7 @@ struct LMR
         {
             for (int moves = 1; moves < 64; ++moves)
             {
-                const auto v = 0.5 + log(depth) * log(moves) / 2;
-                const auto e = (100 + depth) / 100.0;
-
-                _table[depth][moves] = int(pow(v, e));
+                _table[depth][moves] = LMR_BASE / 100.0 + LMR_COEFF / 100.0 * log(depth) * log(moves);
             }
         }
     }
@@ -391,9 +388,8 @@ void search::Context::eval_nnue()
 
         /* Stick with material eval when heavily imbalanced */
         /* TODO: define array of margins, using LMP for now as a temporary hack. */
-
-        if (state().just_king(!turn())
-            || (!is_leaf_extended() && abs(eval) <= NNUE_MAX_EVAL + LMP[depth()]))
+        auto margin = (state().is_endgame() ? NNUE_MAX_EVAL_EG : NNUE_MAX_EVAL) + LMP[depth()];
+        if (state().just_king(!turn()) || (!is_leaf_extended() && abs(eval) <= margin))
         {
             /* NOTE: assume NNUE eval already accounts for insufficient material */
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
