@@ -563,7 +563,9 @@ namespace search
     /* static */
     void Context::log_message(LogLevel level, const std::string& msg, bool force)
     {
+    #if LOG_ENABLED
         cython_wrapper::call(_log_message, int(level), msg, force);
+    #endif
     }
 
 
