@@ -341,7 +341,7 @@ namespace search
         int         history_count(const Move&) const;
         float       history_score(const Move&) const;
 
-        score_t     improvement();
+        score_t     improvement() const;
         static void init();
         bool        is_beta_cutoff(Context*, score_t);
         static bool is_cancelled() { return _cancel.load(std::memory_order_acquire); }
@@ -820,7 +820,7 @@ namespace search
     /*
      * Improvement for the side that just moved.
      */
-    INLINE score_t Context::improvement()
+    INLINE score_t Context::improvement() const
     {
         if (_improvement < 0)
         {
