@@ -43,6 +43,39 @@ extern void _set_param(const std::string&, int value, bool echo=false);
 extern std::map<std::string, int> _get_params();
 extern void assert_param_ref();
 
+
+/* Late-move pruning counts */
+class LMPTable
+{
+    size_t _table[2][PLY_MAX];
+    LMPTable(const LMPTable&) = delete;
+    LMPTable& operator=(const LMPTable&) = delete;
+
+public:
+    LMPTable() { init(); }
+    void init();
+    size_t count(bool, int) const;
+};
+
+
+/* Table of margins for when to skip using NN eval. */
+class NNMarginTable
+{
+    size_t _table[2][PLY_MAX];
+    NNMarginTable(const NNMarginTable&) = delete;
+    NNMarginTable& operator=(const NNMarginTable&) = delete;
+
+public:
+    NNMarginTable() { init(); }
+    void init();
+    size_t count(bool, int) const;
+};
+
+
+extern LMPTable LMP;
+extern NNMarginTable NNMargins;
+
+
 namespace search
 {
     using time = std::chrono::time_point<std::chrono::steady_clock>;
@@ -79,19 +112,6 @@ namespace search
         std::unordered_multiset<State, Hasher<State>> _positions;
         int _fifty = 0;
     };
-
-
-    /*
-     * Late-move pruning counts (initialization idea borrowed from Crafty)
-     */
-    template<std::size_t... I>
-    static constexpr std::array<int, sizeof ... (I)> lmp(std::index_sequence<I...>)
-    {
-        return { static_cast<int>(LMP_BASE + pow(I + .5, 1.9)) ... };
-    }
-
-
-    static const auto LMP = lmp(std::make_index_sequence<PLY_MAX>{});
 
 
     /*
@@ -335,7 +355,7 @@ namespace search
 
         score_t     futility_margin() const;
 
-        INLINE bool has_improved(score_t margin = 0) { return improvement() > margin; }
+        INLINE bool has_improved(score_t margin = 0) const { return improvement() > margin; }
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
 
         int         history_count(const Move&) const;
@@ -1310,7 +1330,7 @@ namespace search
         ASSERT(_phase > 1);
 
         return ctxt.depth() > 1 /* do not LMP leaf nodes */
-            && _current >= LMP[ctxt.depth() - 1] * ctxt.late_move_prune_factor()
+            && _current >= LMP.count(ctxt.has_improved(), ctxt.depth() - 1) * ctxt.late_move_prune_factor()
             && ctxt.can_forward_prune();
     }
 

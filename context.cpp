@@ -155,13 +155,15 @@ namespace
 
 
 /*
- * Late-move reduction tables (adapted from berserk)
+ * Late-move reduction tableS
  */
 struct LMR
 {
     int _table[PLY_MAX][64] = { { 0 }, { 0 } };
 
-    LMR()
+    LMR() { init(); }
+
+    void init()
     {
         for (int depth = 1; depth < PLY_MAX; ++depth)
         {
@@ -172,6 +174,56 @@ struct LMR
         }
     }
 } LMR;
+
+
+/*
+ * Late-move pruning tables
+ */
+void LMPTable::init()
+{
+    for (size_t i = 0; i != PLY_MAX; ++i)
+    {
+        const auto p = pow(i + .5, 1.9);
+        _table[0][i] = LMP_BASE / 100.0 + LMP_COEFF / 100.0 + p;
+        _table[1][i] = LMP_BASE_IMPROVED / 100.0 + LMP_COEFF_IMPROVED / 100.0 + p;
+    }
+}
+
+size_t LMPTable::count(bool has_improved, int depth) const
+{
+    ASSERT(depth >= 0);
+    ASSERT(depth < PLY_MAX);
+
+    return _table[has_improved][depth];
+}
+
+LMPTable LMP;
+
+
+/*
+ * Neural net eval margin tables
+ */
+void NNMarginTable::init()
+{
+    for (size_t i = 0; i != PLY_MAX; ++i)
+    {
+        const auto p = pow(i + .5, 1.9);
+        _table[0][i] = NNUE_MARGIN_BASE / 100.0 + NNUE_MARGIN_COEFF / 100.0 + p;
+        _table[1][i] = NNUE_MARGIN_BASE_EG / 100.0 + NNUE_MARGIN_COEFF_EG / 100.0 + p;
+    }
+}
+
+
+size_t NNMarginTable::count(bool endgame, int depth) const
+{
+    ASSERT(depth >= 0);
+    ASSERT(depth < PLY_MAX);
+
+    return _table[endgame][depth];
+}
+
+NNMarginTable NNMargins;
+
 
 /*---------------------------------------------------------------------------
  *
@@ -246,8 +298,31 @@ void _set_param(const std::string& name, int value, bool echo)
         {
             *iter->second._val = value;
 
+            if (   name == "LMP_BASE"
+                || name == "LMP_BASE_IMPROVED"
+                || name == "LMP_COEFF"
+                || name == "LMP_COEFF_IMPROVED")
+            {
+                LMP.init();
+            }
+
+            if (name == "LMR_BASE" || name == "LMR_COEFF")
+            {
+                LMR.init();
+            }
+
+            if (   name == "NNUE_MARGIN_BASE"
+                || name == "NNUE_MARGIN_COEFF"
+                || name == "NNUE_MARGIN_BASE_EG"
+                || name == "NNUE_MARGIN_COEFF_EG")
+            {
+                NNMargins.init();
+            }
+
             if (echo)
+            {
                 std::cout << "info string " << name << "=" << *iter->second._val << std::endl;
+            }
         }
     }
 }
@@ -387,9 +462,14 @@ void search::Context::eval_nnue()
         auto eval = evaluate_material();
 
         /* Stick with material eval when heavily imbalanced */
-        /* TODO: define array of margins, using LMP for now as a temporary hack. */
-        auto margin = (state().is_endgame() ? NNUE_MAX_EVAL_EG : NNUE_MAX_EVAL) + LMP[depth()];
-        if (state().just_king(!turn()) || (!is_leaf_extended() && abs(eval) <= margin))
+        const auto depth = this->depth();
+
+        auto below_margin = [](const Context& ctxt, int depth, score_t eval) {
+            const auto margin = _interpolate(ctxt.piece_count(), NNMargins.count(false, depth), NNMargins.count(true, depth));
+            return abs(eval) <= margin;
+        };
+
+        if (state().just_king(!turn()) || (depth >= 0 && below_margin(*this, depth, eval)))
         {
             /* NOTE: assume NNUE eval already accounts for insufficient material */
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
@@ -1796,7 +1876,7 @@ namespace search
         const int depth = this->depth();
 
         /* late move pruning */
-        if (depth > 0 && count >= LMP[depth] * late_move_prune_factor() && can_prune())
+        if (depth > 0 && count >= LMP.count(has_improved(), depth) * late_move_prune_factor() && can_prune())
             return LMRAction::Prune;
 
         /* no reductions at very low depth and in qsearch */

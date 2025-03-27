@@ -190,7 +190,10 @@ DECLARE_VALUE(  DOUBLE_EXT_MAX,                      12,    0,     100)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
 DECLARE_VALUE(  LMP_ALPHA,                           17,    0,     100)
 DECLARE_VALUE(  LMP_BETA,                            36,    1,     100)
-DECLARE_VALUE(  LMP_BASE,                             2,    2,     100)
+DECLARE_VALUE(  LMP_BASE,                           193,  100,    1000)
+DECLARE_VALUE(  LMP_BASE_IMPROVED,                  301,  100,    1000)
+DECLARE_VALUE(  LMP_COEFF,                          221,  100,    1000)
+DECLARE_VALUE(  LMP_COEFF_IMPROVED,                 293,  100,    1000)
 
 DECLARE_VALUE(  LMR_BASE,                            62,    0,    1000)
 DECLARE_VALUE(  LMR_COEFF,                           67,    0,    1000)
@@ -202,11 +205,13 @@ DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,     100)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
 
 #if WITH_NNUE
-DECLARE_VALUE(  NNUE_EVAL_TERM,                     645,    0,    1000)
-DECLARE_VALUE(  NNUE_MAX_EVAL,                      496,    0,    1000)
-DECLARE_VALUE(  NNUE_MAX_EVAL_EG,                   496,    0,    1000)
-
+DECLARE_VALUE(  NNUE_EVAL_TERM,                     647,    0,    1000)
+DECLARE_VALUE(  NNUE_MARGIN_BASE,                   467,    0,    1000)
+DECLARE_VALUE(  NNUE_MARGIN_COEFF,                  100,    0,    1000)
+DECLARE_VALUE(  NNUE_MARGIN_BASE_EG,                454,    0,    1000)
+DECLARE_VALUE(  NNUE_MARGIN_COEFF_EG,               100,    0,    1000)
 #endif /* WITH_NNUE */
+
 DECLARE_VALUE(  NNUE_ROOT_ORDER_THRESHOLD,           88,    0,     128)
 DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,               3,    0,     100)
 DECLARE_VALUE(  NULL_MOVE_DEPTH_DIV,                  4,    1,     100)
