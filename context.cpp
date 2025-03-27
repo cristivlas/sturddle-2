@@ -2005,6 +2005,7 @@ namespace search
                     _count = i;
                     break;
                 }
+
                 move._old_score = move._score;
                 move._old_group = move._group;
 
@@ -2067,7 +2068,7 @@ namespace search
          * If in check, no need to determine "quieteness", since
          * all legal moves are about getting out of check.
          */
-        _group_quiet_moves = (ctxt.depth() <= 0 && !ctxt.is_check());
+        _group_quiet_moves = (ctxt.depth() < 0 && !ctxt.is_check());
     #endif /* GROUP_QUIET_MOVES */
     }
 
@@ -2207,32 +2208,14 @@ namespace search
                     move._score = hist_score;
                 }
             }
-            else /* Phase == 4 */
+            /* Phase == 4 */
+            else if (make_move<true>(ctxt, move, futility))
             {
-                if (make_move<true>(ctxt, move, futility))
-                {
-                    if (!WITH_NNUE || !ctxt.is_root() || count < size_t(NNUE_ROOT_ORDER_THRESHOLD))
-                    {
-                        incremental_update(move, ctxt);
-                        move._group = MoveOrder::LATE_MOVES;
-                        move._score =
-                            ctxt.history_score(move) / (1 + HISTORY_LOW)
-                            + eval_material_and_piece_squares(*move._state);
-                    }
-                #if WITH_NNUE
-                    else /* order by NNUE eval at root */
-                    {
-                        auto& ctxt_acc = NNUE_data[ctxt.tid()][0];
-                        auto& move_acc = NNUE_data[ctxt.tid()][1];
-                        if (ctxt_acc.needs_update(ctxt.state()))
-                            ctxt_acc.update(L1A, L1B, ctxt.state());
-                        ASSERT(ctxt_acc._hash == ctxt.state().hash());
-                        move_acc.update(L1A, L1B, ctxt.state(), *move._state, move, ctxt_acc);
-                        move._score = -nnue::eval(move_acc, L_DYN, L2, L3, L4) * SIGN[ctxt.state().turn];
-                        move._group = MoveOrder::ROOT_MOVES;
-                    }
-                #endif /* WITH_NNUE */
-                }
+                incremental_update(move, ctxt);
+                move._group = MoveOrder::LATE_MOVES;
+                move._score =
+                    ctxt.history_score(move) / (1 + HISTORY_LOW)
+                    + eval_material_and_piece_squares(*move._state);
             }
         }
     }
