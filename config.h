@@ -200,6 +200,7 @@ DECLARE_VALUE(  KILLER_MOVES_MARGIN,                261,    0,    1000)
 
 DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,     100)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
+
 #if WITH_NNUE
 DECLARE_VALUE(  NNUE_EVAL_TERM,                     645,    0,    1000)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      496,    0,    1000)
