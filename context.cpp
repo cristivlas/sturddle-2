@@ -184,8 +184,8 @@ void LMPTable::init()
     for (size_t i = 0; i != PLY_MAX; ++i)
     {
         const auto p = pow(i + .5, 1.9);
-        _table[0][i] = LMP_BASE / 100.0 + LMP_COEFF / 100.0 + p;
-        _table[1][i] = LMP_BASE_IMPROVED / 100.0 + LMP_COEFF_IMPROVED / 100.0 + p;
+        _table[0][i] = LMP_BASE / 100.0 + (LMP_COEFF * p) / 100.0;
+        _table[1][i] = LMP_BASE_IMPROVED / 100.0 + (LMP_COEFF_IMPROVED * p) / 100.0;
     }
 }
 
@@ -207,9 +207,10 @@ void NNMarginTable::init()
 {
     for (size_t i = 0; i != PLY_MAX; ++i)
     {
-        const auto p = pow(i + .5, 1.9);
-        _table[0][i] = NNUE_MARGIN_BASE / 100.0 + NNUE_MARGIN_COEFF / 100.0 + p;
-        _table[1][i] = NNUE_MARGIN_BASE_EG / 100.0 + NNUE_MARGIN_COEFF_EG / 100.0 + p;
+        const auto p = pow2(i);
+        _table[0][i] = NNUE_MARGIN_BASE + (NNUE_MARGIN_COEFF * p) / 100.0;
+        _table[1][i] = NNUE_MARGIN_BASE_EG + (NNUE_MARGIN_COEFF_EG * p) / 100.0;
+        // std::cout << i << ": " << _table[0][i] << ", " << _table[1][i] << std::endl;
     }
 }
 
@@ -465,7 +466,11 @@ void search::Context::eval_nnue()
         const auto depth = this->depth();
 
         auto below_margin = [](const Context& ctxt, int depth, score_t eval) {
+        #if true
             const auto margin = _interpolate(ctxt.piece_count(), NNMargins.count(false, depth), NNMargins.count(true, depth));
+        #else
+            const auto margin = NNMargins.count(ctxt.state().is_endgame(), depth);
+        #endif
             return abs(eval) <= margin;
         };
 
