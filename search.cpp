@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -165,7 +165,6 @@ void TranspositionTable::clear()
     _null_move_cutoffs = 0;
     _null_move_failed = 0;
     _null_move_not_ok = 0;
-    _qsnodes = 0;
     _reductions = 0;
     _retry_reductions = 0;
 
@@ -200,9 +199,6 @@ void TranspositionTable::clear()
 
 void TranspositionTable::update_stats(const Context& ctxt)
 {
-    if (ctxt.is_qsearch())
-        ++_qsnodes;
-
     if (ctxt.is_check())
         ++_check_nodes;
 
@@ -236,6 +232,7 @@ void TranspositionTable::store(Context& ctxt, TT_Entry& entry, int depth)
     entry._hash = ctxt.state().hash();
     entry._depth = depth;
     entry._age = _table.clock();
+    entry._captures = ctxt._tt_entry._captures;
 }
 
 
@@ -483,9 +480,10 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
      * regardless, but lower the count of cutoffs required to "succeed" if the position has
      * produced cutoffs before.
      */
-    const auto min_cutoffs = MULTICUT_C - (ctxt.depth() > 5
-        && ctxt._tt_entry.is_lower()
-        && ctxt._tt_entry._value + MULTICUT_MARGIN >= ctxt._beta);
+    const auto min_cutoffs = MULTICUT_C - (
+        /* ctxt.depth() > 5 && */ ctxt._tt_entry.is_lower()
+        && ctxt._tt_entry._value + MULTICUT_MARGIN >= ctxt._beta
+    );
 
     while (auto next_ctxt = ctxt.next(false, 0, move_count))
     {
@@ -645,7 +643,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     {
         ASSERT(ctxt._score == *p);
         ASSERT(!ctxt._excluded);
-
+        ctxt._prune_reason = PruneReason::PRUNE_TT;
         return *p;
     }
 
@@ -665,6 +663,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     {
         table.store<TT_Type::EXACT>(ctxt, ctxt.depth() + 2 * ctxt.tb_cardinality());
         ctxt._eval_raw = ctxt._score;
+        ctxt._prune_reason = PruneReason::PRUNE_END_TABLES;
         return ctxt._score;
     }
     else
@@ -696,23 +695,29 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             ASSERT(eval > SCORE_MIN);
             ASSERT(eval < SCORE_MAX);
 
+            ctxt._prune_reason = PruneReason::PRUNE_REVERSE_FUTILITY;
             return eval;
         }
     #endif /* REVERSE_FUTILITY_PRUNING */
 
     #if RAZORING
-        if (ctxt.depth() > 0
+        if (  !ctxt.is_root()
+            && ctxt.depth() > 0
             && eval > SCORE_MIN
             && eval < ctxt._alpha - RAZOR_INTERCEPT - RAZOR_DEPTH_COEFF * pow2(ctxt.depth())
-            && eval + eval_captures(ctxt) < ctxt._alpha)
+            && eval + eval_captures(ctxt, eval) < ctxt._alpha)
         {
+            ctxt._prune_reason = PruneReason::PRUNE_RAZOR;
             return ctxt._alpha;
         }
     #endif /* RAZORING */
 
+        ctxt.ensure_prev_move();
+
         if (multicut(ctxt, table))
         {
             ASSERT(ctxt._score < SCORE_MAX);
+            ctxt._prune_reason = PruneReason::PRUNE_MULTICUT;
             return ctxt._score;
         }
 
@@ -757,8 +762,9 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     ASSERT(move_count > 0);
                     const auto val = futility - next_ctxt->evaluate_material();
 
-                    if ((val < ctxt._alpha || val < ctxt._score) && next_ctxt->can_prune<true>())
+                    if (val < ctxt._alpha && next_ctxt->can_prune<true>())
                     {
+                        next_ctxt->_prune_reason = PruneReason::PRUNE_FUTILITY;
                         update_pruned(ctxt, *next_ctxt, table._futility_prune_count);
                         continue;
                     }
@@ -767,7 +773,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 /*
                  * Do not extend at root, or if already deeper than twice the depth at root
                  */
-
                 if (!ctxt.is_root() && ctxt._ply < root_depth * 2)
                 {
                 #if SINGULAR_EXTENSION
@@ -826,6 +831,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                          */
                         else if (s_beta >= ctxt._beta)
                         {
+                            ctxt._prune_reason = PruneReason::PRUNE_SINGULAR;
                             return s_beta;
                         }
                         else if (ctxt._tt_entry._value >= ctxt._beta && next_ctxt->can_reduce())
@@ -841,6 +847,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 /* Late-move reduction and pruning */
                 if (move_count && next_ctxt->late_move_reduce(move_count) == LMRAction::Prune)
                 {
+                    next_ctxt->_prune_reason = PruneReason::PRUNE_LMP;
                     update_pruned(ctxt, *next_ctxt, table._late_move_prune_count);
                     continue;
                 }
@@ -989,7 +996,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
      * The conventional wisdom is to not store root nodes
      * (https://www.stmintz.com/ccc/index.php?id=93686)
      */
-    if (ctxt._score && !ctxt.is_root() && !ctxt._excluded && !ctxt.is_qsearch() && !ctxt.is_cancelled())
+    if (ctxt._score && !ctxt.is_root() && ctxt.depth() > 0 && !ctxt._excluded && !ctxt.is_cancelled())
         table.store(ctxt, ctxt.depth());
 
     if constexpr(EXTRA_STATS)
@@ -1045,7 +1052,7 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
 
         ASSERT(g < SCORE_MAX); /* sanity check */
 
-        if (ctxt.is_cancelled())
+        if (ctxt.is_cancelled() || table._reset_window)
             break;
 
         if (g < b)
@@ -1084,6 +1091,10 @@ static score_t search_iteration(Context& ctxt, TranspositionTable& table, score_
         ctxt._prev = ctxt._best_move; /* save for next iteration */
         table.store_pv(ctxt);
     }
+    else if (ctxt._prev)
+        ctxt._best_move = ctxt._prev;
+    else
+        table._pv.clear();
 
     return score;
 }

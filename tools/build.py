@@ -54,14 +54,11 @@ if __name__ == '__main__':
 
     ARCHS = [''] # default
 
-    if platform.machine() in ['x86_64', 'AMD64']:
-        ARCHS = ['AVX512', 'AVX2', '']
-    elif platform.machine() == 'aarch64':
-        ARCHS = ['ARMv8_2', '']
-
-    if len(ARCHS) == 1 and not args.native_uci:
-        print('Python UCI implementation not supported on this platform')
-        os._exit(-1)
+    if args.native_uci:
+        if platform.machine() in ['x86_64', 'AMD64']:
+            ARCHS = ['AVX512', 'AVX2', '']
+        elif platform.machine() == 'aarch64':
+            ARCHS = ['ARMv8_2', '']
 
     for arch in ARCHS:
         delete(['uci.cpp', '__init__.cpp']) # force re-cythonize

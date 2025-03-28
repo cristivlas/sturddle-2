@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -98,7 +98,7 @@ namespace
         std::vector<Entry> _data;
 
     public:
-        explicit MovesCache(size_t size = 1031) : _data(size)
+        explicit MovesCache(size_t size = 4007) : _data(size)
         {
         }
 
@@ -107,37 +107,44 @@ namespace
             std::vector<Entry>(_data.size()).swap(_data);
         }
 
-        INLINE bool lookup(const State& state, MovesList& moves) // non-const due to locking
+        INLINE bool lookup(const State& state, MovesList& moves)
         {
             const auto hash = state.hash();
+            const auto slot = scramble64(hash);
 
             for (size_t j = 0; j < BUCKET_SIZE; ++j)
             {
-                const auto i = (hash + j) % _data.size();
+                const auto i = (slot + j) % _data.size();
                 auto& entry = _data[i];
-                if (state.hash() == entry._state.hash() && state == entry._state)
+                if (hash == entry._state.hash() && state == entry._state)
                 {
                     ++entry._use_count;
                     moves.assign(entry._moves.begin(), entry._moves.end());
+
                     return true;
                 }
             }
             return false;
         }
 
-        INLINE void write(const State& state, const MovesList& moves)
+        INLINE void write(const State& state, const MovesList& moves, bool force_write = false)
         {
             const auto hash = state.hash();
+            const auto slot = scramble64(hash);
 
             for (size_t j = 0; j < BUCKET_SIZE; ++j)
             {
-                const auto i = (hash + j) % _data.size();
+                const auto i = (slot + j) % _data.size();
                 auto& entry = _data[i];
-                if (++entry._write_attempts > 2 * entry._use_count)
+
+                if (force_write /* bypass eviction mechanism and forcefully write */
+                    || hash == entry._state.hash()
+                    || ++entry._write_attempts > 2 * entry._use_count)
                 {
                     entry._moves.assign(moves.begin(), moves.end());
+                    if (hash != entry._state.hash())
+                        entry._use_count = 0;
                     entry._state = state;
-                    entry._use_count = 0;
                     entry._write_attempts = 0;
                     break;
                 }
@@ -164,9 +171,6 @@ struct LMR
                 const auto e = (100 + depth) / 100.0;
 
                 _table[depth][moves] = int(pow(v, e));
-
-                // std::cout << "[" << depth << "][" << moves << "]: " << int(v);
-                // std::cout << ", " << int(pow(v, e)) << std::endl;
             }
         }
     }
@@ -385,18 +389,20 @@ void search::Context::eval_nnue()
 
         auto eval = evaluate_material();
 
-        /* stick with material eval if in quiescent search, or if heavily imbalanced */
-        if (state().just_king(!turn()) || (!is_qsearch() && abs(eval) <= NNUE_MAX_EVAL + LMP[depth()]))
+        /* Stick with material eval when heavily imbalanced */
+        /* TODO: define array of margins, using LMP for now as a temporary hack. */
+
+        if (state().just_king(!turn())
+            || (!is_leaf_extended() && abs(eval) <= NNUE_MAX_EVAL + LMP[depth()]))
         {
+            /* NOTE: assume NNUE eval already accounts for insufficient material */
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
         }
-
-        eval += eval_fuzz();
-
-        if (is_qsearch())
-            _eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
         else
-            _eval = eval; /* assume NNUE eval already accounts for insufficient material */
+        {
+            eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
+        }
+        _eval = eval + eval_fuzz();
     }
 }
 
@@ -591,6 +597,37 @@ namespace search
     }
 
 
+    /*
+     * Lookup move in the principal variation from the previous iteration.
+     * https://www.chessprogramming.org/PV-Move
+     */
+    static INLINE const BaseMove* lookup_pv(const Context& ctxt)
+    {
+        ASSERT(ctxt.get_tt());
+
+        const auto& pv = ctxt.get_tt()->get_pv();
+        const size_t ply = ctxt._ply;
+
+        if (ply + 1 >= pv.size())
+            return nullptr;
+
+        return (pv[ply] == ctxt._move) ? &pv[ply + 1] : nullptr;
+    }
+
+
+    /* Populate prev move from the Principal Variation, if missing. */
+    void Context::ensure_prev_move()
+    {
+        if (!is_root() && !_prev && !is_null_move() && !_excluded)
+        {
+            if (const auto move = lookup_pv(*this))
+            {
+                _prev = *move;
+            }
+        }
+    }
+
+
     /* static */ void Context::ensure_stacks()
     {
         const size_t n_threads(SMP_CORES);
@@ -635,16 +672,19 @@ namespace search
             {
                 if (!next_ctxt->is_null_move())
                 {
-                    if (next_ctxt->_retry_above_alpha == RETRY::Reduced)
+                    if (next_ctxt->_prune_reason == PruneReason::PRUNE_TT
+                        && next_ctxt->_tt_entry._depth >= depth() - 1)
+                    {
+                        /* Do not retry */
+                        ASSERT(next_ctxt->_tt_entry.is_valid());
+                    }
+                    else if (next_ctxt->_retry_above_alpha == RETRY::Reduced)
                     {
                         ASSERT(!next_ctxt->is_retry());
                         _retry_next = true;
 
                         if constexpr(EXTRA_STATS)
                             ++_tt->_retry_reductions;
-
-                        /* increment, so that late_move_reduce() skips it */
-                        _full_depth_count = next_move_index() + 1;
                     }
                     else if (next_ctxt->_retry_above_alpha == RETRY::PVS && score < _beta)
                     {
@@ -825,7 +865,7 @@ namespace search
                     Context::log_message(LogLevel::DEBUG, out.str());
                 }
 
-                continue;
+                break; // moves are sorted by piece weight
             }
 
             /****************************************************************/
@@ -886,7 +926,7 @@ namespace search
      *
      * Called by eval_captures (if !STATIC_EXCHANGES).
      */
-    INLINE int do_captures(int tid, const State& state, Bitboard from_mask, Bitboard to_mask)
+    INLINE int do_captures(int tid, const State& state, Bitboard from_mask, Bitboard to_mask, score_t standpat_threshold)
     {
         static constexpr auto ply = FIRST_EXCHANGE_PLY;
         const auto mask = to_mask & state.occupied_co(!state.turn) & ~state.kings;
@@ -900,6 +940,9 @@ namespace search
         {
             return 0;
         }
+
+        bool standpat = true;
+
         /*
          * 1) Go over the captures and assign the "victim" value to each move.
          */
@@ -909,10 +952,18 @@ namespace search
             ASSERT(state.piece_type_at(move.from_square()));
 
             move._score = state.piece_weight_at(move.to_square());
+
+            if (move._score + STANDPAT_MARGIN >= standpat_threshold)
+                standpat = false;
+
+            move._score -= state.piece_weight_at(move.from_square());
         }
 
+        if (standpat)
+            return 0;
+
         /*
-         * 2) Sort most valuable victims first.
+         * 2) Sort most valuable victims, least valuable attacker first.
          */
         insertion_sort(moves.begin(), moves.end(), [](const Move& lhs, const Move& rhs) {
             return lhs._score > rhs._score;
@@ -961,11 +1012,10 @@ namespace search
             if (!apply_capture(state, next_state, move))
                 continue;
 
-            ASSERT(move._score == next_state.capture_value);
             ASSERT(next_state.capture_value > score || EXCHANGES_DETECT_CHECKMATE);
+            ASSERT(move._score == next_state.capture_value - state.piece_weight_at(move.from_square()));
 
-            auto attacker_value = state.piece_weight_at(move.from_square());
-            auto gain = next_state.capture_value - attacker_value;
+            const auto gain = move._score;
 
             /*
              * Worst case scenario the attacker gets captured, capturing
@@ -978,15 +1028,12 @@ namespace search
             #else
                 if (next_state.is_checkmate())
                     return CHECKMATE - (ply + 1 - FIRST_EXCHANGE_PLY);
-
                 if constexpr(DEBUG_CAPTURES)
                     Context::log_message(
                         LogLevel::DEBUG,
                         move.uci() + ": skip exchanges: " + std::to_string(gain));
-
                 if (gain > score)
                     score = gain;
-
                 continue;
             #endif /* EXCHANGES_DETECT_CHECKMATE */
             }
@@ -1029,8 +1076,11 @@ namespace search
     }
 
 
-    score_t eval_captures(Context& ctxt)
+    score_t eval_captures(Context& ctxt, score_t score)
     {
+        if (is_valid(ctxt._tt_entry._captures) && ctxt._tt_entry._depth >= ctxt.depth())
+            return ctxt._tt_entry._captures;
+
         if constexpr(DEBUG_CAPTURES)
             ctxt.log_message(LogLevel::DEBUG, "eval_captures");
 
@@ -1039,15 +1089,21 @@ namespace search
         score_t result;
 
         if constexpr(STATIC_EXCHANGES)
+        {
             result = estimate_captures(*state);
+        }
         else
-            result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL);
+        {
+            const int standpat_threshold = ctxt._ply > 1 ? ctxt._alpha - score : SCORE_MIN;
+            result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL, standpat_threshold);
+        }
 
         ASSERT(result >= 0);
 
         if constexpr(DEBUG_CAPTURES)
             ctxt.log_message(LogLevel::DEBUG, "captures: " + std::to_string(result));
 
+        ctxt._tt_entry._captures = result;
         return result;
     }
 
@@ -1650,8 +1706,8 @@ namespace search
         ASSERT(is_root());
         ASSERT(!_is_null_move);
         ASSERT(_tt->_w_alpha <= _alpha);
-
         ASSERT(_retry_above_alpha == RETRY::None);
+        ASSERT(_prune_reason == PruneReason::PRUNE_NONE);
 
         _best_move = BaseMove();
         _cancel = false;
@@ -1661,16 +1717,17 @@ namespace search
         _cutoff_move = Move();
 
         _extension = 0;
-        _full_depth_count = LATE_MOVE_REDUCTION_COUNT;
         _has_singleton = false;
 
         _max_depth = iteration();
 
         _mate_detected = 0;
-        _multicut_allowed = true;
+        _multicut_allowed = MULTICUT;
 
         _null_move_allowed[WHITE] = true;
         _null_move_allowed[BLACK] = true;
+
+        _prune_reason = PruneReason::PRUNE_NONE;
 
         _repetitions = -1;
 
@@ -1683,7 +1740,7 @@ namespace search
 
     static INLINE int window_delta(int iteration, int depth, double score)
     {
-        return HALF_WINDOW * pow2(iteration) + WINDOW_COEFF * depth * log(0.001 + abs(score) / WINDOW_DIV);
+        return WINDOW_HALF * pow2(iteration) + WINDOW_COEFF * depth * log(0.001 + abs(score) / WINDOW_DIV);
     }
 
 
@@ -1719,8 +1776,8 @@ namespace search
             const score_t delta = score - prev_score;
             prev_score = score;
 
-            _alpha = std::max<score_t>(SCORE_MIN, score - std::max(HALF_WINDOW, delta));
-            _beta = std::min<score_t>(SCORE_MAX, score + std::max(HALF_WINDOW, -delta));
+            _alpha = std::max<score_t>(SCORE_MIN, score - std::max(WINDOW_HALF, delta));
+            _beta = std::min<score_t>(SCORE_MAX, score + std::max(WINDOW_HALF, -delta));
         }
 
         /* save iteration bounds */
@@ -1747,7 +1804,7 @@ namespace search
             return LMRAction::Prune;
 
         /* no reductions at very low depth and in qsearch */
-        if (depth < 3 || count < _parent->_full_depth_count || !can_reduce())
+        if (depth < 3 || count < LATE_MOVE_REDUCTION_COUNT || !can_reduce())
             return LMRAction::None;
 
         /* Lookup reduction in the Late Move Reduction table. */
@@ -1758,7 +1815,7 @@ namespace search
             reduction += !_parent->has_improved();
             reduction -= 2 * _parent->is_counter_move(_move);
 
-            if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * HALF_WINDOW && iteration() >= 13)
+            if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= 13)
                 ++reduction;
             reduction -= _parent->history_count(_move) / HISTORY_COUNT_HIGH;
         }
@@ -1899,9 +1956,24 @@ namespace search
     }
 
 
+    void Context::cache_scores(bool force_write)
+    {
+        auto& moves_list = moves();
+
+        for (auto& move: moves_list)
+        {
+            move._old_score = move._score;
+            move._old_group = move._group;
+        }
+
+        _moves_cache[tid()].write(state(), moves_list, force_write);
+    }
+
+
     /*---------------------------------------------------------------------
      * MoveMaker
      *---------------------------------------------------------------------*/
+
     int MoveMaker::rewind(Context& ctxt, int where, bool force_reorder)
     {
         ensure_moves(ctxt);
@@ -1916,9 +1988,10 @@ namespace search
 
             _phase = 0;
 
+            auto& moves_list = ctxt.moves();
             for (int i = 0; i != _count; ++i)
             {
-                auto& move = ctxt.moves()[i];
+                auto& move = moves_list[i];
 
                 if (move._state == nullptr)
                 {
@@ -1933,9 +2006,13 @@ namespace search
                     break;
                 }
 
+                move._old_score = move._score;
+                move._old_group = move._group;
+
                 move._score = 0;
                 move._group = MoveOrder::UNORDERED_MOVES;
             }
+
         }
 
         if (where >= 0)
@@ -1949,25 +2026,6 @@ namespace search
 
         ASSERT(_current >= 0);
         return _current;
-    }
-
-
-    /*
-     * Lookup move in the principal variation from the previous iteration.
-     * https://www.chessprogramming.org/PV-Move
-     */
-    static INLINE const BaseMove* lookup_pv(const Context& ctxt)
-    {
-        if (!ctxt.get_tt() || !ctxt._move)
-            return nullptr;
-
-        const auto& pv = ctxt.get_tt()->get_pv();
-        const size_t ply = ctxt._ply;
-
-        if (ply + 1 >= pv.size())
-            return nullptr;
-
-        return pv[ply] == ctxt._move ? &pv[ply + 1] : nullptr;
     }
 
 
@@ -2004,19 +2062,14 @@ namespace search
         if (states_vec.size() < size_t(_count))
             states_vec.resize(_count);
 
+    #if GROUP_QUIET_MOVES
         /*
          * In quiescent search, only quiet moves are interesting.
          * If in check, no need to determine "quieteness", since
          * all legal moves are about getting out of check.
          */
-        _group_quiet_moves = (ctxt.depth() <= 0 && !ctxt.is_check());
-
-        /* Populate _prev move from the Principal Variation, if missing. */
-        if (!ctxt._prev * ctxt._ply * !ctxt.is_null_move() * !ctxt._excluded)
-        {
-            if (const auto move = lookup_pv(ctxt))
-                ctxt._prev = *move;
-        }
+        _group_quiet_moves = (ctxt.depth() < 0 && !ctxt.is_check());
+    #endif /* GROUP_QUIET_MOVES */
     }
 
 
@@ -2136,6 +2189,10 @@ namespace search
                 {
                     make_move<true>(ctxt, move, MoveOrder::HISTORY_COUNTERS, hist_score);
                 }
+                else if (move._old_group == MoveOrder::TACTICAL_MOVES)
+                {
+                    remake_move(ctxt, move);
+                }
                 else if (ctxt.is_counter_move(move)
                     || move.from_square() == ctxt._capture_square
                     || is_pawn_push(ctxt, move))
@@ -2151,32 +2208,14 @@ namespace search
                     move._score = hist_score;
                 }
             }
-            else /* Phase == 4 */
+            /* Phase == 4 */
+            else if (make_move<true>(ctxt, move, futility))
             {
-                if (make_move<true>(ctxt, move, futility))
-                {
-                    if (!WITH_NNUE || !ctxt.is_root() || count < size_t(NNUE_ROOT_ORDER_THRESHOLD))
-                    {
-                        incremental_update(move, ctxt);
-                        move._group = MoveOrder::LATE_MOVES;
-                        move._score =
-                            ctxt.history_score(move) / (1 + HISTORY_LOW)
-                            + eval_material_and_piece_squares(*move._state);
-                    }
-                #if WITH_NNUE
-                    else /* order by NNUE eval at root */
-                    {
-                        auto& ctxt_acc = NNUE_data[ctxt.tid()][0];
-                        auto& move_acc = NNUE_data[ctxt.tid()][1];
-                        if (ctxt_acc.needs_update(ctxt.state()))
-                            ctxt_acc.update(L1A, L1B, ctxt.state());
-                        ASSERT(ctxt_acc._hash == ctxt.state().hash());
-                        move_acc.update(L1A, L1B, ctxt.state(), *move._state, move, ctxt_acc);
-                        move._score = -nnue::eval(move_acc, L_DYN, L2, L3, L4) * SIGN[ctxt.state().turn];
-                        move._group = MoveOrder::ROOT_MOVES;
-                    }
-                #endif /* WITH_NNUE */
-                }
+                incremental_update(move, ctxt);
+                move._group = MoveOrder::LATE_MOVES;
+                move._score =
+                    ctxt.history_score(move) / (1 + HISTORY_LOW)
+                    + eval_material_and_piece_squares(*move._state);
             }
         }
     }

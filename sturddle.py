@@ -20,6 +20,7 @@ import chess.syzygy
 #    pass
 import psutil
 
+import armcpu
 import uci
 import worker
 

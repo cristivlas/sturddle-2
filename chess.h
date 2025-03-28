@@ -577,7 +577,9 @@ namespace chess
 
         /* group id, for move ordering */
         int8_t  _group = ::search::MoveOrder::UNORDERED_MOVES;
+        int8_t  _old_group = ::search::MoveOrder::UNDEFINED;
         float   _score = 0;         /* sort score, for move ordering */
+        float   _old_score = 0;
         State*  _state = nullptr;   /* state of the board after the move */
     };
 

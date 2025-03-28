@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -106,14 +106,14 @@ namespace search
 
         const Move* get_next_move(Context& ctxt, score_t futility = 0);
 
-        /*
-         * upperbound of legal moves, which may include pruned and quiet moves
-         */
+        /* Return upperbound of legal moves, which may include pruned and quiet moves. */
         int count() const { return _count; }
+
         int current(Context&);
 
+        bool group_quiet_moves() const { return _group_quiet_moves; }
         bool has_moves(Context&);
-        bool have_skipped_moves() { return _have_pruned_moves || _have_quiet_moves; }
+        bool have_skipped_moves() const { return _have_pruned_moves || _have_quiet_moves; }
         bool is_last(Context&);
         bool is_singleton(Context&);
 
@@ -143,6 +143,8 @@ namespace search
 
         template<bool LateMovePrune> bool make_move(Context&, Move&, score_t futility = 0);
         template<bool LateMovePrune> bool make_move(Context&, Move&, MoveOrder, float = 0);
+
+        void remake_move(Context&, Move&);
 
         void mark_as_illegal(Move&);
         void mark_as_pruned(Context&, Move&);
@@ -199,6 +201,20 @@ namespace search
     };
 
 
+    enum class PruneReason : uint8_t
+    {
+        PRUNE_NONE,
+        PRUNE_END_TABLES,
+        PRUNE_LMP,
+        PRUNE_FUTILITY,
+        PRUNE_MULTICUT,
+        PRUNE_RAZOR,
+        PRUNE_REVERSE_FUTILITY,
+        PRUNE_SINGULAR,
+        PRUNE_TT,
+    };
+
+
     /*
      * The context of a searched node.
      */
@@ -243,7 +259,7 @@ namespace search
         bool        _is_pv = false;
         bool        _is_retry = false;
         bool        _is_singleton = false;
-        bool        _multicut_allowed = true;
+        bool        _multicut_allowed = MULTICUT;
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
         bool        _retry_next = false;
@@ -255,9 +271,9 @@ namespace search
 
         int         _extension = 0; /* count pending fractional extensions */
         int         _fifty = 0;
-        int         _full_depth_count = late_move_reduction_count();
         int         _mate_detected = 0;
         int         _pruned_count = 0;
+        PruneReason _prune_reason = PruneReason::PRUNE_NONE;
 
         Move        _move;          /* from parent to current state */
         BaseMove    _best_move;
@@ -269,6 +285,8 @@ namespace search
         TT_Entry    _tt_entry;
         Square      _capture_square = Square::UNDEFINED;
 
+        void        cache_scores(bool force_write /* bypass eviction strategy */ = false);
+
         static void cancel() { _cancel.store(true, std::memory_order_relaxed); }
 
         bool        can_forward_prune() const;
@@ -277,6 +295,8 @@ namespace search
         template<bool PruneCaptures = false> bool can_prune_move(const Move&) const;
 
         bool        can_reduce() const;
+
+        bool        can_reuse_moves() const;
 
         int64_t     check_time_and_update_nps(); /* return elapsed milliseconds */
 
@@ -288,6 +308,7 @@ namespace search
 
         static int64_t elapsed_milliseconds();
 
+        void        ensure_prev_move();
         static void ensure_stacks();
 
         std::string epd() const { return epd(state()); }
@@ -320,7 +341,7 @@ namespace search
         int         history_count(const Move&) const;
         float       history_score(const Move&) const;
 
-        score_t     improvement();
+        score_t     improvement() const;
         static void init();
         bool        is_beta_cutoff(Context*, score_t);
         static bool is_cancelled() { return _cancel.load(std::memory_order_acquire); }
@@ -338,7 +359,7 @@ namespace search
         INLINE bool is_promotion() const { return state().promotion; }
         INLINE bool is_pv_node() const { return _is_pv; }
         bool        is_pvs_ok() const;
-        INLINE bool is_qsearch() const { return _ply > _max_depth; }
+        INLINE bool is_leaf_extended() const { return _ply > _max_depth; }
         bool        is_recapture() const;
         bool        is_reduced() const;
         int         is_repeated() const;
@@ -350,10 +371,9 @@ namespace search
         float       late_move_prune_factor() const;
 
         LMRAction   late_move_reduce(int move_count);
-        static int  late_move_reduction_count();
 
         static void load_nnue_model(const std::string& json_file_path); /* no-op if !WITH_NNUE */
-        static void log_message(LogLevel, const std::string&, bool force = true);
+        static void log_message(LogLevel, const std::string&, bool force = false);
 
         int         move_count() const { return _move_maker.count(); }
         int64_t     nanosleep(int nanosec);
@@ -469,7 +489,7 @@ namespace search
     int do_exchanges(const State&, Bitboard, score_t, int tid, int ply = FIRST_EXCHANGE_PLY);
 
 
-    extern score_t eval_captures(Context& ctxt);
+    extern score_t eval_captures(Context& ctxt, score_t);
 
     using PieceSquares = std::array<Square, 32>;
 
@@ -485,7 +505,7 @@ namespace search
      * Evaluate same square exchanges. Called by make_captures.
      */
     template<bool StaticExchangeEvaluation>
-    INLINE score_t eval_exchanges(int tid, const Move& move)
+    INLINE score_t eval_exchanges(int tid, const Move& move, score_t value)
     {
         score_t val = 0;
 
@@ -502,7 +522,7 @@ namespace search
             else
             {
                 auto mask = chess::BB_SQUARES[move.to_square()];
-                val = do_exchanges<DEBUG_CAPTURES != 0>(*move._state, mask, 0, tid);
+                val = do_exchanges<DEBUG_CAPTURES != 0>(*move._state, mask, value, tid);
             }
         }
         return val;
@@ -586,6 +606,7 @@ namespace search
 
         return !is_extended()
             && !is_pv_node()
+         // && !is_retry()
             && !is_repeated()
             && _parent->can_prune_move<PruneCaptures>(_move);
     }
@@ -616,6 +637,12 @@ namespace search
             && (_move.from_square() != _parent->_capture_square)
             && !is_recapture()
             && !is_check();
+    }
+
+
+    INLINE bool Context::can_reuse_moves() const
+    {
+        return !_move_maker.have_skipped_moves() && !_move_maker.group_quiet_moves();
     }
 
 
@@ -703,7 +730,7 @@ namespace search
             if (abs(score) < CAPTURES_THRESHOLD)
             {
                 /* 3. Captures */
-                const auto capt = eval_captures(*this);
+                const auto capt = eval_captures(*this, score);
 
                 ASSERT(capt <= CHECKMATE);
 
@@ -755,8 +782,6 @@ namespace search
 
         static const auto fp_margins = []() {
             const auto m = margins(std::make_index_sequence<PLY_MAX>{});
-            //for (size_t i = 0; i != m.size(); ++i)
-            //    std::clog << i << ": " << m[i] << std::endl;
             return m;
         } ();
         return fp_margins[depth()] * can_forward_prune();
@@ -795,7 +820,7 @@ namespace search
     /*
      * Improvement for the side that just moved.
      */
-    INLINE score_t Context::improvement()
+    INLINE score_t Context::improvement() const
     {
         if (_improvement < 0)
         {
@@ -861,10 +886,10 @@ namespace search
     INLINE bool Context::is_null_move_ok()
     {
         if (is_root()
+            || depth() < 0
             || _null_move_allowed[turn()] == false
             || _excluded
             || is_null_move() /* consecutive null moves are not allowed */
-            || is_qsearch()
             || is_pv_node()
             || is_mate_bound()
             || is_repeated()
@@ -873,7 +898,6 @@ namespace search
            )
             return false;
 
-        ASSERT(depth() >= 0);
         return static_eval() >= _beta
             - NULL_MOVE_DEPTH_WEIGHT * depth()
             - improvement() / NULL_MOVE_IMPROVEMENT_DIV
@@ -950,12 +974,6 @@ namespace search
     }
 
 
-    /* static */ INLINE int Context::late_move_reduction_count()
-    {
-        return LATE_MOVE_REDUCTION_COUNT;
-    }
-
-
     /*
      * Reduction formula based on ideas from SF and others.
      */
@@ -1000,11 +1018,21 @@ namespace search
         ASSERT(null_move || move->_group != MoveOrder::UNDEFINED);
         ASSERT(null_move || move->_group < MoveOrder::UNORDERED_MOVES);
 
+        /* Save previously generated moves for reuse on retry */
         MoveMaker temp;
         if (retry)
-            next_ply<false>()->_move_maker.swap(temp);
+        {
+            const auto ctxt = next_ply<false>();
+            if (ctxt->move_count() >= 0)
+            {
+                if (ctxt->can_reuse_moves())
+                    ctxt->_move_maker.swap(temp);
+                else
+                    ctxt->cache_scores(true /* force write */);
+            }
+        }
 
-        auto ctxt = next_ply<true>();
+        auto ctxt = next_ply<true>(); /* Construct new context */
 
         if (move)
         {
@@ -1101,6 +1129,7 @@ namespace search
             }
             else if (ctxt->is_retry() && _retry_beta < _beta)
             {
+                ASSERT(_algorithm == Algorithm::NEGASCOUT);
                 ctxt->_beta = _retry_beta;
                 _retry_beta = SCORE_MAX;
             }
@@ -1120,6 +1149,7 @@ namespace search
 
             if (temp.count() >= 0)
             {
+                /* Reuse previously generated moves */
                 ctxt->_move_maker.swap(temp);
                 ASSERT(temp.count() == -1);
 
@@ -1285,9 +1315,6 @@ namespace search
     }
 
 
-    /*
-     * MoveMaker Helper Class
-     */
     INLINE int MoveMaker::current(Context& ctxt)
     {
         ensure_moves(ctxt);
@@ -1326,6 +1353,7 @@ namespace search
         else
         {
             ASSERT(_current == _count || ctxt.moves()[_current]._group >= PRUNED_MOVES);
+            ctxt.cache_scores();
         }
         return move;
     }
@@ -1426,54 +1454,45 @@ namespace search
         /* captures of the last piece moved by the opponent are handled separately */
         ASSERT(move.to_square() != ctxt._move.to_square());
 
-        if (make_move<false>(ctxt, move))
+        ASSERT(is_valid(ctxt._eval));
+
+        if (   move._old_group == MoveOrder::LOSING_CAPTURES
+            || move._old_group == MoveOrder::WINNING_CAPTURES
+            || move._old_group == MoveOrder::EQUAL_CAPTURES)
+        {
+            /* Use values from before rewind / reorder */
+            remake_move(ctxt, move);
+        }
+        else if (make_move<false>(ctxt, move))
         {
             ASSERT(move._state->capture_value);
 
-            /*
-             * Now determine which capture group it belongs to.
-             */
             auto capture_gain = move._state->capture_value;
-            auto other = ctxt.state().piece_weight_at(move.from_square());
+            capture_gain -= eval_exchanges<false>(ctxt.tid(), move, capture_gain);
 
-        #if SIMPLE_CAPTURES_ORDERING
-            capture_gain -= other;
-            move._group = MoveOrder::CAPTURES;
-        #else
-            /* eval_exchanges */
-            /* skip exchange evaluation if the capturer is worth less than the captured */
-
-            if (other >= capture_gain && abs(ctxt._score) < MATE_HIGH)
+            if (SEE_PRUNING
+                && capture_gain < 0
+                && !ctxt.is_root()
+                && ctxt.depth() > 0
+                && ctxt.depth() <= SEE_PRUNING_DEPTH
+                && !ctxt.is_check())
             {
-                other = eval_exchanges<false>(ctxt.tid(), move);
-
-                if (EXCHANGES_DETECT_CHECKMATE && other < MATE_LOW)
-                {
-                    move._score = -other;
-                    move._group = MoveOrder::WINNING_CAPTURES;
-
-                    if (DEBUG_CAPTURES)
-                        ctxt.log_message(
-                            LogLevel::DEBUG,
-                            move.uci() + ": " + std::to_string(move._score) + " " + ctxt.epd());
-                    return;
-                }
-            }
-
-            capture_gain -= other;
-
-            if (capture_gain < 0)
-            {
-                move._group = MoveOrder::LOSING_CAPTURES;
+                mark_as_pruned(ctxt, move);
             }
             else
             {
-                static_assert(MoveOrder::WINNING_CAPTURES + 1 == MoveOrder::EQUAL_CAPTURES);
-                move._group = MoveOrder::WINNING_CAPTURES + (capture_gain == 0);
-            }
-        #endif /* !SIMPLE_CAPTURES_ORDERING */
+                if (capture_gain < 0)
+                {
+                    move._group = MoveOrder::LOSING_CAPTURES;
+                }
+                else
+                {
+                    static_assert(MoveOrder::WINNING_CAPTURES + 1 == MoveOrder::EQUAL_CAPTURES);
+                    move._group = MoveOrder::WINNING_CAPTURES + (capture_gain == 0);
+                }
 
-            move._score = capture_gain;
+                move._score = capture_gain;
+            }
         }
     }
 
@@ -1489,19 +1508,41 @@ namespace search
 
         _need_sort = true;
 
+        /* Check the old group (saved to cache or from before rewinding) */
+        /* NB: do not filter out old pruned moves, they are path-dependent. */
+        if (move._old_group == MoveOrder::ILLEGAL_MOVES)
+        {
+            mark_as_illegal(move);
+            return false;
+        }
+    #if GROUP_QUIET_MOVES
+        else if (move._old_group == MoveOrder::QUIET_MOVES && _group_quiet_moves)
+        {
+            _have_quiet_moves = true;
+            move._group = MoveOrder::QUIET_MOVES;
+            return false;
+        }
+    #endif /* GROUP_QUIET_MOVES */
+
         if (move._state == nullptr)
         {
+            /* Ensure that there's a board state associated with the move. */
             ASSERT(_state_index < Context::states(ctxt.tid(), ctxt._ply).size());
 
             move._state = &Context::states(ctxt.tid(), ctxt._ply)[_state_index++];
         }
-        else if (move._state->is_check(!move._state->turn))
+        /* Check legality in case this was a quiet, or previously pruned move */
+        else if ((move._old_group == MoveOrder::UNDEFINED || move._old_group >= MoveOrder::UNORDERED_MOVES)
+            && move._state->is_check(!move._state->turn))
         {
             mark_as_illegal(move);
             return false;
         }
         else
         {
+            if constexpr(COUNT_VALID_MOVES_AS_NODES)
+                ++ctxt.get_tt()->_nodes;
+
             return (_have_move = true);
         }
 
@@ -1540,12 +1581,14 @@ namespace search
             }
         }
 
+    #if GROUP_QUIET_MOVES
         if (_group_quiet_moves && is_quiet(*move._state))
         {
             _have_quiet_moves = true;
             move._group = MoveOrder::QUIET_MOVES;
             return false;
         }
+    #endif /* GROUP_QUIET_MOVES */
 
         incremental_update(move, ctxt);
 
@@ -1559,7 +1602,7 @@ namespace search
 
             const auto val = futility + move._state->simple_score * SIGN[!move._state->turn];
 
-            if ((val < ctxt._alpha || val < ctxt._score) && ctxt.can_prune_move<true>(move))
+            if (val < ctxt._alpha && ctxt.can_prune_move<true>(move))
             {
                 if constexpr(EXTRA_STATS)
                     ++ctxt.get_tt()->_futility_prune_count;
@@ -1598,6 +1641,33 @@ namespace search
         move._score = score;
 
         return true;
+    }
+
+
+    /* Remake previously rewound, or cached move. */
+    INLINE void MoveMaker::remake_move(Context& ctxt, Move& move)
+    {
+        if (move._state == nullptr)
+        {
+            ASSERT(_state_index < Context::states(ctxt.tid(), ctxt._ply).size());
+            move._state = &Context::states(ctxt.tid(), ctxt._ply)[_state_index++];
+
+            ctxt.state().clone_into(*move._state);
+            ASSERT(move._state->capture_value == 0);
+
+            move._state->apply_move(move);
+        }
+
+        _need_sort = true;
+        _have_move = true;
+
+        move._group = static_cast<MoveOrder>(move._old_group);
+        move._score = move._old_score;
+
+        if constexpr(COUNT_VALID_MOVES_AS_NODES)
+        {
+            ++ctxt.get_tt()->_nodes;
+        }
     }
 
 

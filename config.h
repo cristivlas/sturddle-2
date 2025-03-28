@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
  * search and evaluation functions, and infrastructure for exposing
  * them to Python scripts for the purpose of tuning the engine.
  *
- * To expose ALL settings, compile with -DTUNING_ENABLED -DMOBILITY_TUNING_ENABLED
+ * To expose ALL settings, compile with -DTUNING_ENABLED -DWEIGHT_TUNING_ENABLED
  *
  * To cherry-pick, replace DECLARE_VALUE with DECLARE_PARAM
  */
@@ -47,9 +47,6 @@ constexpr score_t CHECKMATE = SCORE_MAX - 1;
 #endif /* MTDF_CSTAR_BISECT */
 
 constexpr score_t MATE_LOW  = -MATE_HIGH;
-
-/* Aspiration window */
-constexpr score_t HALF_WINDOW = 25;
 
 
 #if REFCOUNT_PARAM
@@ -105,7 +102,7 @@ std::string Config::_group;
 
 Config::Namespace Config::_namespace = {
 #if MOBILITY_TUNING_ENABLED
-    /* Piece mobility coefficients */
+    /*** DEPRECATE Piece mobility coefficients ***/
     { "MOBILITY_PAWN", Config::Param{ &chess::MOBILITY[chess::PieceType::PAWN], 0, 50, "Weights" } },
     { "MOBILITY_KNIGHT", Config::Param{ &chess::MOBILITY[chess::PieceType::KNIGHT], 0, 50, "Weights" } },
     { "MOBILITY_BISHOP", Config::Param{ &chess::MOBILITY[chess::PieceType::BISHOP], 0, 50, "Weights" } },
@@ -151,14 +148,16 @@ Config::Namespace Config::_namespace = {
 
 #endif /* TUNING_ENABLED */
 
-
-#if SMP && defined(CONFIG_IMPL)
-    static auto THREAD_MAX = std::thread::hardware_concurrency();
-#else
-    static constexpr int THREAD_MAX = 1;
-#endif
-
 static constexpr int HASH_MIN = 16; /* MB */
+
+#if SMP
+    #if defined(CONFIG_IMPL)
+        static const auto THREAD_MAX = std::thread::hardware_concurrency();
+        static const auto THREAD_VAL = std::min<int>(4, THREAD_MAX);
+    #endif
+#else
+    static constexpr int SMP_CORES = 1;
+#endif /* SMP */
 
 /* Min-max range is useful when exposing params via UCI. */
 /****************************************************************************
@@ -166,24 +165,22 @@ static constexpr int HASH_MIN = 16; /* MB */
  ****************************************************************************/
 
 GROUP(Settings)
+#if SMP
+    DECLARE_ALIAS( SMP_CORES, Threads,         THREAD_VAL,  1,  THREAD_MAX)
+#endif
+
 DECLARE_VALUE(  ASPIRATION_WINDOW,                    1,    0,       1)
 DECLARE_CONST(  DEBUG_CAPTURES,                       0,    0,       1)
+#if DATAGEN
+    DECLARE_CONST(  DATAGEN_SCORE_THRESHOLD,          0,    0,   30000)
+    DECLARE_CONST(  DATAGEN_MIN_DEPTH,               10, -100,     100)
+#endif
 #if EVAL_FUZZ_ENABLED
-DECLARE_PARAM(  EVAL_FUZZ,                            0,    0,     100)
+    DECLARE_PARAM(  EVAL_FUZZ,                        0,    0,     100)
 #endif
 DECLARE_CONST(  FIFTY_MOVES_RULE,                     1,    0,       1)
 DECLARE_VALUE(  FUTILITY_PRUNING,                     1,    0,       1)
 DECLARE_VALUE(  MULTICUT,                             1,    0,       1)
-#if DATAGEN
-DECLARE_CONST(  DATAGEN_SCORE_THRESHOLD,              0,    0,   30000)
-DECLARE_CONST(  DATAGEN_MIN_DEPTH,                   10, -100,     100)
-#endif
-/* SEE */
-/* -1 disables pin awareness */
-DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
-DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
-
-DECLARE_ALIAS(  SMP_CORES, Threads,                   1,    1, THREAD_MAX)
 
 GROUP(Search)
 DECLARE_VALUE(  CAPTURES_SCALE,                      99,    0,     150)
@@ -199,29 +196,43 @@ DECLARE_VALUE(  KILLER_MOVES_MARGIN,                261,    0,    1000)
 
 DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,     100)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
+
 #if WITH_NNUE
 DECLARE_VALUE(  NNUE_EVAL_TERM,                     645,    0,    1000)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      496,    0,    1000)
 #endif /* WITH_NNUE */
-DECLARE_VALUE(  NNUE_ROOT_ORDER_THRESHOLD,           88,    0,     128)
+
 DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,               3,    0,     100)
 DECLARE_VALUE(  NULL_MOVE_DEPTH_DIV,                  4,    1,     100)
 DECLARE_VALUE(  NULL_MOVE_DIV,                      278,    1,    1000)
 DECLARE_VALUE(  NULL_MOVE_REDUCTION,                  4,    0,     100)
 DECLARE_VALUE(  NULL_MOVE_IMPROVEMENT_DIV,           72,    1,    1000)
 DECLARE_VALUE(  NULL_MOVE_MARGIN,                   611,    0,    1000)
-DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    17,    0,     100)
+DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,     100)
 DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  248,    0,     300)
 DECLARE_VALUE(  RAZOR_INTERCEPT,                    224,    0,     300)
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
 DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     500)
-DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             26,    0,     150)
+DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             33,    0,     150)
+/* SEE */
+DECLARE_VALUE(  SEE_PRUNING,                          1,    0,       1)
+DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
+/* -1 disables pin awareness */
+DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
+
 DECLARE_VALUE(  SINGULAR_ACCURACY_MARGIN,           288,    1,     500)
 DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                0,    0,     100)
+
+DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
+DECLARE_VALUE(  STANDPAT_MARGIN,                     85,    0,    1000)
+
 DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_LOW,       -48, -150,       0)
 DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_HIGH,       12,    0,     150)
+
+/* Aspiration window */
 DECLARE_VALUE(  WINDOW_COEFF,                         6,    0,     100)
 DECLARE_VALUE(  WINDOW_DIV,                          67,    1,     200)
+DECLARE_VALUE(  WINDOW_HALF,                         25,    5,     200)
 
 GROUP(MoveOrdering)
 DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 223,    0,     500)
@@ -235,6 +246,7 @@ DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,     100)
 DECLARE_VALUE(  HISTORY_PRUNE,                       67,    0,     100)
 /****************************************************************************/
 #if !WITH_NNUE
+/* HCE tunable parameters */
 GROUP(Eval)
 DECLARE_VALUE(  BISHOP_PAIR,                         53,    0,     100)
 DECLARE_VALUE(  CASTLING_RIGHTS_BONUS,               32,    0,     100)

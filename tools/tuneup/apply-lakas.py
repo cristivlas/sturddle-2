@@ -96,6 +96,38 @@ def print_mobility(best_params):
     print(f'#define DEFAULT_MOBILITY_WEIGHTS {{ {weights} }}')
 
 
+def print_weights(best_params):
+    m_sym = {
+        'PAWN': 1,
+        'KNIGHT': 2,
+        'BISHOP': 3,
+        'ROOK': 4,
+        'QUEEN': 5,
+        'KING': 6
+    }
+    m_map = { k:0 for k in range(0, 7) }
+
+    for k in m_sym:
+        if k in best_params:
+            val = best_params[k]
+        else:
+            val = 20000
+        m_map[m_sym[k]] = val
+
+    weights = ', '.join(map(str, m_map.values()))
+    print(f'#define DEFAULT_WEIGHTS {{ {weights} }}')
+
+
+def print_fp_margins(best_params):
+    print("    int fp_margins[] = {")
+    print("        0,")
+    for i in range(1, 17):
+        k = f"FP_{i}"
+        val = best_params.get(k, 0)
+        print(f"        {val}, /* {i} */")
+    print("    };")
+
+
 def main():
     parser = argparse.ArgumentParser(description='Update C++ header file with best parameters from log file.')
     parser.add_argument('logfile', help='Path to the log file')
@@ -108,6 +140,8 @@ def main():
         update_header(args.config, best_params)
         logging.info("Header file updated successfully.")
         print_mobility(best_params)
+        print_weights(best_params)
+        print_fp_margins(best_params)
 
     else:
         logging.warning("No best params found to update the header file.")

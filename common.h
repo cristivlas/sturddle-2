@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -78,6 +78,8 @@ using score_t = int;
   #define NATIVE_UCI                        false
 #endif /* NATIVE_UCI */
 
+#define GROUP_QUIET_MOVES                   true
+
 #define KILLER_MOVE_HEURISTIC               true
 
 #define MTDF_CSTAR_BISECT                   true
@@ -89,8 +91,6 @@ using score_t = int;
 #define REPORT_CURRENT_MOVE                 false
 
 #define REVERSE_FUTILITY_PRUNING            true
-
-#define SIMPLE_CAPTURES_ORDERING            false
 
 /*
  * https://www.chessprogramming.org/Singular_Extensions
@@ -183,13 +183,12 @@ namespace search
         PROMOTIONS = 4,
         LAST_MOVED_CAPTURE = 5,
         WINNING_CAPTURES = 6,
-        CAPTURES = WINNING_CAPTURES, /* used with SIMPLE_CAPTURES_ORDERING */
         EQUAL_CAPTURES = 7,
         KILLER_MOVES = 8,
         LOSING_CAPTURES = 9,
         HISTORY_COUNTERS = 10,
         TACTICAL_MOVES = 11, /* pushed pawns, checks, etc. */
-        ROOT_MOVES = 12, /* root moves ordered by NNUE eval */
+     // ROOT_MOVES = 12, /* unused */
         LATE_MOVES = 13, /* all other legal moves not covered above */
         UNORDERED_MOVES = 14,
         PRUNED_MOVES = 15,

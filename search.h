@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -163,6 +163,7 @@ namespace search
         BaseMove    _hash_move;
         int16_t     _eval = SCORE_MIN; /* static */
         int16_t     _value = SCORE_MIN;
+        int16_t     _captures = SCORE_MIN;
         uint64_t    _hash = 0;
 
         INLINE bool is_lower() const { return _type == TT_Type::LOWER; }
@@ -272,7 +273,6 @@ namespace search
         size_t _null_move_cutoffs = 0;
         size_t _null_move_failed = 0;
         size_t _null_move_not_ok = 0;
-        size_t _qsnodes = 0;
         size_t _reductions = 0;
         size_t _retry_reductions = 0;
 
@@ -292,16 +292,16 @@ namespace search
 
         template<typename C> const int16_t* lookup(C& ctxt);
 
-        INLINE bool is_cached(const State& state) const
-        {
-            return !!_table.lookup_read(state);
-        }
+        // INLINE bool is_cached(const State& state) const
+        // {
+        //     return !!_table.lookup_read(state);
+        // }
 
-        INLINE bool is_cutoff(const State& state) const
-        {
-            auto p = _table.lookup_read(state);
-            return p ? p->is_lower() : false;
-        }
+        // INLINE bool is_cutoff(const State& state) const
+        // {
+        //     auto p = _table.lookup_read(state);
+        //     return p ? p->is_lower() : false;
+        // }
 
         template<TT_Type=TT_Type::NONE, typename C=struct Context>
         void store(C& ctxt, int depth);
