@@ -155,7 +155,7 @@ namespace
 
 
 /*
- * Late-move reduction tableS
+ * Late-move reduction tables
  */
 struct LMR
 {
@@ -169,7 +169,10 @@ struct LMR
         {
             for (int moves = 1; moves < 64; ++moves)
             {
-                _table[depth][moves] = LMR_BASE / 100.0 + LMR_COEFF / 100.0 * log(depth) * log(moves);
+                const auto v = 0.5 + log(depth) * log(moves) / 2;
+                const auto e = (100 + depth) / 100.0;
+
+                _table[depth][moves] = LMR_BASE / 100.0 + (LMR_COEFF * pow(v, e)) / 100.0;
             }
         }
     }
@@ -184,10 +187,14 @@ void LMPTable::init()
     for (size_t i = 0; i != PLY_MAX; ++i)
     {
         const auto p = pow(i + .5, 1.9);
+
         _table[0][i] = LMP_BASE / 100.0 + (LMP_COEFF * p) / 100.0;
         _table[1][i] = LMP_BASE_IMPROVED / 100.0 + (LMP_COEFF_IMPROVED * p) / 100.0;
+
+        // std::cout << i << ": " << _table[0][i] << ", " << _table[1][i] << std::endl;
     }
 }
+
 
 size_t LMPTable::count(bool has_improved, int depth) const
 {
