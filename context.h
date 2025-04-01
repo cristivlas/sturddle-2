@@ -762,7 +762,7 @@ namespace search
         }
         else
         {
-            assert_static(false); /* TODO: remove */
+            static_assert(false); /* TODO: remove */
             return state().eval_material() * SIGN[state().turn];
         }
     }
