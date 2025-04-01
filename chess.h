@@ -1146,10 +1146,18 @@ namespace chess
         /*
          * Apply incremental material and piece squares evaluation.
          */
-        INLINE void eval_apply_delta(const BaseMove& move, const State& prev)
+        INLINE score_t eval_apply_delta(const BaseMove& move, const State& prev)
         {
-            simple_score = prev.eval_incremental(move);
-            eval_lazy();
+            if (simple_score == UNKNOWN_SCORE)
+            {
+                simple_score = prev.eval_incremental(move);
+                return eval_lazy();
+            }
+            else
+            {
+                ASSERT(prev.simple_score == UNKNOWN_SCORE || simple_score == prev.eval_incremental(move));
+                return simple_score;
+            }
         }
 
         score_t eval_incremental(const BaseMove&) const;

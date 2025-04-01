@@ -534,9 +534,11 @@ namespace search
      * evaluate methods which apply the perspective of the side-to-move.
      * Side-effect: caches simple score inside the State object.
      */
-    INLINE int eval_material_and_piece_squares(State& state)
+    INLINE int eval_material_and_piece_squares(State& state, const State* prev, const BaseMove& move)
     {
-        return state.eval_lazy() * SIGN[!state.turn];
+        const auto eval = (prev && move) ? state.eval_apply_delta(move, *prev) : state.eval_lazy();
+        ASSERT(eval == state.eval_lazy());
+        return eval * SIGN[!state.turn];
     }
 
 
@@ -756,10 +758,11 @@ namespace search
              * Flip it from the pov of the side that moved
              * to the perspective of the side-to-move.
              */
-            return -eval_material_and_piece_squares(*_state);
+            return -eval_material_and_piece_squares(*_state, _parent ? _parent->_state : nullptr, _move);
         }
         else
         {
+            assert_static(false); /* TODO: remove */
             return state().eval_material() * SIGN[state().turn];
         }
     }
@@ -845,12 +848,16 @@ namespace search
                 }
                 else
                 {
+                    const auto ggp = _parent->_parent->_parent;
+                    const auto gg_parent_state = ggp ? ggp->_state : nullptr;
+
                     _improvement = std::max(0,
-                          eval_material_and_piece_squares(*_state)
-                        - eval_material_and_piece_squares(*prev->_state));
+                          eval_material_and_piece_squares(*_state, _parent->_state, _move)
+                        - eval_material_and_piece_squares(*prev->_state, gg_parent_state, prev->_move));
                 }
             }
         }
+
         return _improvement;
     }
 

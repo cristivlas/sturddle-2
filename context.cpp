@@ -2216,7 +2216,7 @@ namespace search
             else if (make_move<true>(ctxt, move, futility))
             {
                 incremental_update(move, ctxt);
-                const auto eval = eval_material_and_piece_squares(*move._state);
+                const auto eval = eval_material_and_piece_squares(*move._state, ctxt._state, move);
                 move._group = MoveOrder::LATE_MOVES;
                 move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
             }
