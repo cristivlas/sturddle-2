@@ -1508,6 +1508,13 @@ namespace search
 
         _need_sort = true;
 
+        /* Capturing the king is an illegal move (Louis XV?) */
+        if (ctxt.state().kings & chess::BB_SQUARES[move.to_square()])
+        {
+            mark_as_illegal(move);
+            return false;
+        }
+
         /* Check the old group (saved to cache or from before rewinding) */
         /* NB: do not filter out old pruned moves, they are path-dependent. */
         if (move._old_group == MoveOrder::ILLEGAL_MOVES)
@@ -1526,6 +1533,16 @@ namespace search
 
         if (move._state == nullptr)
         {
+            /* Late-move prune before making the move. */
+            if constexpr(LateMovePrune)
+            {
+                if (can_late_move_prune(ctxt))
+                {
+                    mark_as_pruned(ctxt, move);
+                    return false;
+                }
+            }
+
             /* Ensure that there's a board state associated with the move. */
             ASSERT(_state_index < Context::states(ctxt.tid(), ctxt._ply).size());
 
@@ -1544,23 +1561,6 @@ namespace search
                 ++ctxt.get_tt()->_nodes;
 
             return (_have_move = true);
-        }
-
-        /* Capturing the king is an illegal move (Louis XV?) */
-        if (ctxt.state().kings & chess::BB_SQUARES[move.to_square()])
-        {
-            mark_as_illegal(move);
-            return false;
-        }
-
-        /* Late-move prune before making the move. */
-        if constexpr(LateMovePrune)
-        {
-            if (can_late_move_prune(ctxt))
-            {
-                mark_as_pruned(ctxt, move);
-                return false;
-            }
         }
 
         ctxt.state().clone_into(*move._state);

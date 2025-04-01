@@ -592,7 +592,7 @@ private:
     static std::atomic_bool _output_expected;
     bool _ponder = false;
     bool _use_opening_book = false;
-    bool _best_book_move = false;
+    bool _best_book_move = true;
     chess::BaseMove _last_move;
 };
 
