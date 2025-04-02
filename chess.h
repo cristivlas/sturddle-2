@@ -1148,9 +1148,14 @@ namespace chess
          */
         INLINE score_t eval_apply_delta(const BaseMove& move, const State& prev)
         {
-            ASSERT (simple_score == UNKNOWN_SCORE);
-            simple_score = prev.eval_incremental(move);
-            return eval_lazy();
+            ASSERT(simple_score == UNKNOWN_SCORE);
+
+            if (prev.simple_score == UNKNOWN_SCORE)
+                simple_score = eval_simple();
+            else
+                simple_score = prev.eval_incremental(move);
+
+            return simple_score;
         }
 
         score_t eval_incremental(const BaseMove&) const;
@@ -1408,25 +1413,21 @@ namespace chess
 
     INLINE score_t State::eval_incremental(const BaseMove& move) const
     {
-        if (simple_score == UNKNOWN_SCORE)
-        {
-            return UNKNOWN_SCORE; /* full eval needed */
-        }
-        else
-        {
-            auto eval = simple_score + eval_delta<true>(move);
+        ASSERT(simple_score != UNKNOWN_SCORE);
 
-            if (is_castling(move))
-            {
-                const auto king_file = square_file(move.to_square());
-                const auto rook_move = BaseMove(
-                    chess::rook_castle_squares[king_file == 2][0][turn],
-                    chess::rook_castle_squares[king_file == 2][1][turn]);
+        auto eval = simple_score + eval_delta<true>(move);
 
-                eval += eval_delta<false>(rook_move);
-            }
-            return eval;
+        if (is_castling(move))
+        {
+            const auto king_file = square_file(move.to_square());
+            const auto rook_move = BaseMove(
+                chess::rook_castle_squares[king_file == 2][0][turn],
+                chess::rook_castle_squares[king_file == 2][1][turn]);
+
+            eval += eval_delta<false>(rook_move);
         }
+
+        return eval;
     }
 
 

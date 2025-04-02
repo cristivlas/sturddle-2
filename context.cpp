@@ -380,7 +380,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
 /* TODO: define array of margins, using LMP for now as a temporary hack. */
 static INLINE score_t eval_margin(int depth, bool endgame)
 {
-    return (NNUE_MAX_EVAL + search::LMP[depth]) / (1 + 0.5 * endgame);
+    return (NNUE_MAX_EVAL + search::LMP[depth]) * (1 + 0.33 * endgame);
 }
 
 
