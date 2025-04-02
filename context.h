@@ -368,8 +368,6 @@ namespace search
 
         INLINE int  iteration() const { ASSERT(_tt); return _tt->_iteration; }
 
-        float       late_move_prune_factor() const;
-
         LMRAction   late_move_reduce(int move_count);
 
         static void load_nnue_model(const std::string& json_file_path); /* no-op if !WITH_NNUE */
@@ -534,17 +532,26 @@ namespace search
      * evaluate methods which apply the perspective of the side-to-move.
      * Side-effect: caches simple score inside the State object.
      */
-    INLINE int eval_material_and_piece_squares(State& state, const State* prev, const BaseMove& move)
+    INLINE score_t eval_material_and_piece_squares(State& state, const State* prev, const BaseMove& move)
     {
-        if (state.simple_score != State::UNKNOWN_SCORE)
+        score_t eval;
+
+        if (state.simple_score == State::UNKNOWN_SCORE)
+        {
+            if (prev && move)
+                eval = state.eval_apply_delta(move, *prev);
+            else
+                eval = (state.simple_score = state.eval_simple());
+        }
+        else
         {
             ASSERT(state.simple_score == state.eval_simple());
-            return state.simple_score * SIGN[!state.turn];
+            eval = state.simple_score;
         }
-        const auto eval = (prev && move) ? state.eval_apply_delta(move, *prev) : state.eval_lazy();
-        ASSERT(eval == state.eval_lazy());
+
         return eval * SIGN[!state.turn];
     }
+
 
 
     INLINE void incremental_update(Move& move, const Context& ctxt)
@@ -973,20 +980,6 @@ namespace search
 
 
     /*
-     * A simple model of position complexity, used with late move prunning.
-     */
-    INLINE float Context::late_move_prune_factor() const
-    {
-        const auto piece_count = chess::popcount(state().occupied());
-
-        return 1 + (
-            float(LMP_ALPHA) * move_count() / piece_count +
-            float(LMP_BETA) * evaluate_material() / chess::max_material_delta()
-        ) / (LMP_ALPHA + LMP_BETA);
-    }
-
-
-    /*
      * Reduction formula based on ideas from SF and others.
      */
     INLINE int null_move_reduction(Context& ctxt)
@@ -1322,7 +1315,7 @@ namespace search
         ASSERT(_phase > 1);
 
         return ctxt.depth() > 1 /* do not LMP leaf nodes */
-            && _current >= LMP[ctxt.depth() - 1] * ctxt.late_move_prune_factor()
+            && _current >= LMP[ctxt.depth() - 1]
             && ctxt.can_forward_prune();
     }
 
