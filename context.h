@@ -853,8 +853,8 @@ namespace search
                 }
                 else
                 {
-                    const auto ggp = _parent->_parent->_parent;
-                    const auto gg_parent_state = ggp ? ggp->_state : nullptr;
+                    const auto gg_pareent = prev->_parent;
+                    const auto gg_parent_state = gg_parent ? gg_parent->_state : nullptr;
 
                     _improvement = std::max(0,
                           eval_material_and_piece_squares(*_state, _parent->_state, _move)

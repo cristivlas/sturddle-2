@@ -377,6 +377,13 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
 }
 
 
+/* TODO: define array of margins, using LMP for now as a temporary hack. */
+static INLINE score_t eval_margin(int depth, bool endgame)
+{
+    return (NNUE_MAX_EVAL + search::LMP[depth]) / (1 + 0.5 * endgame);
+}
+
+
 void search::Context::eval_nnue()
 {
     if (!is_valid(_eval))
@@ -390,13 +397,11 @@ void search::Context::eval_nnue()
         auto eval = evaluate_material();
 
         /* Stick with material eval when heavily imbalanced */
-        /* TODO: define array of margins, using LMP for now as a temporary hack. */
-        const auto margin = LMP[depth()];
-
         if (state().just_king(!turn())
-            || (!is_leaf_extended() && abs(eval) <= NNUE_MAX_EVAL + margin))
+            || (!is_leaf_extended() && abs(eval) <= eval_margin(depth(), state().is_endgame())))
         {
             /* NOTE: assume NNUE eval already accounts for insufficient material */
+
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
         }
         else
@@ -1996,7 +2001,7 @@ namespace search
 
                 if (move._state == nullptr)
                 {
-                    ASSERT(move._group == MoveOrder::UNORDERED_MOVES);
+                    ASSERT(move._group >= MoveOrder::UNORDERED_MOVES);
                     ASSERT(move._score == 0);
                     break;
                 }
