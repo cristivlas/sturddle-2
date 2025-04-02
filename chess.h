@@ -1148,16 +1148,9 @@ namespace chess
          */
         INLINE score_t eval_apply_delta(const BaseMove& move, const State& prev)
         {
-            if (simple_score == UNKNOWN_SCORE)
-            {
-                simple_score = prev.eval_incremental(move);
-                return eval_lazy();
-            }
-            else
-            {
-                ASSERT(prev.simple_score == UNKNOWN_SCORE || simple_score == prev.eval_incremental(move));
-                return simple_score;
-            }
+            ASSERT (simple_score == UNKNOWN_SCORE);
+            simple_score = prev.eval_incremental(move);
+            return eval_lazy();
         }
 
         score_t eval_incremental(const BaseMove&) const;

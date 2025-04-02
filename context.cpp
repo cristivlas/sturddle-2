@@ -391,9 +391,10 @@ void search::Context::eval_nnue()
 
         /* Stick with material eval when heavily imbalanced */
         /* TODO: define array of margins, using LMP for now as a temporary hack. */
+        const auto margin = LMP[depth()];
 
         if (state().just_king(!turn())
-            || (!is_leaf_extended() && abs(eval) <= NNUE_MAX_EVAL + LMP[depth()]))
+            || (!is_leaf_extended() && abs(eval) <= NNUE_MAX_EVAL + margin))
         {
             /* NOTE: assume NNUE eval already accounts for insufficient material */
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;

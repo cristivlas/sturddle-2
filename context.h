@@ -536,6 +536,11 @@ namespace search
      */
     INLINE int eval_material_and_piece_squares(State& state, const State* prev, const BaseMove& move)
     {
+        if (state.simple_score != State::UNKNOWN_SCORE)
+        {
+            ASSERT(state.simple_score == state.eval_simple());
+            return state.simple_score * SIGN[!state.turn];
+        }
         const auto eval = (prev && move) ? state.eval_apply_delta(move, *prev) : state.eval_lazy();
         ASSERT(eval == state.eval_lazy());
         return eval * SIGN[!state.turn];
