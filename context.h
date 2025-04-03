@@ -328,9 +328,9 @@ namespace search
         score_t     eval_nnue_raw(bool update_only = false, bool side_to_move_pov = true);
         static void update_root_accumulators();
 
-        score_t     static_eval();  /* use TT value if available, eval material otherwise */
+        score_t     static_eval() const; /* use TT value if available, eval material otherwise */
 
-        void        extend();       /* fractional and other extensions */
+        void        extend(); /* fractional and other extensions */
         const Move* first_valid_move();
 
         score_t     futility_margin() const;
@@ -705,15 +705,13 @@ namespace search
     /*
      * Use value from the TT if available, else use material evaluation.
      */
-    INLINE score_t Context::static_eval()
+    INLINE score_t Context::static_eval() const
     {
-    #if WITH_NNUE
         if (is_valid(_eval))
             return _eval;
-    #else
+
         if (is_valid(_tt_entry._value) && _tt_entry._depth >= depth())
             return _tt_entry._value;
-    #endif /* WITH_NNUE */
 
         return evaluate_material();
     }
@@ -846,13 +844,8 @@ namespace search
             else
             {
                 const auto prev = _parent->_parent;
-            #if WITH_NNUE
-                const auto eval = _eval;
-                const auto prev_eval = prev->_eval;
-            #else
                 const auto eval = static_eval();
                 const auto prev_eval = prev->static_eval();
-            #endif /* WITH_NNUE */
 
                 if (abs(eval) < MATE_HIGH && abs(prev_eval) < MATE_HIGH)
                 {

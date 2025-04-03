@@ -398,7 +398,7 @@ void search::Context::eval_nnue()
 
         /* Stick with material eval when heavily imbalanced */
         if (state().just_king(!turn())
-            || (!is_leaf_extended() && abs(eval) <= eval_margin(depth(), state().is_endgame())))
+            || (depth() >= 0 && abs(eval) <= eval_margin(depth(), state().is_endgame())))
         {
             /* NOTE: assume NNUE eval already accounts for insufficient material */
 
