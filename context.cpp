@@ -586,6 +586,7 @@ namespace search
         ctxt->_alpha = _alpha;
         ctxt->_beta = _beta;
         ctxt->_score = _score;
+        ctxt->_eval = _eval;
         ctxt->_max_depth = _max_depth;
         ctxt->_parent = _parent;
         ctxt->_ply = ply;

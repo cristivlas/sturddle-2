@@ -569,7 +569,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     ASSERT(ctxt._score <= ctxt._alpha);
     ASSERT(ctxt._alpha < ctxt._beta);
     ASSERT(ctxt.is_root() || !ctxt._move || ctxt._move._group < MoveOrder::UNORDERED_MOVES);
-
     ASSERT(ctxt.get_tt() == &table);
 
     if (ctxt.is_root())
@@ -645,11 +644,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         return *p;
     }
 
-    if (!ctxt.is_pv_node() && /* !ctxt.is_retry() && */ ctxt._eval > ctxt._alpha && ctxt.depth() < 7)
-    {
-        ++ctxt._max_depth;
-    }
-
     if (ctxt.is_leaf())
     {
         ctxt._score = ctxt.evaluate();
@@ -667,9 +661,14 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     else
     {
         ASSERT(ctxt._alpha < ctxt._beta);
-        auto eval = ctxt._tt_entry._depth > 7 ? ctxt._tt_entry._value : ctxt._tt_entry._eval;
+        auto eval = ctxt._tt_entry._eval;
     #if WITH_NNUE
-        if (!is_valid(eval))
+        if (is_valid(eval))
+        {
+            ASSERT(!ctxt.is_root());
+            ctxt._eval = eval;
+        }
+        else
         {
             ctxt.eval_nnue();
             eval = ctxt._eval;
