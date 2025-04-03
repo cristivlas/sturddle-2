@@ -335,7 +335,7 @@ namespace search
 
         score_t     futility_margin() const;
 
-        INLINE bool has_improved(score_t margin = 0) { return improvement() > margin; }
+        INLINE bool has_improved() const { return improvement() > 0; }
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
 
         int         history_count(const Move&) const;
