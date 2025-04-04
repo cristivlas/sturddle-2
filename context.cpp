@@ -1254,7 +1254,7 @@ namespace search
     }
 
 
-    static INLINE int eval_material_imbalance(const State& state, int pcs)
+    static INLINE int eval_material_imbalance(const State& state)
     {
         if ((state.rooks | state.queens) == 0)
         {
@@ -1553,7 +1553,7 @@ namespace search
 
         if (abs(mat_eval) < WEIGHT[PAWN])
         {
-            eval += eval_material_imbalance(state, piece_count);
+            eval += eval_material_imbalance(state);
             eval += eval_redundant_rook(state, piece_count);
         }
 
@@ -1577,7 +1577,7 @@ namespace search
     static INLINE int eval_tactical(Context& ctxt, score_t eval)
     {
         const auto& state = ctxt.state();
-        const auto piece_count = popcount(state.occupied());
+        const auto piece_count = ctxt.piece_count();
 
         /*
          * 2nd order evaluation is currently slow (and possibly inaccurate).

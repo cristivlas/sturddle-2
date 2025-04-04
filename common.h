@@ -68,14 +68,18 @@ using score_t = int;
   #define DATAGEN                           false
 #endif
 
-/* NOTE: this setting has no effect when using SEE */
+/* NOTE: this setting has no effect when using STATIC_EXCHANGES */
 #define EXCHANGES_DETECT_CHECKMATE          false
 
 /* Collect extra stats for troubleshooting */
 #define EXTRA_STATS                         false
 
+/* Use C++ implementation for Polyglot opening book (NATIVE_UCI only) */
+#define NATIVE_BOOK                         true
+
+/* Use C++ implementation for UCI protocol */
 #if !defined(NATIVE_UCI)
-  #define NATIVE_UCI                        false
+  #define NATIVE_UCI                        true
 #endif /* NATIVE_UCI */
 
 #define GROUP_QUIET_MOVES                   true

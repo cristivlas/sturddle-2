@@ -513,6 +513,18 @@ namespace chess
             , _promotion(PieceType::NONE)
         {}
 
+        static BaseMove from_raw(uint16_t raw_move)
+        {
+            const int from = (raw_move >> 6) & 0x3F;
+            const int to = raw_move & 0x3F;
+            const int promotion = (raw_move >> 12) & 0x7;
+            ASSERT(from >= 0 && from < 64);
+            ASSERT(to >= 0 && to < 64);
+            ASSERT(promotion > 0 && promotion < 6);
+
+            return BaseMove(static_cast<Square>(from), static_cast<Square>(to), static_cast<PieceType>(promotion));
+        }
+
         INLINE constexpr Square to_square() const
         {
             return _to_square;
@@ -1000,7 +1012,6 @@ namespace chess
         int capture_value = 0;
         int pushed_pawns_score = 0; /* ranks past the middle of the board */
         bool is_castle = false;
-
         PieceType promotion = PieceType::NONE;
 
         /* material and PST from white's POV */
@@ -1172,6 +1183,13 @@ namespace chess
             return WEIGHT[piece_type];
         }
 
+        INLINE int piece_count() const
+        {
+            if (_piece_count < 0)
+                _piece_count = popcount(occupied());
+            return _piece_count;
+        }
+
         INLINE int piece_weight_at(Square square) const
         {
             return weight(piece_type_at(square));
@@ -1201,6 +1219,7 @@ namespace chess
             ENDGAME_TRUE = 1
         }
         mutable _endgame = ENDGAME_UNKNOWN;
+        mutable int _piece_count = -1;
     }; /* State */
 
     INLINE int score_pushed_pawns(const State& state, const BaseMove& move)
@@ -1305,6 +1324,7 @@ namespace chess
         state._check = {-1, -1};
         state._hash = 0;
         state._endgame = ENDGAME_UNKNOWN;
+        state._piece_count = -1;
     }
 
 
@@ -1602,7 +1622,7 @@ namespace chess
 
     /* static */ INLINE bool State::is_endgame(const State& state)
     {
-        return (popcount(state.occupied()) <= ENDGAME_PIECE_COUNT);
+        return (state.piece_count() <= ENDGAME_PIECE_COUNT);
         /*
             || state.just_king_and_pawns(BLACK)
             || state.just_king_and_pawns(WHITE)

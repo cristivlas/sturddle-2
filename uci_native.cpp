@@ -31,6 +31,7 @@ static void raise_runtime_error(const char* err)
 #include <string>
 #include <sstream>
 #include <vector>
+#include "book.h"
 #include "thread_pool.hpp" /* pondering, go infinite */
 
 #if 0
@@ -400,7 +401,11 @@ public:
     UCI(const std::string &name, const std::string &version, Params& params)
         : _name(name)
         , _version(version)
+    #if NATIVE_BOOK
+        , _use_opening_book(_opening_book.open(_book))
+    #else
         , _use_opening_book(search::Context::_book_init(_book))
+    #endif
     {
         search::Context::_history = std::make_unique<search::History>();
         log_debug(std::format("TT_Entry size: {}", sizeof(search::TT_Entry)));
@@ -591,6 +596,10 @@ private:
 #endif /* OUTPUT_POOL */
     static std::atomic_bool _output_expected;
     bool _ponder = false;
+
+#if NATIVE_BOOK
+    PolyglotBook _opening_book = {};
+#endif
     bool _use_opening_book = false;
     bool _best_book_move = true;
     chess::BaseMove _last_move;
@@ -953,11 +962,22 @@ void UCI::go(const Arguments &args)
         if (_use_opening_book && _ply_count < _book_depth && !do_analysis)
         {
             LOG_DEBUG(std::format("lookup book_depth={}, ply_count={}", _book_depth, _ply_count));
-            if (auto move = search::Context::_book_lookup(_buf._state, _best_book_move))
+
+        #if NATIVE_BOOK
+            const auto mode = _best_book_move ? PolyglotBook::BEST_WEIGHT : PolyglotBook::WEIGHTED_CHOICE;
+            if (const auto raw_move = _opening_book.lookup_move(_buf._state.hash(), mode))
+            {
+                const auto move = chess::BaseMove::from_raw(raw_move);
+                output_best_move(move);
+                return;
+            }
+        #else
+            if (const auto move = search::Context::_book_lookup(_buf._state, _best_book_move))
             {
                 output_best_move(move);
                 return;
             }
+        #endif /* !_NATIVE_BOOK */
             else
                 _book_depth = std::min(_book_depth, _ply_count);
         }

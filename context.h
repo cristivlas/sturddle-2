@@ -383,7 +383,7 @@ namespace search
         INLINE int  next_move_index() { return _move_maker.current(*this); }
 
         bool        on_next();
-        INLINE int  piece_count() const { return chess::popcount(state().occupied()); }
+        INLINE int  piece_count() const { return state().piece_count(); }
 
         void        reinitialize();
         int         rewind(int where = 0, bool reorder = false);
