@@ -325,15 +325,8 @@ namespace chess
         BB_SQUARES[A1] | BB_SQUARES[H1] | BB_SQUARES[A8] | BB_SQUARES[H8];
 
 
-#define DEFAULT_MOBILITY_WEIGHTS { 0, 0, 0, 7, 6, 5, 0 }
 #define DEFAULT_WEIGHTS { 0, 85, 319, 343, 522, 986, 20000 }
 
-
-#if MOBILITY_TUNING_ENABLED
-    extern int MOBILITY[7];
-#else
-    static constexpr int MOBILITY[7] = DEFAULT_MOBILITY_WEIGHTS;
-#endif
 
     /* Piece values */
 #if WEIGHT_TUNING_ENABLED
@@ -723,8 +716,6 @@ namespace chess
             return BB_EMPTY;
         }
 
-        score_t eval_mobility() const;
-
         INLINE constexpr Bitboard occupied() const
         {
             return white | black;
@@ -1048,7 +1039,7 @@ namespace chess
         }
 
         /* evaluate base score from the perspective of the side to play */
-        template<bool EVAL_MOBILITY = true> score_t eval() const;
+        score_t eval() const;
 
         INLINE score_t eval_lazy() const
         {
@@ -1061,8 +1052,7 @@ namespace chess
         score_t eval_material() const;
 
         /*
-         * Evaluate material and piece-squares (i.e. excluding mobility)
-         * from the white side's perspective
+         * Evaluate material and piece-squares from the white side's perspective.
          */
         score_t eval_simple() const;
 
@@ -1549,15 +1539,9 @@ namespace chess
     }
 
 
-    template<bool EVAL_MOBILITY> INLINE score_t State::eval() const
+    INLINE score_t State::eval() const
     {
-        auto value = eval_lazy();
-
-        if constexpr(EVAL_MOBILITY)
-        {
-            if (!is_endgame())
-                value += eval_mobility();
-        }
+        const auto value = eval_lazy();
         return value * SIGN[turn];
     }
 

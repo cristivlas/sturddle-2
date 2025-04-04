@@ -101,18 +101,8 @@ std::string Config::_group;
 #define GROUP(x) Config::Group __##x(_TOSTR(x));
 
 Config::Namespace Config::_namespace = {
-#if MOBILITY_TUNING_ENABLED
-    /*** DEPRECATE Piece mobility coefficients ***/
-    { "MOBILITY_PAWN", Config::Param{ &chess::MOBILITY[chess::PieceType::PAWN], 0, 50, "Weights" } },
-    { "MOBILITY_KNIGHT", Config::Param{ &chess::MOBILITY[chess::PieceType::KNIGHT], 0, 50, "Weights" } },
-    { "MOBILITY_BISHOP", Config::Param{ &chess::MOBILITY[chess::PieceType::BISHOP], 0, 50, "Weights" } },
-    { "MOBILITY_ROOK", Config::Param{ &chess::MOBILITY[chess::PieceType::ROOK], 0, 50, "Weights" } },
-    { "MOBILITY_QUEEN", Config::Param{ &chess::MOBILITY[chess::PieceType::QUEEN], 0, 50, "Weights" } },
-    { "MOBILITY_KING", Config::Param{ &chess::MOBILITY[chess::PieceType::KING], 0, 50, "Weights" } },
-#endif /* MOBILITY_TUNING_ENABLED */
-
 #if WEIGHT_TUNING_ENABLED
-    /* Piece mobility coefficients */
+    /* Piece weights */
     { "PAWN", Config::Param{ &chess::WEIGHT[chess::PieceType::PAWN], 0, 150, "Weights" } },
     { "KNIGHT", Config::Param{ &chess::WEIGHT[chess::PieceType::KNIGHT], 0, 400, "Weights" } },
     { "BISHOP", Config::Param{ &chess::WEIGHT[chess::PieceType::BISHOP], 0, 400, "Weights" } },

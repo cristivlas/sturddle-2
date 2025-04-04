@@ -82,11 +82,8 @@ def print_board(board, use_unicode=False):
 cdef extern from 'common.h':
     score_t SCORE_MAX
     score_t SCORE_MIN
-    const bool MOBILITY_TUNING_ENABLED
     string timestamp() nogil
 
-
-MOBILITY_TUNING = MOBILITY_TUNING_ENABLED
 
 
 # ---------------------------------------------------------------------
@@ -155,7 +152,7 @@ cdef extern from 'chess.h' namespace 'chess':
         Bitboard pin_mask(int color, int square) const
 
         score_t eval_simple() const
-        score_t eval_mobility() const
+
         PieceType _piece_type_at(Square) const
         PieceType piece_type_at(Square) const
 
@@ -359,10 +356,6 @@ cdef class BoardState:
 
     cpdef int longest_pawn_sequence(self, Bitboard mask):
         return self._state.longest_pawn_sequence(mask)
-
-
-    cpdef int mobility(self):
-        return self._state.eval_mobility()
 
 
     cpdef Bitboard pin_mask(self, Color color, Square square):

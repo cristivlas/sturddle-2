@@ -229,10 +229,6 @@ void _set_param(const std::string& name, int value, bool echo)
     {
         search::Context::log_message(LogLevel::ERROR, "unknown parameter: \"" + name + "\"");
     }
-    else if (WITH_NNUE && iter->second._group == "Eval" && name.find("MOBILITY") != 0)
-    {
-        search::Context::log_message(LogLevel::WARN, "not used in NNUE mode: \"" + name + "\"");
-    }
     else if (value < iter->second._min || value > iter->second._max)
     {
         std::ostringstream err;
@@ -1438,7 +1434,7 @@ namespace search
         int score = 0;
         const int p = popcount(state.pawns);
 
-    #if USE_VECTOR && !(MOBILITY_TUNING)
+    #if USE_VECTOR
 
         using ix4 = int __attribute__((vector_size(4 * sizeof(int))));
         auto constexpr N = WEIGHT[KNIGHT];
@@ -1491,7 +1487,7 @@ namespace search
 
             score += SIGN[color] * popcount(state.pawns * color_mask) * interpolate(pcs, 0, 3);
         }
-    #endif /* USE_VECTOR && !MOBILITY_TUNING */
+    #endif /* USE_VECTOR */
 
         return score;
     }
@@ -1609,7 +1605,7 @@ namespace search
 
     /*
      * Static evaluation has three components:
-     * 1. base = material + pst + mobility
+     * 1. base = material + pst
      * 2. tactical (positional)
      * 3. capture estimates (in Context::evaluate)
      * NOTE: when using NNUE for evaluation (default), 1 and 2 do not apply.
@@ -1624,7 +1620,7 @@ namespace search
             eval_nnue();
         #else
             /*
-             * 1. Material + piece-squares + mobility
+             * 1. Material + piece-squares
              */
             _eval = state().eval();
 

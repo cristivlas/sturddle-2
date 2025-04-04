@@ -39,10 +39,6 @@ namespace chess
 {
     const AttackTable attack_table;
 
-#if MOBILITY_TUNING_ENABLED
-    int MOBILITY[] = DEFAULT_MOBILITY_WEIGHTS;
-#endif
-
 #if WEIGHT_TUNING_ENABLED
     int WEIGHT[] = DEFAULT_WEIGHTS;
 #endif
@@ -234,121 +230,6 @@ namespace chess
         {
             add_move(moves_list, from_square, to_square);
         }
-    }
-
-
-    /*
-     * Rough approximation of the (difference in) move options. No en-passant, no SEE.
-     */
-    score_t Position::eval_mobility() const
-    {
-        score_t mobility = 0;
-
-        Bitboard attacks[2][7] = { { 0 }, { 0 } };
-        Bitboard attacks_from[2][64] = { { 0 }, { 0 } };
-        Bitboard checks_from[2][64] = { { 0 }, { 0 } };
-        Bitboard checks[2] = { 0 };
-        Bitboard pinned[2] = { 0, 0 };
-
-        const auto occupied = this->occupied();
-
-        /*
-         * Step 1, build some tables...
-         */
-        for (const auto color: {BLACK, WHITE})
-        {
-            const auto our_pieces = this->occupied_co(color);
-
-            for_each_square(our_pieces, [&](Square square) {
-                const auto piece_type = piece_type_at(square);
-                auto piece_attacks = attacks_mask(square, occupied);
-
-                checks_from[color][square] = piece_attacks;
-                checks[color] |= piece_attacks;
-
-                const Bitboard mask = (piece_type == KING) ? BB_ALL : pin_mask(color, square);
-                piece_attacks &= mask; /* can only attack in the direction of the pin */
-                pinned[color] |= (mask != BB_ALL) * BB_SQUARES[square];
-
-                attacks[color][piece_type] |= piece_attacks;
-                attacks_from[color][square] = piece_attacks & ~(kings | our_pieces);
-            });
-        }
-        /*
-         * Step 2, count where pieces can go without being captured by the
-         * king or pieces of lower values, king not allowed to move into check.
-         */
-        for (const auto color: {BLACK, WHITE})
-        {
-            if constexpr(MOBILITY_TUNING_ENABLED || MOBILITY[PieceType::PAWN] != 0)
-            {
-                /* pawns moves... */
-                const auto own_pawns = pawns & occupied_co(color) & ~pinned[color];
-
-                Bitboard single_pawn_moves, double_pawn_moves;
-
-                if (color)
-                {
-                    single_pawn_moves = shift_up(own_pawns) & ~occupied;
-                    double_pawn_moves = shift_up(single_pawn_moves) & ~occupied & (BB_RANK_3 | BB_RANK_4);
-                }
-                else
-                {
-                    single_pawn_moves = shift_down(own_pawns) & ~occupied;
-                    double_pawn_moves = shift_down(single_pawn_moves) & ~occupied & (BB_RANK_6 | BB_RANK_5);
-                }
-
-                /* ... and captures */
-                const auto pawn_captures = attacks[color][PieceType::PAWN] & occupied_co(!color);
-
-                mobility += SIGN[color] * MOBILITY[PieceType::PAWN]
-                    * (popcount(single_pawn_moves | double_pawn_moves) + popcount(pawn_captures));
-            }
-
-            /* non-pawns */
-            for_each_square(occupied_co(color) & ~pawns, [&](Square square) {
-                if (attacks_from[color][square] == BB_EMPTY)
-                    return;
-
-                const auto piece_type = piece_type_at(square);
-                ASSERT(piece_type != PieceType::PAWN);
-                if (MOBILITY[piece_type] == 0)
-                    return;
-
-                /* where can the enemy king capture? */
-                Bitboard defended = attacks[!color][KING];
-                for (int i = 0; i != 64; ++i)
-                {
-                    /* skip checks by the piece to move */
-                    // if (i != square)
-                    //     defended &= ~checks_from[color][i];
-                    defended &= ~checks_from[color][i] | ((i == square) * BB_ALL);
-                }
-                switch (piece_type)
-                {
-                case PieceType::KNIGHT:
-                case PieceType::BISHOP:
-                    defended |= attacks[!color][PieceType::PAWN];
-                    break;
-
-                case PieceType::ROOK:
-                case PieceType::QUEEN:
-                    for (int i = PieceType::PAWN; i != piece_type; ++i)
-                        defended |= attacks[!color][i];
-                    break;
-
-                case PieceType::KING:
-                    defended |= checks[!color];
-                default:
-                    break;
-                }
-
-                mobility += SIGN[color] * MOBILITY[piece_type]
-                    * popcount(attacks_from[color][square] & ~defended);
-            });
-        }
-
-        return mobility;
     }
 
 

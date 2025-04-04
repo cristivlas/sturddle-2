@@ -258,30 +258,6 @@ def test_forks():
         assert state.has_fork(color)==expected, (id, expected)
 
 
-def test_mobility():
-    engine.set_param('MOBILITY_PAWN', 2, True)
-    engine.set_param('MOBILITY_KING', 3, True)
-    engine.set_param('MOBILITY_KNIGHT', 2, True)
-    engine.set_param('MOBILITY_BISHOP', 2, True)
-    engine.set_param('MOBILITY_ROOK', 1, True)
-    tests = [
-        ('mobility.01', '3k4/8/8/8/8/8/8/3K4 w - -', 0),
-        ('mobility.02', '3k4/8/8/8/8/8/3K4/8 w - -', 9),
-        ('mobility.03', '3k4/3p4/8/8/8/8/3K4/8 w - -', 8),
-        ('mobility.04', '3k4/3p4/2N5/8/8/8/3K4/8 b - -', 21),
-        ('mobility.05', '3k4/3p4/2N5/8/4b3/8/3K4/8 b - -', -3),
-        ('mobility.06', '3k4/3p4/2N5/8/4b3/b7/3K4/8 b - -', -18),
-        ('mobility.07', '3k4/3p4/2N5/8/8/8/3K4/4R3 b - -', 12 + 14 + 21 - 12),
-        ('mobility.08', '8/8/8/8/8/8/5k2/3K4 w - -', 9 - 18),
-        ('mobility.09', '8/8/8/8/2N3b1/8/2N1Pk2/3K4 w - -', 8 * 2 + 6 * 2 + 3 * 2 - 3 * 4 - 2 * 7),
-        ('mobility.10', '3r4/8/4P3/6b1/8/4R3/5k2/2K5 w - -', 3 * 3 + 2 - 3 * 4 - 6 * 2 - 11)
-    ]
-    for id, fen, expected in tests:
-        state = engine.BoardState(chess.Board(fen=fen))
-        mobility = state.mobility()
-        assert mobility == expected, (id, mobility, f'expected={expected}')
-
-
 def test_connected_pawns():
     tests = [
         ('connected.01', '8/P5kp/3p2p1/3P4/2P2Pb1/6P1/4p2P/3rR1K1 w - -', chess.WHITE, 5),
@@ -395,10 +371,6 @@ test_pins()
 test_static_exchanges()
 test_zobrist()
 test_forks()
-
-#This test requires compiling with MOBILITY_TUNING_ENABLED
-if engine.MOBILITY_TUNING:
-    test_mobility()
 
 # Test eval components
 test_connected_pawns()

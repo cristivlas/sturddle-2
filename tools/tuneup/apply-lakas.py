@@ -78,24 +78,6 @@ def update_header(header_file, best_params):
         f.writelines(updated_lines)
 
 
-def print_mobility(best_params):
-    m_sym = {
-        'MOBILITY_PAWN': 1,
-        'MOBILITY_KNIGHT': 2,
-        'MOBILITY_BISHOP': 3,
-        'MOBILITY_ROOK': 4,
-        'MOBILITY_QUEEN': 5,
-        'MOBILITY_KING': 6,
-    }
-    m_map = { k:0 for k in range(0, 7) }
-
-    for k in m_sym:
-        if k in best_params:
-            m_map[m_sym[k]] = best_params[k]
-    weights = ', '.join(map(str, m_map.values()))
-    print(f'#define DEFAULT_MOBILITY_WEIGHTS {{ {weights} }}')
-
-
 def print_weights(best_params):
     m_sym = {
         'PAWN': 1,
