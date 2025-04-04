@@ -776,7 +776,6 @@ namespace search
         }
         else
         {
-            static_assert(false); /* TODO: remove */
             return state().eval_material() * SIGN[state().turn];
         }
     }
