@@ -790,7 +790,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         && !ctxt._excluded
                         && ctxt._tt_entry._depth >= ctxt.depth() - 3
                         && abs(ctxt._eval - ctxt._tt_entry._value)
-                            <= SINGULAR_ACCURACY - SINGULAR_COEFF * pow2(ctxt._tt_entry._depth) / 100.0
+                            <= std::max<int>(0, SINGULAR_ACCURACY - SINGULAR_COEFF * pow2(ctxt._tt_entry._depth) / 100.0)
                        )
                     {
                         const auto s_beta = std::max(int(ctxt._tt_entry._value) - ctxt.singular_margin(), MATE_LOW);
@@ -814,14 +814,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                         if (eval < s_beta)
                         {
-                            const auto ext = (SINGULAR_ACCURACY - abs(ctxt._eval - ctxt._tt_entry._value))
-                                * ONE_PLY / SINGULAR_ACCURACY;
-                            ASSERT(ext >= 0);
-
-                            next_ctxt->_extension += ext; /* extend once */
-                            if (!ctxt.is_pv_node() && eval + DOUBLE_EXT_MARGIN < s_beta)
+                            ++next_ctxt->_max_depth; /* extend once */
+                            if (!ctxt.is_pv_node() && eval + SINGULAR_DOUBLE_EXT_MARGIN < s_beta)
                             {
-                                next_ctxt->_extension += ext; /* extend more */
+                                ++next_ctxt->_max_depth; /* extend more */
                             }
                         }
                         /*

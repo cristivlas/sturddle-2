@@ -104,7 +104,7 @@ using score_t = int;
  */
 #define SINGULAR_EXTENSION                  true
 
-#define SMP                                 false
+#define SMP                                 true
 
 #if !WITH_NNUE && !defined(USE_PIECE_SQUARE_TABLES)
   #define USE_PIECE_SQUARE_TABLES           true

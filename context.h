@@ -1354,7 +1354,8 @@ namespace search
         else
         {
             ASSERT(_current == _count || ctxt.moves()[_current]._group >= PRUNED_MOVES);
-            ctxt.cache_scores();
+            if (_count >= 0)
+                ctxt.cache_scores();
         }
         return move;
     }

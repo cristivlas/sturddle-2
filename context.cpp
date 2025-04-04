@@ -120,7 +120,7 @@ namespace
                 {
                     ++entry._use_count;
                     moves.assign(entry._moves.begin(), entry._moves.end());
-
+                    ASSERT(moves.size() == entry._moves.size());
                     return true;
                 }
             }
@@ -142,6 +142,7 @@ namespace
                     || ++entry._write_attempts > 2 * entry._use_count)
                 {
                     entry._moves.assign(moves.begin(), moves.end());
+                    ASSERT(entry._moves.size() == moves.size());
                     if (hash != entry._state.hash())
                         entry._use_count = 0;
                     entry._state = state;
@@ -1964,6 +1965,7 @@ namespace search
 
     void Context::cache_scores(bool force_write)
     {
+        ASSERT(move_count() >= 0);
         auto& moves_list = moves();
 
         for (auto& move: moves_list)
