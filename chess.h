@@ -520,7 +520,7 @@ namespace chess
             const int promotion = (raw_move >> 12) & 0x7;
             ASSERT(from >= 0 && from < 64);
             ASSERT(to >= 0 && to < 64);
-            ASSERT(promotion > 0 && promotion < 6);
+            ASSERT(promotion >= 0 && promotion < 6);
 
             return BaseMove(static_cast<Square>(from), static_cast<Square>(to), static_cast<PieceType>(promotion));
         }

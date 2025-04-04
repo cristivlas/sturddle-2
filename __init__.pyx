@@ -1351,9 +1351,14 @@ def version():
 # ---------------------------------------------------------------------
 def uci(name: str, debug: bool=False):
     cdef unordered_map[string, string] c_param
-    param = {'name': name, 'version': version()}
+    param = {
+        'dir': os.path.dirname(__file__),
+        'name': name,
+        'version': version(),
+    }
     if debug:
         param['debug'] = 'true'
+
     for k,v in param.items():
         c_param[k.encode()] = v.encode()
 

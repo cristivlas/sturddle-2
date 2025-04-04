@@ -112,38 +112,35 @@ public:
 
     uint16_t lookup_move(uint64_t key, LookupMode mode)
     {
-        const auto& moves = find_moves(key);
-        if (moves.empty())
+        const auto& entries = find_moves(key);
+        if (entries.empty())
             return 0;
 
         if (mode == FIRST_MATCH)
         {
-            return moves[0].move;
+            return entries[0].move;
         }
         else if (mode == BEST_WEIGHT)
         {
-            return std::max_element(moves.begin(), moves.end(), [](const PolyglotEntry& a, const PolyglotEntry& b) {
+            return std::max_element(entries.begin(), entries.end(), [](const PolyglotEntry& a, const PolyglotEntry& b) {
                 return a.weight < b.weight;
             })->move;
         }
         else if (mode == WEIGHTED_CHOICE)
         {
-            uint16_t totalWeight = 0;
-            for (const auto& move : moves) totalWeight += move.weight;
+            int totalWeight = 0;
+            for (const auto& entry : entries) totalWeight += entry.weight;
 
-            std::random_device rd;
-            std::mt19937 gen(rd());
-            std::uniform_int_distribution<uint16_t> dist(0, totalWeight - 1);
+            const auto choice = random_int(0, totalWeight);
 
-            uint16_t choice = dist(gen);
-            uint16_t currentSum = 0;
-
-            for (const auto& move : moves)
+            int currentSum = 0;
+            for (const auto& entry : entries)
             {
-                currentSum += move.weight;
+                currentSum += entry.weight;
                 if (currentSum > choice)
-                    return move.move;
+                    return entry.move;
             }
+            ASSERT(false);
         }
 
         return 0;
@@ -161,7 +158,7 @@ private:
             return swap_uint64(entry.key) < key;
         });
 
-        _moves.clear();
+        _entries.clear();
 
         // Collect all matching entries
         while (it != end && swap_uint64(it->key) == key)
@@ -170,12 +167,12 @@ private:
             entry.key = key;
             entry.move = swap_uint16(entry.move);
             entry.weight = swap_uint16(entry.weight);
-            _moves.emplace_back(entry);
+            _entries.emplace_back(entry);
         }
 
-        return _moves;
+        return _entries;
     }
 
     MemoryMappedFile _mapped_file;
-    std::vector<PolyglotEntry> _moves;
+    std::vector<PolyglotEntry> _entries;
 };

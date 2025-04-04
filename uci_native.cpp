@@ -402,6 +402,7 @@ public:
         : _name(name)
         , _version(version)
     #if NATIVE_BOOK
+        , _book((fs::absolute(fs::path(params["dir"])) / "book.bin").string())
         , _use_opening_book(true)
     #else
         , _use_opening_book(search::Context::_book_init(_book))
@@ -429,7 +430,7 @@ public:
         _options.emplace("ponder", std::make_shared<OptionBool>("Ponder", _ponder));
         _options.emplace("syzygypath", std::make_shared<OptionSyzygy>());
     #if DATAGEN
-        const auto db_path = fs::absolute(fs::path(params["prog"]).parent_path()) / "evals";
+        const auto db_path = fs::absolute(fs::path(params["dir"])) / "evals";
         _options.emplace("db", std::make_shared<OptionDB>(db_path.string()));
     #endif
     }
@@ -556,16 +557,13 @@ private:
 
     INLINE chess::BaseMove search_book()
     {
-        ASSERT(_use_opening_book);
-
     #if NATIVE_BOOK
         if (!_opening_book.is_open())
         {
             log_debug(std::format("Opening: {}", _book));
-            _use_opening_book = _opening_book.open(_book);
-
-            if (!_use_opening_book)
+            if (!_opening_book.open(_book))
             {
+                _use_opening_book = false;
                 log_error(std::format("Failed opening: {}", _book));
                 return chess::BaseMove();
             }
@@ -614,6 +612,8 @@ private:
     /** iterative deepening search */
     template<typename F = void(*)()> score_t search(F f = []{});
 
+    const std::string _name;
+    const std::string _version; /* engine version */
     search::Algorithm _algorithm = search::Algorithm::MTDF;
     search::ContextBuffer _buf;
     search::TranspositionTable _tt;
@@ -625,8 +625,6 @@ private:
     score_t _score = 0;
     score_t _score_delta = 0;
     EngineOptions _options;
-    const std::string _name;
-    const std::string _version; /* engine version */
 #if OUTPUT_POOL
     static std::unique_ptr<ThreadPool> _output_pool;
 #endif /* OUTPUT_POOL */
@@ -1171,7 +1169,8 @@ INLINE score_t UCI::search(F set_time_limit)
     set_time_limit();
 
 #if NATIVE_BOOK && USE_BOOK_HINT
-    ctxt._prev = search_book();
+    if (_ply_count < _book_depth)
+        ctxt._prev = search_book();
 #endif /* USE_BOOK_HINT */
 
     const auto score = search::iterative(ctxt, _tt, _depth + 1);

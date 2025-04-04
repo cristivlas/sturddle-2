@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -130,9 +130,7 @@ namespace
 
     static INLINE int random_int(int low, int high)
     {
-        static std::random_device rd;  // Will be used to obtain a seed for the random number engine
-        static std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
-
+        static thread_local std::mt19937 gen(std::random_device{}());
         return std::uniform_int_distribution<int>(low, high)(gen);
     }
 
