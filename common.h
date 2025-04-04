@@ -75,13 +75,16 @@ using score_t = int;
 #define EXTRA_STATS                         false
 
 /* Use C++ implementation for Polyglot opening book (NATIVE_UCI only) */
-#define NATIVE_BOOK                         true
+#if !defined(NATIVE_BOOK)
+  #define NATIVE_BOOK                       true
+#endif /* NATIVE_BOOK */
 
 /* Use C++ implementation for UCI protocol */
 #if !defined(NATIVE_UCI)
   #define NATIVE_UCI                        true
 #endif /* NATIVE_UCI */
 
+/* Filter out quiet moves if extended at leaf (depth < 0) */
 #define GROUP_QUIET_MOVES                   true
 
 #define KILLER_MOVE_HEURISTIC               true
@@ -106,6 +109,9 @@ using score_t = int;
 #if !WITH_NNUE && !defined(USE_PIECE_SQUARE_TABLES)
   #define USE_PIECE_SQUARE_TABLES           true
 #endif
+
+/* Experimental */
+#define USE_BOOK_HINT                       true
 
 #define USE_LIBPOPCOUNT                     true
 
@@ -136,7 +142,7 @@ constexpr size_t DEFAULT_HASH_TABLE_SIZE =  32;
 /*
  * When TUNING_ENABLED is true, values introduced by DECLARE_VALUE in config.h
  * become visible to Python scripts (via set_param, get_params, get_param_info)
- * and can be tweaked at runtime.
+ * and in the UCI interface (setoption) and can be tweaked at runtime.
  */
 #if !defined(TUNING_ENABLED)
   #define TUNING_ENABLED                    false

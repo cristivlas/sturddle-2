@@ -402,7 +402,7 @@ public:
         : _name(name)
         , _version(version)
     #if NATIVE_BOOK
-        , _use_opening_book(_opening_book.open(_book))
+        , _use_opening_book(true)
     #else
         , _use_opening_book(search::Context::_book_init(_book))
     #endif
@@ -552,6 +552,42 @@ private:
             std::format_to(std::back_inserter(g_out), "bestmove {}", move.uci());
             output(g_out);
         }
+    }
+
+    INLINE chess::BaseMove search_book()
+    {
+        ASSERT(_use_opening_book);
+
+    #if NATIVE_BOOK
+        if (!_opening_book.is_open())
+        {
+            log_debug(std::format("Opening: {}", _book));
+            _use_opening_book = _opening_book.open(_book);
+
+            if (!_use_opening_book)
+            {
+                log_error(std::format("Failed opening: {}", _book));
+                return chess::BaseMove();
+            }
+        }
+
+        const auto mode = _best_book_move ? PolyglotBook::BEST_WEIGHT : PolyglotBook::WEIGHTED_CHOICE;
+        if (const auto raw_move = _opening_book.lookup_move(_buf._state.hash(), mode))
+        {
+            return chess::BaseMove::from_raw(raw_move);
+        }
+    #else
+        if (const auto move = search::Context::_book_lookup(_buf._state, _best_book_move))
+        {
+            return move;
+        }
+    #endif /* !_NATIVE_BOOK */
+        else
+        {
+            _book_depth = std::min(_book_depth, _ply_count);
+        }
+
+        return chess::BaseMove();
     }
 
     INLINE void set_start_position()
@@ -963,24 +999,13 @@ void UCI::go(const Arguments &args)
         {
             LOG_DEBUG(std::format("lookup book_depth={}, ply_count={}", _book_depth, _ply_count));
 
-        #if NATIVE_BOOK
-            const auto mode = _best_book_move ? PolyglotBook::BEST_WEIGHT : PolyglotBook::WEIGHTED_CHOICE;
-            if (const auto raw_move = _opening_book.lookup_move(_buf._state.hash(), mode))
-            {
-                const auto move = chess::BaseMove::from_raw(raw_move);
-                output_best_move(move);
-                return;
-            }
-        #else
-            if (const auto move = search::Context::_book_lookup(_buf._state, _best_book_move))
+            if (const auto move = search_book())
             {
                 output_best_move(move);
                 return;
             }
-        #endif /* !_NATIVE_BOOK */
-            else
-                _book_depth = std::min(_book_depth, _ply_count);
         }
+
         ASSERT(!do_analysis);
         ASSERT(!do_ponder);
 
@@ -1144,13 +1169,15 @@ INLINE score_t UCI::search(F set_time_limit)
     ctxt._move = _last_move;
 
     set_time_limit();
+
+#if NATIVE_BOOK && USE_BOOK_HINT
+    ctxt._prev = search_book();
+#endif /* USE_BOOK_HINT */
+
     const auto score = search::iterative(ctxt, _tt, _depth + 1);
 
     _score_delta = score - _score;
-#if 0
-    if (_score_delta < -50)
-        search::Context::log_message(LogLevel::INFO, std::format("score drop from {} to {}", _score, score));
-#endif
+
     return score;
 }
 

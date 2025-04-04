@@ -102,13 +102,13 @@ INLINE uint16_t swap_uint16(uint16_t val) { return __builtin_bswap16(val); }
 /* Polyglot opening book */
 class PolyglotBook
 {
-    MemoryMappedFile _mapped_file;
-
 public:
+    enum LookupMode { FIRST_MATCH, BEST_WEIGHT, WEIGHTED_CHOICE };
+
     bool open(const std::string& filename) { return _mapped_file.open(filename); }
     void close() { _mapped_file.close(); }
 
-    enum LookupMode { FIRST_MATCH, BEST_WEIGHT, WEIGHTED_CHOICE };
+    bool is_open() const { return _mapped_file.size(); }
 
     uint16_t lookup_move(uint64_t key, LookupMode mode)
     {
@@ -176,5 +176,6 @@ private:
         return _moves;
     }
 
+    MemoryMappedFile _mapped_file;
     std::vector<PolyglotEntry> _moves;
 };

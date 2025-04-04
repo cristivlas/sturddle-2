@@ -184,13 +184,19 @@ else:
                     '-lc++',
                     '-lc++experimental',
                 ]
+        else:
+            args.append('-DNATIVE_UCI=false')
+
     else:
+        # Not Clang
         if NATIVE_UCI:
             if get_compiler_major_version() < MIN_GCC_VER:
                 raise RuntimeError(f'NATIVE_UCI uses C++20 and requires GCC {MIN_GCC_VER} or later')
-            args += [
-                '-DNATIVE_UCI=true',
-            ]
+
+            args.append('-DNATIVE_UCI=true')
+        else:
+            args.append('-DNATIVE_UCI=false')
+
         args.append('-DUSE_MAGIC_BITS')
 
 """
