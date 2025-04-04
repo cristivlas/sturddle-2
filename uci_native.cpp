@@ -1169,7 +1169,7 @@ INLINE score_t UCI::search(F set_time_limit)
     set_time_limit();
 
 #if NATIVE_BOOK && USE_BOOK_HINT
-    if (_ply_count < _book_depth)
+    if (_ply_count < 12)
         ctxt._prev = search_book();
 #endif /* USE_BOOK_HINT */
 

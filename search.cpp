@@ -789,7 +789,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         && abs(ctxt._tt_entry._value) < MATE_HIGH
                         && !ctxt._excluded
                         && ctxt._tt_entry._depth >= ctxt.depth() - 3
-                        && abs(ctxt._eval - ctxt._tt_entry._value) <= SINGULAR_ACCURACY_MARGIN
+                        && abs(ctxt._eval - ctxt._tt_entry._value)
+                            <= SINGULAR_ACCURACY - SINGULAR_COEFF * pow2(ctxt._tt_entry._depth) / 100.0
                        )
                     {
                         const auto s_beta = std::max(int(ctxt._tt_entry._value) - ctxt.singular_margin(), MATE_LOW);
@@ -813,8 +814,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                         if (eval < s_beta)
                         {
-                            const auto ext = (SINGULAR_ACCURACY_MARGIN - abs(ctxt._eval - ctxt._tt_entry._value))
-                                * ONE_PLY / SINGULAR_ACCURACY_MARGIN;
+                            const auto ext = (SINGULAR_ACCURACY - abs(ctxt._eval - ctxt._tt_entry._value))
+                                * ONE_PLY / SINGULAR_ACCURACY;
                             ASSERT(ext >= 0);
 
                             next_ctxt->_extension += ext; /* extend once */

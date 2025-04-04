@@ -104,14 +104,14 @@ using score_t = int;
  */
 #define SINGULAR_EXTENSION                  true
 
-#define SMP                                 true
+#define SMP                                 false
 
 #if !WITH_NNUE && !defined(USE_PIECE_SQUARE_TABLES)
   #define USE_PIECE_SQUARE_TABLES           true
 #endif
 
 /* Experimental */
-#define USE_BOOK_HINT                       true
+#define USE_BOOK_HINT                       false
 
 #define USE_LIBPOPCOUNT                     true
 
@@ -134,10 +134,6 @@ using score_t = int;
 /* default hash table size in megabytes */
 constexpr size_t DEFAULT_HASH_TABLE_SIZE =  32;
 
-
-#if !defined(MOBILITY_TUNING_ENABLED)
-  #define MOBILITY_TUNING_ENABLED           false
-#endif
 
 /*
  * When TUNING_ENABLED is true, values introduced by DECLARE_VALUE in config.h

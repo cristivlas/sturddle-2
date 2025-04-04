@@ -208,7 +208,8 @@ DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
 /* -1 disables pin awareness */
 DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 
-DECLARE_VALUE(  SINGULAR_ACCURACY_MARGIN,           288,    1,     500)
+DECLARE_PARAM(  SINGULAR_ACCURACY,                  288,    1,     500)
+DECLARE_PARAM(  SINGULAR_COEFF,                     100,    0,     100)
 DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                0,    0,     100)
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
