@@ -417,6 +417,9 @@ namespace search
         static void set_tb_cardinality(int n) { _tb_cardinality = n; }
         static int tb_cardinality() { return _tb_cardinality.load(std::memory_order_relaxed); }
 
+        const State& last_play() const;
+        void set_last_play(const State&);
+
         /*
          * Python callbacks
          */
@@ -465,6 +468,7 @@ namespace search
         static std::vector<ContextStack>    _context_stacks;
         static std::vector<MoveStack>       _move_stacks;
         static std::vector<StateStack>      _state_stacks;
+        static std::vector<State>           _last_play;
     };
 
 

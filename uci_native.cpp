@@ -1177,6 +1177,7 @@ INLINE score_t UCI::search(F set_time_limit)
 
     _score_delta = score - _score;
 
+    ctxt.set_last_play(ctxt.state());
     return score;
 }
 

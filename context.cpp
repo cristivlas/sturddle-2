@@ -526,6 +526,7 @@ namespace search
     std::vector<Context::MoveStack> Context::_move_stacks(SMP_CORES);
     std::vector<Context::StateStack> Context::_state_stacks(SMP_CORES);
     std::vector<MovesCache> _moves_cache(SMP_CORES);
+    std::vector<State> Context::_last_play(SMP_CORES);
 
     /* Cython callbacks */
     PyObject* Context::_engine = nullptr;
@@ -645,6 +646,8 @@ namespace search
             _moves_cache.resize(n_threads);
             _move_stacks.resize(n_threads);
             _state_stacks.resize(n_threads);
+
+            _last_play.resize(n_threads);
 
         #if WITH_NNUE
             NNUE_data.resize(n_threads);
@@ -1977,6 +1980,23 @@ namespace search
     }
 
 
+    const State& Context::last_play() const
+    {
+        return _last_play[tid()];
+    }
+
+
+    void Context::set_last_play(const State& state)
+    {
+        ASSERT(is_root());
+
+        _last_play[tid()] = state;
+
+        const auto& moves_list = moves(tid(), 0);
+        _moves_cache[tid()].write(state, moves_list);
+    }
+
+
     /*---------------------------------------------------------------------
      * MoveMaker
      *---------------------------------------------------------------------*/
@@ -2059,6 +2079,23 @@ namespace search
         else
         {
             ctxt.state().generate_pseudo_legal_moves(moves_list);
+
+            if (ctxt.is_root())
+            {
+                auto& prev_moves = Context::moves(ctxt.tid(), PLY_MAX);
+                if (moves_cache.lookup(ctxt.last_play(), prev_moves))
+                {
+                    for (auto& move : moves_list)
+                    {
+                        const auto i = std::find(prev_moves.begin(), prev_moves.end(), move);
+                        if (i != prev_moves.end())
+                            move._score = -std::distance(prev_moves.begin(), i);
+                    }
+
+                    insertion_sort(moves_list.begin(), moves_list.end(), compare_moves_gt);
+                }
+            }
+
             moves_cache.write(ctxt.state(), moves_list);
         }
 
