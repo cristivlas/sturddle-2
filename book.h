@@ -31,7 +31,7 @@ public:
     #ifdef _WIN32
             UnmapViewOfFile(_data);
     #else
-            munmap(const_cast<char*>(data), size);
+            munmap(const_cast<char*>(_data), _size);
     #endif
         }
         _data = nullptr;
@@ -67,13 +67,13 @@ public:
         CloseHandle(hFile);
         CloseHandle(hMap);
     #else
-        int fd = open(filename.c_str(), O_RDONLY);
+        int fd = ::open(filename.c_str(), O_RDONLY);
         if (fd < 0)
             return false;
 
         _size = lseek(fd, 0, SEEK_END);
         _data = static_cast<const char*>(mmap(nullptr, _size, PROT_READ, MAP_PRIVATE, fd, 0));
-        close(fd);
+        ::close(fd);
     #endif /* !_WIN32 */
         return true;
     }
