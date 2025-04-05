@@ -112,7 +112,7 @@ using score_t = int;
 
 /* Experimental */
 #define USE_BOOK_HINT                       false
-#define USE_ROOT_MOVES                      false
+#define USE_ROOT_MOVES                      true
 
 #define USE_LIBPOPCOUNT                     true
 
