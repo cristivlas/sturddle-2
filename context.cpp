@@ -2078,6 +2078,7 @@ namespace search
         {
             ctxt.state().generate_pseudo_legal_moves(moves_list);
 
+        #if 0
             if (ctxt.is_root())
             {
                 auto& prev_moves = Context::moves(ctxt.tid(), PLY_MAX);
@@ -2093,6 +2094,7 @@ namespace search
                     insertion_sort(moves_list.begin(), moves_list.end(), compare_moves_gt);
                 }
             }
+        #endif /* 0 */
 
             moves_cache.write(ctxt.state(), moves_list);
         }

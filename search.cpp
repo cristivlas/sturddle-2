@@ -790,9 +790,11 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         && !ctxt._excluded
                         && ctxt._tt_entry._depth >= ctxt.depth() - 3
                         && abs(ctxt._eval - ctxt._tt_entry._value)
-                            <= std::max<int>(0, SINGULAR_ACCURACY - SINGULAR_COEFF * pow2(ctxt._tt_entry._depth) / 100.0)
+                            <= std::max<int>(0, SINGULAR_ACCURACY + SINGULAR_COEFF * pow2(ctxt._tt_entry._depth) / 100.0)
                        )
                     {
+                        ASSERT(next_ctxt->_move == ctxt._tt_entry._best_move);
+
                         const auto s_beta = std::max(int(ctxt._tt_entry._value) - ctxt.singular_margin(), MATE_LOW);
 
                         /*
@@ -805,9 +807,14 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         s_ctxt->set_tt(ctxt.get_tt());
                         s_ctxt->_excluded = next_ctxt->_move;
                         s_ctxt->_max_depth = s_ctxt->_ply + (ctxt.depth() - 1) / 2;
+                        ASSERT(s_ctxt->depth() == (ctxt.depth() - 1) / 2);
                         s_ctxt->_alpha = s_beta - 1;
                         s_ctxt->_beta = s_beta;
                         s_ctxt->_score = SCORE_MIN;
+                        s_ctxt->_multicut_allowed = ctxt._multicut_allowed;
+                        s_ctxt->_null_move_allowed[0] = ctxt._null_move_allowed[0];
+                        s_ctxt->_null_move_allowed[1] = ctxt._null_move_allowed[1];
+
                         s_ctxt->_non_incremental_update = true;
 
                         const auto eval = negamax(*s_ctxt, table);
@@ -815,9 +822,13 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         if (eval < s_beta)
                         {
                             ++next_ctxt->_max_depth; /* extend once */
-                            if (!ctxt.is_pv_node() && eval + SINGULAR_DOUBLE_EXT_MARGIN < s_beta)
+
+                            if (!ctxt.is_pv_node()
+                                && eval + SINGULAR_DOUBLE_EXT_MARGIN < s_beta
+                                && next_ctxt->_double_ext <= DOUBLE_EXT_MAX)
                             {
                                 ++next_ctxt->_max_depth; /* extend more */
+                                ++next_ctxt->_double_ext;
                             }
                         }
                         /*
