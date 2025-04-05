@@ -2259,7 +2259,7 @@ namespace search
                 if (prev_moves)
                 {
                     const auto i = std::find(prev_moves->begin(), prev_moves->end(), move);
-                    if (i != prev_moves->end() && i->_old_group < MoveOrder::UNORDERED_MOVES)
+                    if (i != prev_moves->end() && i->_old_group <= MoveOrder::KILLER_MOVES)
                     {
                         move._score = -std::distance(prev_moves->begin(), i);
                         if (make_move<true>(ctxt, move, futility))
