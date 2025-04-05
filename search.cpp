@@ -815,6 +815,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         s_ctxt->_null_move_allowed[0] = ctxt._null_move_allowed[0];
                         s_ctxt->_null_move_allowed[1] = ctxt._null_move_allowed[1];
 
+                        /* Force NN accumulator update due to the skip in plies (i.e. use of ply + 2) */
                         s_ctxt->_non_incremental_update = true;
 
                         const auto eval = negamax(*s_ctxt, table);
