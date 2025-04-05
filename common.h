@@ -112,6 +112,7 @@ using score_t = int;
 
 /* Experimental */
 #define USE_BOOK_HINT                       false
+#define USE_ROOT_MOVES                      false
 
 #define USE_LIBPOPCOUNT                     true
 
@@ -194,7 +195,7 @@ namespace search
         LOSING_CAPTURES = 9,
         HISTORY_COUNTERS = 10,
         TACTICAL_MOVES = 11, /* pushed pawns, checks, etc. */
-     // ROOT_MOVES = 12, /* unused */
+        ROOT_MOVES = 12,
         LATE_MOVES = 13, /* all other legal moves not covered above */
         UNORDERED_MOVES = 14,
         PRUNED_MOVES = 15,

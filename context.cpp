@@ -2077,25 +2077,6 @@ namespace search
         else
         {
             ctxt.state().generate_pseudo_legal_moves(moves_list);
-
-        #if 0
-            if (ctxt.is_root())
-            {
-                auto& prev_moves = Context::moves(ctxt.tid(), PLY_MAX);
-                if (moves_cache.lookup(ctxt.last_play(), prev_moves))
-                {
-                    for (auto& move : moves_list)
-                    {
-                        const auto i = std::find(prev_moves.begin(), prev_moves.end(), move);
-                        if (i != prev_moves.end())
-                            move._score = -std::distance(prev_moves.begin(), i);
-                    }
-
-                    insertion_sort(moves_list.begin(), moves_list.end(), compare_moves_gt);
-                }
-            }
-        #endif /* 0 */
-
             moves_cache.write(ctxt.state(), moves_list);
         }
 
@@ -2158,6 +2139,21 @@ namespace search
 
         /* Confidence bar for historical scores */
         const double hist_high = (Phase == 3) ? hist_thresholds[ctxt.iteration()] : 0;
+
+
+    #if USE_ROOT_MOVES
+        /* Previous root moves */
+        MovesList* prev_moves = nullptr;
+
+        if (Phase == 4 && ctxt.is_root())
+        {
+            prev_moves = &Context::moves(ctxt.tid(), PLY_MAX);
+            auto& moves_cache = _moves_cache[ctxt.tid()];
+
+            if (!moves_cache.lookup(ctxt.last_play(), *prev_moves))
+                prev_moves = nullptr;
+        }
+    #endif /* USE_ROOT_MOVES */
 
         /********************************************************************/
         /* Iterate over pseudo-legal moves                                  */
@@ -2252,17 +2248,35 @@ namespace search
                     move._score = hist_score;
                 }
             }
-            /* Phase == 4 */
-            else if (move._old_group == MoveOrder::LATE_MOVES)
+            else /* Phase == 4 */
             {
-                remake_move(ctxt, move);
-            }
-            else if (make_move<true>(ctxt, move, futility))
-            {
-                incremental_update(move, ctxt);
-                const auto eval = eval_material_and_piece_squares(*move._state, ctxt._state, move);
-                move._group = MoveOrder::LATE_MOVES;
-                move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
+                if (move._old_group == MoveOrder::LATE_MOVES)
+                {
+                    remake_move(ctxt, move);
+                    continue;
+                }
+            #if USE_ROOT_MOVES
+                if (prev_moves)
+                {
+                    const auto i = std::find(prev_moves->begin(), prev_moves->end(), move);
+                    if (i != prev_moves->end())
+                    {
+                        move._score = -std::distance(prev_moves->begin(), i);
+                        if (make_move<true>(ctxt, move, futility))
+                        {
+                            move._group = MoveOrder::ROOT_MOVES;
+                        }
+                        continue;
+                    }
+                }
+            #endif /* USE_ROOT_MOVES */
+                if (make_move<true>(ctxt, move, futility))
+                {
+                    incremental_update(move, ctxt);
+                    const auto eval = eval_material_and_piece_squares(*move._state, ctxt._state, move);
+                    move._group = MoveOrder::LATE_MOVES;
+                    move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
+                }
             }
         }
     }

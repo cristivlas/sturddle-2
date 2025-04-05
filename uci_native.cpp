@@ -1177,10 +1177,11 @@ INLINE score_t UCI::search(F set_time_limit)
 
     _score_delta = score - _score;
 
-#if 0
+#if USE_ROOT_MOVES
     if (ctxt.move_count() >= 0)
         ctxt.set_last_play(ctxt.state());
-#endif
+#endif /* USE_ROOT_MOVES */
+
     return score;
 }
 
