@@ -831,12 +831,12 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                                 ++next_ctxt->_double_ext;
                             }
                         }
+                        else if (s_beta >= ctxt._beta)
+                        {
                         /*
                          * Got another fail-high from the (reduced) search that skipped the known
                          * cutoff move, so there must be multiple cutoffs, do 2nd multicut pruning.
                          */
-                        else if (s_beta >= ctxt._beta)
-                        {
                             ctxt._prune_reason = PruneReason::PRUNE_SINGULAR;
                             return s_beta;
                         }
