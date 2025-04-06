@@ -978,9 +978,9 @@ namespace search
     /*
      * Reduction formula based on ideas from SF and others.
      */
-    INLINE int null_move_reduction(Context& ctxt)
+    INLINE int null_move_reduction(const Context& ctxt)
     {
-        return NULL_MOVE_REDUCTION
+        return NULL_MOVE_REDUCTION /* base reduction */
             + ctxt.depth() / NULL_MOVE_DEPTH_DIV
             + std::min(ctxt.depth() / 2, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_DIV);
     }
