@@ -386,6 +386,8 @@ namespace search
         INLINE int  piece_count() const { return state().piece_count(); }
 
         void        reinitialize();
+        int         repeated_count(const State&) const;
+
         int         rewind(int where = 0, bool reorder = false);
         INLINE void set_counter_move(const BaseMove& move) { _counter_move = move; }
         void        set_search_window(score_t score, score_t& prev_score);
@@ -444,8 +446,6 @@ namespace search
     private:
         const Move* get_next_move(score_t);
         bool has_cycle(const State&) const;
-
-        int repeated_count(const State&) const;
 
         BaseMove            _counter_move;
         mutable int8_t      _can_forward_prune = -1;

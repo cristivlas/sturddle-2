@@ -100,13 +100,33 @@ def print_weights(best_params):
     print(f'#define DEFAULT_WEIGHTS {{ {weights} }}')
 
 
-def print_fp_margins(best_params):
-    print("    int fp_margins[] = {")
-    print("        0,")
-    for i in range(1, 17):
-        k = f"FP_{i}"
-        val = best_params.get(k, 0)
-        print(f"        {val}, /* {i} */")
+#def print_fp_margins(best_params):
+#    print("    int fp_margins[] = {")
+#    print("        0,")
+#    for i in range(1, 17):
+#        k = f"FP_{i}"
+#        val = best_params.get(k, 0)
+#        print(f"        {val}, /* {i} */")
+#    print("    };")
+
+
+def print_piece_square_tables(best_params):
+    piece_name = ['PAWN', 'KNIGHT', 'BISHOP', 'ROOK', 'QUEEN', 'KING']
+
+    print("\n    int SQUARE_TABLE[][64] = {")
+    print("        {}/* NONE */,")
+    for piece in range(1, 7):
+        print(f"        {{ /* {piece_name[piece-1]} */")
+        print(f"         ", end='')
+        for i in range(64):
+            key = f"PS_{piece}_{i}"
+            val = best_params.get(key, 0)
+            end_char = ', ' if (i % 8 != 7) else (',\n' if i != 63 else '\n')
+            if i % 8 == 0 and i != 0:
+                print("         ", end='')  # align rows
+            print(f"{val:>4}", end=end_char)
+        suffix = ',' if piece != 6 else ''
+        print(f"        }}{suffix}")
     print("    };")
 
 
@@ -121,10 +141,11 @@ def main():
     if best_params:
         update_header(args.config, best_params)
         logging.info("Header file updated successfully.")
-        print_mobility(best_params)
         print_weights(best_params)
-        print_fp_margins(best_params)
+        # print_fp_margins(best_params)
 
+        if any(k.startswith('PS_') for k in best_params):
+            print_piece_square_tables(best_params)
     else:
         logging.warning("No best params found to update the header file.")
 

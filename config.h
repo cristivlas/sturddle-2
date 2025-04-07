@@ -116,10 +116,24 @@ struct PieceSquareTuningEnabler
 {
     PieceSquareTuningEnabler()
     {
-        for (int s = 0; s < 63; ++s)
+        for (int s = 0; s < 64; ++s)
         {
             const std::string param_name = "PS_" + std::to_string(PT) + "_" + std::to_string(s);
             Config::_namespace.emplace(param_name.c_str(), Config::Param{ &SQUARE_TABLE[PT][s], -100, 100, "Weights" });
+        }
+    }
+};
+
+
+template <>
+struct PieceSquareTuningEnabler <chess::PAWN>
+{
+    PieceSquareTuningEnabler()
+    {
+        for (int s = 8; s < 56; ++s)
+        {
+            const std::string param_name = "PS_1_" + std::to_string(s);
+            Config::_namespace.emplace(param_name.c_str(), Config::Param{ &SQUARE_TABLE[1][s], -100, 100, "Weights" });
         }
     }
 };

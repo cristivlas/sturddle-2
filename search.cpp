@@ -296,6 +296,7 @@ static bool is_valid_pv_move(
         if (   (pos.piece_type_at(move.from_square()) == PieceType::NONE)
             || (pos.occupied_co(pos.turn) & chess::BB_SQUARES[move.to_square()])
             || (pos.kings & chess::BB_SQUARES[move.to_square()])
+            || start.repeated_count(pos) > 2
         )
         {
             log_invalid_pv(func, pv, start, pos, move);
