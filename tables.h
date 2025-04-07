@@ -98,7 +98,11 @@ int SQUARE_TABLE[][64] = {
 };
 
 
-static constexpr int ENDGAME_KING_SQUARE_TABLE[64] = {
+static
+#if !PS_KING_TUNING_ENABLED
+    constexpr
+#endif
+int ENDGAME_KING_SQUARE_TABLE[64] = {
    0,  0,  0,  0,  0,  0,  0,  0,
    0,  0,  0,  0,  0,  0,  0,  0,
    0,  0,  0,  0,  0,  0,  0,  0,

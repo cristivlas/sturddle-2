@@ -112,7 +112,7 @@ Config::Namespace Config::_namespace = {
 };
 
 #if USE_PIECE_SQUARE_TABLES
-template <chess::PieceType PT>
+template <chess::PieceType PT, bool EndGame = false>
 struct PieceSquareTuningEnabler
 {
     PieceSquareTuningEnabler()
@@ -126,20 +126,22 @@ struct PieceSquareTuningEnabler
 };
 
 
-template <>
-struct PieceSquareTuningEnabler <chess::PAWN>
-{
-    PieceSquareTuningEnabler()
-    {
-        for (int s = 8; s < 56; ++s)
-        {
-            const std::string param_name = "PS_1_" + std::to_string(s);
-            Config::_namespace.emplace(param_name.c_str(), Config::Param{ &SQUARE_TABLE[1][s], -100, 100, "Weights" });
-        }
-    }
-};
-
 #if PS_PAWN_TUNING_ENABLED
+    template<> struct PieceSquareTuningEnabler<chess::PAWN>
+    {
+        PieceSquareTuningEnabler()
+        {
+            for (int s = 8; s < 56; ++s)
+            {
+                const std::string param_name = "PS_1_" + std::to_string(s);
+                Config::_namespace.emplace(
+                    param_name.c_str(),
+                    Config::Param{ &SQUARE_TABLE[1][s], -100, 100, "Weights" }
+                );
+            }
+        }
+    };
+
     PieceSquareTuningEnabler<chess::PAWN> tune_ps_pawn;
 #endif /* PS_PAWN_TUNING_ENABLED */
 
@@ -160,7 +162,23 @@ struct PieceSquareTuningEnabler <chess::PAWN>
 #endif /* PS_QUEEN_TUNING_ENABLED */
 
 #if PS_KING_TUNING_ENABLED
+    template<> struct PieceSquareTuningEnabler<chess::KING, true>
+    {
+        PieceSquareTuningEnabler()
+        {
+            for (int s = 0; s < 64; ++s)
+            {
+                const std::string param_name = "PS_KEG_" + std::to_string(s);
+                Config::_namespace.emplace(
+                    param_name.c_str(),
+                    Config::Param{ &ENDGAME_KING_SQUARE_TABLE[s], -100, 100, "Weights" }
+                );
+            }
+        }
+    };
+
     PieceSquareTuningEnabler<chess::KING> tune_ps_king;
+    PieceSquareTuningEnabler<chess::KING, true> tune_ps_king_endgame;
 #endif /* PS_KING_TUNING_ENABLED */
 #endif /* USE_PIECE_SQUARE_TABLES */
 #else

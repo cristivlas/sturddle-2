@@ -113,22 +113,32 @@ def print_weights(best_params):
 def print_piece_square_tables(best_params):
     piece_name = ['PAWN', 'KNIGHT', 'BISHOP', 'ROOK', 'QUEEN', 'KING']
 
-    print("\n    int SQUARE_TABLE[][64] = {")
-    print("        {}/* NONE */,")
+    print("\nint SQUARE_TABLE[][64] = {")
+    print("    {}/* NONE */,")
     for piece in range(1, 7):
-        print(f"        {{ /* {piece_name[piece-1]} */")
-        print(f"         ", end='')
+        print(f"    {{ /* {piece_name[piece-1]} */")
+        print(f"     ", end='')
         for i in range(64):
             key = f"PS_{piece}_{i}"
             val = best_params.get(key, 0)
             end_char = ', ' if (i % 8 != 7) else (',\n' if i != 63 else '\n')
             if i % 8 == 0 and i != 0:
-                print("         ", end='')  # align rows
+                print("     ", end='')  # align rows
             print(f"{val:>4}", end=end_char)
         suffix = ',' if piece != 6 else ''
-        print(f"        }}{suffix}")
+        print(f"    }}{suffix}")
     print("    };")
 
+    print("\nint ENDGAME_KING_SQUARE_TABLE[][64] = {")
+    print("    ", end='')
+    for i in range(64):
+        key = f"PS_KEG_{i}"
+        val = best_params.get(key, 0)
+        end_char = ', ' if (i % 8 != 7) else (',\n' if i != 63 else '\n')
+        if i % 8 == 0 and i != 0:
+            print("    ", end='')  # align rows
+        print(f"{val:>4}", end=end_char)
+    print("};")
 
 def main():
     parser = argparse.ArgumentParser(description='Update C++ header file with best parameters from log file.')
