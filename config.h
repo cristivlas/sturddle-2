@@ -110,6 +110,43 @@ Config::Namespace Config::_namespace = {
     { "QUEEN", Config::Param{ &chess::WEIGHT[chess::PieceType::QUEEN], 0, 1300, "Weights" } },
 #endif /* WEIGHT_TUNING_ENABLED */
 };
+
+template <chess::PieceType PT>
+struct PieceSquareTuningEnabler
+{
+    PieceSquareTuningEnabler()
+    {
+        for (int s = 0; s < 63; ++s)
+        {
+            const std::string param_name = "PS_" + std::to_string(PT) + "_" + std::to_string(s);
+            Config::_namespace.emplace(param_name.c_str(), Config::Param{ &SQUARE_TABLE[PT][s], -100, 100, "Weights" });
+        }
+    }
+};
+
+#if PS_PAWN_TUNING_ENABLED
+    PieceSquareTuningEnabler<chess::PAWN> tune_ps_pawn;
+#endif /* PS_PAWN_TUNING_ENABLED */
+
+#if PS_KNIGHT_TUNING_ENABLED
+    PieceSquareTuningEnabler<chess::KNIGHT> tune_ps_knight;
+#endif /* PS_KNIGHT_TUNING_ENABLED */
+
+#if PS_BISHOP_TUNING_ENABLED
+    PieceSquareTuningEnabler<chess::BISHOP> tune_ps_bishop;
+#endif /* PS_BISHOP_TUNING_ENABLED */
+
+#if PS_ROOK_TUNING_ENABLED
+    PieceSquareTuningEnabler<chess::ROOK> tune_ps_rook;
+#endif /* PS_ROOK_TUNING_ENABLED */
+
+#if PS_QUEEN_TUNING_ENABLED
+    PieceSquareTuningEnabler<chess::QUEEN> tune_ps_queen;
+#endif /* PS_QUEEN_TUNING_ENABLED */
+
+#if PS_KING_TUNING_ENABLED
+    PieceSquareTuningEnabler<chess::KING> tune_ps_king;
+#endif /* PS_KING_TUNING_ENABLED */
 #else
 
   #define GROUP(x) /* as nothing */
@@ -195,7 +232,14 @@ DECLARE_VALUE(  NULL_MOVE_DIV,                      278,    1,    1000)
 DECLARE_VALUE(  NULL_MOVE_REDUCTION,                  4,    0,     100)
 DECLARE_VALUE(  NULL_MOVE_IMPROVEMENT_DIV,           72,    1,    1000)
 DECLARE_VALUE(  NULL_MOVE_MARGIN,                   611,    0,    1000)
+DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  3,    0,      20)
+
+/* Ensured minimum depth when verifying */
+DECLARE_VALUE(  NULL_MOVE_MIN_DRAUGHT,                0,   -1,      10)
+
+/* Do not verify null move below this depth */
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,     100)
+
 DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  248,    0,     300)
 DECLARE_VALUE(  RAZOR_INTERCEPT,                    224,    0,     300)
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
@@ -209,7 +253,7 @@ DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 
 DECLARE_VALUE(  SINGULAR_ACCURACY,                  127,    1,     500)
 DECLARE_VALUE(  SINGULAR_COEFF,                      45,    0,     100)
-DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                4,    0,     100)
+DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                2,    0,      20)
 DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,        1354,    0,    2000)
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)

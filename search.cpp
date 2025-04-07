@@ -410,6 +410,11 @@ bool verify_null_move(Context& ctxt, Context& null_move_ctxt)
     null_move_ctxt._alpha = ctxt._beta - 1;
     null_move_ctxt._beta  = ctxt._beta;
 
+    /* Ensure minimum verification depth */
+    null_move_ctxt._max_depth =
+       std::max(null_move_ctxt._ply + NULL_MOVE_MIN_DRAUGHT, null_move_ctxt._max_depth);
+    ASSERT(null_move_ctxt.depth() >= NULL_MOVE_MIN_DRAUGHT);
+
     const auto score = negamax(null_move_ctxt, *null_move_ctxt.get_tt());
 
     if (score >= ctxt._beta)

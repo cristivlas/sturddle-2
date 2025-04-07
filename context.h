@@ -354,7 +354,7 @@ namespace search
         INLINE bool is_leftmost() const { return is_root() || _leftmost; }
         bool        is_leaf(); /* treat as terminal node ? */
         bool        is_mate_bound() const;
-        bool        is_null_move_ok(); /* ok to generate null move? */
+        bool        is_null_move_ok() const; /* ok to generate null move? */
         INLINE bool is_null_move() const { return _is_null_move; }
         INLINE bool is_promotion() const { return state().promotion; }
         INLINE bool is_pv_node() const { return _is_pv; }
@@ -898,10 +898,10 @@ namespace search
     /*
      * Ok to generate a null-move?
      */
-    INLINE bool Context::is_null_move_ok()
+    INLINE bool Context::is_null_move_ok() const
     {
         if (is_root()
-            || depth() < 0
+            || depth() < NULL_MOVE_MIN_DEPTH
             || _null_move_allowed[turn()] == false
             || _excluded
             || is_null_move() /* consecutive null moves are not allowed */
@@ -1614,10 +1614,13 @@ namespace search
             }
         }
 
-        if (move._state->is_check(ctxt.turn()))
+        if (move._old_group == MoveOrder::UNDEFINED || move._old_group >= MoveOrder::UNORDERED_MOVES)
         {
-            mark_as_illegal(move); /* can't leave the king in check */
-            return false;
+            if (move._state->is_check(ctxt.turn()))
+            {
+                mark_as_illegal(move); /* can't leave the king in check */
+                return false;
+            }
         }
 
         /* consistency check */
