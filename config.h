@@ -111,6 +111,7 @@ Config::Namespace Config::_namespace = {
 #endif /* WEIGHT_TUNING_ENABLED */
 };
 
+#if USE_PIECE_SQUARE_TABLES
 template <chess::PieceType PT>
 struct PieceSquareTuningEnabler
 {
@@ -161,6 +162,7 @@ struct PieceSquareTuningEnabler <chess::PAWN>
 #if PS_KING_TUNING_ENABLED
     PieceSquareTuningEnabler<chess::KING> tune_ps_king;
 #endif /* PS_KING_TUNING_ENABLED */
+#endif /* USE_PIECE_SQUARE_TABLES */
 #else
 
   #define GROUP(x) /* as nothing */
