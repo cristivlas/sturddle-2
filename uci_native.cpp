@@ -501,6 +501,8 @@ private:
         if (moves.empty())
             _buf._state.hash();
         ASSERT(_buf._state._hash);
+
+        LOG_DEBUG(search::Context::epd(_buf._state));
     }
 
     INLINE search::Context &context() { return *_buf.as_context(); }
@@ -572,7 +574,17 @@ private:
         const auto mode = _best_book_move ? PolyglotBook::BEST_WEIGHT : PolyglotBook::WEIGHTED_CHOICE;
         if (const auto raw_move = _opening_book.lookup_move(_buf._state.hash(), mode))
         {
-            return chess::BaseMove::from_raw(raw_move);
+            const auto move = chess::BaseMove::from_raw(raw_move);
+
+            if (_buf._state.is_valid(move))
+            {
+                LOG_DEBUG(std::format("Book move: {} in [{}]", move.uci(), search::Context::epd(_buf._state)));
+                return move;
+            }
+            else
+            {
+                log_warning(std::format("Invalid book move: {} in [{}]", move.uci(), search::Context::epd(_buf._state)));
+            }
         }
     #else
         if (const auto move = search::Context::_book_lookup(_buf._state, _best_book_move))

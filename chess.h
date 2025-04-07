@@ -1113,6 +1113,8 @@ namespace chess
         bool is_en_passant(const BaseMove&) const;
         bool is_pinned(Color color) const;
 
+        bool is_valid(const BaseMove&, bool validate_check = false) const;
+
         INLINE bool just_king(Color color) const
         {
             return (~kings & occupied_co(color)) == 0;
@@ -1245,12 +1247,18 @@ namespace chess
         this->promotion = move.promotion();
 
         const auto color = piece_color_at(move.from_square());
+        Square to_square = move.to_square();
 
         if ((this->is_castle = is_castling(move)) == true)
         {
+        #if 0
             const auto king_to_file = square_file(move.to_square());
             ASSERT(king_to_file == 2 || king_to_file == 6);
-
+        #else
+            // More robust when dealing with Polyglot files that may contain e.g. E8H8
+            const auto king_to_file = square_file(move.to_square()) >= 6 ? 6 : 2;
+            to_square = Square(square_rank(move.to_square()) * 8 + king_to_file);
+        #endif
             const auto rook_from_square = rook_castle_squares[king_to_file == 2][0][color];
             const auto rook_to_square = rook_castle_squares[king_to_file == 2][1][color];
 
@@ -1268,7 +1276,7 @@ namespace chess
         {
             castling_rights &= ~BB_BACKRANKS[color];
         }
-        castling_rights &= ~BB_SQUARES[move.from_square()] & ~BB_SQUARES[move.to_square()];
+        castling_rights &= ~BB_SQUARES[move.from_square()] & ~BB_SQUARES[to_square];
 
         /* save current en-passant square */
         const auto ep_square = en_passant_square;
@@ -1294,7 +1302,7 @@ namespace chess
             }
         }
 
-        set_piece_at(move.to_square(), piece_type, color, move.promotion());
+        set_piece_at(to_square, piece_type, color, move.promotion());
         flip(turn);
 
         pushed_pawns_score = score_pushed_pawns(*this, move);
@@ -1625,6 +1633,7 @@ namespace chess
         }
         return (_endgame == ENDGAME_TRUE);
     }
+
 
 
     INLINE int State::longest_pawn_sequence(Bitboard mask) const

@@ -405,6 +405,33 @@ namespace chess
     }
 
 
+    bool State::is_valid(const BaseMove& move, bool validate_check) const
+    {
+        if (piece_type_at(move.from_square()) == PieceType::NONE)
+            return false;
+
+        if (is_castling(move))
+            return true;
+
+        if (occupied_co(turn) & BB_SQUARES[move.to_square()])
+            return false;
+
+        if (kings & BB_SQUARES[move.to_square()])
+            return false;
+
+        if (validate_check)
+        {
+            State state;
+            clone_into(state);
+
+            state.apply_move(move);
+            return !is_check(turn);
+        }
+
+        return true;
+    }
+
+
     /* for testing */
     size_t State::make_pseudo_legal_moves(MovesList& moves) const
     {
