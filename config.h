@@ -112,6 +112,10 @@ Config::Namespace Config::_namespace = {
 };
 
 #if USE_PIECE_SQUARE_TABLES
+
+#if PS_PAWN_TUNING_ENABLED || PS_KNIGHT_TUNING_ENABLED || PS_BISHOP_TUNING_ENABLED || \
+    PS_ROOK_TUNING_ENABLED || PS_QUEEN_TUNING_ENABLED  || PS_KING_TUNING_ENABLED
+
 template <chess::PieceType PT, bool EndGame = false>
 struct PieceSquareTuningEnabler
 {
@@ -124,7 +128,7 @@ struct PieceSquareTuningEnabler
         }
     }
 };
-
+#endif
 
 #if PS_PAWN_TUNING_ENABLED
     template<> struct PieceSquareTuningEnabler<chess::PAWN>
