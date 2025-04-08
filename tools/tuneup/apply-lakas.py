@@ -127,7 +127,7 @@ def print_piece_square_tables(best_params):
             print(f"{val:>4}", end=end_char)
         suffix = ',' if piece != 6 else ''
         print(f"    }}{suffix}")
-    print("    };")
+    print("};")
 
     print("\nint ENDGAME_KING_SQUARE_TABLE[][64] = {")
     print("    ", end='')
