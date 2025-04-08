@@ -398,6 +398,7 @@ cdef extern from 'context.h' nogil:
         int min_val
         int max_val
         string group
+        size_t scale
 
     void _set_param(string, int, bool) except+
 
@@ -1171,7 +1172,8 @@ def get_param_info():
             elem.second.val,
             elem.second.min_val,
             elem.second.max_val,
-            elem.second.group.decode()
+            elem.second.group.decode(),
+            elem.second.scale
         )
     return params
 

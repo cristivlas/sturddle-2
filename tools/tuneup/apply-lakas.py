@@ -7,6 +7,8 @@ import logging
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+PST_SCALE = 100
+
 def parse_best_params(logfile):
     logging.info(f"Reading log file: {logfile}")
     with open(logfile, 'r') as f:
@@ -120,7 +122,7 @@ def print_piece_square_tables(best_params):
         print(f"     ", end='')
         for i in range(64):
             key = f"PS_{piece}_{i}"
-            val = best_params.get(key, 0)
+            val = int(best_params.get(key, 0) * PST_SCALE)
             end_char = ', ' if (i % 8 != 7) else (',\n' if i != 63 else '\n')
             if i % 8 == 0 and i != 0:
                 print("     ", end='')  # align rows

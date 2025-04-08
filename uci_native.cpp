@@ -246,7 +246,7 @@ namespace
             else if (_p.scale > 1)
             {
                 const double s = _p.scale;
-                out << "type spin default " << _p.val / s << " min " << _p.min_val / s << " max " << _p.max_val / s;
+                out << "type string default " << _p.val / s;
             }
             else
             {
