@@ -275,7 +275,7 @@ namespace chess
 
         for (auto color: {BLACK, WHITE})
         {
-            for_each_square(state.occupied_co(color), [&](Square square)
+            for_each_square_r(state.occupied_co(color), [&](Square square)
             {
                 const auto piece_type = state.piece_type_at(square);
                 ASSERT (piece_type);

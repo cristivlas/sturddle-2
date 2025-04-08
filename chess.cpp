@@ -286,9 +286,9 @@ namespace chess
 
         /* Piece moves. */
         if (const auto non_pawns = our_pieces & ~pawns & from_mask)
-            for_each_square(non_pawns, [&](Square from_square) {
+            for_each_square_r(non_pawns, [&](Square from_square) {
                 const auto moves = attacks_mask(from_square, occupied) & to_mask;
-                for_each_square(moves, [&](Square to_square) {
+                for_each_square_r(moves, [&](Square to_square) {
                     add_move(moves_list, from_square, to_square);
                 });
             });
@@ -301,9 +301,9 @@ namespace chess
         {
             /* captures */
             const auto capturers = our_pawns;
-            for_each_square(capturers, [&](Square from_square) {
+            for_each_square_r(capturers, [&](Square from_square) {
                 const auto targets = BB_PAWN_ATTACKS[turn][from_square] & occupied_co(!turn) & to_mask;
-                for_each_square(targets, [&moves_list, from_square](Square to_square) {
+                for_each_square_r(targets, [&moves_list, from_square](Square to_square) {
                     add_pawn_moves(moves_list, from_square, to_square);
                 });
             });
@@ -328,13 +328,13 @@ namespace chess
 
             const auto sign = SIGN[turn];
             /* single pawn moves */
-            for_each_square(single_moves, [&moves_list, sign](Square to_square) {
+            for_each_square_r(single_moves, [&moves_list, sign](Square to_square) {
                 auto from_square = Square(to_square - 8 * sign);
                 add_pawn_moves(moves_list, from_square, to_square);
             });
 
             /* double pawn moves */
-            for_each_square(double_moves, [&moves_list, sign](Square to_square) {
+            for_each_square_r(double_moves, [&moves_list, sign](Square to_square) {
                 auto from_square = Square(to_square - 16 * sign);
                 add_move(moves_list, from_square, to_square);
             });
@@ -361,7 +361,7 @@ namespace chess
         if (is_check())
             return;
 
-        for_each_square((rooks & occupied_co(turn) & castling_rights), [&](Square rook_square)
+        for_each_square_r((rooks & occupied_co(turn) & castling_rights), [&](Square rook_square)
         {
             /* any pieces between the king and the rook? */
             if (between(king_square, rook_square) & occupied)
@@ -399,7 +399,7 @@ namespace chess
         auto capturers = pawns & occupied_co(turn) &
             BB_PAWN_ATTACKS[!turn][en_passant_square] & BB_RANKS[turn == WHITE ? 4 : 3];
 
-        for_each_square(capturers, [&](Square capturer) {
+        for_each_square_r(capturers, [&](Square capturer) {
             moves.emplace_back(capturer, en_passant_square);
         });
     }

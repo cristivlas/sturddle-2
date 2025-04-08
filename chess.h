@@ -398,9 +398,6 @@ namespace chess
     }
 
 
-    std::vector<int> scan_forward(Bitboard);
-
-
     INLINE constexpr int square_file(int square)
     {
         return square & 7;
@@ -1466,7 +1463,7 @@ namespace chess
             #if USE_PIECE_SQUARE_TABLES
                 const auto& table = select_piece_square_table(endgame, piece_type);
 
-                for_each_square(mask, [&](Square square) {
+                for_each_square_r(mask, [&](Square square) {
                     score += sign * table[square_index(square, color)];
                 });
             #endif /* USE_PIECE_SQUARE_TABLES */
@@ -1488,7 +1485,7 @@ namespace chess
     {
         int count = 0;
 
-        for_each_square(pawns & color_mask & mask, [&](Square p) {
+        for_each_square_r(pawns & color_mask & mask, [&](Square p) {
             const auto file_mask = bb_neighbour_files_mask[square_file(p)];
 
             count += bool(pawns & color_mask & file_mask) == connected;
@@ -1799,7 +1796,7 @@ namespace chess
 
             const auto victims = board.pieces_mask(piece_type, Color(color ^ 1));
 
-            for_each_square(victims, [&](Square square)
+            for_each_square_r(victims, [&](Square square)
             {
                 auto v = estimate_static_exchanges(board, color, square, piece_type);
                 value = std::max(value, v);
