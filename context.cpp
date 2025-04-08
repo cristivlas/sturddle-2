@@ -197,7 +197,8 @@ std::map<std::string, Param> _get_param_info()
                 *elem.second._val,
                 elem.second._min,
                 elem.second._max,
-                elem.second._group
+                elem.second._group,
+                elem.second._scale
             });
     }
 
@@ -262,21 +263,6 @@ std::map<std::string, int> _get_params()
     }
     cfg.emplace(std::string("Hash"), int(TranspositionTable::get_hash_size()));
     return cfg;
-}
-
-
-void assert_param_ref()
-{
-#if REFCOUNT_PARAM
-    for (auto& p : Config::_namespace)
-    {
-        if (p.second._val->_refcount == 0)
-            search::Context::log_message(LogLevel::ERROR, p.first + ": unreferenced");
-
-        ASSERT_ALWAYS(p.second._val->_refcount);
-        p.second._val->_refcount = 0;
-    }
-#endif /* REFCOUNT_PARAM */
 }
 
 

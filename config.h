@@ -48,21 +48,7 @@ constexpr score_t CHECKMATE = SCORE_MAX - 1;
 
 constexpr score_t MATE_LOW  = -MATE_HIGH;
 
-
-#if REFCOUNT_PARAM
-/* Instrumentation & debug: count parameter usage */
-struct Val
-{
-    int _v;
-    mutable count_t _refcount = 0;
-
-    explicit Val(int v) : _v(v) {}
-    Val& operator=(int v) { _v = v; return *this; }
-    INLINE operator int() const { ++_refcount; return _v; }
-};
-#else
 using Val = int;
-#endif /* REFCOUNT_PARAM */
 
 #if defined(CONFIG_IMPL)
 #include <map>
@@ -76,7 +62,8 @@ struct Config
         Val* const  _val = nullptr;
         const int   _min = 0;
         const int   _max = 0;
-        std::string _group;
+        const std::string _group;
+        const size_t _scale = 1;
     };
 
     using Namespace = std::map<std::string, Param>;
@@ -116,6 +103,8 @@ Config::Namespace Config::_namespace = {
 #if PS_PAWN_TUNING_ENABLED || PS_KNIGHT_TUNING_ENABLED || PS_BISHOP_TUNING_ENABLED || \
     PS_ROOK_TUNING_ENABLED || PS_QUEEN_TUNING_ENABLED  || PS_KING_TUNING_ENABLED
 
+constexpr size_t PST_SCALE = 100;
+
 template <chess::PieceType PT, bool EndGame = false>
 struct PieceSquareTuningEnabler
 {
@@ -124,7 +113,7 @@ struct PieceSquareTuningEnabler
         for (int s = 0; s < 64; ++s)
         {
             const std::string param_name = "PS_" + std::to_string(PT) + "_" + std::to_string(s);
-            Config::_namespace.emplace(param_name.c_str(), Config::Param{ &SQUARE_TABLE[PT][s], -100, 100, "Weights" });
+            Config::_namespace.emplace(param_name.c_str(), Config::Param{ &SQUARE_TABLE[PT][s], -100, 100, "", PST_SCALE});
         }
     }
 };
@@ -140,7 +129,7 @@ struct PieceSquareTuningEnabler
                 const std::string param_name = "PS_1_" + std::to_string(s);
                 Config::_namespace.emplace(
                     param_name.c_str(),
-                    Config::Param{ &SQUARE_TABLE[1][s], -100, 100, "Weights" }
+                    Config::Param{ &SQUARE_TABLE[1][s], -100, 100, "", PST_SCALE }
                 );
             }
         }
@@ -175,7 +164,7 @@ struct PieceSquareTuningEnabler
                 const std::string param_name = "PS_KEG_" + std::to_string(s);
                 Config::_namespace.emplace(
                     param_name.c_str(),
-                    Config::Param{ &ENDGAME_KING_SQUARE_TABLE[s], -100, 100, "Weights" }
+                    Config::Param{ &ENDGAME_KING_SQUARE_TABLE[s], -100, 100, "", PST_SCALE }
                 );
             }
         }

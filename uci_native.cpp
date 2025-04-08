@@ -240,12 +240,32 @@ namespace
         {
             OptionBase::print(out);
             if (_p.min_val == 0 && _p.max_val == 1)
+            {
                 out << "type check default " << std::boolalpha << bool(_p.val);
+            }
+            else if (_p.scale > 1)
+            {
+                const double s = _p.scale;
+                out << "type spin default " << _p.val / s << " min " << _p.min_val / s << " max " << _p.max_val / s;
+            }
             else
+            {
                 out << "type spin default " << _p.val << " min " << _p.min_val << " max " << _p.max_val;
+            }
         }
 
-        void set(std::string_view value) override { _set_param(_name, to_int(value), true); }
+        void set(std::string_view value) override
+        {
+            if (_p.scale > 1)
+            {
+                const double v = std::stod(std::string(value));
+                _set_param(_name, v * _p.scale, true);
+            }
+            else
+            {
+                _set_param(_name, to_int(value), true);
+            }
+        }
     };
 
     struct OptionSyzygy : public OptionBase

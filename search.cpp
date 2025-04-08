@@ -178,8 +178,6 @@ void TranspositionTable::clear()
 
 /* static */ void TranspositionTable::clear_shared_hashtable()
 {
-    assert_param_ref();
-
     _table.clear();
     Context::clear_moves_cache();
 }

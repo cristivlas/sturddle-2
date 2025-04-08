@@ -37,11 +37,17 @@
 constexpr auto FIRST_EXCHANGE_PLY = PLY_MAX;
 
 /* Configuration API */
-struct Param { int val = 0; int min_val; int max_val; std::string group; };
+struct Param {
+    int val = 0;
+    int min_val;
+    int max_val;
+    std::string group;
+    size_t scale = 1;
+};
+
 extern std::map<std::string, Param> _get_param_info();
 extern void _set_param(const std::string&, int value, bool echo=false);
 extern std::map<std::string, int> _get_params();
-extern void assert_param_ref();
 
 namespace search
 {
