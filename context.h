@@ -42,7 +42,7 @@ struct Param {
     int min_val;
     int max_val;
     std::string group;
-    size_t scale = 1;
+    bool normal = false;
 };
 
 extern std::map<std::string, Param> _get_param_info();

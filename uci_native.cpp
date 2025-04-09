@@ -243,10 +243,10 @@ namespace
             {
                 out << "type check default " << std::boolalpha << bool(_p.val);
             }
-            else if (_p.scale > 1)
+            else if (_p.normal)
             {
-                const double s = _p.scale;
-                out << "type string default " << _p.val / s;
+                const auto scaled_val = 2.0 * (_p.val - _p.min_val) / (_p.max_val - _p.min_val) - 1;
+                out << "type string default " << scaled_val;
             }
             else
             {
@@ -256,10 +256,12 @@ namespace
 
         void set(std::string_view value) override
         {
-            if (_p.scale > 1)
+            if (_p.normal)
             {
                 const double v = std::stod(std::string(value));
-                _set_param(_name, v * _p.scale, true);
+
+                const auto val = std::round(((v + 1) / 2) * (_p.max_val - _p.min_val) + _p.min_val);
+                _set_param(_name, int(val), true);
             }
             else
             {

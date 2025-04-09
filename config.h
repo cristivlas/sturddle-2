@@ -63,7 +63,7 @@ struct Config
         const int   _min = 0;
         const int   _max = 0;
         const std::string _group;
-        const size_t _scale = 1;
+        const bool  _normal = false;
     };
 
     using Namespace = std::map<std::string, Param>;
@@ -103,7 +103,9 @@ Config::Namespace Config::_namespace = {
 #if PS_PAWN_TUNING_ENABLED || PS_KNIGHT_TUNING_ENABLED || PS_BISHOP_TUNING_ENABLED || \
     PS_ROOK_TUNING_ENABLED || PS_QUEEN_TUNING_ENABLED  || PS_KING_TUNING_ENABLED
 
-constexpr size_t PST_SCALE = 100;
+
+#define PST_RANGE -1000, 1000, "PST", true
+
 
 template <chess::PieceType PT, bool EndGame = false>
 struct PieceSquareTuningEnabler
@@ -113,7 +115,7 @@ struct PieceSquareTuningEnabler
         for (int s = 0; s < 64; ++s)
         {
             const std::string param_name = "PS_" + std::to_string(PT) + "_" + std::to_string(s);
-            Config::_namespace.emplace(param_name.c_str(), Config::Param{ &SQUARE_TABLE[PT][s], -100, 100, "", PST_SCALE});
+            Config::_namespace.emplace(param_name.c_str(), Config::Param{ &SQUARE_TABLE[PT][s], PST_RANGE });
         }
     }
 };
@@ -127,10 +129,7 @@ struct PieceSquareTuningEnabler
             for (int s = 8; s < 56; ++s)
             {
                 const std::string param_name = "PS_1_" + std::to_string(s);
-                Config::_namespace.emplace(
-                    param_name.c_str(),
-                    Config::Param{ &SQUARE_TABLE[1][s], -100, 100, "", PST_SCALE }
-                );
+                Config::_namespace.emplace(param_name.c_str(), Config::Param{ &SQUARE_TABLE[1][s], PST_RANGE });
             }
         }
     };
@@ -164,7 +163,7 @@ struct PieceSquareTuningEnabler
                 const std::string param_name = "PS_KEG_" + std::to_string(s);
                 Config::_namespace.emplace(
                     param_name.c_str(),
-                    Config::Param{ &ENDGAME_KING_SQUARE_TABLE[s], -100, 100, "", PST_SCALE }
+                    Config::Param{ &ENDGAME_KING_SQUARE_TABLE[s], PST_RANGE }
                 );
             }
         }

@@ -198,7 +198,7 @@ std::map<std::string, Param> _get_param_info()
                 elem.second._min,
                 elem.second._max,
                 elem.second._group,
-                elem.second._scale
+                elem.second._normal
             });
     }
 

@@ -50,12 +50,13 @@ if __name__ == '__main__':
     params = {}
     groups = set()
 
-    for name, (val, lo, hi, grp, scale) in  get_param_info().items():
+    for name, (val, lo, hi, grp, normal) in  get_param_info().items():
         if grp == 'Settings':
             continue
         groups.add(grp)
-        if scale > 1:
-            params[name] = val / scale, lo / scale, hi / scale, grp
+        if normal:
+            val = 2 * (val - lo) / (hi - lo) - 1
+            params[name] = val, -1.0, 1.0, grp
         else:
             params[name] = val, lo, hi, grp
 

@@ -7,7 +7,8 @@ import logging
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-PST_SCALE = 100
+PST_SCALE = 1000
+
 
 def parse_best_params(logfile):
     logging.info(f"Reading log file: {logfile}")
