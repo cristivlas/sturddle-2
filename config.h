@@ -24,10 +24,6 @@
  * This file contains parameters that control the behavior of the
  * search and evaluation functions, and infrastructure for exposing
  * them to Python scripts for the purpose of tuning the engine.
- *
- * To expose ALL settings, compile with -DTUNING_ENABLED -DWEIGHT_TUNING_ENABLED
- *
- * To cherry-pick, replace DECLARE_VALUE with DECLARE_PARAM
  */
 
 constexpr int ONE_PLY = 16; /* fractional extensions */
@@ -179,12 +175,9 @@ struct PieceSquareTuningEnabler
 
 #endif /* !CONFIG_IMPL */
 
-/*
- * Runtime params that are always visible (regardless of TUNING_ENABLED).
- */
 #if !defined(CONFIG_IMPL)
   #define DECLARE_ALIAS(n, a, v, v_min, v_max) extern Val n;
-  #define DECLARE_NORMAL(n, a, v, v_min, v_max) extern Val n;
+  #define DECLARE_NORMAL(n, v, v_min, v_max) extern Val n;
 #else
   #define DECLARE_ALIAS(n, a, v, v_min, v_max) Val n(v); Config p_##n(_TOSTR(a), &n, v_min, v_max);
   #define DECLARE_NORMAL(n, v, v_min, v_max) Val n(v); Config p_##n(_TOSTR(n), &n, v_min, v_max, true);
@@ -194,7 +187,8 @@ struct PieceSquareTuningEnabler
 #define DECLARE_PARAM(n, v, v_min, v_max) DECLARE_ALIAS(n, n, v, v_min, v_max)
 
 #if TUNING_ENABLED
-  #define DECLARE_VALUE(n, v, v_min, v_max) DECLARE_PARAM(n, v, v_min, v_max)
+//#define DECLARE_VALUE(n, v, v_min, v_max) DECLARE_PARAM(n, v, v_min, v_max)
+  #define DECLARE_VALUE(n, v, v_min, v_max) DECLARE_NORMAL(n, v, v_min, v_max)
 #else
  /*
   * tuning disabled: params become compile-time constants
@@ -224,7 +218,7 @@ GROUP(Settings)
     DECLARE_ALIAS( SMP_CORES, Threads,         THREAD_VAL,  1,  THREAD_MAX)
 #endif
 
-DECLARE_VALUE(  ASPIRATION_WINDOW,                    1,    0,       1)
+DECLARE_CONST(  ASPIRATION_WINDOW,                    1,    0,       1)
 DECLARE_CONST(  DEBUG_CAPTURES,                       0,    0,       1)
 #if DATAGEN
     DECLARE_CONST(  DATAGEN_SCORE_THRESHOLD,          0,    0,   30000)
@@ -234,8 +228,8 @@ DECLARE_CONST(  DEBUG_CAPTURES,                       0,    0,       1)
     DECLARE_PARAM(  EVAL_FUZZ,                        0,    0,     100)
 #endif
 DECLARE_CONST(  FIFTY_MOVES_RULE,                     1,    0,       1)
-DECLARE_VALUE(  FUTILITY_PRUNING,                     1,    0,       1)
-DECLARE_VALUE(  MULTICUT,                             1,    0,       1)
+DECLARE_CONST(  FUTILITY_PRUNING,                     1,    0,       1)
+DECLARE_CONST(  MULTICUT,                             1,    0,       1)
 
 GROUP(Search)
 DECLARE_VALUE(  CAPTURES_SCALE,                      99,    0,     150)
