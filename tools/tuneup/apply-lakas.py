@@ -3,11 +3,31 @@ import argparse
 import re
 import ast
 import logging
+import os
+import sys
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-PST_SCALE = 1000
+
+def root_path():
+    return os.path.abspath(os.path.join(os.path.split(sys.argv[0])[0], '../..'))
+
+sys.path.append(root_path())
+from chess_engine import *
+
+params = get_param_info()
+print(params)
+
+
+def scale_param(name, val):
+    p = params.get(name)
+    if p:
+        (default_val, lo, hi, grp, normal) = p
+        if normal:
+            val = (val + 1) * (hi - lo) / 2 + lo
+
+    return val
 
 
 def parse_best_params(logfile):
@@ -123,7 +143,7 @@ def print_piece_square_tables(best_params):
         print(f"     ", end='')
         for i in range(64):
             key = f"PS_{piece}_{i}"
-            val = int(best_params.get(key, 0) * PST_SCALE)
+            val = int(scale_param(key, best_params.get(key, 0)))
             end_char = ', ' if (i % 8 != 7) else (',\n' if i != 63 else '\n')
             if i % 8 == 0 and i != 0:
                 print("     ", end='')  # align rows
