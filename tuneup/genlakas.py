@@ -21,7 +21,7 @@ sys.path.append(root_path())
 from chess_engine import *
 
 
-def get_engine_path(args, windows):
+def get_engine_path(args, windows=False):
     try:
         import uci
         engine = make_path('sturddle.py')
@@ -29,7 +29,9 @@ def get_engine_path(args, windows):
         # use native (built-in) uci version
         engine = make_path('main.py')
     if windows:
-        engine = sys.executable + ' ' + engine
+        with open('engine.bat', 'w') as out:
+            out.write(sys.executable + ' ' + engine)
+        engine = 'engine.bat'
     return engine
 
 optimizers = ('oneplusone', 'tbpsa', 'bayesopt', 'spsa', 'cmaes', 'ngopt')
@@ -86,20 +88,35 @@ if __name__ == '__main__':
     time_control = f'--base-time-sec {tc[0]} --inc-time-sec {tc[1] if len(tc) > 1 else 0}'
 
     # detect cutechess-cli location
-    cutechess = 'cutechess-cli.exe' if sysconfig.get_platform().startswith('win') else 'cutechess-cli'
-    cutechess = shutil.which(cutechess)
+    cutechess = shutil.which('cutechess-cli')
     if cutechess is None:
         raise RuntimeError('Could not locate cutechess-cli')
 
     windows = sysconfig.get_platform().startswith('win')
 
     # fill out the script template
-    script = f'''#!/usr/bin/env bash
+    if windows:
+        script = f'''
+python {os.path.join(args.lakas_path, 'lakas.py')} ^
+    --budget {args.budget} --games-per-budget {args.games_per_budget} ^
+    --concurrency {args.concurrency} ^
+    --engine {get_engine_path(args, True)} ^
+    --input-data-file {args.data_file} ^
+    --opening-file {os.path.join(args.lakas_path, 'start_opening/ogpt_chess_startpos.epd')} ^
+    --optimizer {args.strategy} ^
+    --optimizer-log-file {args.log_file} ^
+    --output-data-file {args.data_file} ^
+    --match-manager-path "{cutechess}" ^
+    {time_control} ^
+    --input-param="{{{"".join(tune_params).replace('\\\n', ' ')} }}"
+'''
+    else:
+        script = f'''#!/usr/bin/env bash
 
 python3 {os.path.join(args.lakas_path, 'lakas.py')} \\
     --budget {args.budget} --games-per-budget {args.games_per_budget} \\
     --concurrency {args.concurrency} \\
-    --engine {get_engine_path(args, windows)} \\
+    --engine {get_engine_path(args)} \\
     --input-data-file {args.data_file} \\
     --opening-file {os.path.join(args.lakas_path, 'start_opening/ogpt_chess_startpos.epd')} \\
     --optimizer {args.strategy} \\
