@@ -83,22 +83,24 @@ struct Config
 std::string Config::_group;
 #define GROUP(x) Config::Group __##x(_TOSTR(x));
 
+constexpr bool normalize_weights = true;
+
 Config::Namespace Config::_namespace = {
 #if WEIGHT_TUNING_ENABLED
     /* Piece weights */
-    { "PAWN", Config::Param{ &chess::WEIGHT[chess::PieceType::PAWN], 0, 150, "Weights" } },
-    { "KNIGHT", Config::Param{ &chess::WEIGHT[chess::PieceType::KNIGHT], 0, 400, "Weights" } },
-    { "BISHOP", Config::Param{ &chess::WEIGHT[chess::PieceType::BISHOP], 0, 400, "Weights" } },
-    { "ROOK", Config::Param{ &chess::WEIGHT[chess::PieceType::ROOK], 0, 700, "Weights" } },
-    { "QUEEN", Config::Param{ &chess::WEIGHT[chess::PieceType::QUEEN], 0, 1300, "Weights" } },
+    { "PAWN", Config::Param{ &chess::WEIGHT[chess::PieceType::PAWN], 0, 150, "Weights", normalize_weights} },
+    { "KNIGHT", Config::Param{ &chess::WEIGHT[chess::PieceType::KNIGHT], 0, 400, "Weights", normalize_weights } },
+    { "BISHOP", Config::Param{ &chess::WEIGHT[chess::PieceType::BISHOP], 0, 400, "Weights", normalize_weights } },
+    { "ROOK", Config::Param{ &chess::WEIGHT[chess::PieceType::ROOK], 0, 700, "Weights", normalize_weights } },
+    { "QUEEN", Config::Param{ &chess::WEIGHT[chess::PieceType::QUEEN], 0, 1300, "Weights", normalize_weights } },
 #endif /* WEIGHT_TUNING_ENABLED */
 };
+
 
 #if USE_PIECE_SQUARE_TABLES
 
 #if PS_PAWN_TUNING_ENABLED || PS_KNIGHT_TUNING_ENABLED || PS_BISHOP_TUNING_ENABLED || \
     PS_ROOK_TUNING_ENABLED || PS_QUEEN_TUNING_ENABLED  || PS_KING_TUNING_ENABLED
-
 
 #define PST_RANGE -1000, 1000, "PST", true
 

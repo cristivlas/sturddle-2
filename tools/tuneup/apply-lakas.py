@@ -25,7 +25,7 @@ def scale_param(name, val):
     if p:
         (default_val, lo, hi, grp, normal) = p
         if normal:
-            val = (val + 1) * (hi - lo) / 2 + lo
+            val = int((val + 1) * (hi - lo) / 2 + lo)
 
     return val
 
@@ -67,7 +67,7 @@ def update_header(header_file, best_params):
     for line in lines:
         original_line = line
         for param, value in best_params.items():
-            value = int(scale_param(param, value))
+            value = scale_param(param, value)
 
             # This pattern matches lines like: DECLARE_VALUE(  PARAM_NAME, VALUE, MIN, MAX)
             pattern = re.compile(rf'(DECLARE_VALUE\s*\(\s*{param}\s*,\s*)(-?\d+)(\s*,\s*-?\d+\s*,\s*-?\d+\s*\))')
@@ -120,7 +120,7 @@ def print_weights(best_params):
 
     for k in m_sym:
         if k in best_params:
-            val = best_params[k]
+            val = scale_param(k, best_params[k])
         else:
             val = 20000
         m_map[m_sym[k]] = val
@@ -149,7 +149,7 @@ def print_piece_square_tables(best_params):
         print(f"     ", end='')
         for i in range(64):
             key = f"PS_{piece}_{i}"
-            val = int(scale_param(key, best_params.get(key, 0)))
+            val = scale_param(key, best_params.get(key, 0))
             end_char = ', ' if (i % 8 != 7) else (',\n' if i != 63 else '\n')
             if i % 8 == 0 and i != 0:
                 print("     ", end='')  # align rows
