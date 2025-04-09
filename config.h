@@ -72,9 +72,9 @@ struct Config
     static std::string _group;
 
     /* Register parameter names with Config::_namespace */
-    Config(const char* n, Val* v, int v_min, int v_max)
+    Config(const char* n, Val* v, int v_min, int v_max, bool normalized = false)
     {
-        _namespace.emplace(n, Config::Param{ v, v_min, v_max, Config::_group });
+        _namespace.emplace(n, Config::Param{ v, v_min, v_max, Config::_group, normalized });
     }
 
     struct Group
@@ -184,8 +184,10 @@ struct PieceSquareTuningEnabler
  */
 #if !defined(CONFIG_IMPL)
   #define DECLARE_ALIAS(n, a, v, v_min, v_max) extern Val n;
+  #define DECLARE_NORMAL(n, a, v, v_min, v_max) extern Val n;
 #else
   #define DECLARE_ALIAS(n, a, v, v_min, v_max) Val n(v); Config p_##n(_TOSTR(a), &n, v_min, v_max);
+  #define DECLARE_NORMAL(n, v, v_min, v_max) Val n(v); Config p_##n(_TOSTR(n), &n, v_min, v_max, true);
 #endif /* CONFIG_IMPL */
 
 #define DECLARE_CONST(n, v, v_min, v_max) static constexpr int n = v; static_assert(v >= v_min && v <= v_max);
@@ -277,10 +279,10 @@ DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
 /* -1 disables pin awareness */
 DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 
-DECLARE_VALUE(  SINGULAR_ACCURACY,                  127,    1,     500)
-DECLARE_VALUE(  SINGULAR_COEFF,                      45,    0,     100)
-DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                2,    0,      20)
-DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,        1354,    0,    2000)
+DECLARE_NORMAL( SINGULAR_ACCURACY,                  127,    1,     500)
+DECLARE_NORMAL( SINGULAR_COEFF,                      45,    0,     100)
+DECLARE_NORMAL( SINGULAR_DEPTH_MARGIN,                2,    0,      20)
+DECLARE_NORMAL( SINGULAR_DOUBLE_EXT_MARGIN,        1354,    0,    2000)
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 DECLARE_VALUE(  STANDPAT_MARGIN,                     85,    0,    1000)

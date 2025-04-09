@@ -67,12 +67,18 @@ def update_header(header_file, best_params):
     for line in lines:
         original_line = line
         for param, value in best_params.items():
+            value = int(scale_param(param, value))
+
             # This pattern matches lines like: DECLARE_VALUE(  PARAM_NAME, VALUE, MIN, MAX)
             pattern = re.compile(rf'(DECLARE_VALUE\s*\(\s*{param}\s*,\s*)(-?\d+)(\s*,\s*-?\d+\s*,\s*-?\d+\s*\))')
             match = pattern.search(line)
 
             if not match:
                 pattern = re.compile(rf'(DECLARE_PARAM\s*\(\s*{param}\s*,\s*)(-?\d+)(\s*,\s*-?\d+\s*,\s*-?\d+\s*\))')
+                match = pattern.search(line)
+
+            if not match:
+                pattern = re.compile(rf'(DECLARE_NORMAL\s*\(\s*{param}\s*,\s*)(-?\d+)(\s*,\s*-?\d+\s*,\s*-?\d+\s*\))')
                 match = pattern.search(line)
 
             if match:
