@@ -425,8 +425,10 @@ namespace search
         static void set_tb_cardinality(int n) { _tb_cardinality = n; }
         static int tb_cardinality() { return _tb_cardinality.load(std::memory_order_relaxed); }
 
+        /* USE_ROOT_MOVES */
         const State& last_play() const;
         void set_last_play(const State&);
+        static void clear_last_play();
 
         /*
          * Python callbacks

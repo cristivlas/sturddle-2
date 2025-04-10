@@ -579,7 +579,7 @@ private:
         }
     }
 
-    INLINE chess::BaseMove search_book()
+    INLINE chess::BaseMove search_book(bool validate = true)
     {
     #if NATIVE_BOOK
         if (!_opening_book.is_open())
@@ -598,7 +598,7 @@ private:
         {
             const auto move = chess::BaseMove::from_raw(raw_move);
 
-            if (_buf._state.is_valid(move))
+            if (!validate || _buf._state.is_valid(move))
             {
                 LOG_DEBUG(std::format("Book move: {} in [{}]", move.uci(), search::Context::epd(_buf._state)));
                 return move;
@@ -609,6 +609,7 @@ private:
             }
         }
     #else
+        /* Deprecated. Call into Python to look up Polyglot opening book. */
         if (const auto move = search::Context::_book_lookup(_buf._state, _best_book_move))
         {
             return move;
@@ -1092,6 +1093,7 @@ void UCI::newgame()
 {
     stop(true);
     search::TranspositionTable::clear_shared_hashtable();
+    search::Context::clear_last_play();
     set_start_position();
     _book_depth = max_depth;
 }
@@ -1204,7 +1206,7 @@ INLINE score_t UCI::search(F set_time_limit)
 
 #if NATIVE_BOOK && USE_BOOK_HINT
     if (_ply_count < 12)
-        ctxt._prev = search_book();
+        ctxt._prev = search_book(false /* do not validate */);
 #endif /* USE_BOOK_HINT */
 
     const auto score = search::iterative(ctxt, _tt, _depth + 1);

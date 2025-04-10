@@ -1980,6 +1980,11 @@ namespace search
         _moves_cache[tid()].write(state, moves_list);
     }
 
+    /* static */ void Context::clear_last_play()
+    {
+        for (auto& state : _last_play)
+            state = State();
+    }
 
     /*---------------------------------------------------------------------
      * MoveMaker

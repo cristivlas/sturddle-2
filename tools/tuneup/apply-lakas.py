@@ -17,7 +17,7 @@ sys.path.append(root_path())
 from chess_engine import *
 
 params = get_param_info()
-print(params)
+#print(params)
 
 
 def scale_param(name, val):
