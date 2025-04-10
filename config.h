@@ -89,10 +89,10 @@ Config::Namespace Config::_namespace = {
 #if WEIGHT_TUNING_ENABLED
     /* Piece weights */
     { "PAWN", Config::Param{ &chess::WEIGHT[chess::PieceType::PAWN], 0, 150, "Weights", normalize_weights} },
-    { "KNIGHT", Config::Param{ &chess::WEIGHT[chess::PieceType::KNIGHT], 0, 400, "Weights", normalize_weights } },
-    { "BISHOP", Config::Param{ &chess::WEIGHT[chess::PieceType::BISHOP], 0, 400, "Weights", normalize_weights } },
-    { "ROOK", Config::Param{ &chess::WEIGHT[chess::PieceType::ROOK], 0, 700, "Weights", normalize_weights } },
-    { "QUEEN", Config::Param{ &chess::WEIGHT[chess::PieceType::QUEEN], 0, 1300, "Weights", normalize_weights } },
+    { "KNIGHT", Config::Param{ &chess::WEIGHT[chess::PieceType::KNIGHT], 200, 400, "Weights", normalize_weights } },
+    { "BISHOP", Config::Param{ &chess::WEIGHT[chess::PieceType::BISHOP], 200, 400, "Weights", normalize_weights } },
+    { "ROOK", Config::Param{ &chess::WEIGHT[chess::PieceType::ROOK], 300, 700, "Weights", normalize_weights } },
+    { "QUEEN", Config::Param{ &chess::WEIGHT[chess::PieceType::QUEEN], 600, 1300, "Weights", normalize_weights } },
 #endif /* WEIGHT_TUNING_ENABLED */
 };
 
