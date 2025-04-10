@@ -63,6 +63,7 @@ def update_header(header_file, best_params):
     with open(header_file, 'r') as f:
         lines = f.readlines()
 
+    mod_count = 0
     updated_lines = []
     for line in lines:
         original_line = line
@@ -100,11 +101,15 @@ def update_header(header_file, best_params):
                 line = pattern.sub(replacement, line)
                 if line != original_line:
                     logging.info(f"Updated line: '{original_line.strip()}' to '{line.strip()}'")
+                    mod_count += 1
         updated_lines.append(line)
 
-    logging.info(f"Writing updated header file: {header_file}")
-    with open(header_file, 'w') as f:
-        f.writelines(updated_lines)
+    if mod_count > 0:
+        logging.info(f"Writing updated header file: {header_file}")
+        with open(header_file, 'w') as f:
+            f.writelines(updated_lines)
+    else:
+        logging.info(f"Unmodified: {header_file}")
 
 
 def print_weights(best_params):
