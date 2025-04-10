@@ -134,16 +134,6 @@ def print_weights(best_params):
     print(f'#define DEFAULT_WEIGHTS {{ {weights} }}')
 
 
-#def print_fp_margins(best_params):
-#    print("    int fp_margins[] = {")
-#    print("        0,")
-#    for i in range(1, 17):
-#        k = f"FP_{i}"
-#        val = best_params.get(k, 0)
-#        print(f"        {val}, /* {i} */")
-#    print("    };")
-
-
 def print_piece_square_tables(best_params):
     piece_name = ['PAWN', 'KNIGHT', 'BISHOP', 'ROOK', 'QUEEN', 'KING']
 
@@ -184,9 +174,7 @@ def main():
     best_params = parse_best_params(args.logfile)
     if best_params:
         update_header(args.config, best_params)
-        logging.info("Header file updated successfully.")
         print_weights(best_params)
-        # print_fp_margins(best_params)
 
         if any(k.startswith('PS_') for k in best_params):
             print_piece_square_tables(best_params)
