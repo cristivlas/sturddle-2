@@ -102,7 +102,7 @@ Config::Namespace Config::_namespace = {
 #if PS_PAWN_TUNING_ENABLED || PS_KNIGHT_TUNING_ENABLED || PS_BISHOP_TUNING_ENABLED || \
     PS_ROOK_TUNING_ENABLED || PS_QUEEN_TUNING_ENABLED  || PS_KING_TUNING_ENABLED
 
-#define PST_RANGE -1000, 1000, "PST", true
+#define PST_RANGE -150, 150, "PST", true
 
 
 template <chess::PieceType PT, bool EndGame = false>

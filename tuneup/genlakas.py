@@ -96,11 +96,13 @@ if __name__ == '__main__':
 
     # fill out the script template
     if windows:
+        input_param=''.join(tune_params).replace('\\\n', ' ')
         script = f'''
 python {os.path.join(args.lakas_path, 'lakas.py')} ^
     --budget {args.budget} --games-per-budget {args.games_per_budget} ^
     --concurrency {args.concurrency} ^
     --engine {get_engine_path(args, True)} ^
+    --enhance-threads 1 ^
     --input-data-file {args.data_file} ^
     --opening-file {os.path.join(args.lakas_path, 'start_opening/ogpt_chess_startpos.epd')} ^
     --optimizer {args.strategy} ^
@@ -108,7 +110,7 @@ python {os.path.join(args.lakas_path, 'lakas.py')} ^
     --output-data-file {args.data_file} ^
     --match-manager-path "{cutechess}" ^
     {time_control} ^
-    --input-param="{{{"".join(tune_params).replace('\\\n', ' ')} }}"
+    --input-param="{{{input_param} }}"
 '''
     else:
         script = f'''#!/usr/bin/env bash
@@ -117,6 +119,7 @@ python3 {os.path.join(args.lakas_path, 'lakas.py')} \\
     --budget {args.budget} --games-per-budget {args.games_per_budget} \\
     --concurrency {args.concurrency} \\
     --engine {get_engine_path(args)} \\
+    --enhance-threads 1 \\
     --input-data-file {args.data_file} \\
     --opening-file {os.path.join(args.lakas_path, 'start_opening/ogpt_chess_startpos.epd')} \\
     --optimizer {args.strategy} \\
