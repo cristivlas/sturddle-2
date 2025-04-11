@@ -344,7 +344,7 @@ namespace chess
         BB_SQUARES[A1] | BB_SQUARES[H1] | BB_SQUARES[A8] | BB_SQUARES[H8];
 
 
-#define DEFAULT_WEIGHTS { 0, 85, 319, 343, 522, 986, 20000 }
+#define DEFAULT_WEIGHTS { 0, 77, 319, 326, 514, 999, 20000 }
 
 
     /* Piece values */
