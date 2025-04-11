@@ -988,9 +988,9 @@ namespace search
      */
     INLINE int null_move_reduction(const Context& ctxt)
     {
-        return NULL_MOVE_REDUCTION /* base reduction */
-            + ctxt.depth() / NULL_MOVE_DEPTH_DIV
-            + std::min(ctxt.depth() / 2, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_DIV);
+        return NULL_MOVE_REDUCTION_BASE /* base reduction */
+            + ctxt.depth() / NULL_MOVE_REDUCTION_DEPTH_DIV
+            + std::min(ctxt.depth() / 2, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_REDUCTION_DIV);
     }
 
 
@@ -1091,7 +1091,7 @@ namespace search
         ctxt->_multicut_allowed = _multicut_allowed && MULTICUT;
 
         for (auto side : { chess::BLACK, chess::WHITE })
-            ctxt->_null_move_allowed[side] = _null_move_allowed[side] && (NULL_MOVE_REDUCTION > 0);
+            ctxt->_null_move_allowed[side] = _null_move_allowed[side] && (NULL_MOVE_REDUCTION_BASE > 0);
 
         ctxt->_tt = _tt;
         ctxt->_alpha = -_beta;
@@ -1099,7 +1099,7 @@ namespace search
         if (ctxt->is_null_move())
         {
             ASSERT(null_move);
-            ASSERT(NULL_MOVE_REDUCTION > 0);
+            ASSERT(NULL_MOVE_REDUCTION_BASE > 0);
 
             ctxt->_beta = -_beta + 1;
 

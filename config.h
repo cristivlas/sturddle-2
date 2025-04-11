@@ -251,12 +251,13 @@ DECLARE_VALUE(  NNUE_MAX_EVAL,                      496,    0,    1000)
 #endif /* WITH_NNUE */
 
 DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,               3,    0,     100)
-DECLARE_VALUE(  NULL_MOVE_DEPTH_DIV,                  4,    1,     100)
-DECLARE_VALUE(  NULL_MOVE_DIV,                      278,    1,    1000)
-DECLARE_VALUE(  NULL_MOVE_REDUCTION,                  4,    0,     100)
 DECLARE_VALUE(  NULL_MOVE_IMPROVEMENT_DIV,           72,    1,    1000)
 DECLARE_VALUE(  NULL_MOVE_MARGIN,                   611,    0,    1000)
 DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  3,    0,      20)
+
+DECLARE_VALUE(  NULL_MOVE_REDUCTION_BASE,             4,    0,     100)
+DECLARE_VALUE(  NULL_MOVE_REDUCTION_DEPTH_DIV,        4,    1,     100)
+DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,            278,    1,    1000)
 
 /* Ensured minimum depth when verifying */
 DECLARE_VALUE(  NULL_MOVE_MIN_DRAUGHT,                0,   -1,      10)
