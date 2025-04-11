@@ -126,6 +126,8 @@ def print_weights(best_params):
     for k in m_sym:
         if k in best_params:
             val = scale_param(k, best_params[k])
+        elif k in params:
+            val = params[k][0]
         else:
             val = 20000
         m_map[m_sym[k]] = val
