@@ -50,7 +50,7 @@ namespace
 
 
 
-#if !WITH_NNUE /* HCE ^/
+#if !WITH_NNUE /* HCE */
     static INLINE int eval_center(const State& state, int pc)
     {
         int attacks = 0;
