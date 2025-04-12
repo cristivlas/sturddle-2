@@ -1,14 +1,10 @@
 #pragma once
+/* Evaluation helpers called by search::Context::eval_tactical and other places.  */
 
 #include "chess.h"
 
 namespace
 {
-    /*----------------------------------------------------------------------
-     * Tactical evaluations.
-     * Hand-crafted evaluations are not compiled when using NNUE evals.
-     * All tactical scores are computed from the white side's perspective.
-     *----------------------------------------------------------------------*/
     using namespace chess;
     using search::Context;
 
@@ -48,7 +44,11 @@ namespace
         return score;
     }
 
-
+    /*----------------------------------------------------------------------
+     * Tactical evaluations.
+     * Hand-crafted evaluations are not compiled when using NNUE evals.
+     * All tactical scores are computed from the white side's perspective.
+     *----------------------------------------------------------------------*/
 
 #if !WITH_NNUE /* HCE */
     static INLINE int eval_center(const State& state, int pc)

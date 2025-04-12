@@ -960,6 +960,8 @@ namespace chess
         /* Compile-time sigmoid in range [0,32] */
         INLINE constexpr double _e(int x)
         {
+            ASSERT(abs(x) < 33);
+
             auto constexpr e = _exp_table(std::make_index_sequence<33>{});
             return x < 0 ? (1.0 / e[-x]) : e[x];
         }
@@ -1188,6 +1190,7 @@ namespace chess
          * Ideas:
          * - use different weights for midgame / endgame and interpolate;
          * - use tables for game phases, use number of pawns to determine phase;
+         * Since the above make incremental eval difficult:
          * - leave weights alone and alter material eval (see eval_piece_grading).
          */
         static INLINE constexpr int weight(PieceType piece_type)
@@ -1199,6 +1202,7 @@ namespace chess
         {
             if (_piece_count < 0)
                 _piece_count = popcount(occupied());
+
             return _piece_count;
         }
 
@@ -1233,6 +1237,7 @@ namespace chess
         mutable _endgame = ENDGAME_UNKNOWN;
         mutable int _piece_count = -1;
     }; /* State */
+
 
     INLINE int score_pushed_pawns(const State& state, const BaseMove& move)
     {
@@ -1469,6 +1474,7 @@ namespace chess
     }
 
 
+    /* Evaluate material from white's perspective. For high order evals (HCE, NNUE) see Context. */
     INLINE score_t State::eval_simple() const
     {
         int score = 0;
