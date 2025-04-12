@@ -1170,10 +1170,14 @@ namespace chess
             ASSERT(simple_score == UNKNOWN_SCORE);
 
             if (prev.simple_score == UNKNOWN_SCORE)
+            {
                 simple_score = eval_simple();
+            }
             else
+            {
                 simple_score = prev.eval_incremental(move);
-
+                ASSERT(simple_score == eval_simple());
+            }
             return simple_score;
         }
 
