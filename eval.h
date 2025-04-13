@@ -37,7 +37,7 @@ namespace
                 + popcount(state.bishops & color_mask) * WEIGHT[BISHOP] * grading[1]
                 + popcount(state.rooks & color_mask) * WEIGHT[ROOK] * grading[2]
                 + popcount(state.queens & color_mask) * WEIGHT[QUEEN] * grading[3]
-            ) / 100.0;
+            );
 
             score += SIGN[color] * popcount(state.pawns & color_mask) * interpolate(pcs, 0, PAWN_GRAD);
         }
