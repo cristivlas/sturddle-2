@@ -1,5 +1,5 @@
 #pragma once
-/* Evaluation helpers called by search::Context::eval_tactical and other places.  */
+/* Evaluation helpers called from search::Context::eval_tactical and other places. */
 
 #include "chess.h"
 
@@ -15,7 +15,7 @@ namespace
      */
     static INLINE int eval_piece_grading(const State& state, int pcs)
     {
-        int score = 0;
+        double score = 0;
         const int p = popcount(state.pawns);
 
         static constexpr int percents[4][4] = {
@@ -36,7 +36,7 @@ namespace
                 + popcount(state.bishops & color_mask) * WEIGHT[BISHOP] * grading[1]
                 + popcount(state.rooks & color_mask) * WEIGHT[ROOK] * grading[2]
                 + popcount(state.queens & color_mask) * WEIGHT[QUEEN] * grading[3]
-            ) / 100;
+            ) / 100.0;
 
             score += SIGN[color] * popcount(state.pawns * color_mask) * interpolate(pcs, 0, 3);
         }
