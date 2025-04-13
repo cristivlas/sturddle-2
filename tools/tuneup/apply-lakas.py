@@ -159,7 +159,7 @@ def print_piece_square_tables(best_params):
     print("    ", end='')
     for i in range(64):
         key = f"PS_KEG_{i}"
-        val = best_params.get(key, 0)
+        val = scale_param(key, best_params.get(key, 0))
         end_char = ', ' if (i % 8 != 7) else (',\n' if i != 63 else '\n')
         if i % 8 == 0 and i != 0:
             print("    ", end='')  # align rows
