@@ -25,6 +25,10 @@
  * search and evaluation functions, and infrastructure for exposing
  * them to Python scripts for the purpose of tuning the engine.
  */
+#if PS_PAWN_TUNING_ENABLED || PS_KNIGHT_TUNING_ENABLED || PS_BISHOP_TUNING_ENABLED || \
+    PS_ROOK_TUNING_ENABLED || PS_QUEEN_TUNING_ENABLED  || PS_KING_TUNING_ENABLED
+  #define PST_TUNING_ENABLED true
+#endif
 
 constexpr int ONE_PLY = 16; /* fractional extensions */
 constexpr int PLY_MAX = 100;
@@ -97,13 +101,8 @@ Config::Namespace Config::_namespace = {
 };
 
 
-#if USE_PIECE_SQUARE_TABLES
-
-#if PS_PAWN_TUNING_ENABLED || PS_KNIGHT_TUNING_ENABLED || PS_BISHOP_TUNING_ENABLED || \
-    PS_ROOK_TUNING_ENABLED || PS_QUEEN_TUNING_ENABLED  || PS_KING_TUNING_ENABLED
-
+#if USE_PIECE_SQUARE_TABLES && PST_TUNING_ENABLED
 #define PST_RANGE -150, 150, "PST", true
-
 
 template <chess::PieceType PT, bool EndGame = false>
 struct PieceSquareTuningEnabler
@@ -117,7 +116,7 @@ struct PieceSquareTuningEnabler
         }
     }
 };
-#endif
+
 
 #if PS_PAWN_TUNING_ENABLED
     template<> struct PieceSquareTuningEnabler<chess::PAWN>
@@ -170,7 +169,7 @@ struct PieceSquareTuningEnabler
     PieceSquareTuningEnabler<chess::KING> tune_ps_king;
     PieceSquareTuningEnabler<chess::KING, true> tune_ps_king_endgame;
 #endif /* PS_KING_TUNING_ENABLED */
-#endif /* USE_PIECE_SQUARE_TABLES */
+#endif /* USE_PIECE_SQUARE_TABLES && PST_TUNING_ENABLED */
 #else
 
   #define GROUP(x) /* as nothing */

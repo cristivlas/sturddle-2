@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -199,7 +199,40 @@ namespace chess
         init_attack_masks(BB_RANK_MASKS, BB_RANK_ATTACKS, {-1, 1});
 
         BB_RAYS = init_rays();
+
+        init_piece_square_tables();
     }
+
+
+#if USE_PIECE_SQUARE_TABLES
+    int piece_square_table[12][64] = {};
+    int king_endgame_table[2][64] = {};
+
+    void init_piece_square_tables()
+    {
+        for (auto piece_type : { PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING })
+        {
+            const auto& table = select_piece_square_table(false, piece_type);
+            const auto pt = (piece_type - 1) * 2;
+
+            for (int square = 0; square < 64; ++square)
+            {
+                piece_square_table[pt + BLACK][square] = table[square_index(square, BLACK)];
+                piece_square_table[pt + WHITE][square] = table[square_index(square, WHITE)];
+            }
+        }
+
+        /*
+         * Separate endgame table for King only
+         */
+        const auto& table = select_piece_square_table(true, KING);
+        for (int square = 0; square < 64; ++square)
+        {
+            king_endgame_table[BLACK][square] = table[square_index(square, BLACK)];
+            king_endgame_table[WHITE][square] = table[square_index(square, WHITE)];
+        }
+    }
+#endif /* USE_PIECE_SQUARE_TABLES */
 
 
     template<typename T>

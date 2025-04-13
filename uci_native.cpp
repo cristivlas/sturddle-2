@@ -1096,6 +1096,11 @@ void UCI::newgame()
     search::Context::clear_last_play();
     set_start_position();
     _book_depth = max_depth;
+
+#if PST_TUNING_ENABLED
+    chess::init_piece_square_tables();
+    std::cout << "info string PST_init\n";
+#endif
 }
 
 /**

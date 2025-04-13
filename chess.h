@@ -622,6 +622,11 @@ namespace chess
 #endif
 
 #if USE_PIECE_SQUARE_TABLES
+    extern int piece_square_table[12][64];
+    extern int king_endgame_table[2][64];
+
+    void init_piece_square_tables();
+
     INLINE constexpr int square_index(int i, chess::Color color)
     {
         return square_indices[color][i];
@@ -635,6 +640,19 @@ namespace chess
 
         return SQUARE_TABLE[pt];
     }
+
+
+    INLINE const int (&select_piece_square_table_rt(bool endgame, PieceType pt, Color color))[64]
+    {
+        if (endgame && pt == PieceType::KING)
+            return king_endgame_table[color];
+
+        return piece_square_table[(pt - 1) * 2 + int(color)];
+    }
+#else
+
+    #define init_piece_square_tables()
+
 #endif /* USE_PIECE_SQUARE_TABLES */
 
 
@@ -1361,20 +1379,22 @@ namespace chess
 
         const auto eg = is_endgame();
         const auto color = turn;
-        const auto moved_piece_type = piece_type_at(move.from_square());
+        const auto moving_piece_type = piece_type_at(move.from_square());
 
         ASSERT(color == piece_color_at(move.from_square()));
 
     #if USE_PIECE_SQUARE_TABLES
-        const auto i = square_index(move.from_square(), color);
-        const auto j = square_index(move.to_square(), color);
+        const auto i = move.from_square();
+        const auto j = move.to_square();
 
-        /* piece-square table for the initial position of the moved piece */
-        const auto& table_i = select_piece_square_table(eg, moved_piece_type);
+        /* piece-square table for the initial position of the moving piece */
+        const auto& table_i = select_piece_square_table_rt(eg, moving_piece_type, color);
+
+        ASSERT(select_piece_square_table(eg, moving_piece_type)[square_index(i, color)] == table_i[i]);
 
         if (move.promotion())
         {
-            const auto& table_j = select_piece_square_table(eg, move.promotion());
+            const auto& table_j = select_piece_square_table_rt(eg, move.promotion(), color);
 
             delta = table_j[j] - table_i[i] + weight(move.promotion()) - weight(PieceType::PAWN);
         }
@@ -1405,21 +1425,19 @@ namespace chess
                 capt_sq = Square(move.to_square() - 8 * SIGN[color]);
             }
 
-        if (const auto type = piece_type_at(capt_sq))
+        if (const auto captured_type = piece_type_at(capt_sq))
         {
-            ASSERT(type != PieceType::KING);
+            ASSERT(captured_type != PieceType::KING);
             ASSERT(piece_color_at(capt_sq) != color);
 
-            delta += weight(type);
+            delta += weight(captured_type);
 
         #if USE_PIECE_SQUARE_TABLES
             /*
-             * Can't capture the king, no need to check for king's endgame table;
-             * the only alternate endgame table for now is ENDGAME_KING_SQUARE_TABLE
+             * The only endgame table (for now) is ENDGAME_KING_SQUARE_TABLE.
+             * Since the king cannot be captured, use a non-endgame table.
              */
-            /* const auto& table = select_piece_square_table(eg, type); */
-
-            const auto& table = SQUARE_TABLE[type];
+            const auto& table = SQUARE_TABLE[captured_type];
 
             delta += table[square_index(capt_sq, !color)];
 
@@ -1428,13 +1446,16 @@ namespace chess
              */
             if (!eg && popcount(occupied()) == ENDGAME_PIECE_COUNT + 1)
             {
-                /* Update piece-square values for KING */
+                /* Update piece-square values for KING to account for endgame table */
+                /* TODO: interpolate */
                 for (const auto c : { BLACK, WHITE })
                 {
                     const auto k1 = square_index(king(c), c);
                     auto k2 = k1;
 
-                    if (moved_piece_type == PieceType::KING && c == color) /* king moved? */
+                    ASSERT(SQUARE_TABLE[KING][k1] == piece_square_table[(KING - 1) * 2 + c][king(c)]);
+
+                    if (moving_piece_type == PieceType::KING && c == color) /* king move? */
                     {
                         k2 = square_index(move.to_square(), c);
 
@@ -1490,10 +1511,11 @@ namespace chess
                 score += sign * weight(piece_type) * popcount(mask);
 
             #if USE_PIECE_SQUARE_TABLES
-                const auto& table = select_piece_square_table(endgame, piece_type);
+                /* TODO: interpolate King endgame table */
+                const auto& table = select_piece_square_table_rt(endgame, piece_type, color);
 
                 for_each_square_r(mask, [&](Square square) {
-                    score += sign * table[square_index(square, color)];
+                    score += sign * table[square];
                 });
             #endif /* USE_PIECE_SQUARE_TABLES */
             }
