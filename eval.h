@@ -18,13 +18,14 @@ namespace
         double score = 0;
         const int p = popcount(state.pawns);
 
-        static constexpr int percents[4][4] = {
-            /*  n,  b,   r,  q */
-            {   2,  0, -3,  -2, }, /* closed */
-            {   2,  1, -2,  -1, }, /* semi-closed */
-            {  -2,  3,  2,   4, }, /* semi-open */
-            {  -3,  4,  2,   6, }, /* open */
+        static constexpr double percents[4][4] = {
+            /*  n,      b,     r,    q */
+            { +0.10,  0.00, -0.15, -0.10 }, /* closed */
+            { +0.10, +0.05, -0.10, -0.05 }, /* semi-closed */
+            { -0.10, +0.15, +0.10, +0.20 }, /* semi-open */
+            { -0.15, +0.20, +0.10, +0.30 }, /* open */
         };
+
         const auto& grading = percents[int(p > 4) + int(p > 8) + int(p > 12)];
 
         for (const auto color : { BLACK, WHITE })
@@ -38,7 +39,7 @@ namespace
                 + popcount(state.queens & color_mask) * WEIGHT[QUEEN] * grading[3]
             ) / 100.0;
 
-            score += SIGN[color] * popcount(state.pawns * color_mask) * interpolate(pcs, 0, 3);
+            score += SIGN[color] * popcount(state.pawns & color_mask) * interpolate(pcs, 0, PAWN_GRAD);
         }
 
         return score;

@@ -264,6 +264,9 @@ DECLARE_VALUE(  NULL_MOVE_MIN_DRAUGHT,                0,   -1,      10)
 /* Do not verify null move below this depth */
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,     100)
 
+/* Experimental: max pawn diff grading coeff., see eval_piece_grading */
+DECLARE_VALUE(  PAWN_GRAD,                           35,    0,     250)
+
 DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  248,    0,     300)
 DECLARE_VALUE(  RAZOR_INTERCEPT,                    224,    0,     300)
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
