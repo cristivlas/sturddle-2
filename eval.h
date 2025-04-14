@@ -16,6 +16,7 @@ namespace
     static INLINE int eval_piece_grading(const State& state, int pcs)
     {
         double score = 0;
+    #if 0
         const int p = popcount(state.pawns);
 
     #if !(TUNING_ENABLED || TUNING_PARTIAL)
@@ -28,18 +29,20 @@ namespace
             { EVAL_KNIGHT_CLOSED,   EVAL_BISHOP_CLOSED,     EVAL_ROOK_CLOSED,   EVAL_QUEEN_CLOSED }
         };
         const auto& grading = piece_percents[int(p > 4) + int(p > 8) + int(p > 12)];
+    #endif
 
         for (const auto color : { BLACK, WHITE })
         {
             const auto color_mask = state.occupied_co(color);
 
+    #if 0
             score += SIGN[color] * (
                 + popcount(state.knights & color_mask) * WEIGHT[KNIGHT] * grading[0]
                 + popcount(state.bishops & color_mask) * WEIGHT[BISHOP] * grading[1]
                 + popcount(state.rooks & color_mask) * WEIGHT[ROOK] * grading[2]
                 + popcount(state.queens & color_mask) * WEIGHT[QUEEN] * grading[3]
             ) / 100.0;
-
+    #endif
             score += SIGN[color] * popcount(state.pawns & color_mask) * interpolate(pcs, 0, ENDGAME_PAWN_BONUS);
         }
 

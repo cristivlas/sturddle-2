@@ -303,7 +303,7 @@ DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,     100)
 DECLARE_VALUE(  HISTORY_PRUNE,                       67,    0,     100)
 
 GROUP(Eval)
-DECLARE_VALUE(  ENDGAME_PAWN_BONUS,                  35,    0,     250)
+DECLARE_VALUE(  ENDGAME_PAWN_BONUS,                  20,    0,     250)
 
 /* NOTE: Add -DTUNING_PARTIAL to compiler cmd line when tuning */
 DECLARE_VALUE(  EVAL_KNIGHT_OPEN,                   -15,  -100,    100)
