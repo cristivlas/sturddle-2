@@ -236,6 +236,7 @@ GROUP(Search)
 DECLARE_VALUE(  CAPTURES_SCALE,                      99,    0,     150)
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
 DECLARE_VALUE(  DOUBLE_EXT_MAX,                      12,    0,     100)
+DECLARE_VALUE(  ENDGAME_PAWN_BONUS,                  35,    0,     250)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
 DECLARE_VALUE(  LMP_BASE,                             2,    2,     100)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
@@ -254,18 +255,15 @@ DECLARE_VALUE(  NULL_MOVE_IMPROVEMENT_DIV,           72,    1,    1000)
 DECLARE_VALUE(  NULL_MOVE_MARGIN,                   611,    0,    1000)
 DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  3,    0,      20)
 
+/* Minimum depth when verifying */
+DECLARE_VALUE(  NULL_MOVE_MIN_DRAUGHT,                0,   -1,      10)
+
 DECLARE_VALUE(  NULL_MOVE_REDUCTION_BASE,             4,    0,     100)
 DECLARE_VALUE(  NULL_MOVE_REDUCTION_DEPTH_DIV,        4,    1,     100)
 DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,            278,    1,    1000)
 
-/* Ensured minimum depth when verifying */
-DECLARE_VALUE(  NULL_MOVE_MIN_DRAUGHT,                0,   -1,      10)
-
 /* Do not verify null move below this depth */
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,     100)
-
-/* Experimental: max pawn diff grading coeff., see eval_piece_grading */
-DECLARE_VALUE(  PAWN_GRAD,                           35,    0,     250)
 
 DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  248,    0,     300)
 DECLARE_VALUE(  RAZOR_INTERCEPT,                    224,    0,     300)

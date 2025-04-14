@@ -22,7 +22,7 @@
 /*
  * Core Chess support data structures and routines.
  *
- * Parts inspired and adapted from:
+ * Small parts inspired and adapted from:
  * python-chess (C) Niklas Fiekas (https://python-chess.readthedocs.io/en/latest/)
 */
 #include <algorithm>
@@ -975,7 +975,7 @@ namespace chess
             return { _exp<I>::value ... };
         }
 
-        /* Compile-time sigmoid in range [0,32] */
+        /* Compile-time sigmoid */
         INLINE constexpr double _e(int x)
         {
             ASSERT(abs(x) < 33);
@@ -993,20 +993,13 @@ namespace chess
     /*
      * https://www.chessprogramming.org/Tapered_Eval
      */
-    INLINE constexpr double _interpolate(double pc, int midgame, int endgame)
+    INLINE constexpr double _interpolate(int pc, int from, int to)
     {
         ASSERT(pc >= 2);
         ASSERT(pc <= 32);
 
-    #if 0
-        /* linear, hockey stick */
-        return pc <= ENDGAME_PIECE_COUNT
-            ? endgame
-            : midgame + (endgame - midgame) * double(32 - pc) / (32 - ENDGAME_PIECE_COUNT);
-    #else
-        /* sigmoid */
-        return (endgame - midgame) * (1 - logistic((pc - 19) / 2)) + midgame;
-    #endif
+        constexpr auto max_pc = 32 - ENDGAME_PIECE_COUNT;
+        return from + (to - from) * (1 - logistic(pc * max_pc / 32.0 - max_pc / 2 - 2));
     }
 
 
@@ -1026,7 +1019,12 @@ namespace chess
 
         static constexpr auto _value = make_values(std::make_index_sequence<33>{});
 
-        static double value(int i) { return _value[i]; }
+        static double value(int i) {
+            ASSERT(i >= 0);
+            ASSERT(i <= 32);
+
+            return _value[i];
+        }
     };
 
     #define interpolate(pc, mg, eg) Interpolate<mg, eg>::value(pc)
