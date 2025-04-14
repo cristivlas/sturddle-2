@@ -236,7 +236,6 @@ GROUP(Search)
 DECLARE_VALUE(  CAPTURES_SCALE,                      99,    0,     150)
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
 DECLARE_VALUE(  DOUBLE_EXT_MAX,                      12,    0,     100)
-DECLARE_VALUE(  ENDGAME_PAWN_BONUS,                  35,    0,     250)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
 DECLARE_VALUE(  LMP_BASE,                             2,    2,     100)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
@@ -302,6 +301,31 @@ DECLARE_VALUE(  HISTORY_HIGH,                        92,    0,     100)
 DECLARE_VALUE(  HISTORY_LOW,                         65,    0, HISTORY_HIGH)
 DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,     100)
 DECLARE_VALUE(  HISTORY_PRUNE,                       67,    0,     100)
+
+GROUP(Eval)
+DECLARE_VALUE(  ENDGAME_PAWN_BONUS,                  35,    0,     250)
+
+/* NOTE: Add -DTUNING_PARTIAL to compiler cmd line when tuning */
+DECLARE_VALUE(  EVAL_KNIGHT_OPEN,                   -15,  -100,    100)
+DECLARE_VALUE(  EVAL_BISHOP_OPEN,                    20,  -100,    100)
+DECLARE_VALUE(  EVAL_ROOK_OPEN,                      10,  -100,    100)
+DECLARE_VALUE(  EVAL_QUEEN_OPEN,                     30,  -100,    100)
+
+DECLARE_VALUE(  EVAL_KNIGHT_SEMIOPEN,               -10,  -100,    100)
+DECLARE_VALUE(  EVAL_BISHOP_SEMIOPEN,                15,  -100,    100)
+DECLARE_VALUE(  EVAL_ROOK_SEMIOPEN,                  10,  -100,    100)
+DECLARE_VALUE(  EVAL_QUEEN_SEMIOPEN,                 20,  -100,    100)
+
+DECLARE_VALUE(  EVAL_KNIGHT_SEMICLOSE,               10,  -100,    100)
+DECLARE_VALUE(  EVAL_BISHOP_SEMICLOSE,                5,  -100,    100)
+DECLARE_VALUE(  EVAL_ROOK_SEMICLOSE,                -10,  -100,    100)
+DECLARE_VALUE(  EVAL_QUEEN_SEMICLOSE,                -5,  -100,    100)
+
+DECLARE_VALUE(  EVAL_KNIGHT_CLOSED,                  10,  -100,    100)
+DECLARE_VALUE(  EVAL_BISHOP_CLOSED,                   0,  -100,    100)
+DECLARE_VALUE(  EVAL_ROOK_CLOSED,                   -15,  -100,    100)
+DECLARE_VALUE(  EVAL_QUEEN_CLOSED,                  -10,  -100,    100)
+
 /****************************************************************************/
 #if !WITH_NNUE
 /* HCE tunable parameters */

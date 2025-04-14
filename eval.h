@@ -18,15 +18,16 @@ namespace
         double score = 0;
         const int p = popcount(state.pawns);
 
-        static constexpr double percents[4][4] = {
-            /*  n,      b,     r,    q */
-            { -0.15, +0.20, +0.10, +0.30 }, /* open */
-            { -0.10, +0.15, +0.10, +0.20 }, /* semi-open */
-            { +0.10, +0.05, -0.10, -0.05 }, /* semi-closed */
-            { +0.10,  0.00, -0.15, -0.10 }, /* closed */
+    #if !(TUNING_ENABLED || TUNING_PARTIAL)
+        static constexpr
+    #endif /* !(TUNING_ENABLED || TUNING_PARTIAL) */
+        int piece_percents[4][4] = {
+            { EVAL_KNIGHT_OPEN,     EVAL_BISHOP_OPEN,       EVAL_ROOK_OPEN,     EVAL_QUEEN_OPEN },
+            { EVAL_KNIGHT_SEMIOPEN, EVAL_BISHOP_SEMIOPEN,   EVAL_ROOK_SEMIOPEN, EVAL_QUEEN_SEMIOPEN },
+            { EVAL_KNIGHT_SEMICLOSE,EVAL_BISHOP_SEMICLOSE,  EVAL_ROOK_SEMICLOSE,EVAL_QUEEN_SEMICLOSE },
+            { EVAL_KNIGHT_CLOSED,   EVAL_BISHOP_CLOSED,     EVAL_ROOK_CLOSED,   EVAL_QUEEN_CLOSED }
         };
-
-        const auto& grading = percents[int(p > 4) + int(p > 8) + int(p > 12)];
+        const auto& grading = piece_percents[int(p > 4) + int(p > 8) + int(p > 12)];
 
         for (const auto color : { BLACK, WHITE })
         {
@@ -37,7 +38,7 @@ namespace
                 + popcount(state.bishops & color_mask) * WEIGHT[BISHOP] * grading[1]
                 + popcount(state.rooks & color_mask) * WEIGHT[ROOK] * grading[2]
                 + popcount(state.queens & color_mask) * WEIGHT[QUEEN] * grading[3]
-            );
+            ) / 100.0;
 
             score += SIGN[color] * popcount(state.pawns & color_mask) * interpolate(pcs, 0, ENDGAME_PAWN_BONUS);
         }
