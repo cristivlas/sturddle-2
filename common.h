@@ -69,7 +69,11 @@ using score_t = int;
 #endif
 
 /* Experimental in 2.03 */
-#define EVAL_PIECE_GRADING                  true
+#if !WITH_NNUE
+  #define EVAL_PIECE_GRADING                true
+#else
+  #define EVAL_PIECE_GRADING                true
+#endif
 
 /* NOTE: this setting has no effect when using STATIC_EXCHANGES */
 #define EXCHANGES_DETECT_CHECKMATE          false
@@ -117,7 +121,7 @@ using score_t = int;
 #define USE_BOOK_HINT                       false
 #define USE_ROOT_MOVES                      false
 
-#define USE_LIBPOPCOUNT                     true
+#define USE_LIBPOPCOUNT                     false
 
 #if SMP
   #if __GNUC__

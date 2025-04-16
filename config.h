@@ -262,10 +262,8 @@ DECLARE_VALUE(  NNUE_EVAL_TERM,                     645,    0,    1000)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      496,    0,    1000)
 #endif /* WITH_NNUE */
 
-//DECLARE_VAL(  NULL_MOVE_DEPTH_WEIGHT,              19,    0,     100)
-//DECLARE_VAL(  NULL_MOVE_MARGIN,                   450,    0,    1000)
-DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,              18,    0,     100)
-DECLARE_VALUE(  NULL_MOVE_MARGIN,                   290,    0,    1000)
+DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,              16,    0,     100)
+DECLARE_VALUE(  NULL_MOVE_MARGIN,                   315,    0,    1000)
 DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  4,    0,      20)
 
 /* Minimum depth when verifying */
@@ -317,40 +315,26 @@ DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,     100)
 DECLARE_VALUE(  HISTORY_PRUNE,                       67,    0,     100)
 
 GROUP(Eval)
+
+/****************************************************************************/
 #if EVAL_PIECE_GRADING
 /* NOTE: Add -DTUNING_PARTIAL to compiler cmd line when tuning these */
-DECLARE_VALUE(  ENDGAME_PAWN_BONUS,                  37,    0,     100)
-
 #undef DECLARE_VALUE
 #define DECLARE_VALUE DECLARE_NORMAL
-DECLARE_VALUE(  EVAL_KNIGHT_OPEN,                    -6, -100,       0)
-DECLARE_VALUE(  EVAL_BISHOP_OPEN,                    70,    0,     100)
-DECLARE_VALUE(  EVAL_ROOK_OPEN,                      32,    0,     200)
-DECLARE_VALUE(  EVAL_QUEEN_OPEN,                     19,    0,     300)
+DECLARE_VALUE(  ENDGAME_PAWN_ADJUST,                 36,    0,     100)
 
-DECLARE_VALUE(  EVAL_KNIGHT_SEMIOPEN,               -67, -100,       0)
-DECLARE_VALUE(  EVAL_BISHOP_SEMIOPEN,                14,    0,     100)
-DECLARE_VALUE(  EVAL_ROOK_SEMIOPEN,                  39,    0,     200)
-DECLARE_VALUE(  EVAL_QUEEN_SEMIOPEN,                  5,    0,     300)
-
-DECLARE_VALUE(  EVAL_KNIGHT_SEMICLOSE,               23,    0,     100)
-DECLARE_VALUE(  EVAL_BISHOP_SEMICLOSE,              -51, -100,     100)
-DECLARE_VALUE(  EVAL_ROOK_SEMICLOSE,                -16, -200,       0)
-DECLARE_VALUE(  EVAL_QUEEN_SEMICLOSE,               -86, -300,       0)
-
-DECLARE_VALUE(  EVAL_KNIGHT_CLOSED,                  27,    0,     100)
-DECLARE_VALUE(  EVAL_BISHOP_CLOSED,                 -47, -100,     100)
-DECLARE_VALUE(  EVAL_ROOK_CLOSED,                    -7, -200,       0)
-DECLARE_VALUE(  EVAL_QUEEN_CLOSED,                  -33, -300,       0)
+DECLARE_VALUE(  ENDGAME_KNIGHT_ADJUST,                0, -100,     100)
+DECLARE_VALUE(  ENDGAME_BISHOP_ADJUST,                0, -100,     100)
+DECLARE_VALUE(  ENDGAME_ROOK_ADJUST,                  0, -100,     100)
+DECLARE_VALUE(  ENDGAME_QUEEN_ADJUST,                 0, -100,     100)
 #undef DECLARE_VALUE
 #define DECLARE_VALUE DECLARE_CONST
 
 #endif /* EVAL_PIECE_GRADING */
 
 /****************************************************************************/
-#if !WITH_NNUE
-/* HCE tunable parameters */
-GROUP(Eval)
+#if !WITH_NNUE /* HCE tunable parameters */
+
 DECLARE_VALUE(  BISHOP_PAIR,                         53,    0,     100)
 DECLARE_VALUE(  CASTLING_RIGHTS_BONUS,               32,    0,     100)
 DECLARE_VALUE(  CENTER_ATTACKS,                      65,    0,     100)

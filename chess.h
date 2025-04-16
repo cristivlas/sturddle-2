@@ -629,9 +629,10 @@ namespace chess
 
     void init_piece_square_tables();
 
+
     INLINE constexpr int square_index(int i, chess::Color color)
     {
-        return square_indices[color][i];
+        return color == WHITE ? square_mirror(i) : i;
     }
 
 
@@ -1348,6 +1349,12 @@ namespace chess
         set_piece_at(to_square, piece_type, color, move.promotion());
         flip(turn);
 
+        if (capture_value && _piece_count > 0)
+        {
+            --_piece_count;
+            ASSERT(popcount(occupied()) == _piece_count);
+        }
+
         pushed_pawns_score = score_pushed_pawns(*this, move);
 
         _endgame = ENDGAME_UNKNOWN; /* recalculate lazily */
@@ -1365,7 +1372,7 @@ namespace chess
         state._check = {-1, -1};
         state._hash = 0;
         state._endgame = ENDGAME_UNKNOWN;
-        state._piece_count = -1;
+        state._piece_count = _piece_count;
     }
 
 
@@ -1447,7 +1454,7 @@ namespace chess
             if (!eg && popcount(occupied()) == ENDGAME_PIECE_COUNT + 1)
             {
                 /* Update piece-square values for KING to account for endgame table */
-                /* TODO: interpolate */
+
                 for (const auto c : { BLACK, WHITE })
                 {
                     const auto k1 = square_index(king(c), c);

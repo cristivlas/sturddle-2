@@ -378,18 +378,23 @@ void search::Context::eval_nnue()
         eval += eval_piece_grading(state(), piece_count()) * SIGN[turn()];
     #endif
 
-        /* Stick with material eval when heavily imbalanced */
         if (state().just_king(!turn())
             || (depth() >= 0 && abs(eval) <= eval_margin(depth(), state().is_endgame())))
         {
-            /* NOTE: assume NNUE eval already accounts for insufficient material */
-
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
         }
         else
         {
-            eval = eval_insufficient_material(state(), eval, [eval](){ return eval; });
+            /* Stick with material eval when heavily imbalanced, and assume NN */
+            /* eval already accounts for insufficient material in branch above */
+
+            eval = eval_insufficient_material(state(), eval,
+                [eval](){
+                    return eval;
+                }
+            );
         }
+
         _eval = eval + eval_fuzz();
     }
 }
