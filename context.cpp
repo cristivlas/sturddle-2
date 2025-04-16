@@ -372,7 +372,11 @@ void search::Context::eval_nnue()
             return;
         }
 
-        auto eval = evaluate_material() + eval_piece_grading(state(), piece_count()) * SIGN[turn()];
+        auto eval = evaluate_material();
+
+    #if EVAL_PIECE_GRADING
+        eval += eval_piece_grading(state(), piece_count()) * SIGN[turn()];
+    #endif
 
         /* Stick with material eval when heavily imbalanced */
         if (state().just_king(!turn())

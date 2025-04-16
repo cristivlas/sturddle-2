@@ -9,45 +9,52 @@ namespace
     using search::Context;
 
 
+#if EVAL_PIECE_GRADING
     /*
      * https://www.chessprogramming.org/images/7/70/LittleChessEvaluationCompendium.pdf
      * Grading of Pieces, page 4
      */
     static INLINE int eval_piece_grading(const State& state, int pcs)
     {
-        double score = 0;
-    #if 0
-        const int p = popcount(state.pawns);
+        const Bitboard mask[2] = { state.occupied_co(BLACK), state.occupied_co(WHITE) };
+        const int pawn_count[2] = {
+            popcount(state.pawns & mask[BLACK]),
+            popcount(state.pawns & mask[WHITE]),
+        };
+
+        int score = 0;
+
+        const int p = pawn_count[BLACK] + pawn_count[WHITE];
 
     #if !(TUNING_ENABLED || TUNING_PARTIAL)
         static constexpr
     #endif /* !(TUNING_ENABLED || TUNING_PARTIAL) */
-        int piece_percents[4][4] = {
+        int piece_adjustments[4][4] = {
             { EVAL_KNIGHT_OPEN,     EVAL_BISHOP_OPEN,       EVAL_ROOK_OPEN,     EVAL_QUEEN_OPEN },
             { EVAL_KNIGHT_SEMIOPEN, EVAL_BISHOP_SEMIOPEN,   EVAL_ROOK_SEMIOPEN, EVAL_QUEEN_SEMIOPEN },
             { EVAL_KNIGHT_SEMICLOSE,EVAL_BISHOP_SEMICLOSE,  EVAL_ROOK_SEMICLOSE,EVAL_QUEEN_SEMICLOSE },
             { EVAL_KNIGHT_CLOSED,   EVAL_BISHOP_CLOSED,     EVAL_ROOK_CLOSED,   EVAL_QUEEN_CLOSED }
         };
-        const auto& grading = piece_percents[int(p > 4) + int(p > 8) + int(p > 12)];
-    #endif
+
+        const auto& adjustment = piece_adjustments[int(p > 4) + int(p > 8) + int(p > 12)];
 
         for (const auto color : { BLACK, WHITE })
         {
-            const auto color_mask = state.occupied_co(color);
+            const auto color_mask = mask[color];
 
-    #if 0
             score += SIGN[color] * (
-                + popcount(state.knights & color_mask) * WEIGHT[KNIGHT] * grading[0]
-                + popcount(state.bishops & color_mask) * WEIGHT[BISHOP] * grading[1]
-                + popcount(state.rooks & color_mask) * WEIGHT[ROOK] * grading[2]
-                + popcount(state.queens & color_mask) * WEIGHT[QUEEN] * grading[3]
-            ) / 100.0;
-    #endif
-            score += SIGN[color] * popcount(state.pawns & color_mask) * interpolate(pcs, 0, ENDGAME_PAWN_BONUS);
+                + popcount(state.knights & color_mask) * adjustment[0]
+                + popcount(state.bishops & color_mask) * adjustment[1]
+                + popcount(state.rooks & color_mask) * adjustment[2]
+                + popcount(state.queens & color_mask) * adjustment[3]
+            );
+
+            score += SIGN[color] * pawn_count[color] * interpolate(pcs, 0, ENDGAME_PAWN_BONUS);
         }
 
         return score;
     }
+#endif /* EVAL_PIECE_GRADING */
 
     /*----------------------------------------------------------------------
      * Tactical evaluations.

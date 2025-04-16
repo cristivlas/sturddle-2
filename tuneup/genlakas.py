@@ -38,15 +38,16 @@ optimizers = ('oneplusone', 'tbpsa', 'bayesopt', 'spsa', 'cmaes', 'ngopt')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate Lakas tuning script.')
-    parser.add_argument('-b', '--budget', type=int, default=100)
+    parser.add_argument('-b', '--budget', type=int, default=10000)
     parser.add_argument('-c', '--concurrency', type=int, default=os.cpu_count())
     parser.add_argument('-d', '--data-file', default='checkpoint.dat')
-    parser.add_argument('-g', '--games_per_budget', type=int, default=200)
+    parser.add_argument('-D', '--depth', type=int, default=9)
+    parser.add_argument('-g', '--games_per_budget', type=int, default=100)
     parser.add_argument('-l', '--log-file', default='log.txt')
     parser.add_argument('-o', '--output')
     parser.add_argument('-p', '--lakas-path', default='')
     parser.add_argument('-s', '--strategy', choices=optimizers, default='spsa')
-    parser.add_argument('-t', '--time-control', default='5+0.05')
+    parser.add_argument('-t', '--time-control', default='1+0.2')
 
     # Enumerate available engine settings
     params = {}
@@ -101,6 +102,7 @@ if __name__ == '__main__':
 python {os.path.join(args.lakas_path, 'lakas.py')} ^
     --budget {args.budget} --games-per-budget {args.games_per_budget} ^
     --concurrency {args.concurrency} ^
+    --depth {args.depth} ^
     --engine {get_engine_path(args, True)} ^
     --enhance-threads 1 ^
     --input-data-file {args.data_file} ^
@@ -118,6 +120,7 @@ python {os.path.join(args.lakas_path, 'lakas.py')} ^
 python3 {os.path.join(args.lakas_path, 'lakas.py')} \\
     --budget {args.budget} --games-per-budget {args.games_per_budget} \\
     --concurrency {args.concurrency} \\
+    --depth {args.depth} \\
     --engine {get_engine_path(args)} \\
     --enhance-threads 1 \\
     --input-data-file {args.data_file} \\

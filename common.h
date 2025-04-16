@@ -68,6 +68,9 @@ using score_t = int;
   #define DATAGEN                           false
 #endif
 
+/* Experimental in 2.03 */
+#define EVAL_PIECE_GRADING                  true
+
 /* NOTE: this setting has no effect when using STATIC_EXCHANGES */
 #define EXCHANGES_DETECT_CHECKMATE          false
 

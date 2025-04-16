@@ -23,7 +23,20 @@
 /*
  * This file contains parameters that control the behavior of the
  * search and evaluation functions, and infrastructure for exposing
- * them to Python scripts for the purpose of tuning the engine.
+ * them to UCI and to Python scripts for tuning.
+ *
+ * -DTUNING_ENABLED changes the definition of DECLARE_VALUE into DECLARE_NORMAL,
+ * which results in exposing all parameters to UCI and to Python scripts.
+ *
+ * It is however impractical to attempt tuning all parameters at once.
+ * Changing DECLARE_VALUE to DECLARE_PARAM manually for targeted params is more
+ * useful. When tuning several params with different ranges all at once, it may be
+ * a good idea to use DECLARE_NORMAL instead, to normalize the params before exposing
+ * them to optimizers such as lakas.py (https://github.com/fsmosca/Lakas).
+ *
+ * The genlakas.py tool automatically detects tunable parameters and generates a script
+ * that runs lakas.py. The tool apply_lakas.py scrapes log_lakas.txt and patches the
+ * config.h file (automatically rescaling normalized params back to the original range).
  */
 #if PS_PAWN_TUNING_ENABLED || PS_KNIGHT_TUNING_ENABLED || PS_BISHOP_TUNING_ENABLED || \
     PS_ROOK_TUNING_ENABLED || PS_QUEEN_TUNING_ENABLED  || PS_KING_TUNING_ENABLED
@@ -92,11 +105,11 @@ constexpr bool normalize_weights = true;
 Config::Namespace Config::_namespace = {
 #if WEIGHT_TUNING_ENABLED
     /* Piece weights */
-    { "PAWN", Config::Param{ &chess::WEIGHT[chess::PieceType::PAWN], 0, 150, "Weights", normalize_weights} },
-    { "KNIGHT", Config::Param{ &chess::WEIGHT[chess::PieceType::KNIGHT], 200, 400, "Weights", normalize_weights } },
-    { "BISHOP", Config::Param{ &chess::WEIGHT[chess::PieceType::BISHOP], 200, 400, "Weights", normalize_weights } },
-    { "ROOK", Config::Param{ &chess::WEIGHT[chess::PieceType::ROOK], 300, 700, "Weights", normalize_weights } },
-    { "QUEEN", Config::Param{ &chess::WEIGHT[chess::PieceType::QUEEN], 600, 1300, "Weights", normalize_weights } },
+    { "PAWN", Config::Param{ &chess::WEIGHT[chess::PieceType::PAWN], 0, 150, "Eval", normalize_weights} },
+    { "KNIGHT", Config::Param{ &chess::WEIGHT[chess::PieceType::KNIGHT], 200, 400, "Eval", normalize_weights } },
+    { "BISHOP", Config::Param{ &chess::WEIGHT[chess::PieceType::BISHOP], 200, 400, "Eval", normalize_weights } },
+    { "ROOK", Config::Param{ &chess::WEIGHT[chess::PieceType::ROOK], 300, 700, "Eval", normalize_weights } },
+    { "QUEEN", Config::Param{ &chess::WEIGHT[chess::PieceType::QUEEN], 600, 1300, "Eval", normalize_weights } },
 #endif /* WEIGHT_TUNING_ENABLED */
 };
 
@@ -249,10 +262,11 @@ DECLARE_VALUE(  NNUE_EVAL_TERM,                     645,    0,    1000)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      496,    0,    1000)
 #endif /* WITH_NNUE */
 
-DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,               3,    0,     100)
-DECLARE_VALUE(  NULL_MOVE_IMPROVEMENT_DIV,           72,    1,    1000)
-DECLARE_VALUE(  NULL_MOVE_MARGIN,                   611,    0,    1000)
-DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  3,    0,      20)
+//DECLARE_VAL(  NULL_MOVE_DEPTH_WEIGHT,              19,    0,     100)
+//DECLARE_VAL(  NULL_MOVE_MARGIN,                   450,    0,    1000)
+DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,              18,    0,     100)
+DECLARE_VALUE(  NULL_MOVE_MARGIN,                   290,    0,    1000)
+DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  4,    0,      20)
 
 /* Minimum depth when verifying */
 DECLARE_VALUE(  NULL_MOVE_MIN_DRAUGHT,                0,   -1,      10)
@@ -303,28 +317,35 @@ DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,     100)
 DECLARE_VALUE(  HISTORY_PRUNE,                       67,    0,     100)
 
 GROUP(Eval)
-DECLARE_VALUE(  ENDGAME_PAWN_BONUS,                  20,    0,     250)
+#if EVAL_PIECE_GRADING
+/* NOTE: Add -DTUNING_PARTIAL to compiler cmd line when tuning these */
+DECLARE_VALUE(  ENDGAME_PAWN_BONUS,                  37,    0,     100)
 
-/* NOTE: Add -DTUNING_PARTIAL to compiler cmd line when tuning */
-DECLARE_VALUE(  EVAL_KNIGHT_OPEN,                   -15,  -100,    100)
-DECLARE_VALUE(  EVAL_BISHOP_OPEN,                    20,  -100,    100)
-DECLARE_VALUE(  EVAL_ROOK_OPEN,                      10,  -100,    100)
-DECLARE_VALUE(  EVAL_QUEEN_OPEN,                     30,  -100,    100)
+#undef DECLARE_VALUE
+#define DECLARE_VALUE DECLARE_NORMAL
+DECLARE_VALUE(  EVAL_KNIGHT_OPEN,                    -6, -100,       0)
+DECLARE_VALUE(  EVAL_BISHOP_OPEN,                    70,    0,     100)
+DECLARE_VALUE(  EVAL_ROOK_OPEN,                      32,    0,     200)
+DECLARE_VALUE(  EVAL_QUEEN_OPEN,                     19,    0,     300)
 
-DECLARE_VALUE(  EVAL_KNIGHT_SEMIOPEN,               -10,  -100,    100)
-DECLARE_VALUE(  EVAL_BISHOP_SEMIOPEN,                15,  -100,    100)
-DECLARE_VALUE(  EVAL_ROOK_SEMIOPEN,                  10,  -100,    100)
-DECLARE_VALUE(  EVAL_QUEEN_SEMIOPEN,                 20,  -100,    100)
+DECLARE_VALUE(  EVAL_KNIGHT_SEMIOPEN,               -67, -100,       0)
+DECLARE_VALUE(  EVAL_BISHOP_SEMIOPEN,                14,    0,     100)
+DECLARE_VALUE(  EVAL_ROOK_SEMIOPEN,                  39,    0,     200)
+DECLARE_VALUE(  EVAL_QUEEN_SEMIOPEN,                  5,    0,     300)
 
-DECLARE_VALUE(  EVAL_KNIGHT_SEMICLOSE,               10,  -100,    100)
-DECLARE_VALUE(  EVAL_BISHOP_SEMICLOSE,                5,  -100,    100)
-DECLARE_VALUE(  EVAL_ROOK_SEMICLOSE,                -10,  -100,    100)
-DECLARE_VALUE(  EVAL_QUEEN_SEMICLOSE,                -5,  -100,    100)
+DECLARE_VALUE(  EVAL_KNIGHT_SEMICLOSE,               23,    0,     100)
+DECLARE_VALUE(  EVAL_BISHOP_SEMICLOSE,              -51, -100,     100)
+DECLARE_VALUE(  EVAL_ROOK_SEMICLOSE,                -16, -200,       0)
+DECLARE_VALUE(  EVAL_QUEEN_SEMICLOSE,               -86, -300,       0)
 
-DECLARE_VALUE(  EVAL_KNIGHT_CLOSED,                  10,  -100,    100)
-DECLARE_VALUE(  EVAL_BISHOP_CLOSED,                   0,  -100,    100)
-DECLARE_VALUE(  EVAL_ROOK_CLOSED,                   -15,  -100,    100)
-DECLARE_VALUE(  EVAL_QUEEN_CLOSED,                  -10,  -100,    100)
+DECLARE_VALUE(  EVAL_KNIGHT_CLOSED,                  27,    0,     100)
+DECLARE_VALUE(  EVAL_BISHOP_CLOSED,                 -47, -100,     100)
+DECLARE_VALUE(  EVAL_ROOK_CLOSED,                    -7, -200,       0)
+DECLARE_VALUE(  EVAL_QUEEN_CLOSED,                  -33, -300,       0)
+#undef DECLARE_VALUE
+#define DECLARE_VALUE DECLARE_CONST
+
+#endif /* EVAL_PIECE_GRADING */
 
 /****************************************************************************/
 #if !WITH_NNUE
