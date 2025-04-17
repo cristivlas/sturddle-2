@@ -40,7 +40,7 @@ namespace chess
     const AttackTable attack_table;
 
 #if WEIGHT_TUNING_ENABLED
-    int WEIGHT[] = DEFAULT_WEIGHTS;
+    int WEIGHT[] = PIECE_VALUES;
 #endif
 
     AttackMasks BB_DIAG_MASKS, BB_FILE_MASKS, BB_RANK_MASKS;

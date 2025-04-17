@@ -133,7 +133,8 @@ def print_weights(best_params):
         m_map[m_sym[k]] = val
 
     weights = ', '.join(map(str, m_map.values()))
-    print(f'#define DEFAULT_WEIGHTS {{ {weights} }}')
+    print()
+    print(f'#define PIECE_VALUES {{ {weights} }}')
 
 
 def print_piece_square_tables(best_params):

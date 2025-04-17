@@ -56,7 +56,10 @@ if __name__ == '__main__':
     params = {}
     groups = set()
 
-    for name, (val, lo, hi, grp) in  get_param_info().items():
+    for name, (val, lo, hi, grp, n) in  get_param_info().items():
+        if n:
+            print("Normalized params are currently not supported by this script")
+            quit()
         if grp == 'Settings':
             continue
         groups.add(grp)

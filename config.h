@@ -262,8 +262,8 @@ DECLARE_VALUE(  NNUE_EVAL_TERM,                     645,    0,    1000)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      496,    0,    1000)
 #endif /* WITH_NNUE */
 
-DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,              16,    0,     100)
-DECLARE_VALUE(  NULL_MOVE_MARGIN,                   315,    0,    1000)
+DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,              25,    0,     100)
+DECLARE_VALUE(  NULL_MOVE_MARGIN,                   313,    0,    1000)
 DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  4,    0,      20)
 
 /* Minimum depth when verifying */
@@ -318,17 +318,12 @@ GROUP(Eval)
 
 /****************************************************************************/
 #if EVAL_PIECE_GRADING
-/* NOTE: Add -DTUNING_PARTIAL to compiler cmd line when tuning these */
-#undef DECLARE_VALUE
-#define DECLARE_VALUE DECLARE_NORMAL
-DECLARE_VALUE(  ENDGAME_PAWN_ADJUST,                 36,    0,     100)
 
-DECLARE_VALUE(  ENDGAME_KNIGHT_ADJUST,                0, -100,     100)
-DECLARE_VALUE(  ENDGAME_BISHOP_ADJUST,                0, -100,     100)
-DECLARE_VALUE(  ENDGAME_ROOK_ADJUST,                  0, -100,     100)
-DECLARE_VALUE(  ENDGAME_QUEEN_ADJUST,                 0, -100,     100)
-#undef DECLARE_VALUE
-#define DECLARE_VALUE DECLARE_CONST
+DECLARE_VALUE(  ENDGAME_PAWN_ADJUST,                 17,    0,     100)
+DECLARE_VALUE(  ENDGAME_KNIGHT_ADJUST,               -7, -100,     100)
+DECLARE_VALUE(  ENDGAME_BISHOP_ADJUST,              -34, -100,     100)
+DECLARE_VALUE(  ENDGAME_ROOK_ADJUST,                 -4, -100,     100)
+DECLARE_VALUE(  ENDGAME_QUEEN_ADJUST,               -31, -100,     100)
 
 #endif /* EVAL_PIECE_GRADING */
 

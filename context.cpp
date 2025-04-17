@@ -356,9 +356,10 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
 
 
 /* TODO: define array of margins, using LMP for now as a temporary hack. */
-static INLINE score_t eval_margin(int depth, bool endgame)
+
+static INLINE score_t eval_margin(int depth, int pc)
 {
-    return (NNUE_MAX_EVAL + search::LMP[depth]) * (1 + 0.33 * endgame);
+    return (NNUE_MAX_EVAL + search::LMP[depth]) * interpolate(pc, 100, 135) / 100.0;
 }
 
 
@@ -373,13 +374,12 @@ void search::Context::eval_nnue()
         }
 
         auto eval = evaluate_material();
-
+        const auto pc = piece_count();
     #if EVAL_PIECE_GRADING
-        eval += eval_piece_grading(state(), piece_count()) * SIGN[turn()];
+        eval += eval_piece_grading(state(), pc) * SIGN[turn()];
     #endif
 
-        if (state().just_king(!turn())
-            || (depth() >= 0 && abs(eval) <= eval_margin(depth(), state().is_endgame())))
+        if (state().just_king(!turn()) || (depth() >= 0 && abs(eval) <= eval_margin(depth(), pc)))
         {
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
         }

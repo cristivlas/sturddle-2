@@ -68,10 +68,10 @@ using score_t = int;
   #define DATAGEN                           false
 #endif
 
-/* Experimental in 2.03 */
 #if !WITH_NNUE
-  #define EVAL_PIECE_GRADING                true
+  #define EVAL_PIECE_GRADING                true /* required */
 #else
+/* Experimental in 2.03 */
   #define EVAL_PIECE_GRADING                true
 #endif
 

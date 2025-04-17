@@ -344,10 +344,9 @@ namespace chess
         BB_SQUARES[A1] | BB_SQUARES[H1] | BB_SQUARES[A8] | BB_SQUARES[H8];
 
 
-// #define DEFAULT_WEIGHTS { 0, 77, 319, 326, 514, 960, 20000 }
-// #define DEFAULT_WEIGHTS { 0, 77, 319, 326, 485, 960, 20000 }
-#define DEFAULT_WEIGHTS { 0, 77, 319, 326, 483, 980, 20000 }
-// #define DEFAULT_WEIGHTS { 0, 77, 319, 335, 483, 980, 20000 }
+
+#define PIECE_VALUES { 0, 80, 318, 321, 492, 998, 20000 }
+
 
     /* Piece values */
 #if WEIGHT_TUNING_ENABLED
@@ -358,7 +357,7 @@ namespace chess
         return WEIGHT[1]*16 + WEIGHT[2]*4 + WEIGHT[3]*4 + WEIGHT[4]*4 + WEIGHT[5]*2;
     }
 #else
-    constexpr int WEIGHT[7] = DEFAULT_WEIGHTS;
+    constexpr int WEIGHT[7] = PIECE_VALUES;
 
     INLINE constexpr int max_material_delta()
     {
