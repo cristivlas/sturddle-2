@@ -41,6 +41,7 @@ namespace chess
 
 #if WEIGHT_TUNING_ENABLED
     int WEIGHT[] = PIECE_VALUES;
+    int ADJUST[] = ENDGAME_ADJUST;
 #endif
 
     AttackMasks BB_DIAG_MASKS, BB_FILE_MASKS, BB_RANK_MASKS;

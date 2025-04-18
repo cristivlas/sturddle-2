@@ -110,6 +110,16 @@ Config::Namespace Config::_namespace = {
     { "BISHOP", Config::Param{ &chess::WEIGHT[chess::PieceType::BISHOP], 320, 400, "Eval", normalize_weights } },
     { "ROOK", Config::Param{ &chess::WEIGHT[chess::PieceType::ROOK], 300, 700, "Eval", normalize_weights } },
     { "QUEEN", Config::Param{ &chess::WEIGHT[chess::PieceType::QUEEN], 600, 1300, "Eval", normalize_weights } },
+
+#if EVAL_PIECE_GRADING
+    /* Endgame adjustments */
+    { "ENDGAME_PAWN_ADJUST", Config::Param{ &chess::ADJUST[chess::PieceType::PAWN], 0, 100, "Eval", normalize_weights} },
+    { "ENDGAME_KNIGHT_ADJUST", Config::Param{ &chess::ADJUST[chess::PieceType::KNIGHT], -100, 0, "Eval", normalize_weights } },
+    { "ENDGAME_BISHOP_ADJUST", Config::Param{ &chess::ADJUST[chess::PieceType::BISHOP], -100, 0, "Eval", normalize_weights } },
+    { "ENDGAME_ROOK_ADJUST", Config::Param{ &chess::ADJUST[chess::PieceType::ROOK], 0, 100, "Eval", normalize_weights } },
+    { "ENDGAME_QUEEN_ADJUST", Config::Param{ &chess::ADJUST[chess::PieceType::QUEEN], -100, 0, "Eval", normalize_weights } },
+#endif /* EVAL_PIECE_GRADING */
+
 #endif /* WEIGHT_TUNING_ENABLED */
 };
 
@@ -315,20 +325,6 @@ DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,     100)
 DECLARE_VALUE(  HISTORY_PRUNE,                       67,    0,     100)
 
 GROUP(Eval)
-
-/****************************************************************************/
-#if EVAL_PIECE_GRADING
-
-// #undef DECLARE_VALUE
-// #define DECLARE_VALUE DECLARE_NORMAL
-
-DECLARE_VALUE(  ENDGAME_PAWN_ADJUST,                 12,    0,     100)
-DECLARE_VALUE(  ENDGAME_KNIGHT_ADJUST,              -56, -100,       0)
-DECLARE_VALUE(  ENDGAME_BISHOP_ADJUST,              -68, -100,       0)
-DECLARE_VALUE(  ENDGAME_ROOK_ADJUST,                 35,    0,     100)
-DECLARE_VALUE(  ENDGAME_QUEEN_ADJUST,               -89, -100,       0)
-
-#endif /* EVAL_PIECE_GRADING */
 
 /****************************************************************************/
 #if !WITH_NNUE /* HCE tunable parameters */

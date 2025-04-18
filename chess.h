@@ -345,23 +345,15 @@ namespace chess
 
 
 #define PIECE_VALUES { 0, 82, 337, 365, 477, 1025, 20000 }
-
+#define ENDGAME_ADJUST { 0, 12, -56, -68, 35, -89, 0 }
 
     /* Piece values */
 #if WEIGHT_TUNING_ENABLED
     extern int WEIGHT[7];
-
-    INLINE int max_material_delta()
-    {
-        return WEIGHT[1]*16 + WEIGHT[2]*4 + WEIGHT[3]*4 + WEIGHT[4]*4 + WEIGHT[5]*2;
-    }
+    extern int ADJUST[7];
 #else
     constexpr int WEIGHT[7] = PIECE_VALUES;
-
-    INLINE constexpr int max_material_delta()
-    {
-        return WEIGHT[1]*16 + WEIGHT[2]*4 + WEIGHT[3]*4 + WEIGHT[4]*4 + WEIGHT[5]*2;
-    }
+    constexpr int ADJUST[7] = ENDGAME_ADJUST;
 #endif /* WEIGHT_TUNING_ENABLED */
 
 
@@ -1210,7 +1202,7 @@ namespace chess
          * Since the above make incremental eval difficult:
          * - leave weights alone and alter material eval (see eval_piece_grading).
          */
-        static INLINE constexpr int weight(PieceType piece_type)
+        INLINE int weight(PieceType piece_type) const
         {
             return WEIGHT[piece_type];
         }
@@ -1223,10 +1215,15 @@ namespace chess
             return _piece_count;
         }
 
+        /* Used in capture evals */
         INLINE int piece_weight_at(Square square, Color color) const
         {
             const auto piece_type = piece_type_at(square);
-            auto w = weight(piece_type);
+            auto w = WEIGHT[piece_type];
+
+        #if EVAL_PIECE_GRADING
+            w += _interpolate(piece_count(), 0, ADJUST[piece_type]);
+        #endif /* EVAL_PIECE_GRADING */
 
         #if USE_PIECE_SQUARE_TABLES
             if (piece_type)

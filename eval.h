@@ -14,11 +14,11 @@ namespace
     {
         int score = 0;
 
-        const auto pawn_adjust = interpolate(pcs, 0, ENDGAME_PAWN_ADJUST);
-        const auto knight_adjust = interpolate(pcs, 0, ENDGAME_KNIGHT_ADJUST);
-        const auto bishop_adjust = interpolate(pcs, 0, ENDGAME_BISHOP_ADJUST);
-        const auto rook_adjust = interpolate(pcs, 0, ENDGAME_ROOK_ADJUST);
-        const auto queen_adjust = interpolate(pcs, 0, ENDGAME_QUEEN_ADJUST);
+        const auto pawn_adjust = interpolate(pcs, 0, ADJUST[PAWN]);
+        const auto knight_adjust = interpolate(pcs, 0, ADJUST[KNIGHT]);
+        const auto bishop_adjust = interpolate(pcs, 0, ADJUST[BISHOP]);
+        const auto rook_adjust = interpolate(pcs, 0, ADJUST[ROOK]);
+        const auto queen_adjust = interpolate(pcs, 0, ADJUST[QUEEN]);
 
         for (const auto color : { BLACK, WHITE })
         {
