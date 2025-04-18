@@ -106,8 +106,8 @@ Config::Namespace Config::_namespace = {
 #if WEIGHT_TUNING_ENABLED
     /* Piece weights */
     { "PAWN", Config::Param{ &chess::WEIGHT[chess::PieceType::PAWN], 0, 150, "Eval", normalize_weights} },
-    { "KNIGHT", Config::Param{ &chess::WEIGHT[chess::PieceType::KNIGHT], 200, 400, "Eval", normalize_weights } },
-    { "BISHOP", Config::Param{ &chess::WEIGHT[chess::PieceType::BISHOP], 200, 400, "Eval", normalize_weights } },
+    { "KNIGHT", Config::Param{ &chess::WEIGHT[chess::PieceType::KNIGHT], 250, 400, "Eval", normalize_weights } },
+    { "BISHOP", Config::Param{ &chess::WEIGHT[chess::PieceType::BISHOP], 320, 400, "Eval", normalize_weights } },
     { "ROOK", Config::Param{ &chess::WEIGHT[chess::PieceType::ROOK], 300, 700, "Eval", normalize_weights } },
     { "QUEEN", Config::Param{ &chess::WEIGHT[chess::PieceType::QUEEN], 600, 1300, "Eval", normalize_weights } },
 #endif /* WEIGHT_TUNING_ENABLED */
@@ -319,11 +319,14 @@ GROUP(Eval)
 /****************************************************************************/
 #if EVAL_PIECE_GRADING
 
-DECLARE_VALUE(  ENDGAME_PAWN_ADJUST,                 17,    0,     100)
-DECLARE_VALUE(  ENDGAME_KNIGHT_ADJUST,               -7, -100,     100)
-DECLARE_VALUE(  ENDGAME_BISHOP_ADJUST,              -34, -100,     100)
-DECLARE_VALUE(  ENDGAME_ROOK_ADJUST,                 -4, -100,     100)
-DECLARE_VALUE(  ENDGAME_QUEEN_ADJUST,               -31, -100,     100)
+// #undef DECLARE_VALUE
+// #define DECLARE_VALUE DECLARE_NORMAL
+
+DECLARE_VALUE(  ENDGAME_PAWN_ADJUST,                 12,    0,     100)
+DECLARE_VALUE(  ENDGAME_KNIGHT_ADJUST,              -56, -100,       0)
+DECLARE_VALUE(  ENDGAME_BISHOP_ADJUST,              -68, -100,       0)
+DECLARE_VALUE(  ENDGAME_ROOK_ADJUST,                 35,    0,     100)
+DECLARE_VALUE(  ENDGAME_QUEEN_ADJUST,               -89, -100,       0)
 
 #endif /* EVAL_PIECE_GRADING */
 

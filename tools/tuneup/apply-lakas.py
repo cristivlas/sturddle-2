@@ -30,7 +30,8 @@ def scale_param(name, val):
     return val
 
 
-def parse_best_params(logfile):
+def parse_best_params(logfile, recommended=False):
+    pat = ("recommended param", r"recommended param: ({.*})") if recommended else ("best param", r"best param: ({.*})")
     logging.info(f"Reading log file: {logfile}")
     with open(logfile, 'r') as f:
         content = f.read()
@@ -45,11 +46,11 @@ def parse_best_params(logfile):
 
     best_params = None
     for line in last_chunk.split('\n'):
-        if 'best param' in line:
-            match = re.search(r"best param: ({.*})", line)
+        if pat[0] in line:
+            match = re.search(pat[1], line)
             if match:
                 best_params = ast.literal_eval(match.group(1))
-                logging.info(f"Best params: {best_params}")
+                logging.info(f"{pat[0]}: {best_params}")
                 break
 
     if not best_params:
@@ -167,14 +168,16 @@ def print_piece_square_tables(best_params):
         print(f"{val:>4}", end=end_char)
     print("};")
 
+
 def main():
     parser = argparse.ArgumentParser(description='Update C++ header file with best parameters from log file.')
     parser.add_argument('logfile', help='Path to the log file')
     parser.add_argument('--config', default='config.h', help='Path to the C++ header file')
+    parser.add_argument('-r', '--recommended', action='store_true', help='Use recommended param instead of best')
 
     args = parser.parse_args()
 
-    best_params = parse_best_params(args.logfile)
+    best_params = parse_best_params(args.logfile, args.recommended)
     if best_params:
         update_header(args.config, best_params)
         print_weights(best_params)

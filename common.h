@@ -111,6 +111,7 @@ using score_t = int;
  */
 #define SINGULAR_EXTENSION                  true
 
+/* Compile with multithread (symmetric multiprocessing) support */
 #define SMP                                 true
 
 //#if !WITH_NNUE && !defined(USE_PIECE_SQUARE_TABLES)
@@ -158,6 +159,8 @@ constexpr size_t DEFAULT_HASH_TABLE_SIZE =  32;
 /*
  * Use this magic_bits implementation instead of attacks.h:
  * https://github.com/goutham/magic-bits
+ *
+ * Turn ON if compilation is too slow (some compilers don't like huge static tables).
  */
 #if !defined(USE_MAGIC_BITS)
   #define USE_MAGIC_BITS                    false

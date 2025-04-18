@@ -236,7 +236,7 @@ namespace search
                 return *reinterpret_cast<std::atomic<lock_state_t> *>(&_lock_state);
             }
 
-            static constexpr size_t size() { return S; }
+            static constexpr size_t size() { static_assert(S); return S; }
         };
 
         using bucket_t = Bucket<CACHE_LINE_SIZE / sizeof(T)>;

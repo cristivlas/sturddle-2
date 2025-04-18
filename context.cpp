@@ -788,7 +788,7 @@ namespace search
         for (auto& move : moves)
         {
             ASSERT(state.piece_type_at(move.from_square()));
-            move._score = state.piece_weight_at(move.from_square());
+            move._score = state.piece_weight_at(move.from_square(), state.turn);
         }
         /* sort lower-value attackers first */
         insertion_sort(moves.begin(), moves.end(),
@@ -827,7 +827,7 @@ namespace search
                 Context::log_message(LogLevel::DEBUG, "\t>>> " + move.uci());
 
             const score_t capturer_value = move._score;
-            ASSERT(capturer_value == state.piece_weight_at(move.from_square()));
+            ASSERT(capturer_value == state.piece_weight_at(move.from_square(), state.turn));
 
             /*
              * If the value of the capture exceeds the other's side gain plus the value of the
@@ -948,12 +948,12 @@ namespace search
             ASSERT(state.piece_type_at(move.to_square()));
             ASSERT(state.piece_type_at(move.from_square()));
 
-            move._score = state.piece_weight_at(move.to_square());
+            move._score = state.piece_weight_at(move.to_square(), !state.turn);
 
             if (move._score + STANDPAT_MARGIN >= standpat_threshold)
                 standpat = false;
 
-            move._score -= state.piece_weight_at(move.from_square());
+            move._score -= state.piece_weight_at(move.from_square(), state.turn);
         }
 
         if (standpat)
@@ -1010,7 +1010,7 @@ namespace search
                 continue;
 
             ASSERT(next_state.capture_value > score || EXCHANGES_DETECT_CHECKMATE);
-            ASSERT(move._score == next_state.capture_value - state.piece_weight_at(move.from_square()));
+            ASSERT(move._score == next_state.capture_value - state.piece_weight_at(move.from_square(), state.turn));
 
             const auto gain = move._score;
 
@@ -1705,7 +1705,7 @@ namespace search
                      */
 
                     /* Sort in decreasing order of the capturing piece's value. */
-                    move._score = -ctxt.state().piece_weight_at(move.from_square());
+                    move._score = -ctxt.state().piece_weight_at(move.from_square(), ctxt.turn());
                 }
             }
             /* Captures and killer moves. */

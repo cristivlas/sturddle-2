@@ -344,8 +344,7 @@ namespace chess
         BB_SQUARES[A1] | BB_SQUARES[H1] | BB_SQUARES[A8] | BB_SQUARES[H8];
 
 
-
-#define PIECE_VALUES { 0, 80, 318, 321, 492, 998, 20000 }
+#define PIECE_VALUES { 0, 82, 337, 365, 477, 1025, 20000 }
 
 
     /* Piece values */
@@ -1224,9 +1223,22 @@ namespace chess
             return _piece_count;
         }
 
-        INLINE int piece_weight_at(Square square) const
+        INLINE int piece_weight_at(Square square, Color color) const
         {
-            return weight(piece_type_at(square));
+            const auto piece_type = piece_type_at(square);
+            auto w = weight(piece_type);
+
+        #if USE_PIECE_SQUARE_TABLES
+            if (piece_type)
+            {
+                // endgame=false since it's currently only used for KING
+                const auto& table = select_piece_square_table_rt(false, piece_type, color);
+
+                w += table[square];
+            }
+        #endif /* USE_PIECE_SQUARE_TABLES */
+
+            return w;
         }
 
         void set_piece_at(Square, PieceType, Color, PieceType promotion = PieceType::NONE);
@@ -1286,10 +1298,12 @@ namespace chess
 
         _check = { -1, -1 };
 
-        this->capture_value = piece_weight_at(move.to_square());
+        this->capture_value = piece_weight_at(move.to_square(), !turn);
         this->promotion = move.promotion();
 
-        const auto color = piece_color_at(move.from_square());
+        const auto color = turn;
+        ASSERT(color == piece_color_at(move.from_square()));
+
         Square to_square = move.to_square();
 
         if ((this->is_castle = is_castling(move)) == true)
@@ -1387,6 +1401,7 @@ namespace chess
         const auto color = turn;
         const auto moving_piece_type = piece_type_at(move.from_square());
 
+        ASSERT(moving_piece_type);
         ASSERT(color == piece_color_at(move.from_square()));
 
     #if USE_PIECE_SQUARE_TABLES
@@ -1521,6 +1536,7 @@ namespace chess
                 const auto& table = select_piece_square_table_rt(endgame, piece_type, color);
 
                 for_each_square_r(mask, [&](Square square) {
+                    ASSERT(piece_type_at(square) == piece_type);
                     score += sign * table[square];
                 });
             #endif /* USE_PIECE_SQUARE_TABLES */
