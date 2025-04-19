@@ -113,7 +113,31 @@ def update_header(header_file, best_params):
         logging.info(f"Unmodified: {header_file}")
 
 
-def print_weights(best_params):
+def get_endgame_adjustments(best_params):
+    m_sym = {
+        'ENDGAME_PAWN_ADJUST': 1,
+        'ENDGAME_KNIGHT_ADJUST': 2,
+        'ENDGAME_BISHOP_ADJUST': 3,
+        'ENDGAME_ROOK_ADJUST': 4,
+        'ENDGAME_QUEEN_ADJUST': 5,
+        'ENDGAME_KING_ADJUST': 6
+    }
+    m_map = { k:0 for k in range(0, 7) }
+
+    for k in m_sym:
+        if k in best_params:
+            val = scale_param(k, best_params[k])
+        elif k in params:
+            val = params[k][0]
+        else:
+            val = 0
+        m_map[m_sym[k]] = val
+
+    weights = ', '.join(map(str, m_map.values()))
+    return (f'#define ENDGAME_ADJUST {{ {weights} }}')
+
+
+def get_weights(best_params):
     m_sym = {
         'PAWN': 1,
         'KNIGHT': 2,
@@ -134,8 +158,27 @@ def print_weights(best_params):
         m_map[m_sym[k]] = val
 
     weights = ', '.join(map(str, m_map.values()))
-    print()
-    print(f'#define PIECE_VALUES {{ {weights} }}')
+    return f'#define PIECE_VALUES {{ {weights} }}'
+
+
+def patch_header(header_file, best_params):
+
+    adjust = get_endgame_adjustments(best_params)
+    weights = get_weights(best_params)
+
+    logging.info(f"Reading header file: {header_file}")
+    with open(header_file, 'r') as f:
+        text = f.read()
+
+    new_text = re.sub(r"#define PIECE_VALUES .*", weights, text)
+    new_text = re.sub(r"#define ENDGAME_ADJUST .*", adjust, new_text)
+
+    if new_text == text:
+        logging.info(f'Unmodified: {header_file}')
+    else:
+        with open(header_file, 'w') as f:
+            f.write(new_text)
+        logging.info(f'Patched: {header_file}')
 
 
 def print_piece_square_tables(best_params):
@@ -173,6 +216,7 @@ def main():
     parser = argparse.ArgumentParser(description='Update C++ header file with best parameters from log file.')
     parser.add_argument('logfile', help='Path to the log file')
     parser.add_argument('--config', default='config.h', help='Path to the C++ header file')
+    parser.add_argument('-p', '--patch', help="Optional file to patch (normally chess.h)")
     parser.add_argument('-r', '--recommended', action='store_true', help='Use recommended param instead of best')
 
     args = parser.parse_args()
@@ -180,7 +224,9 @@ def main():
     best_params = parse_best_params(args.logfile, args.recommended)
     if best_params:
         update_header(args.config, best_params)
-        print_weights(best_params)
+
+        if args.patch:
+            patch_header(args.patch, best_params)
 
         if any(k.startswith('PS_') for k in best_params):
             print_piece_square_tables(best_params)
