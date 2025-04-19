@@ -101,23 +101,24 @@ std::string Config::_group;
 #define GROUP(x) Config::Group __##x(_TOSTR(x));
 
 constexpr bool normalize_weights = true;
+using namespace chess;
 
 Config::Namespace Config::_namespace = {
 #if WEIGHT_TUNING_ENABLED
     /* Piece weights */
-    { "PAWN", Config::Param{ &chess::WEIGHT[chess::PieceType::PAWN], 0, 150, "Eval", normalize_weights} },
-    { "KNIGHT", Config::Param{ &chess::WEIGHT[chess::PieceType::KNIGHT], 250, 400, "Eval", normalize_weights } },
-    { "BISHOP", Config::Param{ &chess::WEIGHT[chess::PieceType::BISHOP], 320, 400, "Eval", normalize_weights } },
-    { "ROOK", Config::Param{ &chess::WEIGHT[chess::PieceType::ROOK], 300, 700, "Eval", normalize_weights } },
-    { "QUEEN", Config::Param{ &chess::WEIGHT[chess::PieceType::QUEEN], 600, 1300, "Eval", normalize_weights } },
+    { "PAWN", Config::Param{ &WEIGHT[PieceType::PAWN], 0, 150, "Eval", normalize_weights} },
+    { "KNIGHT", Config::Param{ &WEIGHT[PieceType::KNIGHT], 250, 400, "Eval", normalize_weights } },
+    { "BISHOP", Config::Param{ &WEIGHT[PieceType::BISHOP], 320, 400, "Eval", normalize_weights } },
+    { "ROOK", Config::Param{ &WEIGHT[PieceType::ROOK], 300, 700, "Eval", normalize_weights } },
+    { "QUEEN", Config::Param{ &WEIGHT[PieceType::QUEEN], 600, 1300, "Eval", normalize_weights } },
 
 #if EVAL_PIECE_GRADING
     /* Endgame adjustments */
-    { "ENDGAME_PAWN_ADJUST", Config::Param{ &chess::ADJUST[chess::PieceType::PAWN], 0, 100, "Eval", normalize_weights} },
-    { "ENDGAME_KNIGHT_ADJUST", Config::Param{ &chess::ADJUST[chess::PieceType::KNIGHT], -100, 0, "Eval", normalize_weights } },
-    { "ENDGAME_BISHOP_ADJUST", Config::Param{ &chess::ADJUST[chess::PieceType::BISHOP], -100, 0, "Eval", normalize_weights } },
-    { "ENDGAME_ROOK_ADJUST", Config::Param{ &chess::ADJUST[chess::PieceType::ROOK], 0, 100, "Eval", normalize_weights } },
-    { "ENDGAME_QUEEN_ADJUST", Config::Param{ &chess::ADJUST[chess::PieceType::QUEEN], -100, 0, "Eval", normalize_weights } },
+    { "ENDGAME_PAWN_ADJUST", Config::Param{ &ADJUST[PieceType::PAWN], 0, 100, "Eval", normalize_weights} },
+    { "ENDGAME_KNIGHT_ADJUST", Config::Param{ &ADJUST[PieceType::KNIGHT], -100, 0, "Eval", normalize_weights } },
+    { "ENDGAME_BISHOP_ADJUST", Config::Param{ &ADJUST[PieceType::BISHOP], -100, 0, "Eval", normalize_weights } },
+    { "ENDGAME_ROOK_ADJUST", Config::Param{ &ADJUST[PieceType::ROOK], 0, 100, "Eval", normalize_weights } },
+    { "ENDGAME_QUEEN_ADJUST", Config::Param{ &ADJUST[PieceType::QUEEN], -100, 0, "Eval", normalize_weights } },
 #endif /* EVAL_PIECE_GRADING */
 
 #endif /* WEIGHT_TUNING_ENABLED */
@@ -127,7 +128,7 @@ Config::Namespace Config::_namespace = {
 #if USE_PIECE_SQUARE_TABLES && PST_TUNING_ENABLED
 #define PST_RANGE -150, 150, "PST", true
 
-template <chess::PieceType PT, bool EndGame = false>
+template <PieceType PT, bool EndGame = false>
 struct PieceSquareTuningEnabler
 {
     PieceSquareTuningEnabler()
@@ -142,7 +143,7 @@ struct PieceSquareTuningEnabler
 
 
 #if PS_PAWN_TUNING_ENABLED
-    template<> struct PieceSquareTuningEnabler<chess::PAWN>
+    template<> struct PieceSquareTuningEnabler<PAWN>
     {
         PieceSquareTuningEnabler()
         {
@@ -154,27 +155,27 @@ struct PieceSquareTuningEnabler
         }
     };
 
-    PieceSquareTuningEnabler<chess::PAWN> tune_ps_pawn;
+    PieceSquareTuningEnabler<PAWN> tune_ps_pawn;
 #endif /* PS_PAWN_TUNING_ENABLED */
 
 #if PS_KNIGHT_TUNING_ENABLED
-    PieceSquareTuningEnabler<chess::KNIGHT> tune_ps_knight;
+    PieceSquareTuningEnabler<KNIGHT> tune_ps_knight;
 #endif /* PS_KNIGHT_TUNING_ENABLED */
 
 #if PS_BISHOP_TUNING_ENABLED
-    PieceSquareTuningEnabler<chess::BISHOP> tune_ps_bishop;
+    PieceSquareTuningEnabler<BISHOP> tune_ps_bishop;
 #endif /* PS_BISHOP_TUNING_ENABLED */
 
 #if PS_ROOK_TUNING_ENABLED
-    PieceSquareTuningEnabler<chess::ROOK> tune_ps_rook;
+    PieceSquareTuningEnabler<ROOK> tune_ps_rook;
 #endif /* PS_ROOK_TUNING_ENABLED */
 
 #if PS_QUEEN_TUNING_ENABLED
-    PieceSquareTuningEnabler<chess::QUEEN> tune_ps_queen;
+    PieceSquareTuningEnabler<QUEEN> tune_ps_queen;
 #endif /* PS_QUEEN_TUNING_ENABLED */
 
 #if PS_KING_TUNING_ENABLED
-    template<> struct PieceSquareTuningEnabler<chess::KING, true>
+    template<> struct PieceSquareTuningEnabler<KING, true>
     {
         PieceSquareTuningEnabler()
         {
@@ -189,8 +190,8 @@ struct PieceSquareTuningEnabler
         }
     };
 
-    PieceSquareTuningEnabler<chess::KING> tune_ps_king;
-    PieceSquareTuningEnabler<chess::KING, true> tune_ps_king_endgame;
+    PieceSquareTuningEnabler<KING> tune_ps_king;
+    PieceSquareTuningEnabler<KING, true> tune_ps_king_endgame;
 #endif /* PS_KING_TUNING_ENABLED */
 #endif /* USE_PIECE_SQUARE_TABLES && PST_TUNING_ENABLED */
 #else
