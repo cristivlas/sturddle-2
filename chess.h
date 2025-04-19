@@ -951,7 +951,7 @@ namespace chess
     }
 
 
-    namespace
+    namespace impl
     {
         /* Recursive template for computing exponential at compile time */
         template<int N> struct _exp {
@@ -980,7 +980,7 @@ namespace chess
 
     INLINE constexpr double logistic(int x)
     {
-        return 1 / (1.0 + _e(-x));
+        return 1 / (1.0 + impl::_e(-x));
     }
 
     /*
@@ -1004,6 +1004,7 @@ namespace chess
 #else
     template<int MG, int EG> struct Interpolate
     {
+        /* Pre-populate interpolated values at compile time */
         template<typename T, T... is>  static constexpr std::array<double, sizeof ...(is)>
         make_values(std::integer_sequence<T, is...> int_seq)
         {
