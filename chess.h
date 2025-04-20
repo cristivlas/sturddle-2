@@ -31,10 +31,9 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
-
-#include <utility>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 #if _MSC_VER
 #include <intrin.h>
