@@ -70,7 +70,7 @@ def plot_parameters(budget_numbers, param_data, selected_params):
     for param_name in selected_params:
         if param_name in param_data:
             values = param_data[param_name]
-            plt.plot(budget_numbers, values, marker='o', label=param_name)
+            plt.plot(budget_numbers, values, label=param_name)
     
     plt.xlabel('Iteration')
     plt.ylabel('Parameter Value')
