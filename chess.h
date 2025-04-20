@@ -71,6 +71,8 @@ constexpr int SIGN[] = { -1, 1 };
 
 template<typename T> INLINE T constexpr pow2(T x) { return x * x; }
 
+
+/* Fixed capacity container */
 template<typename T, size_t max_size = 256>
 class MaxSizeVector
 {
@@ -169,6 +171,76 @@ private:
 
     size_t _current_size;
 };
+
+
+/*
+ * https://www.chessprogramming.org/Tapered_Eval
+ */
+namespace impl
+{
+    /* Recursive template for computing exponential at compile time */
+    template<int N> struct _exp {
+        static constexpr double value = _exp<N-1>::value * M_E;
+    };
+
+    template<> struct _exp<0> {
+        static constexpr double value = 1;
+    };
+
+    template<size_t... I>
+    static constexpr std::array<double, sizeof ... (I)> _exp_table(std::index_sequence<I...>)
+    {
+        return { _exp<I>::value ... };
+    }
+
+    INLINE constexpr double _e(int x)
+    {
+        ASSERT(abs(x) < 33);
+
+        auto constexpr e = _exp_table(std::make_index_sequence<33>{});
+        return x < 0 ? (1.0 / e[-x]) : e[x];
+    }
+
+    /* Compile-time sigmoid */
+    INLINE constexpr double _logistic(int x)
+    {
+        return 1 / (1.0 + _e(-x));
+    }
+
+    INLINE constexpr double _interpolate(int pc, int from, int to)
+    {
+        ASSERT(pc >= 2);
+        ASSERT(pc <= 32);
+
+        constexpr auto max_pc = 32 - ENDGAME_PIECE_COUNT;
+        return from + (to - from) * (1 - _logistic(pc * max_pc / 32.0 - max_pc / 2 - 2));
+    }
+
+    template<int MG, int EG> struct Interpolate
+    {
+        /* Pre-populate interpolated values at compile time */
+        template<typename T, T... is>  static constexpr std::array<double, sizeof ...(is)>
+        make_values(std::integer_sequence<T, is...> int_seq)
+        {
+            return { _interpolate(is, MG, EG)... };
+        }
+
+        static constexpr auto _value = make_values(std::make_index_sequence<33>{});
+
+        static double value(int i) {
+            ASSERT(i >= 0);
+            ASSERT(i <= 32);
+            return _value[i];
+        }
+    };
+} /* namespace impl */
+
+
+#if !TUNING_ENABLED && !TUNING_PARTIAL
+    #define interpolate(pc, from, to) impl::Interpolate<from, to>::value(pc)
+#else
+    #define interpolate(pc, from, to) impl::_interpolate(pc, from, to)
+#endif
 
 
 namespace chess
@@ -951,81 +1023,6 @@ namespace chess
     }
 
 
-    namespace impl
-    {
-        /* Recursive template for computing exponential at compile time */
-        template<int N> struct _exp {
-            static constexpr double value = _exp<N-1>::value * M_E;
-        };
-
-        template<> struct _exp<0> {
-            static constexpr double value = 1;
-        };
-
-        template<size_t... I>
-        static constexpr std::array<double, sizeof ... (I)> _exp_table(std::index_sequence<I...>)
-        {
-            return { _exp<I>::value ... };
-        }
-
-        /* Compile-time sigmoid */
-        INLINE constexpr double _e(int x)
-        {
-            ASSERT(abs(x) < 33);
-
-            auto constexpr e = _exp_table(std::make_index_sequence<33>{});
-            return x < 0 ? (1.0 / e[-x]) : e[x];
-        }
-    }
-
-    INLINE constexpr double logistic(int x)
-    {
-        return 1 / (1.0 + impl::_e(-x));
-    }
-
-    /*
-     * https://www.chessprogramming.org/Tapered_Eval
-     */
-    INLINE constexpr double _interpolate(int pc, int from, int to)
-    {
-        ASSERT(pc >= 2);
-        ASSERT(pc <= 32);
-
-        constexpr auto max_pc = 32 - ENDGAME_PIECE_COUNT;
-        return from + (to - from) * (1 - logistic(pc * max_pc / 32.0 - max_pc / 2 - 2));
-    }
-
-
-#if TUNING_ENABLED || defined(TUNING_PARTIAL)
-    INLINE constexpr double interpolate(int pc, int mg, int eg)
-    {
-        return _interpolate(pc, mg, eg);
-    }
-#else
-    template<int MG, int EG> struct Interpolate
-    {
-        /* Pre-populate interpolated values at compile time */
-        template<typename T, T... is>  static constexpr std::array<double, sizeof ...(is)>
-        make_values(std::integer_sequence<T, is...> int_seq)
-        {
-            return { _interpolate(is, MG, EG)... };
-        }
-
-        static constexpr auto _value = make_values(std::make_index_sequence<33>{});
-
-        static double value(int i) {
-            ASSERT(i >= 0);
-            ASSERT(i <= 32);
-
-            return _value[i];
-        }
-    };
-
-    #define interpolate(pc, mg, eg) Interpolate<mg, eg>::value(pc)
-
-#endif /* !TUNING_ENABLED */
-
-
     struct State : public BoardPosition
     {
         int capture_value = 0;
@@ -1217,13 +1214,22 @@ namespace chess
         }
 
         /* Used in capture evals */
-        INLINE int piece_weight_at(Square square, Color color) const
+        INLINE int piece_value_at(Square square, Color color) const
         {
             const auto piece_type = piece_type_at(square);
             auto w = WEIGHT[piece_type];
 
         #if EVAL_PIECE_GRADING
-            w += _interpolate(piece_count(), 0, ADJUST[piece_type]);
+            switch (piece_type)
+            {
+            case NONE: return w;
+            case PAWN: w += interpolate(piece_count(), 0, ADJUST[PAWN]); break;
+            case KNIGHT: w += interpolate(piece_count(), 0, ADJUST[KNIGHT]); break;
+            case BISHOP: w += interpolate(piece_count(), 0, ADJUST[BISHOP]); break;
+            case ROOK: w += interpolate(piece_count(), 0, ADJUST[ROOK]); break;
+            case QUEEN: w += interpolate(piece_count(), 0, ADJUST[QUEEN]); break;
+            case KING: break;
+            }
         #endif /* EVAL_PIECE_GRADING */
 
         #if USE_PIECE_SQUARE_TABLES
@@ -1296,7 +1302,7 @@ namespace chess
 
         _check = { -1, -1 };
 
-        this->capture_value = piece_weight_at(move.to_square(), !turn);
+        this->capture_value = piece_value_at(move.to_square(), !turn);
         this->promotion = move.promotion();
 
         const auto color = turn;

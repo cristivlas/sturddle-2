@@ -797,7 +797,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                             <= std::max<int>(0, SINGULAR_ACCURACY + SINGULAR_COEFF * pow2(ctxt._tt_entry._depth) / 100.0)
                        )
                     {
-                        ASSERT(next_ctxt->_move == ctxt._tt_entry._best_move);
+                        ASSERT(next_ctxt->_move == ctxt._tt_entry._best_move
+                            || next_ctxt->_move._old_group == MoveOrder::BEST_MOVES);
 
                         const auto s_beta = std::max(int(ctxt._tt_entry._value) - ctxt.singular_margin(), MATE_LOW);
 
