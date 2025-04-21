@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 """
-Tests Runner for the Sturddle Chess Engine (c) 2022, 2023 Cristian Vlasceanu.
+Tests Runner for the Sturddle Chess Engine (c) 2022 - 2025 Cristian Vlasceanu.
 -------------------------------------------------------------------------
 
 This program is free software: you can redistribute it and/or modify
@@ -21,10 +21,15 @@ Any third-party files include in this project are subject to copyright
 and licensed as stated in their respective header notes.
 """
 import argparse
+import sys
 from datetime import datetime
 from functools import partial
 from os import path
 
+def root_path():
+    return path.abspath(path.join(path.split(sys.argv[0])[0], '..'))
+
+sys.path.append(root_path())
 
 from chess_engine import *
 
