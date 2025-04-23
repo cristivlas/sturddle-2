@@ -109,19 +109,19 @@ constexpr bool normalize_weights = true;
 Config::Namespace Config::_namespace = {
 #if WEIGHT_TUNING_ENABLED
     /* Piece weights */
-    { "PAWN", Config::Param{ &WEIGHT[PieceType::PAWN], 60, 105, "Eval", normalize_weights} },
-    { "KNIGHT", Config::Param{ &WEIGHT[PieceType::KNIGHT], 250, 400, "Eval", normalize_weights } },
-    { "BISHOP", Config::Param{ &WEIGHT[PieceType::BISHOP], 320, 400, "Eval", normalize_weights } },
+    { "PAWN", Config::Param{ &WEIGHT[PieceType::PAWN], 70, 105, "Eval", normalize_weights} },
+    { "KNIGHT", Config::Param{ &WEIGHT[PieceType::KNIGHT], 270, 400, "Eval", normalize_weights } },
+    { "BISHOP", Config::Param{ &WEIGHT[PieceType::BISHOP], 310, 400, "Eval", normalize_weights } },
     { "ROOK", Config::Param{ &WEIGHT[PieceType::ROOK], 400, 700, "Eval", normalize_weights } },
     { "QUEEN", Config::Param{ &WEIGHT[PieceType::QUEEN], 850, 1200, "Eval", normalize_weights } },
 
 #if EVAL_PIECE_GRADING
     /* Endgame adjustments */
     { "ENDGAME_PAWN_ADJUST", Config::Param{ &ADJUST[PieceType::PAWN], 0, 35, "Eval", normalize_weights} },
-    { "ENDGAME_KNIGHT_ADJUST", Config::Param{ &ADJUST[PieceType::KNIGHT], -100, 0, "Eval", normalize_weights } },
-    { "ENDGAME_BISHOP_ADJUST", Config::Param{ &ADJUST[PieceType::BISHOP], -100, 0, "Eval", normalize_weights } },
-    { "ENDGAME_ROOK_ADJUST", Config::Param{ &ADJUST[PieceType::ROOK], 0, 100, "Eval", normalize_weights } },
-    { "ENDGAME_QUEEN_ADJUST", Config::Param{ &ADJUST[PieceType::QUEEN], -100, 0, "Eval", normalize_weights } },
+    { "ENDGAME_KNIGHT_ADJUST", Config::Param{ &ADJUST[PieceType::KNIGHT], -50, 0, "Eval", normalize_weights } },
+    { "ENDGAME_BISHOP_ADJUST", Config::Param{ &ADJUST[PieceType::BISHOP], -50, 0, "Eval", normalize_weights } },
+    { "ENDGAME_ROOK_ADJUST", Config::Param{ &ADJUST[PieceType::ROOK], 0, 50, "Eval", normalize_weights } },
+    { "ENDGAME_QUEEN_ADJUST", Config::Param{ &ADJUST[PieceType::QUEEN], -50, 0, "Eval", normalize_weights } },
 #endif /* EVAL_PIECE_GRADING */
 
 #endif /* WEIGHT_TUNING_ENABLED */
@@ -129,7 +129,7 @@ Config::Namespace Config::_namespace = {
 
 
 #if USE_PIECE_SQUARE_TABLES && PST_TUNING_ENABLED
-#define PST_RANGE -150, 150, "PST", true
+#define PST_RANGE -40, 40, "PST", true
 
 template <PieceType PT, bool EndGame = false>
 struct PieceSquareTuningEnabler
@@ -272,8 +272,8 @@ DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,     100)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
 
 #if WITH_NNUE
-DECLARE_VALUE(  NNUE_EVAL_TERM,                     645,    0,    1000)
-DECLARE_VALUE(  NNUE_MAX_EVAL,                      496,    0,    1000)
+DECLARE_VALUE(  NNUE_EVAL_TERM,                     502,    0,    1000)
+DECLARE_VALUE(  NNUE_MAX_EVAL,                      452,    0,    1000)
 #endif /* WITH_NNUE */
 
 DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,              25,    0,     100)

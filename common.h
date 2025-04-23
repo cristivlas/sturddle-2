@@ -110,9 +110,9 @@ using score_t = int;
 /* Compile with multithread (symmetric multiprocessing) support */
 #define SMP                                 true
 
-#if !WITH_NNUE && !defined(USE_PIECE_SQUARE_TABLES)
+//#if !WITH_NNUE && !defined(USE_PIECE_SQUARE_TABLES)
   #define USE_PIECE_SQUARE_TABLES           true
-#endif
+//#endif
 
 /* Experimental */
 #define USE_BOOK_HINT                       false
