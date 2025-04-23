@@ -379,7 +379,7 @@ namespace search
         if (move)
         {
             ASSERT(move._state);
-            ASSERT(move._state->capture_value == 0);
+            ASSERT(!move._state->is_capture());
 
             const auto turn = !move._state->turn; /* side that moved */
         #if USE_BUTTERFLY_TABLES
@@ -398,7 +398,7 @@ namespace search
     {
         ASSERT(move);
         ASSERT(move._state);
-        ASSERT(move._state->capture_value == 0);
+        ASSERT(!move._state->is_capture());
 
         const auto turn = !move._state->turn; /* side that moved */
 

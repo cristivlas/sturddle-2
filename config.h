@@ -260,7 +260,7 @@ DECLARE_CONST(  FUTILITY_PRUNING,                     1,    0,       1)
 DECLARE_CONST(  MULTICUT,                             1,    0,       1)
 
 GROUP(Search)
-DECLARE_VALUE(  CAPTURES_SCALE,                      99,    0,     150)
+
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
 DECLARE_VALUE(  DOUBLE_EXT_MAX,                      12,    0,     100)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)

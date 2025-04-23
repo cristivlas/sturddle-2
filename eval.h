@@ -416,7 +416,6 @@ namespace
 
         eval += eval_open_files(state, piece_count);
         eval += eval_pawn_structure(state, piece_count);
-        eval += eval_piece_grading(state, piece_count);
         eval += state.diff_connected_rooks()
              * interpolate(piece_count, MIDGAME_CONNECTED_ROOKS, ENDGAME_CONNECTED_ROOKS);
 
@@ -449,10 +448,6 @@ namespace
             const auto mat_eval = ctxt.evaluate_material();
 
             eval += SIGN[state.turn] * eval_tactical(state, mat_eval, piece_count);
-        }
-        else
-        {
-            eval += SIGN[state.turn] * eval_piece_grading(state, piece_count);
         }
 
         ASSERT(eval < SCORE_MAX);

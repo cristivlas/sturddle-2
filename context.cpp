@@ -357,8 +357,11 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
 
 /* TODO: define array of margins, using LMP for now as a temporary hack. */
 
-static INLINE score_t eval_margin(int depth, int pc)
+static INLINE score_t eval_margin(const Context& ctxt)
 {
+    const auto depth = ctxt.depth();
+    const auto pc = ctxt.piece_count();
+
     return (NNUE_MAX_EVAL + search::LMP[depth]) * interpolate(pc, 100, 135) / 100.0;
 }
 
@@ -374,12 +377,8 @@ void search::Context::eval_nnue()
         }
 
         auto eval = evaluate_material();
-        const auto pc = piece_count();
-    #if EVAL_PIECE_GRADING
-        eval += eval_piece_grading(state(), pc) * SIGN[turn()];
-    #endif
 
-        if (state().just_king(!turn()) || (depth() >= 0 && abs(eval) <= eval_margin(depth(), pc)))
+        if (state().just_king(!turn()) || (depth() >= 0 && abs(eval) <= eval_margin(*this)))
         {
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
         }
@@ -535,6 +534,32 @@ namespace search
     size_t (*Context::_vmem_avail)() = nullptr;
 
     std::string Context::_syzygy_path = "syzygy/3-4-5";
+
+
+    score_t eval_material_for_side_that_moved(const State& state, const State* prev, const BaseMove& move)
+    {
+        score_t eval;
+
+        if (state.simple_score == State::UNKNOWN_SCORE)
+        {
+            if (prev && move)
+                eval = state.eval_apply_delta(move, *prev);
+            else
+                eval = (state.simple_score = state.eval_simple());
+        }
+        else
+        {
+            ASSERT(state.simple_score == state.eval_simple());
+            eval = state.simple_score;
+        }
+
+    #if EVAL_PIECE_GRADING
+        eval += eval_piece_grading(state, state.piece_count());
+    #endif /* EVAL_PIECE_GRADING */
+
+        /* Evaluate from the point of view of the side that just moved. */
+        return eval * SIGN[!state.turn];
+    }
 
 
     /* static */ void Context::clear_moves_cache()
@@ -761,7 +786,7 @@ namespace search
         next_state.apply_move(move);
 
         ASSERT(next_state.turn != state.turn);
-        ASSERT(next_state.capture_value > 0);
+        ASSERT(next_state.is_capture());
 
         return !next_state.is_check(state.turn); /* legal move? */
     }
@@ -1778,7 +1803,7 @@ namespace search
                 if (make_move<true>(ctxt, move, futility))
                 {
                     incremental_update(move, ctxt);
-                    const auto eval = eval_material_and_piece_squares(*move._state, ctxt._state, move);
+                    const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
                     move._group = MoveOrder::LATE_MOVES;
                     move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
                 }

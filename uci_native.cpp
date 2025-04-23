@@ -507,12 +507,14 @@ private:
                     const auto move = chess::BaseMove(from, to, promo);
                     const auto prev = _buf._state;
                     _buf._state.apply_move(move);
+                    if (prev._hash == 0)
+                        prev.hash();
                     chess::zobrist_update(prev, move, _buf._state);
                     ASSERT(_buf._state._hash == chess::zobrist_hash(_buf._state));
                     /* keep track of played moves, to detect repetitions */
                     search::Context::_history->emplace(_buf._state);
                     /* update the halfmove clock */
-                    if (_buf._state.capture_value || prev.piece_type_at(from) == chess::PieceType::PAWN)
+                    if (_buf._state.is_capture() || prev.piece_type_at(from) == chess::PieceType::PAWN)
                         search::Context::_history->_fifty = 0;
                     else
                         ++search::Context::_history->_fifty;
@@ -1177,6 +1179,8 @@ void UCI::position(const Arguments &args)
     if (fen.size() >= 4)
     {
         _buf._state = chess::State();
+        ASSERT(_buf._state._hash == 0);
+
         if (   !chess::epd::parse_pos(fen[0], _buf._state)
             || !chess::epd::parse_side_to_move(fen[1], _buf._state)
             || !chess::epd::parse_castling(fen[2], _buf._state)

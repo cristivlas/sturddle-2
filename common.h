@@ -68,12 +68,8 @@ using score_t = int;
   #define DATAGEN                           false
 #endif
 
-#if !WITH_NNUE
-  #define EVAL_PIECE_GRADING                true /* required */
-#else
 /* Experimental in 2.03 */
-  #define EVAL_PIECE_GRADING                true
-#endif
+#define EVAL_PIECE_GRADING                  true
 
 /* NOTE: this setting has no effect when using STATIC_EXCHANGES */
 #define EXCHANGES_DETECT_CHECKMATE          false
@@ -114,9 +110,9 @@ using score_t = int;
 /* Compile with multithread (symmetric multiprocessing) support */
 #define SMP                                 true
 
-//#if !WITH_NNUE && !defined(USE_PIECE_SQUARE_TABLES)
+#if !WITH_NNUE && !defined(USE_PIECE_SQUARE_TABLES)
   #define USE_PIECE_SQUARE_TABLES           true
-//#endif
+#endif
 
 /* Experimental */
 #define USE_BOOK_HINT                       false

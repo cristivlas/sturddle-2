@@ -630,7 +630,7 @@ namespace nnue
                 }
             }
 
-            if (to_pos.capture_value)
+            if (to_pos.is_capture())
             {
                 const auto capture_square = from_pos.is_en_passant(move)
                     ? Square(from_pos.en_passant_square - 8 * SIGN[color])

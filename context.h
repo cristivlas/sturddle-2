@@ -326,8 +326,6 @@ namespace search
         template<bool EvalCaptures = true> score_t evaluate();
 
         score_t     evaluate_end();
-
-        template<bool with_piece_squares = true>
         score_t     evaluate_material() const;
 
         void        eval_nnue();
@@ -351,7 +349,7 @@ namespace search
         static void init();
         bool        is_beta_cutoff(Context*, score_t);
         static bool is_cancelled() { return _cancel.load(std::memory_order_acquire); }
-        INLINE bool is_capture() const { return state().capture_value != 0; }
+        INLINE bool is_capture() const { return state().is_capture(); }
         INLINE bool is_check() const { return state().is_check(); }
         bool        is_counter_move(const Move&) const;
         bool        is_evasion() const;
@@ -539,31 +537,10 @@ namespace search
     }
 
 
-    /* Evaluate material plus piece-squares from the point of view
-     * of the side that just moved. This is different from the other
-     * evaluate methods which apply the perspective of the side-to-move.
-     * Side-effect: caches simple score inside the State object.
+    /* Evaluate material from the point of view of the side that just moved.
+     * Include piece-square values if USE_PIECE_SQUARE_TABLES defined as true (see common.h)
      */
-    INLINE score_t eval_material_and_piece_squares(State& state, const State* prev, const BaseMove& move)
-    {
-        score_t eval;
-
-        if (state.simple_score == State::UNKNOWN_SCORE)
-        {
-            if (prev && move)
-                eval = state.eval_apply_delta(move, *prev);
-            else
-                eval = (state.simple_score = state.eval_simple());
-        }
-        else
-        {
-            ASSERT(state.simple_score == state.eval_simple());
-            eval = state.simple_score;
-        }
-
-        return eval * SIGN[!state.turn];
-    }
-
+    score_t eval_material_for_side_that_moved(const State& state, const State* prev, const BaseMove& move);
 
 
     INLINE void incremental_update(Move& move, const Context& ctxt)
@@ -598,7 +575,7 @@ namespace search
     INLINE bool is_quiet(const State& state, const Context* ctxt = nullptr)
     {
         return state.promotion != chess::PieceType::QUEEN /* ignore under-promotions */
-            && state.capture_value == 0
+            && !state.is_capture()
             && state.pushed_pawns_score <= 1
             && (!ctxt || !ctxt->is_evasion())
             && !state.is_check();
@@ -644,7 +621,7 @@ namespace search
         ASSERT(move && move._state && move != _move);
 
         return (move != _tt_entry._hash_move)
-            && (PruneCaptures || move._state->capture_value == 0)
+            && (PruneCaptures || !move._state->is_capture())
             && (move.promotion() == chess::PieceType::NONE)
             && (move.from_square() != _capture_square)
             && can_forward_prune()
@@ -761,7 +738,7 @@ namespace search
                 if (capt >= MATE_HIGH)
                     score = capt - 1;
                 else
-                    score += capt * CAPTURES_SCALE / 100;
+                    score += capt;
 
                 ASSERT(score > SCORE_MIN);
                 ASSERT(score < SCORE_MAX);
@@ -771,21 +748,13 @@ namespace search
     }
 
 
-    template<bool with_piece_squares>
     INLINE score_t Context::evaluate_material() const
     {
-        if constexpr (with_piece_squares)
-        {
-            /*
-             * Flip it from the pov of the side that moved
-             * to the perspective of the side-to-move.
-             */
-            return -eval_material_and_piece_squares(*_state, _parent ? _parent->_state : nullptr, _move);
-        }
-        else
-        {
-            return state().eval_material() * SIGN[state().turn];
-        }
+        /*
+         * Flip it from the pov of the side that moved
+         * to the perspective of the side-to-move.
+         */
+        return -eval_material_for_side_that_moved(*_state, _parent ? _parent->_state : nullptr, _move);
     }
 
 
@@ -868,8 +837,8 @@ namespace search
                     const auto gg_parent_state = gg_parent ? gg_parent->_state : nullptr;
 
                     _improvement = std::max(0,
-                          eval_material_and_piece_squares(*_state, _parent->_state, _move)
-                        - eval_material_and_piece_squares(*prev->_state, gg_parent_state, prev->_move));
+                          eval_material_for_side_that_moved(*_state, _parent->_state, _move)
+                        - eval_material_for_side_that_moved(*prev->_state, gg_parent_state, prev->_move));
                 }
             }
         }
@@ -1472,7 +1441,7 @@ namespace search
         }
         else if (make_move<false>(ctxt, move))
         {
-            ASSERT(move._state->capture_value);
+            ASSERT(move._state->is_capture());
 
             auto capture_gain = move._state->capture_value;
             capture_gain -= eval_exchanges<false>(ctxt.tid(), move, capture_gain);
@@ -1571,7 +1540,7 @@ namespace search
         }
 
         ctxt.state().clone_into(*move._state);
-        ASSERT(move._state->capture_value == 0);
+        ASSERT(!move._state->is_capture());
 
         move._state->apply_move(move);
 
@@ -1629,7 +1598,7 @@ namespace search
         }
 
         /* consistency check */
-        ASSERT((move._state->capture_value != 0) == ctxt.state().is_capture(move));
+        ASSERT((move._state->is_capture()) == ctxt.state().is_capture(move));
 
         if constexpr(COUNT_VALID_MOVES_AS_NODES)
             ++ctxt.get_tt()->_nodes;
@@ -1663,7 +1632,7 @@ namespace search
             move._state = &Context::states(ctxt.tid(), ctxt._ply)[_state_index++];
 
             ctxt.state().clone_into(*move._state);
-            ASSERT(move._state->capture_value == 0);
+            ASSERT(!move._state->is_capture());
 
             move._state->apply_move(move);
         }

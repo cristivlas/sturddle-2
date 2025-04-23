@@ -1118,6 +1118,8 @@ namespace chess
 
         bool has_insufficient_material(Color) const;
 
+        INLINE bool is_capture() const { ASSERT(capture_value >= 0); return capture_value != 0; }
+
         bool is_capture(const BaseMove& move) const;
         bool is_castling(const BaseMove&) const;
 
@@ -1173,7 +1175,7 @@ namespace chess
         /*
          * Apply incremental material and piece squares evaluation.
          */
-        INLINE score_t eval_apply_delta(const BaseMove& move, const State& prev)
+        INLINE score_t eval_apply_delta(const BaseMove& move, const State& prev) const
         {
             ASSERT(simple_score == UNKNOWN_SCORE);
 
@@ -1189,7 +1191,6 @@ namespace chess
             return simple_score;
         }
 
-        score_t eval_incremental(const BaseMove&) const;
 
         /*
          * Indirection point for future ideas (dynamic piece weights).
@@ -1216,32 +1217,32 @@ namespace chess
         INLINE int piece_value_at(Square square, Color color) const
         {
             const auto piece_type = piece_type_at(square);
-            auto w = WEIGHT[piece_type];
+            auto value = WEIGHT[piece_type];
 
         #if EVAL_PIECE_GRADING
             switch (piece_type)
             {
-            case NONE: return w;
-            case PAWN: w += interpolate(piece_count(), 0, ADJUST[PAWN]); break;
-            case KNIGHT: w += interpolate(piece_count(), 0, ADJUST[KNIGHT]); break;
-            case BISHOP: w += interpolate(piece_count(), 0, ADJUST[BISHOP]); break;
-            case ROOK: w += interpolate(piece_count(), 0, ADJUST[ROOK]); break;
-            case QUEEN: w += interpolate(piece_count(), 0, ADJUST[QUEEN]); break;
+            case NONE: ASSERT(value == 0); return 0;
+            case PAWN: value += interpolate(piece_count(), 0, ADJUST[PAWN]); break;
+            case KNIGHT: value += interpolate(piece_count(), 0, ADJUST[KNIGHT]); break;
+            case BISHOP: value += interpolate(piece_count(), 0, ADJUST[BISHOP]); break;
+            case ROOK: value += interpolate(piece_count(), 0, ADJUST[ROOK]); break;
+            case QUEEN: value += interpolate(piece_count(), 0, ADJUST[QUEEN]); break;
             case KING: break;
             }
         #endif /* EVAL_PIECE_GRADING */
 
-        #if USE_PIECE_SQUARE_TABLES
-            if (piece_type)
-            {
-                // endgame=false since it's currently only used for KING
-                const auto& table = select_piece_square_table_rt(false, piece_type, color);
+        // #if USE_PIECE_SQUARE_TABLES
+        //     if (piece_type)
+        //     {
+        //         // endgame=false since it's currently only used for KING
+        //         const auto& table = select_piece_square_table_rt(false, piece_type, color);
+        //         value += table[square];
+        //     }
+        // #endif /* USE_PIECE_SQUARE_TABLES */
 
-                w += table[square];
-            }
-        #endif /* USE_PIECE_SQUARE_TABLES */
-
-            return w;
+            ASSERT(piece_type == NONE || value);
+            return value;
         }
 
         void set_piece_at(Square, PieceType, Color, PieceType promotion = PieceType::NONE);
@@ -1251,6 +1252,7 @@ namespace chess
 
     private:
         void ep_moves(MovesList& moves, Bitboard to_mask) const;
+        score_t eval_incremental(const BaseMove&) const;
 
         /*
          * Evaluate the incremental change of a move.
@@ -1304,6 +1306,8 @@ namespace chess
         this->capture_value = piece_value_at(move.to_square(), !turn);
         this->promotion = move.promotion();
 
+        ASSERT(!is_capture() || piece_type_at(move.to_square()));
+
         const auto color = turn;
         ASSERT(color == piece_color_at(move.from_square()));
 
@@ -1354,18 +1358,27 @@ namespace chess
             {
                 en_passant_square = Square(move.from_square() - 8);
             }
-            else if (move.to_square() == ep_square && (abs(diff) == 7 || abs(diff) == 9) && !capture_value)
+            else if (move.to_square() == ep_square && (abs(diff) == 7 || abs(diff) == 9))
             {
+                ASSERT(!is_capture());
+
                 /* Remove pawns captured en passant. */
-                remove_piece_at(Square(ep_square - 8 * SIGN[turn]));
-                capture_value = weight(PieceType::PAWN);
+                const auto sq = Square(ep_square - 8 * SIGN[turn]);
+
+                ASSERT(piece_type_at(sq) == PAWN);
+                ASSERT(piece_color_at(sq) != turn);
+
+                capture_value = piece_value_at(sq, !turn);
+                ASSERT(is_capture());
+
+                remove_piece_at(sq);
             }
         }
 
         set_piece_at(to_square, piece_type, color, move.promotion());
         flip(turn);
 
-        if (capture_value && _piece_count > 0)
+        if (is_capture() && _piece_count > 0)
         {
             --_piece_count;
             ASSERT(popcount(occupied()) == _piece_count);
@@ -1991,7 +2004,11 @@ namespace chess
                     break;
                 }
             }
-            return i == 64;
+            ASSERT(i == 64);
+            if (i != 64)
+                return false;
+            pos.piece_count(); /* update cached _piece_count */
+            return true;
         }
 
         /** Parse castling rights */
