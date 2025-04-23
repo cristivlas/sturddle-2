@@ -73,13 +73,15 @@ def parse_log_file(filename):
 
 def plot_parameters(budget_numbers, param_data, selected_params):
     _fig, _ax = plt.subplots(figsize=(12, 8))
-    cmap = plt.cm.tab20
+    cmap = plt.cm.tab20c
     indices = np.linspace(0, 1, len(selected_params))
     #np.random.shuffle(indices)  # Randomize to break adjacency similarity
     colors = [cmap(i) for i in indices]
 
-    styles = ['-', '--', ':']
+    styles = ['-', '--', '-.']
     line_styles = itertools.cycle(styles)
+
+    mark_spacing = max(1, len(budget_numbers) // 20)
 
     for idx, param_name in enumerate(selected_params):
         if param_name in param_data:
@@ -88,7 +90,10 @@ def plot_parameters(budget_numbers, param_data, selected_params):
             plt.plot(budget_numbers, values,
                      label=param_name,
                      color=colors[idx // len(styles)],
-                     linestyle=next(line_styles))
+                     linestyle=next(line_styles),
+                     marker='s',
+                     markerfacecolor=colors[idx],
+                     markevery=mark_spacing)
 
     plt.xlabel('Iteration')
     plt.ylabel('Parameter Value')
