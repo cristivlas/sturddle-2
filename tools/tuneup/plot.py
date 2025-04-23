@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 
 import argparse
+import itertools
 import re
+import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import numpy as np
 from collections import defaultdict
+
+matplotlib.use('TkAgg')
+
 
 def scan_for_params(filename, sample_size=100):
     """Scan the first part of the lakas.py log file to detect available parameter names."""
@@ -27,6 +33,7 @@ def scan_for_params(filename, sample_size=100):
                     print(f"Warning: Could not parse parameters on line {i+1}: {str(e)}")
     
     return sorted(list(param_names))
+
 
 def parse_log_file(filename):
     """Parse the lakas.py log file and extract best parameter values with budget numbers."""
@@ -63,28 +70,35 @@ def parse_log_file(filename):
     
     return budget_numbers, param_data
 
+
 def plot_parameters(budget_numbers, param_data, selected_params):
-    """Plot the specified best parameters over iteration."""
-    plt.figure(figsize=(12, 8))
-    
-    for param_name in selected_params:
+    _fig, _ax = plt.subplots(figsize=(12, 8))
+    cmap = plt.cm.tab20
+    indices = np.linspace(0, 1, len(selected_params))
+    #np.random.shuffle(indices)  # Randomize to break adjacency similarity
+    colors = [cmap(i) for i in indices]
+
+    styles = ['-', '--', ':']
+    line_styles = itertools.cycle(styles)
+
+    for idx, param_name in enumerate(selected_params):
         if param_name in param_data:
             values = param_data[param_name]
-            plt.plot(budget_numbers, values, label=param_name)
-    
+            # print(f'Plotting {param_name}...')
+            plt.plot(budget_numbers, values,
+                     label=param_name,
+                     color=colors[idx // len(styles)],
+                     linestyle=next(line_styles))
+
     plt.xlabel('Iteration')
     plt.ylabel('Parameter Value')
     plt.title('Best Parameter Values over Iterations')
     plt.grid(True, alpha=0.3)
     plt.legend()
-    
-    # Save plot to file
-    output_file = 'parameter_plot.png'
-    plt.savefig(output_file, dpi=300, bbox_inches='tight')
-    print(f"Plot saved to: {output_file}")
-    
-    # Show plot
+    plt.savefig('parameter_plot.png', dpi=300, bbox_inches='tight')
+    print("Plot saved to: parameter_plot.png")
     plt.show()
+
 
 def main():
     parser = argparse.ArgumentParser(description='Plot best parameters from lakas.py optimization log files')
@@ -131,9 +145,6 @@ def main():
         print(f"Available parameters: {', '.join(param_data.keys())}")
         return
     
-    # Plot the parameters
-    plot_parameters(budget_numbers, param_data, selected_params)
-    
     # Print summary statistics
     print("\nBest Parameter Summary:")
     for param in selected_params:
@@ -146,6 +157,10 @@ def main():
         print(f"  Average value: {np.mean(values):.6f}")
         print(f"  Standard deviation: {np.std(values):.6f}")
         print(f"  Change: {values[-1] - values[0]:.6f}")
+
+    # Plot the parameters
+    plot_parameters(budget_numbers, param_data, selected_params)
+
 
 if __name__ == '__main__':
     main()
