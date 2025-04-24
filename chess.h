@@ -1198,8 +1198,8 @@ namespace chess
             {
                 const auto color = prev.turn;
 
-                auto new_val = piece_value_at(move.to_square(), color);
-                auto old_val = prev.piece_value_at(move.from_square(), color);
+                auto new_val = piece_value_at<false>(move.to_square(), color);
+                auto old_val = prev.piece_value_at<false>(move.from_square(), color);
 
                 simple_score = prev.simple_score + (new_val - old_val) * SIGN[color];
 
@@ -1213,8 +1213,8 @@ namespace chess
                     const auto to_sq = rook_castle_squares[king_file == 2][1][color];
                     ASSERT(prev.piece_type_at(from_sq) == ROOK);
 
-                    new_val = piece_value_at(to_sq, color);
-                    old_val = prev.piece_value_at(from_sq, color);
+                    new_val = piece_value_at<false>(to_sq, color);
+                    old_val = prev.piece_value_at<false>(from_sq, color);
 
                     simple_score += (new_val - old_val) * SIGN[color];
                 }
@@ -1258,23 +1258,25 @@ namespace chess
             return _piece_count;
         }
 
+        template <bool WithPieceGrading = EVAL_PIECE_GRADING>
         INLINE int piece_value_at(Square square, Color color) const
         {
             const auto piece_type = piece_type_at(square);
             auto value = WEIGHT[piece_type];
 
-        #if EVAL_PIECE_GRADING
-            switch (piece_type)
+            if constexpr(WithPieceGrading)
             {
-            case NONE: ASSERT(value == 0); return 0;
-            case PAWN: value += interpolate(piece_count(), 0, ADJUST[PAWN]); break;
-            case KNIGHT: value += interpolate(piece_count(), 0, ADJUST[KNIGHT]); break;
-            case BISHOP: value += interpolate(piece_count(), 0, ADJUST[BISHOP]); break;
-            case ROOK: value += interpolate(piece_count(), 0, ADJUST[ROOK]); break;
-            case QUEEN: value += interpolate(piece_count(), 0, ADJUST[QUEEN]); break;
-            case KING: break;
+                switch (piece_type)
+                {
+                case NONE: ASSERT(value == 0); return 0;
+                case PAWN: value += interpolate(piece_count(), 0, ADJUST[PAWN]); break;
+                case KNIGHT: value += interpolate(piece_count(), 0, ADJUST[KNIGHT]); break;
+                case BISHOP: value += interpolate(piece_count(), 0, ADJUST[BISHOP]); break;
+                case ROOK: value += interpolate(piece_count(), 0, ADJUST[ROOK]); break;
+                case QUEEN: value += interpolate(piece_count(), 0, ADJUST[QUEEN]); break;
+                case KING: break;
+                }
             }
-        #endif /* EVAL_PIECE_GRADING */
 
         #if USE_PIECE_SQUARE_TABLES
             if (piece_type)
