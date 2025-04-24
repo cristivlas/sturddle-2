@@ -95,8 +95,14 @@ struct PolyglotEntry
     uint32_t learn;
 };
 
+
+#if _MSC_VER
+INLINE uint64_t swap_uint64(uint64_t val) { return _byteswap_uint64(val); }
+INLINE uint16_t swap_uint16(uint16_t val) { return _byteswap_ushort(val); }
+#else
 INLINE uint64_t swap_uint64(uint64_t val) { return __builtin_bswap64(val); }
 INLINE uint16_t swap_uint16(uint16_t val) { return __builtin_bswap16(val); }
+#endif /* _MSC_VER */
 
 
 /* Polyglot opening book */

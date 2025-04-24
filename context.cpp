@@ -788,6 +788,16 @@ namespace search
     }
 
 
+    INLINE int capture_gain(const State& state, const State& next_state, const BaseMove& move)
+    {
+    #if EVAL_PIECE_GRADING
+        return next_state.capture_value; /* calculating state score is too slow */
+    #else
+        return (next_state.eval_apply_delta(move, state) - state.eval_lazy()) * SIGN[state.turn];
+    #endif
+    }
+
+
     template<bool Debug>
     int do_exchanges(const State& state, Bitboard mask, int tid, int ply)
     {
@@ -839,7 +849,7 @@ namespace search
             const score_t attacker_val = move._score;
             ASSERT(attacker_val == state.piece_value_at(move.from_square(), state.turn));
 
-            const auto our_gain = (next_state.eval_apply_delta(move, state) - state.eval_lazy()) * SIGN[state.turn];
+            const auto our_gain = capture_gain(state, next_state, move);
 
             if constexpr(Debug)
             {
@@ -991,7 +1001,7 @@ namespace search
             ASSERT(move._score == next_state.capture_value - state.piece_value_at(move.from_square(), state.turn));
         #endif
 
-            const auto our_gain = (next_state.eval_apply_delta(move, state) - state.eval_lazy()) * SIGN[state.turn];
+            const auto our_gain = capture_gain(state, next_state, move);
 
             if (our_gain <= score)
                 continue;

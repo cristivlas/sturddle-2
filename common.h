@@ -115,7 +115,7 @@ using score_t = int;
 #define USE_BOOK_HINT                       false
 #define USE_ROOT_MOVES                      false
 
-#define USE_LIBPOPCOUNT                     false
+#define USE_LIBPOPCOUNT                     true
 
 #if SMP
   #if __GNUC__
