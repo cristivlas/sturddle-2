@@ -9,7 +9,7 @@ namespace
     using search::Context;
 
 
-#if EVAL_PIECE_GRADING
+#if 0 && EVAL_PIECE_GRADING
     static INLINE int eval_piece_grading(const State& state, int pcs)
     {
         int score = 0;

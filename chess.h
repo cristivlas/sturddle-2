@@ -415,8 +415,15 @@ namespace chess
         BB_SQUARES[A1] | BB_SQUARES[H1] | BB_SQUARES[A8] | BB_SQUARES[H8];
 
 
-#define PIECE_VALUES { 0, 82, 337, 365, 477, 1025, 20000 }
-#define ENDGAME_ADJUST { 0, 12, -56, -68, 35, -89, 0 }
+    static constexpr Square rook_castle_squares[2][2][2] = {
+        { { H8, H1 }, { F8, F1 } },
+        { { A8, A1 }, { D8, D1 } },
+    };
+
+
+#define PIECE_VALUES { 0, 85, 319, 343, 522, 986, 0 }
+#define ENDGAME_ADJUST { 0, 2, -40, -42, 39, -27, 0 }
+
 
     /* Piece values */
 #if WEIGHT_TUNING_ENABLED
@@ -1179,6 +1186,42 @@ namespace chess
         {
             ASSERT(simple_score == UNKNOWN_SCORE);
 
+        #if EVAL_PIECE_GRADING
+            /* Recompute from scratch if move is a capture, because the change
+             * in number of pieces modifies the interpolated, graded piece values.
+             */
+            if (prev.simple_score == UNKNOWN_SCORE || prev.is_capture(move))
+            {
+                simple_score = eval_simple();
+            }
+            else
+            {
+                const auto color = prev.turn;
+
+                auto new_val = piece_value_at(move.to_square(), color);
+                auto old_val = prev.piece_value_at(move.from_square(), color);
+
+                simple_score = prev.simple_score + (new_val - old_val) * SIGN[color];
+
+            #if USE_PIECE_SQUARE_TABLES
+                if (prev.is_castling(move))
+                {
+                    /* Take into account the ROOK piece-square delta. */
+                    ASSERT(prev.piece_type_at(move.from_square()) == KING);
+                    const auto king_file = square_file(move.to_square());
+                    const auto from_sq = rook_castle_squares[king_file == 2][0][color];
+                    const auto to_sq = rook_castle_squares[king_file == 2][1][color];
+                    ASSERT(prev.piece_type_at(from_sq) == ROOK);
+
+                    new_val = piece_value_at(to_sq, color);
+                    old_val = prev.piece_value_at(from_sq, color);
+
+                    simple_score += (new_val - old_val) * SIGN[color];
+                }
+            #endif /* USE_PIECE_SQUARE_TABLES */
+                ASSERT(simple_score == eval_simple());
+            }
+        #else
             if (prev.simple_score == UNKNOWN_SCORE)
             {
                 simple_score = eval_simple();
@@ -1188,6 +1231,8 @@ namespace chess
                 simple_score = prev.eval_incremental(move);
                 ASSERT(simple_score == eval_simple());
             }
+        #endif /* EVAL_PIECE_GRADING */
+
             return simple_score;
         }
 
@@ -1213,7 +1258,6 @@ namespace chess
             return _piece_count;
         }
 
-        /* Used in capture evals */
         INLINE int piece_value_at(Square square, Color color) const
         {
             const auto piece_type = piece_type_at(square);
@@ -1232,16 +1276,14 @@ namespace chess
             }
         #endif /* EVAL_PIECE_GRADING */
 
-        // #if USE_PIECE_SQUARE_TABLES
-        //     if (piece_type)
-        //     {
-        //         // endgame=false since it's currently only used for KING
-        //         const auto& table = select_piece_square_table_rt(false, piece_type, color);
-        //         value += table[square];
-        //     }
-        // #endif /* USE_PIECE_SQUARE_TABLES */
+        #if USE_PIECE_SQUARE_TABLES
+            if (piece_type)
+            {
+                const auto& table = select_piece_square_table_rt(is_endgame(), piece_type, color);
+                value += table[square];
+            }
+        #endif /* USE_PIECE_SQUARE_TABLES */
 
-            ASSERT(piece_type == NONE || value);
             return value;
         }
 
@@ -1287,12 +1329,6 @@ namespace chess
         }
         return 0;
     }
-
-
-    static constexpr Square rook_castle_squares[2][2][2] = {
-        { { H8, H1 }, { F8, F1 } },
-        { { A8, A1 }, { D8, D1 } },
-    };
 
 
     INLINE void State::apply_move(const BaseMove& move)
@@ -1405,6 +1441,7 @@ namespace chess
     }
 
 
+#if !EVAL_PIECE_GRADING
     /*
      * Evaluate the incremental score change for a move.
      */
@@ -1530,9 +1567,10 @@ namespace chess
 
         return eval;
     }
+#endif /* !EVAL_PIECE_GRADING */
 
 
-    /* Evaluate material from white's perspective. For high order evals (HCE, NNUE) see Context. */
+    /* Evaluate material from white's perspective. */
     INLINE score_t State::eval_simple() const
     {
         int score = 0;
@@ -1541,7 +1579,7 @@ namespace chess
         for (auto color: {BLACK, WHITE})
         {
             const auto sign = SIGN[color];
-
+        #if 0
             for (auto piece_type : PIECES)
             {
                 const auto mask = pieces_mask(piece_type, color);
@@ -1557,6 +1595,12 @@ namespace chess
                 });
             #endif /* USE_PIECE_SQUARE_TABLES */
             }
+        #else
+            const auto pieces = occupied_co(color);
+            for_each_square_r(pieces, [&](Square square) {
+                score += sign * piece_value_at(square, color);
+            });
+        #endif
         }
 
         return score;
