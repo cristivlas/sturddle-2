@@ -849,8 +849,9 @@ namespace search
             if constexpr(Debug)
                 Context::log_message(LogLevel::DEBUG, "\t>>> " + move.uci() + ": " + std::to_string(our_gain));
 
-            if (our_gain < 0)
-                continue;
+            ASSERT(our_gain > 0);
+            if (our_gain <= score)
+                break;
 
             next_state.castling_rights = 0;  /* castling moves do not capture */
             const auto their_best = do_exchanges<Debug>(next_state, mask, tid, ply + 1);
@@ -862,9 +863,7 @@ namespace search
                 Context::log_message(LogLevel::DEBUG, out.str());
             }
 
-            ASSERT(our_gain - their_best <= score || score == 0);
             score = std::max(score, our_gain - their_best);
-            break;
         }
 
         if constexpr(Debug)
