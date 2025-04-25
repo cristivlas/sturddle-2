@@ -494,7 +494,7 @@ namespace search
 
 
     template<bool Debug = false>
-    int do_exchanges(const State&, Bitboard, score_t, int tid, int ply = FIRST_EXCHANGE_PLY);
+    int do_exchanges(const State&, Bitboard, int tid, int ply = FIRST_EXCHANGE_PLY);
 
 
     extern score_t eval_captures(Context& ctxt, score_t);
@@ -513,7 +513,7 @@ namespace search
      * Evaluate same square exchanges. Called by make_captures.
      */
     template<bool StaticExchangeEvaluation>
-    INLINE score_t eval_exchanges(int tid, const Move& move, score_t value)
+    INLINE score_t eval_exchanges(int tid, const Move& move)
     {
         score_t val = 0;
 
@@ -530,7 +530,7 @@ namespace search
             else
             {
                 auto mask = chess::BB_SQUARES[move.to_square()];
-                val = do_exchanges<DEBUG_CAPTURES != 0>(*move._state, mask, value, tid);
+                val = do_exchanges<DEBUG_CAPTURES != 0>(*move._state, mask, tid);
             }
         }
         return val;
@@ -735,10 +735,7 @@ namespace search
 
                 ASSERT(capt <= CHECKMATE);
 
-                if (capt >= MATE_HIGH)
-                    score = capt - 1;
-                else
-                    score += capt;
+                score += capt;
 
                 ASSERT(score > SCORE_MIN);
                 ASSERT(score < SCORE_MAX);
@@ -1443,8 +1440,7 @@ namespace search
         {
             ASSERT(move._state->is_capture());
 
-            auto capture_gain = move._state->capture_value;
-            capture_gain -= eval_exchanges<false>(ctxt.tid(), move, capture_gain);
+            const auto capture_gain = move._state->capture_value- eval_exchanges<false>(ctxt.tid(), move);
 
             if (SEE_PRUNING
                 && capture_gain < 0
@@ -1485,11 +1481,7 @@ namespace search
         _need_sort = true;
 
         /* Capturing the king is an illegal move (Louis XV?) */
-        if (ctxt.state().kings & chess::BB_SQUARES[move.to_square()])
-        {
-            mark_as_illegal(move);
-            return false;
-        }
+        ASSERT((ctxt.state().kings & chess::BB_SQUARES[move.to_square()]) == chess::BB_EMPTY);
 
         /* Check the old group (saved to cache or from before rewinding) */
         /* NB: do not filter out old pruned moves, they are path-dependent. */

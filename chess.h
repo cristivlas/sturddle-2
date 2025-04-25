@@ -415,8 +415,9 @@ namespace chess
         BB_SQUARES[A1] | BB_SQUARES[H1] | BB_SQUARES[A8] | BB_SQUARES[H8];
 
 
-#define PIECE_VALUES { 0, 82, 337, 365, 477, 1025, 20000 }
-#define ENDGAME_ADJUST { 0, 12, -56, -68, 35, -89, 0 }
+#define PIECE_VALUES { 0, 85, 319, 343, 522, 986, 0 }
+#define ENDGAME_ADJUST { 0, 2, -40, -42, 39, -27, 0 }
+
 
     /* Piece values */
 #if WEIGHT_TUNING_ENABLED
@@ -1213,7 +1214,6 @@ namespace chess
             return _piece_count;
         }
 
-        /* Used in capture evals */
         INLINE int piece_value_at(Square square, Color color) const
         {
             const auto piece_type = piece_type_at(square);
@@ -1232,16 +1232,14 @@ namespace chess
             }
         #endif /* EVAL_PIECE_GRADING */
 
-        // #if USE_PIECE_SQUARE_TABLES
-        //     if (piece_type)
-        //     {
-        //         // endgame=false since it's currently only used for KING
-        //         const auto& table = select_piece_square_table_rt(false, piece_type, color);
-        //         value += table[square];
-        //     }
-        // #endif /* USE_PIECE_SQUARE_TABLES */
+        #if USE_PIECE_SQUARE_TABLES
+            if (piece_type)
+            {
+                const auto& table = select_piece_square_table_rt(is_endgame(), piece_type, color);
+                value += table[square];
+            }
+        #endif /* USE_PIECE_SQUARE_TABLES */
 
-            ASSERT(piece_type == NONE || value);
             return value;
         }
 

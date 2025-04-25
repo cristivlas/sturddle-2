@@ -378,6 +378,10 @@ void search::Context::eval_nnue()
 
         auto eval = evaluate_material();
 
+    #if EVAL_PIECE_GRADING
+        eval += eval_piece_grading(state(), state().piece_count());
+    #endif /* EVAL_PIECE_GRADING */
+
         if (state().just_king(!turn()) || (depth() >= 0 && abs(eval) <= eval_margin(*this)))
         {
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
@@ -552,10 +556,6 @@ namespace search
             ASSERT(state.simple_score == state.eval_simple());
             eval = state.simple_score;
         }
-
-    #if EVAL_PIECE_GRADING
-        eval += eval_piece_grading(state, state.piece_count());
-    #endif /* EVAL_PIECE_GRADING */
 
         /* Evaluate from the point of view of the side that just moved. */
         return eval * SIGN[!state.turn];
@@ -792,30 +792,32 @@ namespace search
     }
 
 
-    template<bool Debug>
-    int do_exchanges(const State& state, Bitboard mask, score_t gain, int tid, int ply)
+    static int INLINE capture_gain(const State& state, const State& next_state, const BaseMove& move)
     {
-        ASSERT(popcount(mask) == 1);
-        ASSERT(gain >= 0);
+        const auto state_eval = state.eval_lazy();
+        return (next_state.eval_apply_delta(move, state) - state_eval) * SIGN[state.turn];
+    }
 
-        /* use top half of moves stacks */
-        ASSERT(ply >= PLY_MAX);
+
+    template<bool Debug>
+    int do_exchanges(const State& state, Bitboard mask, int tid, int ply)
+    {
+        ASSERT(popcount(mask) == 1); /* same square exchanges */
+        ASSERT(ply >= PLY_MAX); /* use top half of moves stacks */
 
         if (size_t(ply) >= Context::MAX_MOVE)
             return 0;
 
-        mask &= ~state.kings;
-
         auto& moves = Context::moves(tid, ply);
         state.generate_pseudo_legal_moves(moves, mask);
 
-        /* sort moves by piece type */
+        /* sort moves by piece value */
         for (auto& move : moves)
         {
             ASSERT(state.piece_type_at(move.from_square()));
             move._score = state.piece_value_at(move.from_square(), state.turn);
         }
-        /* sort lower-value attackers first */
+        /* sort lowest value attackers first */
         insertion_sort(moves.begin(), moves.end(),
             [](const Move& lhs, const Move& rhs) {
                 return lhs._score < rhs._score;
@@ -824,17 +826,13 @@ namespace search
         if constexpr(Debug)
         {
             std::ostringstream out;
-            out << "\tdo_exchanges (" << Context::epd(state) << ") gain=" << gain << " ";
+            out << "\tdo_exchanges (" << Context::epd(state) << ") ";
             for (const auto& move : moves)
-                out << move.uci() << "(" << move._score << ") ";
+                out << move << "(attacker=" << move._score << ") ";
             Context::log_message(LogLevel::DEBUG, out.str());
         }
 
         int score = 0;
-        int moves_count = 0;
-
-        (void) moves_count; /* silence off compiler warning */
-
         State next_state;
 
         /* iterate over pseudo-legal moves */
@@ -846,109 +844,43 @@ namespace search
             if (!apply_capture(state, next_state, move))
                 continue;
 
-            ++moves_count;
+            const auto our_gain = capture_gain(state, next_state, move);
 
             if constexpr(Debug)
-                Context::log_message(LogLevel::DEBUG, "\t>>> " + move.uci());
+                Context::log_message(LogLevel::DEBUG, "\t>>> " + move.uci() + ": " + std::to_string(our_gain));
 
-            const score_t capturer_value = move._score;
-            ASSERT(capturer_value == state.piece_value_at(move.from_square(), state.turn));
+            if (our_gain < 0)
+                continue;
 
-            /*
-             * If the value of the capture exceeds the other's side gain plus the value of the
-             * capturing piece there is no need to call ourselves recursively, as even in the
-             * worst case scenario of the capturer being taken the difference cannot be offset.
-             */
-            if (next_state.capture_value > gain + capturer_value)
-            {
-            #if EXCHANGES_DETECT_CHECKMATE
-                if (next_state.is_checkmate())
-                {
-                    score = CHECKMATE - (ply + 1 - FIRST_EXCHANGE_PLY);
+            next_state.castling_rights = 0;  /* castling moves do not capture */
+            const auto their_best = do_exchanges<Debug>(next_state, mask, tid, ply + 1);
 
-                    if constexpr(Debug)
-                    {
-                        std::ostringstream out;
-                        out << "\t<<< " << move.uci() << ": CHECKMATE " << score;
-                        Context::log_message(LogLevel::DEBUG, out.str());
-                    }
-
-                    break; /* impractical to keep looping in hope of a faster mate */
-                }
-            #endif /* EXCHANGES_DETECT_CHECKMATE */
-
-                score = std::max(score, next_state.capture_value - gain - capturer_value);
-
-                if constexpr(Debug)
-                {
-                    std::ostringstream out;
-                    out << "\t<<< " << move.uci() << ": " << next_state.capture_value
-                        << " - " << gain << " - " << capturer_value;
-                    Context::log_message(LogLevel::DEBUG, out.str());
-                }
-
-                break; // moves are sorted by piece weight
-            }
-
-            /****************************************************************/
-            score_t other = 0;
-
-            /* Call recursively if the capture offsets the opponent's gain. */
-            if (next_state.capture_value >= gain)
-            {
-                next_state.castling_rights = 0;  /* castling do not capture */
-
-                other = do_exchanges<Debug>(
-                    next_state,
-                    mask,
-                    next_state.capture_value - gain,
-                    tid,
-                    ply + 1);
-            }
-            /*****************************************************************/
             if constexpr(Debug)
             {
                 std::ostringstream out;
-                out << "\t<<< " << move.uci() << ": "
-                    << next_state.capture_value << " - " << other;
+                out << "\t<<< " << move << ": " << our_gain << " - " << their_best;
                 Context::log_message(LogLevel::DEBUG, out.str());
             }
 
-            /* could continue and look for a quicker mate, but impractical */
-            if (other < MATE_LOW)
-                return -other;
-
-            score = std::max(score, next_state.capture_value - other);
+            ASSERT(our_gain - their_best <= score || score == 0);
+            score = std::max(score, our_gain - their_best);
+            break;
         }
-
-    #if EXCHANGES_DETECT_CHECKMATE
-        if (moves_count == 0 && state.is_checkmate())
-        {
-            score = -CHECKMATE + ply - FIRST_EXCHANGE_PLY;
-        }
-    #endif /* EXCHANGES_DETECT_CHECKMATE */
 
         if constexpr(Debug)
-        {
-            std::ostringstream out;
-            out << "\tscore: " << score;
-            Context::log_message(LogLevel::DEBUG, out.str());
-        }
+            Context::log_message(LogLevel::DEBUG, "\tscore: " + std::to_string(score));
 
         return score;
     }
 
 
     /*
-     * Look at all captures the side-to-move can make, "play through"
-     * same square exchanges and return lower bound of maximum gain.
-     *
-     * Skip the exchanges when the value of the captured piece exceeds
-     * the value of the capturer.
+     * Look at all captures the side-to-move can make, "play" same square exchanges and return the best gain.
      *
      * Called by eval_captures (if !STATIC_EXCHANGES).
      */
-    INLINE int do_captures(int tid, const State& state, Bitboard from_mask, Bitboard to_mask, score_t standpat_threshold)
+    INLINE int
+    do_captures(int tid, const State& state, Bitboard from_mask, Bitboard to_mask, score_t standpat_threshold)
     {
         static constexpr auto ply = FIRST_EXCHANGE_PLY;
         const auto mask = to_mask & state.occupied_co(!state.turn) & ~state.kings;
@@ -966,26 +898,25 @@ namespace search
         bool standpat = true;
 
         /*
-         * 1) Go over the captures and assign the "victim" value to each move.
+         * 1) Go over the captures and assign the victim value to each move score.
          */
         for (auto& move : moves)
         {
             ASSERT(state.piece_type_at(move.to_square()));
             ASSERT(state.piece_type_at(move.from_square()));
+            ASSERT(state.piece_color_at(move.to_square()) != state.turn);
 
-            move._score = state.piece_value_at(move.to_square(), !state.turn);
+            move._score = state.piece_value_at(move.to_square(), !state.turn) + WEIGHT[move.promotion()];
 
             if (move._score + STANDPAT_MARGIN >= standpat_threshold)
                 standpat = false;
-
-            move._score -= state.piece_value_at(move.from_square(), state.turn);
         }
 
         if (standpat)
             return 0;
 
         /*
-         * 2) Sort most valuable victims, least valuable attacker first.
+         * 2) Sort most valuable victim first.
          */
         insertion_sort(moves.begin(), moves.end(), [](const Move& lhs, const Move& rhs) {
             return lhs._score > rhs._score;
@@ -996,7 +927,7 @@ namespace search
             std::ostringstream out;
             out << "do_captures (" << Context::epd(state) << ") ";
             for (const auto& move : moves)
-                out << move.uci() << "(" << move._score << ") ";
+                out << move << "(" << move._score << ") ";
 
             Context::log_message(LogLevel::DEBUG, out.str());
         }
@@ -1009,91 +940,53 @@ namespace search
          */
         for (const auto& move : moves)
         {
-            /* do not expect to capture the king */
-            ASSERT((state.kings & BB_SQUARES[move.to_square()]) == 0);
+            ASSERT(move._score > 0);
 
-        #if !EXCHANGES_DETECT_CHECKMATE
-            /* victim values less than what we got so far? bail */
-            if (move._score <= score)
+            /* potential gain is less than best score so far? bail */
+            if (move._score + STANDPAT_MARGIN < score)
             {
                 if constexpr(DEBUG_CAPTURES)
                 {
                     std::ostringstream out;
-                    out << "\t" << move.uci() << " " << move._score << " <= " << score;
+                    out << "\t" << move << " " << move._score << " + " << STANDPAT_MARGIN << " < " << score;
                     Context::log_message(LogLevel::DEBUG, out.str());
                 }
 
                 break;
             }
-        #endif /* !EXCHANGES_DETECT_CHECKMATE */
 
             if constexpr(DEBUG_CAPTURES)
                 Context::log_message(LogLevel::DEBUG, "*** " + move.uci());
 
-            /****************************************************************/
             if (!apply_capture(state, next_state, move))
                 continue;
 
-            ASSERT(next_state.capture_value > score || EXCHANGES_DETECT_CHECKMATE);
-            ASSERT(move._score == next_state.capture_value - state.piece_value_at(move.from_square(), state.turn));
+            const auto our_gain = capture_gain(state, next_state, move);
 
-            const auto gain = move._score;
-
-            /*
-             * Worst case scenario the attacker gets captured, capturing
-             * side still has a nice gain; skip "playing" the exchanges.
-             */
-            if (gain > 0)
-            {
-            #if !EXCHANGES_DETECT_CHECKMATE
-                return gain;
-            #else
-                if (next_state.is_checkmate())
-                    return CHECKMATE - (ply + 1 - FIRST_EXCHANGE_PLY);
-                if constexpr(DEBUG_CAPTURES)
-                    Context::log_message(
-                        LogLevel::DEBUG,
-                        move.uci() + ": skip exchanges: " + std::to_string(gain));
-                if (gain > score)
-                    score = gain;
+            if (our_gain <= score)
                 continue;
-            #endif /* EXCHANGES_DETECT_CHECKMATE */
-            }
 
             /****************************************************************/
             /* "play through" same square exchanges                         */
             next_state.castling_rights = 0; /* castling moves can't capture */
+            const auto mask_to = BB_SQUARES[move.to_square()];
+            const auto their_best = do_exchanges<DEBUG_CAPTURES>(next_state, mask_to, tid, ply + 1);
 
-            const auto other = do_exchanges<DEBUG_CAPTURES>(
-                next_state,
-                BB_SQUARES[move.to_square()],
-                next_state.capture_value,
-                tid,
-                ply + 1);
+            const auto value = our_gain - their_best;
+
             /****************************************************************/
-
-            if (other < MATE_LOW)
-            {
-                if constexpr(DEBUG_CAPTURES)
-                    Context::log_message(LogLevel::DEBUG, move.uci() + ": checkmate");
-
-                return -other;
-            }
-            const auto value = next_state.capture_value - other;
-
             if (value > score)
                 score = value;
 
             if constexpr(DEBUG_CAPTURES)
             {
                 std::ostringstream out;
-                out << "\t" << move.uci() << ": " << value << " ("
-                    << next_state.capture_value << " - " << other
-                    << ") score: " << score;
+                out << "\t" << move << ": " << value << " (" << our_gain << " - " << their_best << ") score: " << score;
 
                 Context::log_message(LogLevel::DEBUG, out.str());
             }
         }
+
         return score;
     }
 
@@ -1129,12 +1022,13 @@ namespace search
         return result;
     }
 
+
     /*
      * Static evaluation has three components:
-     * 1. base = material + pst
-     * 2. tactical (positional)
+     * 1. base = material + piece-square table values (optional)
+     * 2. tactical (positional) - aka Hand-crafted evals (HCE)
      * 3. capture estimates (in Context::evaluate)
-     * NOTE: when using NNUE for evaluation (default), 1 and 2 do not apply.
+     * NOTE: when using NNUE for evaluation (default), 2 does not apply.
      */
     score_t Context::_evaluate()
     {
@@ -1524,6 +1418,7 @@ namespace search
         for (auto& state : _last_play)
             state = State();
     }
+
 
     /*---------------------------------------------------------------------
      * MoveMaker
