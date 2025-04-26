@@ -317,13 +317,13 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
 
     auto& acc = NNUE_data[t][_ply];
 
-    if (is_root() || _non_incremental_update || _ply > PLY_MAX / 2)
+    if (is_root() || _ply > PLY_MAX / 2)
     {
         acc.update(L1A, L1B, state());
     }
     else
     {
-        auto& prev = NNUE_data[t][_ply - 1];
+        auto& prev = NNUE_data[t][_ply - _nnue_prev_offs];
 
         if (prev.needs_update(_parent->state()))
         {
@@ -778,9 +778,9 @@ namespace search
 
 
     /*
-     * Make the capturing move, return false if not legal.
+     * Make the capturing move, return false if not legal (verification optional).
      */
-    static bool INLINE apply_capture(const State& state, State& next_state, const Move& move)
+    static bool INLINE apply_capture(const State& state, State& next_state, const Move& move, bool verify = true)
     {
         state.clone_into(next_state);
         next_state.apply_move(move);
@@ -788,7 +788,7 @@ namespace search
         ASSERT(next_state.turn != state.turn);
         ASSERT(next_state.is_capture());
 
-        return !next_state.is_check(state.turn); /* legal move? */
+        return !verify || !next_state.is_check(state.turn); /* legal move? */
     }
 
 
@@ -804,6 +804,8 @@ namespace search
     {
         ASSERT(popcount(mask) == 1); /* same square exchanges */
         ASSERT(ply >= PLY_MAX); /* use top half of moves stacks */
+
+        ASSERT(state.simple_score != State::UNKNOWN_SCORE); /* incremental update */
 
         if (size_t(ply) >= Context::MAX_MOVE)
             return 0;
@@ -841,8 +843,7 @@ namespace search
             ASSERT((BB_SQUARES[move.to_square()] & ~mask) == 0);
             ASSERT((state.kings & BB_SQUARES[move.to_square()]) == 0);
 
-            if (!apply_capture(state, next_state, move))
-                continue;
+            apply_capture(state, next_state, move, false /* defer legality check */);
 
             const auto our_gain = capture_gain(state, next_state, move);
 
@@ -852,6 +853,9 @@ namespace search
             ASSERT(our_gain > 0);
             if (our_gain <= score)
                 break;
+
+            if (next_state.is_check(state.turn))
+                continue; /* not a legal move */
 
             next_state.castling_rights = 0;  /* castling moves do not capture */
             const auto their_best = do_exchanges<Debug>(next_state, mask, tid, ply + 1);
@@ -881,6 +885,8 @@ namespace search
     INLINE int
     do_captures(int tid, const State& state, Bitboard from_mask, Bitboard to_mask, score_t standpat_threshold)
     {
+        ASSERT(!state.is_check(!state.turn)); /* expect legal position */
+
         static constexpr auto ply = FIRST_EXCHANGE_PLY;
         const auto mask = to_mask & state.occupied_co(!state.turn) & ~state.kings;
 
@@ -905,7 +911,9 @@ namespace search
             ASSERT(state.piece_type_at(move.from_square()));
             ASSERT(state.piece_color_at(move.to_square()) != state.turn);
 
-            move._score = state.piece_value_at(move.to_square(), !state.turn) + WEIGHT[move.promotion()];
+            move._score = state.piece_value_at(move.to_square(), !state.turn); /* victim value */
+            if (move.promotion())
+                move._score += WEIGHT[move.promotion()] - state.piece_value_at(move.from_square(), state.turn);
 
             if (move._score + STANDPAT_MARGIN >= standpat_threshold)
                 standpat = false;
@@ -942,12 +950,12 @@ namespace search
             ASSERT(move._score > 0);
 
             /* potential gain is less than best score so far? bail */
-            if (move._score + STANDPAT_MARGIN < score)
+            if (move._score /* + STANDPAT_MARGIN  */ <= score)
             {
                 if constexpr(DEBUG_CAPTURES)
                 {
                     std::ostringstream out;
-                    out << "\t" << move << " " << move._score << " + " << STANDPAT_MARGIN << " < " << score;
+                    out << "\t" << move << " " << move._score /* << " + " << STANDPAT_MARGIN */ << " <= " << score;
                     Context::log_message(LogLevel::DEBUG, out.str());
                 }
 
@@ -961,9 +969,7 @@ namespace search
                 continue;
 
             const auto our_gain = capture_gain(state, next_state, move);
-
-            if (our_gain <= score)
-                continue;
+            ASSERT(our_gain > score);
 
             /****************************************************************/
             /* "play through" same square exchanges                         */

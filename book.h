@@ -1,11 +1,6 @@
 #pragma once
 #if _WIN32
-  #define WIN32_LEAN_AND_MEAN
-  #include <windows.h>
-  #undef ERROR
-  #undef INFINITE
-  #undef max
-  #undef min
+ #include "ms_windows.h"
 #else
   #include <sys/mman.h>
   #include <fcntl.h>

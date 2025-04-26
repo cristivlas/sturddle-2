@@ -35,11 +35,7 @@
 #elif __APPLE__
 #include <mach/mach.h>
 #elif _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#undef ERROR
-#undef max
-#undef min
+#include "ms_windows.h"
 #endif /* _WIN32 */
 
 
@@ -820,8 +816,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         s_ctxt->_null_move_allowed[0] = ctxt._null_move_allowed[0];
                         s_ctxt->_null_move_allowed[1] = ctxt._null_move_allowed[1];
 
-                        /* Force NN accumulator update due to the skip in plies (i.e. use of ply + 2) */
-                        s_ctxt->_non_incremental_update = true;
+                        s_ctxt->_nnue_prev_offs = 3; /* skip 2 plies */
 
                         const auto eval = negamax(*s_ctxt, table);
 

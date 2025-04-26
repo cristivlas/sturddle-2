@@ -269,7 +269,7 @@ namespace search
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
         bool        _retry_next = false;
-        bool        _non_incremental_update = false; /* NNUE */
+        int8_t      _nnue_prev_offs = 1; /* NNUE */
 
         int         _double_ext = 0;
         score_t     _eval = SCORE_MIN; /* static eval */
@@ -546,6 +546,7 @@ namespace search
     INLINE void incremental_update(Move& move, const Context& ctxt)
     {
         ASSERT(move._state);
+        ASSERT(ctxt._ply < PLY_MAX - 1);
 
         if (move._state->simple_score == State::UNKNOWN_SCORE)
         {
@@ -730,12 +731,7 @@ namespace search
             /* Captures may not make a difference for large score gaps. */
             if (abs(score) < CAPTURES_THRESHOLD)
             {
-                /* 3. Captures */
-                const auto capt = eval_captures(*this, score);
-
-                ASSERT(capt <= CHECKMATE);
-
-                score += capt;
+                score += eval_captures(*this, score);
 
                 ASSERT(score > SCORE_MIN);
                 ASSERT(score < SCORE_MAX);
@@ -1440,7 +1436,8 @@ namespace search
         {
             ASSERT(move._state->is_capture());
 
-            const auto capture_gain = move._state->capture_value- eval_exchanges<false>(ctxt.tid(), move);
+            incremental_update(move, ctxt);
+            const auto capture_gain = move._state->capture_value - eval_exchanges<false>(ctxt.tid(), move);
 
             if (SEE_PRUNING
                 && capture_gain < 0

@@ -311,6 +311,8 @@ namespace chess
     const MovesList&
     State::generate_pseudo_legal_moves(MovesList& moves_list, Bitboard to_mask, Bitboard from_mask) const
     {
+        ASSERT(!is_check(!turn));
+
         moves_list.clear();
 
         const auto our_pieces = this->occupied_co(turn);

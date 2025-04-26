@@ -80,9 +80,7 @@ public:
     using iterator = T*;
 
     MaxSizeVector() : _current_size(0)
-    {
-        // _container.reserve(max_size);
-    }
+    {}
 
     MaxSizeVector(const MaxSizeVector& other)
         : _container(other._container)
@@ -147,25 +145,34 @@ public:
 private:
     INLINE void check_capacity(const char* func) const
     {
-    #if !defined(NO_ASSERT)
-        if (_current_size >= max_size)
-            throw std::out_of_range(std::string("capacity exceeded: ") + func);
-    #endif /* NO_ASSERT */
+        check_range("capacity exceeded", func, _current_size, max_size);
     }
 
     INLINE void check_capacity(const char* func, size_t i) const
     {
-        if (i >= max_size)
-            throw std::out_of_range(std::string("capacity exceeded: ") + func);
+        check_range("capacity exceeded", func, i, max_size);
     }
 
     INLINE void check_size(const char* func, size_t i) const
     {
-        if (i >= _current_size)
-            throw std::out_of_range(std::string("index out of range: ") + func);
+        check_range("index out of range", func, i, _current_size);
     }
 
-    // std::vector<T> _container;
+    static void out_of_range(const std::string& prefix, const char* func, size_t v, size_t vmax)
+    {
+        const auto msg = (prefix + " in ") + func + ": " + std::to_string(v) + " >= " + std::to_string(vmax);
+        throw std::out_of_range(msg);
+    }
+
+    static INLINE void check_range(const char* prefix, const char* func, size_t v, size_t vmax)
+    {
+    #if !defined(NO_ASSERT)
+        if (v >= vmax)
+            out_of_range(std::string(prefix), func, v, vmax);
+    #endif /* NO_ASSERT */
+    }
+
+private:
     std::array<T, max_size> _container;
 
     size_t _current_size;
@@ -415,7 +422,7 @@ namespace chess
         BB_SQUARES[A1] | BB_SQUARES[H1] | BB_SQUARES[A8] | BB_SQUARES[H8];
 
 
-#define PIECE_VALUES { 0, 85, 319, 343, 522, 986, 0 }
+#define PIECE_VALUES { 0, 85, 319, 343, 522, 986, 20000 }
 #define ENDGAME_ADJUST { 0, 2, -40, -42, 39, -27, 0 }
 
 

@@ -31,9 +31,17 @@ void dump_backtrace(std::ostream &out)
 #endif /* !__ANDROID__ || __ANDROID_API__ >= 33 */
 }
 #else
+
+#include <string>
+#include "ms_windows.h"
+#pragma comment(lib, "user32.lib")
+
 template <int MAX_FRAMES = 256>
-void dump_backtrace(std::ostream &out)
+void dump_backtrace(std::ostream& /* out */)
 {
-    /* TODO: Windows */
+    const std::string msg = "Attach debugger to process: " + std::to_string(GetCurrentProcessId());
+
+    MessageBoxA(HWND(0), msg.c_str(), "Sturddle Chess Engine Error", MB_OK | MB_ICONERROR);
+    DebugBreak();
 }
 #endif /* __APPLE__ || __linux__ */
