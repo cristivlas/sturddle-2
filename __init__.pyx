@@ -168,9 +168,6 @@ cdef extern from 'chess.h' namespace 'chess':
         Color       turn
         score_t     simple_score
 
-        const int capture_value
-        const PieceType promotion
-
         void    apply_move(const BaseMove&)
 
         int     count_connected_pawns(Color, Bitboard) const
@@ -288,14 +285,6 @@ cdef class BoardState:
         cdef State prev = self._state
         self._state.apply_move(m)
         zobrist_update(prev, m, self._state)
-
-
-    cpdef capture_value(self):
-        return self._state.capture_value
-
-
-    cpdef PieceType promotion(self):
-        return self._state.promotion
 
 
     cpdef copy_to_board(self, b: chess.Board):

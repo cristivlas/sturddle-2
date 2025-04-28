@@ -1035,7 +1035,6 @@ namespace chess
         int capture_value = 0;
         int pushed_pawns_score = 0; /* ranks past the middle of the board */
         bool is_castle = false;
-        PieceType promotion = PieceType::NONE;
 
         /* material and PST from white's POV */
         static constexpr auto UNKNOWN_SCORE = std::numeric_limits<score_t>::max();
@@ -1185,22 +1184,28 @@ namespace chess
          */
         INLINE score_t eval_apply_delta(const BaseMove& move, const State& prev) const
         {
-            ASSERT(simple_score == UNKNOWN_SCORE);
-
-            /* Sanity-check the previous state */
-            ASSERT(prev.occupied());
-            ASSERT(prev.occupied_co(BLACK));
-            ASSERT(prev.occupied_co(WHITE));
-
-            if (prev.simple_score == UNKNOWN_SCORE)
+            if (simple_score == UNKNOWN_SCORE)
             {
-                simple_score = eval_simple();
+                /* Sanity-check the previous state */
+                ASSERT(prev.occupied());
+                ASSERT(prev.occupied_co(BLACK));
+                ASSERT(prev.occupied_co(WHITE));
+
+                if (prev.simple_score == UNKNOWN_SCORE)
+                {
+                    simple_score = eval_simple();
+                }
+                else
+                {
+                    simple_score = prev.eval_incremental(move);
+                    ASSERT(simple_score == eval_simple());
+                }
             }
             else
             {
-                simple_score = prev.eval_incremental(move);
                 ASSERT(simple_score == eval_simple());
             }
+
             return simple_score;
         }
 
@@ -1324,7 +1329,6 @@ namespace chess
         _check = { -1, -1 };
 
         this->capture_value = piece_value_at(move.to_square(), !turn);
-        this->promotion = move.promotion();
 
         ASSERT(!is_capture() || piece_type_at(move.to_square()));
 
@@ -1416,7 +1420,6 @@ namespace chess
         state = *this;
 
         state.capture_value = 0;
-        state.promotion = PieceType::NONE;
         state.simple_score = UNKNOWN_SCORE;
         state._check = {-1, -1};
         state._hash = 0;

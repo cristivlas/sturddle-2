@@ -502,7 +502,8 @@ namespace search
     static int INLINE capture_gain(const State& state, const State& next_state, const BaseMove& move)
     {
         const auto state_eval = state.eval_lazy();
-        return (next_state.eval_apply_delta(move, state) - state_eval) * SIGN[state.turn];
+        const auto adjust = next_state.piece_value_adjustment(next_state.piece_type_at(move.to_square()));
+        return (next_state.eval_apply_delta(move, state) - state_eval + adjust) * SIGN[state.turn];
     }
 
 
@@ -1432,8 +1433,12 @@ namespace search
         {
             ASSERT(move._state->is_capture());
 
+        #if 0
             incremental_update(move, ctxt);
             const auto gain = move._state->capture_value - eval_exchanges<false>(ctxt.tid(), move);
+        #else
+            const auto gain = capture_gain(ctxt.state(), *move._state, move) - eval_exchanges<false>(ctxt.tid(), move);
+        #endif
 
             if (SEE_PRUNING
                 && gain < 0
