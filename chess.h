@@ -1244,10 +1244,8 @@ namespace chess
     #endif /* EVAL_PIECE_GRADING */
         }
 
-        INLINE int piece_value_at(Square square, Color color) const
+        INLINE int piece_value_at(Square square, Color color, PieceType piece_type) const
         {
-            const auto piece_type = piece_type_at(square);
-
             auto value = WEIGHT[piece_type] + piece_value_adjustment(piece_type);
 
         #if USE_PIECE_SQUARE_TABLES
@@ -1259,6 +1257,12 @@ namespace chess
         #endif /* USE_PIECE_SQUARE_TABLES */
 
             return value;
+        }
+
+        INLINE int piece_value_at(Square square, Color color) const
+        {
+            const auto piece_type = piece_type_at(square);
+            return piece_value_at(square, color, piece_type);
         }
 
         void set_piece_at(Square, PieceType, Color, PieceType promotion = PieceType::NONE);
@@ -1422,6 +1426,7 @@ namespace chess
 
     /*
      * Evaluate the incremental score change for a move.
+     * NOTE: Does NOT take piece grading into account.
      */
     template<bool WithEnPassant>
     INLINE score_t State::eval_delta(const BaseMove& move) const
@@ -1548,6 +1553,7 @@ namespace chess
 
 
     /* Evaluate material from white's perspective. For high order evals (HCE, NNUE) see Context. */
+    /* NOTE: Does NOT take piece grading into account. */
     INLINE score_t State::eval_simple() const
     {
         int score = 0;

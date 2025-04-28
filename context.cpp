@@ -905,8 +905,14 @@ namespace search
             ASSERT(state.piece_color_at(move.to_square()) != state.turn);
 
             move._score = state.piece_value_at(move.to_square(), !state.turn); /* victim value */
-            if (move.promotion())
-                move._score += WEIGHT[move.promotion()] - state.piece_value_at(move.from_square(), state.turn);
+            if (const auto promo = move.promotion())
+            {
+                /* Take piece squares and piece grading (dynamic value) into account for the promo */
+                const auto promo_val = state.piece_value_at(move.to_square(), state.turn, promo);
+                ASSERT(USE_PIECE_SQUARE_TABLES || EVAL_PIECE_GRADING || WEIGHT[promo] == promo_val);
+
+                move._score += promo_val - state.piece_value_at(move.from_square(), state.turn);
+            }
 
             if (move._score + STANDPAT_MARGIN >= standpat_threshold)
                 standpat = false;
