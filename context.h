@@ -360,7 +360,7 @@ namespace search
         bool        is_mate_bound() const;
         bool        is_null_move_ok() const; /* ok to generate null move? */
         INLINE bool is_null_move() const { return _is_null_move; }
-        INLINE bool is_promotion() const { return state().promotion; }
+        INLINE bool is_promotion() const { return _move.promotion(); }
         INLINE bool is_pv_node() const { return _is_pv; }
         bool        is_pvs_ok() const;
         INLINE bool is_leaf_extended() const { return _ply > _max_depth; }
@@ -496,16 +496,13 @@ namespace search
     template<bool Debug = false>
     int do_exchanges(const State&, Bitboard, int tid, int ply = FIRST_EXCHANGE_PLY);
 
-
     extern score_t eval_captures(Context& ctxt, score_t);
 
-    using PieceSquares = std::array<Square, 32>;
 
-    static INLINE bool
-    depleted(const PieceSquares (&piece_squares)[2], size_t (&index)[2], chess::Color side)
+    static int INLINE capture_gain(const State& state, const State& next_state, const BaseMove& move)
     {
-        const auto i = index[side];
-        return i >= 32 || piece_squares[side][i] == Square::UNDEFINED;
+        const auto state_eval = state.eval_lazy();
+        return (next_state.eval_apply_delta(move, state) - state_eval) * SIGN[state.turn];
     }
 
 
@@ -573,13 +570,12 @@ namespace search
     }
 
 
-    INLINE bool is_quiet(const State& state, const Context* ctxt = nullptr)
+    INLINE bool is_quiet(const Move& move)
     {
-        return state.promotion != chess::PieceType::QUEEN /* ignore under-promotions */
-            && !state.is_capture()
-            && state.pushed_pawns_score <= 1
-            && (!ctxt || !ctxt->is_evasion())
-            && !state.is_check();
+        return move.promotion() != chess::PieceType::QUEEN /* ignore under-promotions */
+            && !move._state->is_capture()
+            && move._state->pushed_pawns_score <= 1
+            && !move._state->is_check();
     }
 
 
@@ -1437,10 +1433,10 @@ namespace search
             ASSERT(move._state->is_capture());
 
             incremental_update(move, ctxt);
-            const auto capture_gain = move._state->capture_value - eval_exchanges<false>(ctxt.tid(), move);
+            const auto gain = move._state->capture_value - eval_exchanges<false>(ctxt.tid(), move);
 
             if (SEE_PRUNING
-                && capture_gain < 0
+                && gain < 0
                 && !ctxt.is_root()
                 && ctxt.depth() > 0
                 && ctxt.depth() <= SEE_PRUNING_DEPTH
@@ -1450,17 +1446,17 @@ namespace search
             }
             else
             {
-                if (capture_gain < 0)
+                if (gain < 0)
                 {
                     move._group = MoveOrder::LOSING_CAPTURES;
                 }
                 else
                 {
                     static_assert(MoveOrder::WINNING_CAPTURES + 1 == MoveOrder::EQUAL_CAPTURES);
-                    move._group = MoveOrder::WINNING_CAPTURES + (capture_gain == 0);
+                    move._group = MoveOrder::WINNING_CAPTURES + (gain == 0);
                 }
 
-                move._score = capture_gain;
+                move._score = gain;
             }
         }
     }
@@ -1547,7 +1543,7 @@ namespace search
         }
 
     #if GROUP_QUIET_MOVES
-        if (_group_quiet_moves && is_quiet(*move._state))
+        if (_group_quiet_moves && is_quiet(move))
         {
             _have_quiet_moves = true;
             move._group = MoveOrder::QUIET_MOVES;

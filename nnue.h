@@ -603,11 +603,10 @@ namespace nnue
             int& r_idx,
             int& a_idx)
         {
-            if (to_pos.promotion)
+            if (const auto promo = move.promotion())
             {
                 // add the promoted-to piece
-                ASSERT(move.promotion() == to_pos.promotion);
-                delta(add, a_idx, to_pos.promotion, color, move.to_square());
+                delta(add, a_idx, promo, color, move.to_square());
 
                 // remove the pawn
                 delta(remove, r_idx, PieceType::PAWN, color, move.from_square());

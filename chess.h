@@ -1226,23 +1226,29 @@ namespace chess
             return _piece_count;
         }
 
+        INLINE int piece_value_adjustment(PieceType piece_type) const
+        {
+    #if EVAL_PIECE_GRADING
+            switch (piece_type)
+            {
+            case PAWN: return interpolate(piece_count(), 0, ADJUST[PAWN]);
+            case KNIGHT: return interpolate(piece_count(), 0, ADJUST[KNIGHT]);
+            case BISHOP: return interpolate(piece_count(), 0, ADJUST[BISHOP]);
+            case ROOK: return interpolate(piece_count(), 0, ADJUST[ROOK]);
+            case QUEEN: return interpolate(piece_count(), 0, ADJUST[QUEEN]);
+            case KING:
+            case NONE: return 0;
+            }
+    #else
+            return 0;
+    #endif /* EVAL_PIECE_GRADING */
+        }
+
         INLINE int piece_value_at(Square square, Color color) const
         {
             const auto piece_type = piece_type_at(square);
-            auto value = WEIGHT[piece_type];
 
-        #if EVAL_PIECE_GRADING
-            switch (piece_type)
-            {
-            case NONE: ASSERT(value == 0); return 0;
-            case PAWN: value += interpolate(piece_count(), 0, ADJUST[PAWN]); break;
-            case KNIGHT: value += interpolate(piece_count(), 0, ADJUST[KNIGHT]); break;
-            case BISHOP: value += interpolate(piece_count(), 0, ADJUST[BISHOP]); break;
-            case ROOK: value += interpolate(piece_count(), 0, ADJUST[ROOK]); break;
-            case QUEEN: value += interpolate(piece_count(), 0, ADJUST[QUEEN]); break;
-            case KING: break;
-            }
-        #endif /* EVAL_PIECE_GRADING */
+            auto value = WEIGHT[piece_type] + piece_value_adjustment(piece_type);
 
         #if USE_PIECE_SQUARE_TABLES
             if (piece_type)
@@ -1280,7 +1286,7 @@ namespace chess
             ENDGAME_TRUE = 1
         }
         mutable _endgame = ENDGAME_UNKNOWN;
-        mutable int _piece_count = -1;
+        mutable int8_t _piece_count = -1;
     }; /* State */
 
 

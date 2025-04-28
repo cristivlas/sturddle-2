@@ -792,13 +792,6 @@ namespace search
     }
 
 
-    static int INLINE capture_gain(const State& state, const State& next_state, const BaseMove& move)
-    {
-        const auto state_eval = state.eval_lazy();
-        return (next_state.eval_apply_delta(move, state) - state_eval) * SIGN[state.turn];
-    }
-
-
     template<bool Debug>
     int do_exchanges(const State& state, Bitboard mask, int tid, int ply)
     {
@@ -1310,7 +1303,7 @@ namespace search
         if (depth() > 0
             || is_null_move()
             || is_retry()
-            || state().promotion
+            || is_promotion()
             || is_check()
             /*
              * last move to search from current node, with score close to mate?
@@ -1624,7 +1617,7 @@ namespace search
                 else if ((move.to_square() == ctxt._move.to_square() || ctxt.state().is_en_passant(move))
                     && make_move<false>(ctxt, move, MoveOrder::LAST_MOVED_CAPTURE))
                 {
-                    ASSERT(move._state->capture_value);
+                    ASSERT(move._state->is_capture());
                     /*
                      * Looking at the capture of the last piece moved by the opponent before
                      * other captures may speed up the refutation of the current variation.
@@ -1637,7 +1630,7 @@ namespace search
             /* Captures and killer moves. */
             else if constexpr (Phase == 2)
             {
-                if (move._state ? move._state->capture_value : ctxt.state().is_capture(move))
+                if (move._state ? move._state->is_capture() : ctxt.state().is_capture(move))
                 {
                     make_capture(ctxt, move);
                     ASSERT(move._group != MoveOrder::UNORDERED_MOVES);
