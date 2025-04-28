@@ -770,7 +770,7 @@ namespace search
         {
             ASSERT(!is_check());
 
-            return evaluate();
+            return evaluate<false>();
         }
 
         return is_check() ? checkmated(_ply) : 0;
@@ -969,7 +969,8 @@ namespace search
                 continue;
 
             const auto our_gain = capture_gain(state, next_state, move);
-            ASSERT(our_gain > score);
+
+            ASSERT(USE_PIECE_SQUARE_TABLES || EVAL_PIECE_GRADING || our_gain > score);
 
             /****************************************************************/
             /* "play through" same square exchanges                         */

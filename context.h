@@ -956,7 +956,7 @@ namespace search
     /*
      * Get the next move and wrap it into a Context object.
      */
-    INLINE Context* Context::next(bool null_move, score_t futility, int& move_count)
+    INLINE Context* Context::next(bool make_null_move, score_t futility, int& move_count)
     {
         ASSERT(_alpha < _beta);
 
@@ -972,19 +972,17 @@ namespace search
             return nullptr;
 
         /* null move must be tried before actual moves */
-        ASSERT(!null_move || move_count == 0);
+        ASSERT(!make_null_move || move_count == 0);
 
-        const Move* move;
+        const Move* move = nullptr;
 
-        if (null_move)
-            move = nullptr;
-        else
+        if (!make_null_move)
             if ((move = get_next_move(futility)) == nullptr)
                 return nullptr;
 
-        ASSERT(null_move || move->_state);
-        ASSERT(null_move || move->_group != MoveOrder::UNDEFINED);
-        ASSERT(null_move || move->_group < MoveOrder::UNORDERED_MOVES);
+        ASSERT(make_null_move || move->_state);
+        ASSERT(make_null_move || move->_group != MoveOrder::UNDEFINED);
+        ASSERT(make_null_move || move->_group < MoveOrder::UNORDERED_MOVES);
 
         /* Save previously generated moves for reuse on retry */
         MoveMaker temp;
@@ -1024,7 +1022,7 @@ namespace search
         }
         else
         {
-            ASSERT(null_move);
+            ASSERT(make_null_move);
             ASSERT(!ctxt->_move);
             ASSERT(ctxt->_state);
 
@@ -1057,7 +1055,7 @@ namespace search
 
         if (ctxt->is_null_move())
         {
-            ASSERT(null_move);
+            ASSERT(make_null_move);
             ASSERT(NULL_MOVE_REDUCTION_BASE > 0);
 
             ctxt->_beta = -_beta + 1;
@@ -1087,6 +1085,8 @@ namespace search
         }
         else
         {
+            ASSERT(move);
+
             ctxt->_beta = -_alpha;
 
             if (ctxt->is_pvs_ok())

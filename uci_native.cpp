@@ -431,6 +431,9 @@ public:
     #endif
     {
         search::Context::_history = std::make_unique<search::History>();
+
+        log_debug(std::format("Context size: {}", sizeof(search::Context)));
+        log_debug(std::format("State size: {}", sizeof(chess::State)));
         log_debug(std::format("TT_Entry size: {}", sizeof(search::TT_Entry)));
 
         set_start_position();
@@ -506,9 +509,8 @@ private:
                     const auto promo = m.size() > 4 ? chess::piece_type(m[4]) : chess::PieceType::NONE;
                     const auto move = chess::BaseMove(from, to, promo);
                     const auto prev = _buf._state;
+                    ASSERT(prev._hash == chess::zobrist_hash(prev));
                     _buf._state.apply_move(move);
-                    if (prev._hash == 0)
-                        prev.hash();
                     chess::zobrist_update(prev, move, _buf._state);
                     ASSERT(_buf._state._hash == chess::zobrist_hash(_buf._state));
                     /* keep track of played moves, to detect repetitions */
@@ -1192,6 +1194,7 @@ void UCI::position(const Arguments &args)
     {
         raise_value_error("invalid token count {}, expected 4", fen.size());
     }
+    _buf._state.rehash();
     apply_moves(moves);
     LOG_DEBUG(search::Context::epd(_buf._state));
 }

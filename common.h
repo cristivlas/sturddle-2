@@ -50,9 +50,12 @@
 
 using score_t = int;
 
+#if WEIGHT_TUNING_ENABLED
+  #define TUNING_PARTIAL                    true
+#endif
 
 // ---------------------------------------------------------------------
-// Configuration
+// Compile-time Configuration
 // ---------------------------------------------------------------------
 
 #define ADAPTIVE_NULL_MOVE                  true

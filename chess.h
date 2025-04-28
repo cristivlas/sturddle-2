@@ -1187,6 +1187,11 @@ namespace chess
         {
             ASSERT(simple_score == UNKNOWN_SCORE);
 
+            /* Sanity-check the previous state */
+            ASSERT(prev.occupied());
+            ASSERT(prev.occupied_co(BLACK));
+            ASSERT(prev.occupied_co(WHITE));
+
             if (prev.simple_score == UNKNOWN_SCORE)
             {
                 simple_score = eval_simple();
@@ -1406,7 +1411,6 @@ namespace chess
         state._check = {-1, -1};
         state._hash = 0;
         state._endgame = ENDGAME_UNKNOWN;
-        state._piece_count = _piece_count;
     }
 
 
@@ -1790,6 +1794,8 @@ namespace chess
 
         ASSERT(_piece_types[square] == PieceType::NONE);
         _piece_types[square] = type;
+
+        ASSERT(type == _piece_type_at(square));
     }
 
 
@@ -1980,6 +1986,7 @@ namespace chess
         template<typename T, typename P> INLINE bool parse_pos(T tok, P& pos)
         {
             static constexpr auto squares = mirror_squares(std::make_index_sequence<64>{});
+
             size_t i = 0;
             for (const auto c : tok)
             {
@@ -2012,6 +2019,8 @@ namespace chess
             ASSERT(i == 64);
             if (i != 64)
                 return false;
+
+            pos._hash = 0; /* reset hash */
             pos.piece_count(); /* update cached _piece_count */
             return true;
         }
