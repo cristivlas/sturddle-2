@@ -81,7 +81,7 @@ def plot_parameters(budget_numbers, param_data, selected_params):
     #np.random.shuffle(indices)  # Randomize to break adjacency similarity
     colors = [cmap(i) for i in indices]
 
-    styles = ['-', '--', '-.']
+    styles = [('-', 1), ('--', 1.5), ('-.', 2.5)]
     line_styles = itertools.cycle(styles)
 
     mark_spacing = max(1, len(budget_numbers) // 20)
@@ -90,10 +90,12 @@ def plot_parameters(budget_numbers, param_data, selected_params):
         if param_name in param_data:
             values = param_data[param_name]
             # print(f'Plotting {param_name}...')
+            style = next(line_styles)
             plt.plot(budget_numbers, values,
                      label=param_name,
                      color=colors[idx // len(styles)],
-                     linestyle=next(line_styles),
+                     linestyle=style[0],
+                     linewidth=style[1],
                      marker='s',
                      markerfacecolor=colors[idx],
                      markevery=mark_spacing)
