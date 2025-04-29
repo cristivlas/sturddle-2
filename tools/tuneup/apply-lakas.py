@@ -154,7 +154,7 @@ def get_weights(best_params):
         elif k in params:
             val = params[k][0]
         else:
-            val = 0
+            val = 20000 if k == 'KING' else 0
         m_map[m_sym[k]] = val
 
     weights = ', '.join(map(str, m_map.values()))
