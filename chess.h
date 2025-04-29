@@ -1032,8 +1032,8 @@ namespace chess
 
     struct State : public BoardPosition
     {
-        int capture_value = 0;
-        int pushed_pawns_score = 0; /* ranks past the middle of the board */
+        PieceType capture_type = PieceType::NONE;
+        int8_t pushed_pawns_score = 0; /* ranks past the middle of the board */
         bool is_castle = false;
 
         /* material and PST from white's POV */
@@ -1125,7 +1125,7 @@ namespace chess
 
         bool has_insufficient_material(Color) const;
 
-        INLINE bool is_capture() const { ASSERT(capture_value >= 0); return capture_value != 0; }
+        INLINE bool is_capture() const { return capture_type != PieceType::NONE; }
 
         bool is_capture(const BaseMove& move) const;
         bool is_castling(const BaseMove&) const;
@@ -1328,7 +1328,7 @@ namespace chess
 
         _check = { -1, -1 };
 
-        this->capture_value = piece_value_at(move.to_square(), !turn);
+        this->capture_type = piece_type_at(move.to_square());
 
         ASSERT(!is_capture() || piece_type_at(move.to_square()));
 
@@ -1392,8 +1392,8 @@ namespace chess
                 ASSERT(piece_type_at(sq) == PAWN);
                 ASSERT(piece_color_at(sq) != turn);
 
-                capture_value = piece_value_at(sq, !turn);
-                ASSERT(is_capture());
+                this->capture_type = PieceType::PAWN;
+                ASSERT(piece_type_at(sq) == capture_type);
 
                 remove_piece_at(sq);
             }
@@ -1419,7 +1419,7 @@ namespace chess
     {
         state = *this;
 
-        state.capture_value = 0;
+        state.capture_type = PieceType::NONE;
         state.simple_score = UNKNOWN_SCORE;
         state._check = {-1, -1};
         state._hash = 0;
