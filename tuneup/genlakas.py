@@ -30,7 +30,7 @@ def get_engine_path(args, windows=False):
         engine = make_path('main.py')
     if windows:
         with open('engine.bat', 'w') as out:
-            out.write(sys.executable + ' ' + engine)
+            out.write(f'"{sys.executable}" "{engine}"')
         engine = 'engine.bat'
     return engine
 
@@ -45,6 +45,7 @@ if __name__ == '__main__':
     parser.add_argument('-g', '--games_per_budget', type=int, default=8)
     parser.add_argument('-H', '--hash', type=int, default=256, help='Engine hash table size in MB')
     parser.add_argument('-l', '--log-file', default='log.txt')
+    parser.add_argument('-O', '--opening-file')
     parser.add_argument('-o', '--output')
     parser.add_argument('-p', '--lakas-path', default='')
     parser.add_argument('-s', '--strategy', choices=optimizers, default='spsa')
@@ -95,6 +96,12 @@ if __name__ == '__main__':
     if cutechess is None:
         raise RuntimeError('Could not locate cutechess-cli')
 
+    opening_file = args.opening_file
+    if opening_file is None or not os.path.isfile(opening_file):
+         opening_file = os.path.join(args.lakas_path, 'start_opening', 'ogpt_chess_startpos.epd')
+    else:
+        opening_file = os.path.abspath(opening_file)
+
     windows = sysconfig.get_platform().startswith('win')
 
     # fill out the script template
@@ -109,7 +116,7 @@ python {os.path.join(args.lakas_path, 'lakas.py')} ^
     --enhance-hashmb {args.hash} ^
     --enhance-threads {args.threads} ^
     --input-data-file {args.data_file} ^
-    --opening-file {os.path.join(args.lakas_path, 'start_opening/ogpt_chess_startpos.epd')} ^
+    --opening-file "{opening_file}" ^
     --optimizer {args.strategy} ^
     --optimizer-log-file {args.log_file} ^
     --output-data-file {args.data_file} ^
@@ -128,7 +135,7 @@ python3 {os.path.join(args.lakas_path, 'lakas.py')} \\
     --enhance-hashmb {args.hash} \\
     --enhance-threads {args.threads} \\
     --input-data-file {args.data_file} \\
-    --opening-file {os.path.join(args.lakas_path, 'start_opening/ogpt_chess_startpos.epd')} \\
+    --opening-file {opening_file} \\
     --optimizer {args.strategy} \\
     --optimizer-log-file {args.log_file} \\
     --output-data-file {args.data_file} \\
