@@ -111,7 +111,7 @@ Config::Namespace Config::_namespace = {
     /* Piece weights */
     { "PAWN", Config::Param{ &WEIGHT[PieceType::PAWN], 75, 90, "Eval", normalize_weights} },
     { "KNIGHT", Config::Param{ &WEIGHT[PieceType::KNIGHT], 300, 400, "Eval", normalize_weights } },
-    { "BISHOP", Config::Param{ &WEIGHT[PieceType::BISHOP], 350, 400, "Eval", normalize_weights } },
+    { "BISHOP", Config::Param{ &WEIGHT[PieceType::BISHOP], 340, 400, "Eval", normalize_weights } },
     { "ROOK", Config::Param{ &WEIGHT[PieceType::ROOK], 450, 625, "Eval", normalize_weights } },
     { "QUEEN", Config::Param{ &WEIGHT[PieceType::QUEEN], 900, 1200, "Eval", normalize_weights } },
 

@@ -38,16 +38,18 @@ optimizers = ('oneplusone', 'tbpsa', 'bayesopt', 'spsa', 'cmaes', 'ngopt')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate Lakas tuning script.')
-    parser.add_argument('-b', '--budget', type=int, default=10000)
+    parser.add_argument('-b', '--budget', type=int, default=200000)
     parser.add_argument('-c', '--concurrency', type=int, default=os.cpu_count())
     parser.add_argument('-d', '--data-file', default='checkpoint.dat')
     parser.add_argument('-D', '--depth', type=int, default=9)
-    parser.add_argument('-g', '--games_per_budget', type=int, default=100)
+    parser.add_argument('-g', '--games_per_budget', type=int, default=8)
+    parser.add_argument('-H', '--hash', type=int, default=256, help='Engine hash table size in MB')
     parser.add_argument('-l', '--log-file', default='log.txt')
     parser.add_argument('-o', '--output')
     parser.add_argument('-p', '--lakas-path', default='')
     parser.add_argument('-s', '--strategy', choices=optimizers, default='spsa')
     parser.add_argument('-t', '--time-control', default='1+0.2')
+    parser.add_argument('-T', '--threads', type=int, default=1, help='Engine threads (logical CPUs)')
 
     # Enumerate available engine settings
     params = {}
@@ -101,10 +103,11 @@ if __name__ == '__main__':
         script = f'''
 python {os.path.join(args.lakas_path, 'lakas.py')} ^
     --budget {args.budget} --games-per-budget {args.games_per_budget} ^
-    --concurrency {args.concurrency} ^
+    --concurrency {min(args.games_per_budget, args.concurrency)} ^
     --depth {args.depth} ^
     --engine {get_engine_path(args, True)} ^
-    --enhance-threads 1 ^
+    --enhance-hashmb {args.hash} ^
+    --enhance-threads {args.threads} ^
     --input-data-file {args.data_file} ^
     --opening-file {os.path.join(args.lakas_path, 'start_opening/ogpt_chess_startpos.epd')} ^
     --optimizer {args.strategy} ^
@@ -119,10 +122,11 @@ python {os.path.join(args.lakas_path, 'lakas.py')} ^
 
 python3 {os.path.join(args.lakas_path, 'lakas.py')} \\
     --budget {args.budget} --games-per-budget {args.games_per_budget} \\
-    --concurrency {args.concurrency} \\
+    --concurrency {min(args.games_per_budget, args.concurrency)} \\
     --depth {args.depth} \\
     --engine {get_engine_path(args)} \\
-    --enhance-threads 1 \\
+    --enhance-hashmb {args.hash} \\
+    --enhance-threads {args.threads} \\
     --input-data-file {args.data_file} \\
     --opening-file {os.path.join(args.lakas_path, 'start_opening/ogpt_chess_startpos.epd')} \\
     --optimizer {args.strategy} \\
