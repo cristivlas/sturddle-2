@@ -29,34 +29,28 @@ def scale_param(name, val):
 
     return val
 
-
 def parse_best_params(logfile, recommended=False):
     pat = ("recommended param", r"recommended param: ({.*})") if recommended else ("best param", r"best param: ({.*})")
     logging.info(f"Reading log file: {logfile}")
     with open(logfile, 'r') as f:
         content = f.read()
 
-    # Split the log content into chunks separated by empty lines
     chunks = content.strip().split('\n\n')
     logging.info(f"Found {len(chunks)} chunks in the log file")
 
-    # Process the last chunk
-    last_chunk = chunks[-1]
-    logging.info(f"Processing the last chunk")
-
     best_params = None
-    for line in last_chunk.split('\n'):
-        if pat[0] in line:
-            match = re.search(pat[1], line)
-            if match:
-                best_params = ast.literal_eval(match.group(1))
-                logging.info(f"{pat[0]}: {best_params}")
-                break
+    for i, chunk in enumerate(reversed(chunks)):
+        logging.info(f"Processing chunk {-1 - i}")
+        for line in chunk.split('\n'):
+            if pat[0] in line:
+                match = re.search(pat[1], line)
+                if match:
+                    best_params = ast.literal_eval(match.group(1))
+                    logging.info(f"{pat[0]}: {best_params}")
+                    return best_params
 
-    if not best_params:
-        logging.warning("No best params found in the last chunk")
-
-    return best_params
+    logging.warning(f"No {pat[0]} found in any chunk")
+    return None
 
 
 def update_header(header_file, best_params):
