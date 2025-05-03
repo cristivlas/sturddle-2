@@ -670,7 +670,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         }
         else
         {
-            ctxt.eval_nnue();
+            ctxt.eval_with_nnue();
             eval = ctxt._eval;
         }
     #endif /* WITH_NNUE */

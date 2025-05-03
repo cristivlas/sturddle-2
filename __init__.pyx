@@ -394,6 +394,8 @@ cdef extern from 'context.h' nogil:
     map[string, int] _get_params() except+
     map[string, Param] _get_param_info() except+
 
+    score_t cpp_eval_as_white "eval_as_white"(const string&) nogil
+
 
 cdef extern from 'context.h' namespace 'search':
     cdef cppclass TimeControl:
@@ -402,6 +404,10 @@ cdef extern from 'context.h' namespace 'search':
         int moves
         int score
         int delta
+
+
+def eval_as_white(fen):
+    return cpp_eval_as_white(fen.encode())
 
 
 cdef extern from 'nnue.h' namespace 'nnue':

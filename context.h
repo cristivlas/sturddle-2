@@ -328,8 +328,10 @@ namespace search
         score_t     evaluate_end();
         score_t     evaluate_material() const;
 
-        void        eval_nnue();
+        score_t     eval_as_white(); /* for testing, tuning */
+
         score_t     eval_nnue_raw(bool update_only = false, bool side_to_move_pov = true);
+        void        eval_with_nnue();
         static void update_root_accumulators();
 
         score_t     static_eval() const; /* use TT value if available, eval material otherwise */
@@ -705,7 +707,7 @@ namespace search
     }
 
 #if !WITH_NNUE
-    INLINE void search::Context::eval_nnue() {}
+    INLINE void search::Context::eval_with_nnue() {}
     INLINE score_t search::Context::eval_nnue_raw(bool update_only, bool pov) { return 0; }
     INLINE void search::Context::load_nnue_model(const std::string&) {}
     INLINE void search::Context::update_root_accumulators() {}
@@ -1688,6 +1690,9 @@ namespace search
     void data_collect_move(const Context& ctxt, const BaseMove& move);
 
 } /* namespace search */
+
+
+score_t eval_as_white(const std::string& epd);
 
 
 /* C++ implementation of UCI protocol if NATIVE_UCI is defined,

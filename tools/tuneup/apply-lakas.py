@@ -200,7 +200,7 @@ def print_piece_square_tables(best_params):
         print(f"    }}{suffix}")
     print("};")
 
-    print("\nint ENDGAME_KING_SQUARE_TABLE[][64] = {")
+    print("\nint ENDGAME_KING_SQUARE_TABLE[64] = {")
     print("    ", end='')
     for i in range(64):
         key = f"PS_KEG_{i}"

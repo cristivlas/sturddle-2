@@ -366,7 +366,24 @@ static INLINE score_t eval_margin(const Context& ctxt)
 }
 
 
-void search::Context::eval_nnue()
+score_t search::Context::eval_as_white()
+{
+    auto eval = evaluate_material();
+
+#if EVAL_PIECE_GRADING
+    eval += eval_piece_grading(state(), state().piece_count());
+#endif /* EVAL_PIECE_GRADING */
+
+    if (state().just_king(!turn()) || (depth() >= 0 && abs(eval) <= eval_margin(*this)))
+    {
+        eval = eval_nnue_raw(false, false) * (NNUE_EVAL_TERM + eval / 32) / 1024;
+    }
+
+    return eval;
+}
+
+
+void search::Context::eval_with_nnue()
 {
     if (!is_valid(_eval))
     {
@@ -497,6 +514,11 @@ int nnue::eval_fen(const std::string& fen)
     ctxt._state = &state;
     chess::parse_fen(fen, state);
     return ctxt.eval_nnue_raw(false, false);
+}
+#else
+score_t search::Context::eval_as_white()
+{
+    return 0; /* TODO */
 }
 #endif /* WITH_NNUE */
 
@@ -1042,7 +1064,7 @@ namespace search
         if (!is_valid(_eval))
         {
         #if WITH_NNUE
-            eval_nnue();
+            eval_with_nnue();
         #else
             /*
              * 1. Material + piece-squares
@@ -1761,6 +1783,21 @@ namespace search
     #endif /* NO_ASSERT */
     }
 } /* namespace */
+
+
+/* For testing */
+score_t eval_as_white(const std::string& fen)
+{
+    auto ctxt = search::Context();
+    chess::State state;
+    ASSERT_ALWAYS(ctxt.tid() == 0);
+    ASSERT_ALWAYS(ctxt._ply == 0);
+    ctxt._state = &state;
+    chess::parse_fen(fen, state);
+    ASSERT_ALWAYS(state.piece_count() == chess::popcount(state.occupied()));
+
+    return ctxt.eval_as_white();
+}
 
 
 void cancel_search(CancelReason reason)
