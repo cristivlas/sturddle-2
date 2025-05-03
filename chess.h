@@ -423,7 +423,7 @@ namespace chess
 
 
 #define PIECE_VALUES { 0, 85, 319, 343, 522, 986, 20000 }
-#define ENDGAME_ADJUST { 0, 2, -40, -42, 39, -27, 0 }
+#define ENDGAME_ADJUST { 0, 0, 0, 0, 0, 0, 0 }
 
 
     /* Piece values */

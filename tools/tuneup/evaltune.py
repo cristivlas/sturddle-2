@@ -44,25 +44,28 @@ def checkpoint(args, optimizer):
                 shutil.copy(args.checkpoint, args.checkpoint + ".bak")
 
             optimizer.dump(args.checkpoint)
+
         finally:
             # Restore original handler
             signal.signal(signal.SIGINT, original_sigint_handler)
 
 
+def scale(name, val, engine_params):
+    """Re-scale normalized parameters"""
+    p = engine_params.get(name)
+    if p:
+        (_, lo, hi, _, normal) = p
+        if normal:
+            val = int((val + 1) * (hi - lo) / 2 + lo)
+
+    return val
+
+
 def engine_eval(args, engine, engine_params, epd, **params):
     """Run engine evaluation on the position given by epd"""
 
-    def scale(name, val):
-        p = engine_params.get(name)
-        if p:
-            (_, lo, hi, _, normal) = p
-            if normal:
-                val = int((val + 1) * (hi - lo) / 2 + lo)
-
-        return val
-
     for k,v in params.items():
-        v = scale(k, v)
+        v = scale(k, v, engine_params)
         engine.set_param(k, v)
 
     logging.info(f'recommended param: {params}')
@@ -72,18 +75,17 @@ def engine_eval(args, engine, engine_params, epd, **params):
 
 def tune(args, optimizer):
     engine = load_engine(args)
-    logging.info(f'engine version: {engine.version()}')
+    logging.info(f'engine version: {engine.version()}\n')
 
     engine_params = engine.get_param_info()
 
     # Track how many positions we need to skip when resuming
-    positions_to_skip = optimizer.num_ask
-    logging.info(f'Resuming from checkpoint - skipping first {positions_to_skip} positions')
+    if positions_to_skip := optimizer.num_ask:
+        logging.info(f'Resuming from checkpoint - skipping first {positions_to_skip} positions\n')
 
     with sqlite3.connect(args.eval_db) as conn:
         cursor = conn.cursor()
 
-        #for epd, _, eval in cursor.execute("SELECT epd, depth, score FROM position"):
         # Use OFFSET to skip already processed positions
         for epd, _, eval in cursor.execute(
             "SELECT epd, depth, score FROM position LIMIT ? OFFSET ?",
@@ -105,15 +107,14 @@ def tune(args, optimizer):
 
             checkpoint(args, optimizer)
 
-            if optimizer.num_ask > 1:
-                recommendation = optimizer.provide_recommendation()
-                best_param = recommendation.value[1]
+            recommendation = optimizer.provide_recommendation()
+            best_param = recommendation.value[1]
 
-                # Log best params same as lakas.py for compatibility with plotting tool.
-                logging.info(f'best param: {best_param}')
+            # Log best params same as lakas.py for compatibility with plotting tool.
+            logging.info(f'best param: {best_param}')
 
-                config = {k:v for k,v in engine.get_params().items() if k in best_param}
-                logging.info(f'best config: {config}\n')
+            config = {k:scale(k, v, engine_params) for k,v in best_param.items()}
+            logging.info(f'best config: {config}\n')
 
 
 def optimizer_instance(args, instrum):
@@ -123,6 +124,9 @@ def optimizer_instance(args, instrum):
         optimizer = loaded_optimizer.load(input_data_file)
     else:
         optimizer = ng.optimizers.SPSA(instrum, budget=args.budget)
+        optimizer.A = args.initial_amplification
+        optimizer.a = args.step_size_decay_rate
+        optimizer.c = args.perturbation_magnitude
 
     logging.info(f'SPSA: A={optimizer.A}, a={optimizer.a}, c={optimizer.c}, previous budget: {optimizer.num_ask}\n')
     return optimizer
@@ -160,9 +164,12 @@ if __name__ == '__main__':
     parser.add_argument('--budget', type=int, default=100)
     parser.add_argument('--checkpoint', help='Path to checkpoint data file')
     parser.add_argument('--engine', required=True, help='Path to engine')
+    parser.add_argument('--perturbation-magnitude', '-c', type=float, default=1e-1)
+    parser.add_argument('--initial-amplification', '-A', type=int, default=10000, help='Initial SPSA amplification')
     parser.add_argument('--input-param', required=True, type=str, help='The parameters that will be optimized')
     parser.add_argument('--log-file', help='Path to log file', default='log_tune.txt')
     parser.add_argument('--loss-scale', type=float, default=1.0, help='Scale factor for loss amplification')
+    parser.add_argument('--step-size-decay-rate', '-a', type=float, default=1e-5)
 
     args = parser.parse_args()
 
