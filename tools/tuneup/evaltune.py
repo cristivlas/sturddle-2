@@ -31,7 +31,6 @@ def load_engine(args, name='chess_engine'):
 
 
 def checkpoint(args, optimizer):
-
     if args.checkpoint:
         original_sigint_handler = signal.getsignal(signal.SIGINT)
 
@@ -52,26 +51,29 @@ def checkpoint(args, optimizer):
             signal.signal(signal.SIGINT, original_sigint_handler)
 
 
-def scale(name, val, engine_params):
-    """Re-scale normalized parameters"""
-    p = engine_params.get(name)
-    if p:
-        (_, lo, hi, _, normal) = p
-        if normal:
-            val = int((val + 1) * (hi - lo) / 2 + lo)
+def create_scaled_ranges_map(engine_params):
+    """Map normalized parameters to their value ranges"""
+    scaled = {}
 
-    return val
+    for name, param_info in engine_params.items():
+        if param_info and param_info[4]:  # If normal flag is True
+            _, lo, hi, _, _ = param_info
+            # Create closure with fixed lo/hi values
+            scaled[name] = (lo, hi)
+
+    return scaled
 
 
-def engine_eval(args, engine, engine_params, epd, **params):
+def engine_eval(args, engine, scaled, epd, **params):
     """Run engine evaluation on the position given by epd"""
-
-    for k,v in params.items():
-        v = scale(k, v, engine_params)
+    # Apply scaling only to parameters that need it
+    for k, v in params.items():
+        if k in scaled:
+            lo, hi = scaled[k]
+            v = int((v + 1) * (hi - lo) / 2 + lo)
         engine.set_param(k, v)
 
     logging.info(f'recommended param: {params}')
-
     return engine.eval_as_white(epd)
 
 
@@ -80,6 +82,7 @@ def tune(args, optimizer):
     logging.info(f'engine version: {engine.version()}\n')
 
     engine_params = engine.get_param_info()
+    scaled = create_scaled_ranges_map(engine_params)
 
     # Track how many positions we need to skip when resuming
     if positions_to_skip := optimizer.num_ask:
@@ -100,7 +103,7 @@ def tune(args, optimizer):
 
             x = optimizer.ask()
 
-            result = engine_eval(args, engine, engine_params, epd, **x.kwargs)
+            result = engine_eval(args, engine, scaled, epd, **x.kwargs)
             loss = eval - result
 
             logging.info(f'epd: {epd}, eval: {eval}, engine: {result}, loss: {loss}')
@@ -112,10 +115,18 @@ def tune(args, optimizer):
             recommendation = optimizer.provide_recommendation()
             best_param = recommendation.value[1]
 
-            # Log best params same as lakas.py for compatibility with plotting tool.
+            # Log best params
             logging.info(f'best param: {best_param}')
 
-            config = {k:scale(k, v, engine_params) for k,v in best_param.items()}
+            # Scale the best parameters for logging
+            config = {}
+            for k, v in best_param.items():
+                if k in scaled:
+                    lo, hi = scaled[k]
+                    config[k] = int((v + 1) * (hi - lo) / 2 + lo)
+                else:
+                    config[k] = v
+
             logging.info(f'best config: {config}\n')
 
 
@@ -135,7 +146,7 @@ def optimizer_instance(args, instrum):
 
 
 def main(args):
-    logging.info(f'nevegrad {ng.__version__}')
+    logging.info(f'nevergrad {ng.__version__}')
 
     # Convert the input param string to a dict of dict and sort by key.
     input_param = ast.literal_eval(args.input_param)

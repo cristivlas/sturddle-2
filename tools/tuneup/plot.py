@@ -74,11 +74,10 @@ def parse_log_file(filename):
     return budget_numbers, param_data
 
 
-def plot_parameters(budget_numbers, param_data, selected_params):
+def plot_parameters(budget_numbers, param_data, selected_params, legend_ncols=1):
     _fig, _ax = plt.subplots(figsize=(12, 8))
     cmap = plt.cm.tab20c
     indices = np.linspace(0, 1, len(selected_params))
-    #np.random.shuffle(indices)  # Randomize to break adjacency similarity
     colors = [cmap(i) for i in indices]
 
     styles = [('-', 1), ('--', 1.5), ('-.', 2.5)]
@@ -89,7 +88,6 @@ def plot_parameters(budget_numbers, param_data, selected_params):
     for idx, param_name in enumerate(selected_params):
         if param_name in param_data:
             values = param_data[param_name]
-            # print(f'Plotting {param_name}...')
             style = next(line_styles)
             plt.plot(budget_numbers, values,
                      label=param_name,
@@ -101,10 +99,17 @@ def plot_parameters(budget_numbers, param_data, selected_params):
                      markevery=mark_spacing)
 
     plt.xlabel('Iteration')
-    plt.ylabel('Parameter Value')
+    # plt.ylabel('Parameter Value')
     plt.title('Best Parameter Values over Iterations')
     plt.grid(True, alpha=0.3)
-    plt.legend()
+
+    fontsize = 'small' if len(selected_params) > 50 else 'medium'
+    plt.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), ncol=legend_ncols, fontsize=fontsize)
+
+    # Adjust layout to make room for legend
+    plt.tight_layout()
+    plt.subplots_adjust(right=0.75)
+
     plt.savefig('parameter_plot.png', dpi=300, bbox_inches='tight')
     print("Plot saved to: parameter_plot.png")
     plt.show()
@@ -116,6 +121,7 @@ def main():
     parser.add_argument('params', nargs='*', help='Names of parameters to plot (optional)')
     parser.add_argument('--list', action='store_true', help='List available parameters and exit')
     parser.add_argument('--all', action='store_true', help='Plot all available parameters')
+    parser.add_argument('-n', '--legend-columns', type=int, default=1)
 
     args = parser.parse_args()
 
@@ -169,7 +175,7 @@ def main():
         print(f"  Change: {values[-1] - values[0]:.6f}")
 
     # Plot the parameters
-    plot_parameters(budget_numbers, param_data, selected_params)
+    plot_parameters(budget_numbers, param_data, selected_params, args.legend_columns)
 
 
 if __name__ == '__main__':
