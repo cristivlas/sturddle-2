@@ -40,8 +40,10 @@ def checkpoint(args, optimizer):
 
         try:
             # Backup the checkpoint file in case a catastrophic error happens during pickling.
-            if args.backup and os.path.isfile(args.checkpoint):
-                shutil.copy(args.checkpoint, args.checkpoint + ".bak")
+            if args.backup and optimizer.num_ask % args.backup == 0 and os.path.isfile(args.checkpoint):
+                backup = args.checkpoint + ".bak"
+                logging.info(f'backup: {backup}')
+                shutil.copy(args.checkpoint, backup)
 
             optimizer.dump(args.checkpoint)
 
@@ -160,7 +162,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Evaluation-based SPSA tuner")
     parser.add_argument('eval_db', help='Path to sqlite3 DB containing evals')
-    parser.add_argument('--backup', action='store_true', help='Backup checkpoint file')
+    parser.add_argument('--backup', type=int, default=0, help='Checkpoint backup frequency')
     parser.add_argument('--budget', type=int, default=100)
     parser.add_argument('--checkpoint', help='Path to checkpoint data file')
     parser.add_argument('--engine', required=True, help='Path to engine')
