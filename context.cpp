@@ -368,7 +368,10 @@ static INLINE score_t eval_margin(const Context& ctxt)
 
 score_t search::Context::eval_as_white()
 {
-    auto eval = evaluate_material();
+    const auto stm_sign = SIGN[turn()];
+
+    /* eval material from white's perspective */
+    auto eval = evaluate_material() * stm_sign;
 
 #if EVAL_PIECE_GRADING
     eval += eval_piece_grading(state(), state().piece_count());
@@ -378,6 +381,9 @@ score_t search::Context::eval_as_white()
     {
         eval = eval_nnue_raw(false, false) * (NNUE_EVAL_TERM + eval / 32) / 1024;
     }
+
+    /* add captures from white's perspective */
+    eval += eval_captures(*this, eval * stm_sign) * stm_sign;
 
     return eval;
 }
