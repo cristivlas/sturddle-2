@@ -366,29 +366,6 @@ static INLINE score_t eval_margin(const Context& ctxt)
 }
 
 
-score_t search::Context::eval_as_white()
-{
-    const auto stm_sign = SIGN[turn()];
-
-    /* eval material from white's perspective */
-    auto eval = evaluate_material() * stm_sign;
-
-#if EVAL_PIECE_GRADING
-    eval += eval_piece_grading(state(), state().piece_count());
-#endif /* EVAL_PIECE_GRADING */
-
-    if (state().just_king(!turn()) || (depth() >= 0 && abs(eval) <= eval_margin(*this)))
-    {
-        eval = eval_nnue_raw(false, false) * (NNUE_EVAL_TERM + eval / 32) / 1024;
-    }
-
-    /* add captures from white's perspective */
-    eval += eval_captures(*this, eval * stm_sign) * stm_sign;
-
-    return eval;
-}
-
-
 void search::Context::eval_with_nnue()
 {
     if (!is_valid(_eval))
@@ -402,7 +379,8 @@ void search::Context::eval_with_nnue()
         auto eval = evaluate_material();
 
     #if EVAL_PIECE_GRADING
-        eval += eval_piece_grading(state(), state().piece_count());
+        /* eval_piece_grading applies adjustments from white's perspective. */
+        eval += SIGN[turn()] * eval_piece_grading(state(), state().piece_count());
     #endif /* EVAL_PIECE_GRADING */
 
         if (state().just_king(!turn()) || (depth() >= 0 && abs(eval) <= eval_margin(*this)))
@@ -520,11 +498,6 @@ int nnue::eval_fen(const std::string& fen)
     ctxt._state = &state;
     chess::parse_fen(fen, state);
     return ctxt.eval_nnue_raw(false, false);
-}
-#else
-score_t search::Context::eval_as_white()
-{
-    return 0; /* TODO */
 }
 #endif /* WITH_NNUE */
 
@@ -1788,21 +1761,33 @@ namespace search
         }
     #endif /* NO_ASSERT */
     }
+
+
+    score_t Context::eval(bool as_white, int depth)
+    {
+        const auto score = search::iterative(*this, *get_tt(), depth + 1);
+        return as_white ? score * SIGN[turn()] : score;
+    }
 } /* namespace */
 
 
-/* For testing */
-score_t eval_as_white(const std::string& fen)
+score_t eval(const std::string& fen, bool as_white, int depth)
 {
     auto ctxt = search::Context();
-    chess::State state;
-    ASSERT_ALWAYS(ctxt.tid() == 0);
-    ASSERT_ALWAYS(ctxt._ply == 0);
-    ctxt._state = &state;
-    chess::parse_fen(fen, state);
-    ASSERT_ALWAYS(state.piece_count() == chess::popcount(state.occupied()));
+    ASSERT(ctxt.tid() == 0);
+    ASSERT(ctxt._ply == 0);
 
-    return ctxt.eval_as_white();
+    chess::State state;
+    ctxt._state = &state;
+
+    chess::parse_fen(fen, state);
+    ASSERT(state.piece_count() == chess::popcount(state.occupied()));
+
+    search::TranspositionTable tt;
+    tt.init();
+    ctxt.set_tt(&tt);
+
+    return ctxt.eval(as_white, depth);
 }
 
 

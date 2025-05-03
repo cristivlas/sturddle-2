@@ -66,15 +66,46 @@ def create_scaled_ranges_map(engine_params):
 
 def engine_eval(args, engine, scaled, epd, **params):
     """Run engine evaluation on the position given by epd"""
-    # Apply scaling only to parameters that need it
     for k, v in params.items():
+        # Apply scaling to parameters that need it
         if k in scaled:
             lo, hi = scaled[k]
             v = int((v + 1) * (hi - lo) / 2 + lo)
         engine.set_param(k, v)
 
+    engine.set_param('Threads', args.threads)
+    engine.set_param('Hash', args.hash)
+
     logging.info(f'recommended param: {params}')
-    return engine.eval_as_white(epd)
+
+    return engine.eval(epd, args.eval_as_white, max(1, args.depth))
+
+
+def convert_mate_score(score, from_mate_value, to_mate_value):
+    """
+    Convert mate scores between different engines that use different mate values
+    Preserves the distance-to-mate information
+
+    Example:
+    - If engine uses 30000 and score is 29900 (mate in 1)
+    - Converting to DB using 15000 will return 14900 (still mate in 1)
+    """
+    mate_threshold = from_mate_value - 1000
+
+    if score > mate_threshold:
+        # Positive mate score
+        distance_to_mate = from_mate_value - score
+        adjusted_score = to_mate_value - distance_to_mate
+        logging.info(f'adjust score from: {score} to: {adjusted_score}')
+        return adjusted_score
+    elif score < -mate_threshold:
+        # Negative mate score
+        distance_to_mate = from_mate_value + score  # score is negative
+        adjusted_score = -(to_mate_value - distance_to_mate)
+        logging.info(f'adjust score from: {score} to: {adjusted_score}')
+        return adjusted_score
+    else:
+        return score
 
 
 def tune(args, optimizer):
@@ -103,10 +134,12 @@ def tune(args, optimizer):
 
             x = optimizer.ask()
 
-            result = engine_eval(args, engine, scaled, epd, **x.kwargs)
-            loss = eval - result
+            score = engine_eval(args, engine, scaled, epd, **x.kwargs)
+            score = convert_mate_score(score, args.mate_value, args.db_mate_value)
 
-            logging.info(f'epd: {epd}, eval: {eval}, engine: {result}, loss: {loss}')
+            loss = eval - score
+
+            logging.info(f'epd: {epd}, eval: {eval}, engine: {score}, loss: {loss}')
 
             optimizer.tell(x, loss * args.loss_scale)
 
@@ -176,13 +209,19 @@ if __name__ == '__main__':
     parser.add_argument('--backup', type=int, default=0, help='Checkpoint backup frequency')
     parser.add_argument('--budget', type=int, default=100)
     parser.add_argument('--checkpoint', help='Path to checkpoint data file')
+    parser.add_argument('--db-mate-value', type=int, default=15000, help='Mate value used in the database (default: 15000)')
+    parser.add_argument('--depth', type=int, default=10, help='Evaluation depth (default: 10)')
     parser.add_argument('--engine', required=True, help='Path to engine')
+    parser.add_argument('--eval-as-white', action='store_true', help="Engine evaluates from white's perspective")
+    parser.add_argument('--hash', type=int, default=256, help='Engine hashtable size in MB')
     parser.add_argument('--perturbation-magnitude', '-c', type=float, default=1e-1)
     parser.add_argument('--initial-amplification', '-A', type=int, default=10000, help='Initial SPSA amplification')
     parser.add_argument('--input-param', required=True, type=str, help='The parameters that will be optimized')
     parser.add_argument('--log-file', help='Path to log file', default='log_tune.txt')
     parser.add_argument('--loss-scale', type=float, default=1.0, help='Scale factor for loss amplification')
+    parser.add_argument('--mate-value', type=int, default=30000, help='Mate value used by the engine (default: 30000)')
     parser.add_argument('--step-size-decay-rate', '-a', type=float, default=1e-5)
+    parser.add_argument('--threads', type=int, default=1, help='Engine threads')
 
     args = parser.parse_args()
 

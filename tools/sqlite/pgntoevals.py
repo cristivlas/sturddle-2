@@ -37,8 +37,12 @@ def pgn_to_epd(game, mate_score):
             else:
                 score = int(float(score_str) * 100)
 
+            # **************************************************************
+            # Assume evals in the PGN are given from the white side's view.
+            # Convert to side-to-move's perspective.
             if not board.turn:
                 score = -score
+            # **************************************************************
 
             #print(epd, node.move, score_str, score)
             epd_list.append((epd, score))

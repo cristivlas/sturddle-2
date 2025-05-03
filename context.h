@@ -328,7 +328,7 @@ namespace search
         score_t     evaluate_end();
         score_t     evaluate_material() const;
 
-        score_t     eval_as_white(); /* for testing, tuning */
+        score_t     eval(bool as_white, int depth = 0); /* for testing and tuning */
 
         score_t     eval_nnue_raw(bool update_only = false, bool side_to_move_pov = true);
         void        eval_with_nnue();
@@ -1692,7 +1692,7 @@ namespace search
 } /* namespace search */
 
 
-score_t eval_as_white(const std::string& epd);
+score_t eval(const std::string& epd, bool as_side_to_move, int depth = 0);
 
 
 /* C++ implementation of UCI protocol if NATIVE_UCI is defined,

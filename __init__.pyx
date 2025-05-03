@@ -394,7 +394,7 @@ cdef extern from 'context.h' nogil:
     map[string, int] _get_params() except+
     map[string, Param] _get_param_info() except+
 
-    score_t cpp_eval_as_white "eval_as_white"(const string&) nogil
+    score_t cpp_eval "eval"(const string&, bool, int) nogil
 
 
 cdef extern from 'context.h' namespace 'search':
@@ -406,8 +406,8 @@ cdef extern from 'context.h' namespace 'search':
         int delta
 
 
-def eval_as_white(fen):
-    return cpp_eval_as_white(fen.encode())
+def eval(fen, as_white=False, depth=0):
+    return cpp_eval(fen.encode(), as_white, depth)
 
 
 cdef extern from 'nnue.h' namespace 'nnue':
