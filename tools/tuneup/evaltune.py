@@ -85,10 +85,6 @@ def convert_mate_score(score, from_mate_value, to_mate_value):
     """
     Convert mate scores between different engines that use different mate values
     Preserves the distance-to-mate information
-
-    Example:
-    - If engine uses 30000 and score is 29900 (mate in 1)
-    - Converting to DB using 15000 will return 14900 (still mate in 1)
     """
     mate_threshold = from_mate_value - 1000
 
@@ -143,8 +139,12 @@ def tune(args, optimizer):
             logging.info(f'epd: {epd}, eval: {eval}, engine: {score}, loss: {loss}')
 
             if abs(loss) >= args.max_loss:
-                logging.info('max loss exceeded\n')
-                continue
+                if (eval * score) > 0:
+                    loss = 0
+                    logging.info('large loss with same sign - setting to zero')
+                else:  # Different signs (one positive, one negative)
+                    logging.info('max loss exceeded with different signs - skipping')
+                    continue
 
             optimizer.tell(x, loss * args.loss_scale)
 
@@ -248,7 +248,7 @@ if __name__ == '__main__':
     parser.add_argument('--input-param', required=True, type=str, help='The parameters that will be optimized')
     parser.add_argument('--log-file', help='Path to log file', default='log_tune.txt')
     parser.add_argument('--loss-scale', type=float, default=100.0, help='Scale factor for loss amplification (default: 100.0)')
-    parser.add_argument('--mate-value', type=int, default=30000, help='Mate value used by the engine (default: 30000)')
+    parser.add_argument('--mate-value', type=int, default=29999, help='Mate value used by the engine (default: 29999)')
     parser.add_argument('--max-loss', type=int, default=10000, help='Max absolute loss value (default: 10000)')
     parser.add_argument('--step-size-decay-rate', '-a', type=float)
     parser.add_argument('--threads', type=int, default=1, help='Engine threads')
