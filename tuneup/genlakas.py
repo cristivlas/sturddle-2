@@ -61,7 +61,10 @@ if __name__ == '__main__':
             continue
         groups.add(grp)
         if normal:
+            unscaled_val = val
             val = 2 * (val - lo) / (hi - lo) - 1
+            if val < -1 or val > 1:
+                raise ValueError(f'{name}: {val} (unscaled: {unscaled_val}) is out of range')
             params[name] = val, -1.0, 1.0, grp
         else:
             params[name] = val, lo, hi, grp
@@ -94,7 +97,8 @@ if __name__ == '__main__':
     # detect cutechess-cli location
     cutechess = shutil.which('cutechess-cli')
     if cutechess is None:
-        raise RuntimeError('Could not locate cutechess-cli')
+        cutechess = 'cutechess-cli'
+        warnings.warn('Could not locate cutechess-cli')
 
     opening_file = args.opening_file
     if opening_file is None or not os.path.isfile(opening_file):

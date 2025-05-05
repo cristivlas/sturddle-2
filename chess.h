@@ -1242,11 +1242,12 @@ namespace chess
             case ROOK: return interpolate(piece_count(), 0, ADJUST[ROOK]);
             case QUEEN: return interpolate(piece_count(), 0, ADJUST[QUEEN]);
             case KING:
-            case NONE: return 0;
+            case NONE:
+                break;
             }
-    #else
-            return 0;
     #endif /* EVAL_PIECE_GRADING */
+
+            return 0;
         }
 
         INLINE int piece_value_at(Square square, Color color, PieceType piece_type) const

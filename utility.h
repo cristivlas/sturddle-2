@@ -130,7 +130,7 @@ namespace
 
     static INLINE int random_int(int low, int high)
     {
-        static THREAD_LOCAL std::mt19937 gen(std::random_device{}());
+        static thread_local std::mt19937 gen(std::random_device{}());
         return std::uniform_int_distribution<int>(low, high)(gen);
     }
 
