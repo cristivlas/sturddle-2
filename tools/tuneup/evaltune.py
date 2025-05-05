@@ -32,13 +32,20 @@ def load_engine(args, name='chess_engine'):
 
 def checkpoint(args, optimizer):
     if args.checkpoint:
-        original_sigint_handler = signal.getsignal(signal.SIGINT)
+        # Flag to track if Ctrl+C was pressed during checkpoint
+        interrupt_received = []
 
-        # Set temporary handler to ignore interrupts
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        # Custom handler that remembers the interrupt but doesn't act on it yet
+        def delayed_interrupt_handler(signum, frame):
+            interrupt_received.append(True)
+            logging.debug("Interrupt received, will exit after checkpoint completes...")
+
+        # Install our custom handler
+        original_sigint_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, delayed_interrupt_handler)
 
         try:
-            # Backup the checkpoint file in case a catastrophic error happens during pickling.
+            # Backup the checkpoint file in case a catastrophic error happens during pickling
             if args.backup and optimizer.num_ask % args.backup == 0 and os.path.isfile(args.checkpoint):
                 backup = args.checkpoint + ".bak"
                 logging.info(f'backup: {backup}')
@@ -49,6 +56,11 @@ def checkpoint(args, optimizer):
         finally:
             # Restore original handler
             signal.signal(signal.SIGINT, original_sigint_handler)
+
+            # If we received an interrupt while checkpointing, process it now
+            if interrupt_received:
+                logging.debug("Checkpoint completed, now handling the deferred interrupt")
+                original_sigint_handler(signal.SIGINT, None)
 
 
 def create_scaled_ranges_map(engine_params):
@@ -265,4 +277,7 @@ if __name__ == '__main__':
         handlers=log_handlers
     )
 
-    main(args)
+    try:
+        main(args)
+    except KeyboardInterrupt:
+        logging.info("Interrupted.")
