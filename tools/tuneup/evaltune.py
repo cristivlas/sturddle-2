@@ -116,8 +116,9 @@ def tune(args, optimizer):
     scaled = create_scaled_ranges_map(engine_params)
 
     # Track how many positions we need to skip when resuming
-    if positions_to_skip := optimizer.num_ask:
-        logging.info(f'Resuming from checkpoint - skipping first {positions_to_skip} positions\n')
+    positions_to_skip = args.offset if args.offset is not None else optimizer.num_ask
+    if positions_to_skip:
+        logging.info(f'Resuming from offset - skipping first {positions_to_skip} positions\n')
 
     with sqlite3.connect(args.eval_db) as conn:
         cursor = conn.cursor()
@@ -140,6 +141,10 @@ def tune(args, optimizer):
             loss = eval - score
 
             logging.info(f'epd: {epd}, eval: {eval}, engine: {score}, loss: {loss}')
+
+            if abs(loss) >= args.max_loss:
+                logging.info('max loss exceeded\n')
+                continue
 
             optimizer.tell(x, loss * args.loss_scale)
 
@@ -164,14 +169,37 @@ def tune(args, optimizer):
 
 
 def optimizer_instance(args, instrum):
+    """Instantiate SPSA optimizer"""
+
     input_data_file = args.checkpoint
+    budget = args.budget if args.budget > 0 else None
+
     if input_data_file and os.path.isfile(input_data_file):
-        loaded_optimizer = ng.optimizers.SPSA(instrum, budget=args.budget)
+        loaded_optimizer = ng.optimizers.SPSA(instrum, budget=budget)
         optimizer = loaded_optimizer.load(input_data_file)
     else:
-        optimizer = ng.optimizers.SPSA(instrum, budget=args.budget)
+        optimizer = ng.optimizers.SPSA(instrum, budget=budget)
+
+    # k: iteration index, starts at 0 and increases each loop
+    # a_k = a / (A + k + 1)^alpha is the decaying step size
+    # a: base step size that controls how aggressively parameters are updated
+    # A: stability constant that influences how quickly step size decays
+    # alpha: step size decay rate, typically 0.602 for SPSA (constant)
+    # c_k = c / (k + 1)^gamma is the perturbation size at iteration k
+    # c: base perturbation size that determines how far to look when estimating gradients
+    # gamma: perturbation decay rate, typically 0.101 for SPSA (constant)
+
+    if args.initial_amplification is None:
+        if budget is None:
+            optimizer.A = 10000
+        # else use nevergrad SPSA default
+    else:
         optimizer.A = args.initial_amplification
+
+    if args.step_size_decay_rate is not None:
         optimizer.a = args.step_size_decay_rate
+
+    if args.perturbation_magnitude is not None:
         optimizer.c = args.perturbation_magnitude
 
     logging.info(f'SPSA: A={optimizer.A}, a={optimizer.a}, c={optimizer.c}, previous budget: {optimizer.num_ask}\n')
@@ -207,20 +235,22 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Evaluation-based SPSA tuner")
     parser.add_argument('eval_db', help='Path to sqlite3 DB containing evals')
     parser.add_argument('--backup', type=int, default=0, help='Checkpoint backup frequency')
-    parser.add_argument('--budget', type=int, default=100)
+    parser.add_argument('--budget', type=int, default=100000)
     parser.add_argument('--checkpoint', help='Path to checkpoint data file')
     parser.add_argument('--db-mate-value', type=int, default=15000, help='Mate value used in the database (default: 15000)')
-    parser.add_argument('--depth', type=int, default=10, help='Evaluation depth (default: 10)')
+    parser.add_argument('--depth', type=int, default=7, help='Evaluation depth (default: 7)')
     parser.add_argument('--engine', required=True, help='Path to engine')
     parser.add_argument('--eval-as-white', action='store_true', help="Engine evaluates from white's perspective")
     parser.add_argument('--hash', type=int, default=256, help='Engine hashtable size in MB')
-    parser.add_argument('--perturbation-magnitude', '-c', type=float, default=1e-1)
-    parser.add_argument('--initial-amplification', '-A', type=int, default=10000, help='Initial SPSA amplification')
+    parser.add_argument('--offset', type=int, help='Offset in the db to start from')
+    parser.add_argument('--perturbation-magnitude', '-c', type=float)
+    parser.add_argument('--initial-amplification', '-A', type=int, help='Initial SPSA amplification (stability constant)')
     parser.add_argument('--input-param', required=True, type=str, help='The parameters that will be optimized')
     parser.add_argument('--log-file', help='Path to log file', default='log_tune.txt')
-    parser.add_argument('--loss-scale', type=float, default=1.0, help='Scale factor for loss amplification')
+    parser.add_argument('--loss-scale', type=float, default=100.0, help='Scale factor for loss amplification (default: 100.0)')
     parser.add_argument('--mate-value', type=int, default=30000, help='Mate value used by the engine (default: 30000)')
-    parser.add_argument('--step-size-decay-rate', '-a', type=float, default=1e-5)
+    parser.add_argument('--max-loss', type=int, default=10000, help='Max absolute loss value (default: 10000)')
+    parser.add_argument('--step-size-decay-rate', '-a', type=float)
     parser.add_argument('--threads', type=int, default=1, help='Engine threads')
 
     args = parser.parse_args()
