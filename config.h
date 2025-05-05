@@ -119,7 +119,7 @@ Config::Namespace Config::_namespace = {
     /* Endgame adjustments */
     { "ENDGAME_PAWN_ADJUST", Config::Param{ &ADJUST[PieceType::PAWN], 0, 30, "Eval", normalize_weights} },
     { "ENDGAME_KNIGHT_ADJUST", Config::Param{ &ADJUST[PieceType::KNIGHT], -35, 0, "Eval", normalize_weights } },
-    { "ENDGAME_BISHOP_ADJUST", Config::Param{ &ADJUST[PieceType::BISHOP], -45, 0, "Eval", normalize_weights } },
+    { "ENDGAME_BISHOP_ADJUST", Config::Param{ &ADJUST[PieceType::BISHOP], -40, 0, "Eval", normalize_weights } },
     { "ENDGAME_ROOK_ADJUST", Config::Param{ &ADJUST[PieceType::ROOK], 0, 70, "Eval", normalize_weights } },
     { "ENDGAME_QUEEN_ADJUST", Config::Param{ &ADJUST[PieceType::QUEEN], -75, 0, "Eval", normalize_weights } },
 #endif /* EVAL_PIECE_GRADING */
