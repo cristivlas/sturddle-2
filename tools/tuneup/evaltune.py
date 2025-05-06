@@ -11,7 +11,7 @@ import sqlite3
 import shutil
 import signal
 import sys
-
+import tqdm
 
 
 def load_engine(args, name='chess_engine'):
@@ -133,10 +133,23 @@ def tune(args, optimizer):
         cursor = conn.cursor()
 
         # Use OFFSET to skip already processed positions
-        for epd, _, eval in cursor.execute(
+        query_result = cursor.execute(
             "SELECT epd, depth, score FROM position LIMIT ? OFFSET ?",
             (args.budget - optimizer.num_ask if args.budget > 0 else -1, positions_to_skip)
-        ):
+        )
+
+        # Wrap with tqdm if progress is requested
+        if args.progress:
+            total = None if args.budget <= 0 else args.budget
+            query_result = tqdm.tqdm(
+                query_result,
+                desc='Tuning',
+                dynamic_ncols=True,
+                unit='pos',
+                initial=optimizer.num_ask,
+                total=total)
+
+        for epd, _, eval in query_result:
             if args.budget > 0 and optimizer.num_ask > args.budget:
                 break
 
@@ -263,13 +276,20 @@ if __name__ == '__main__':
     parser.add_argument('--loss-scale', type=float, default=100.0, help='Scale factor for loss amplification (default: 100.0)')
     parser.add_argument('--mate-value', type=int, default=29999, help='Mate value used by the engine (default: 29999)')
     parser.add_argument('--max-loss', type=int, default=10000, help='Max absolute loss value (default: 10000)')
+    parser.add_argument('--progress', action='store_true', help='Show progress bar and disable console output')
     parser.add_argument('--step-size-decay-rate', '-a', type=float)
     parser.add_argument('--threads', type=int, default=1, help='Engine threads')
     parser.add_argument('--time-limit-ms', type=int, default=10000, help='Time limit per evaluation, unlimited if <= 0 (default: 10000)')
 
     args = parser.parse_args()
 
-    log_handlers = [logging.StreamHandler()]
+    # Configure logging handlers based on --progress flag
+    log_handlers = []
+    if not args.progress:
+        # Add console output only if not in progress bar mode
+        log_handlers.append(logging.StreamHandler())
+
+    # Always add file handler if log_file is specified
     if args.log_file:
         log_handlers.append(logging.FileHandler(args.log_file))
 
