@@ -1763,15 +1763,18 @@ namespace search
     }
 
 
-    score_t Context::eval(bool as_white, int depth)
+    score_t Context::eval(bool as_white, int depth, int millisec)
     {
+        if (millisec > 0)
+            set_time_limit_ms(millisec);
+
         const auto score = search::iterative(*this, *get_tt(), depth + 1);
         return as_white ? score * SIGN[turn()] : score;
     }
 } /* namespace */
 
 
-score_t eval(const std::string& fen, bool as_white, int depth)
+score_t eval(const std::string& fen, bool as_white, int depth, int millis)
 {
     auto ctxt = search::Context();
     ASSERT(ctxt.tid() == 0);
@@ -1787,7 +1790,7 @@ score_t eval(const std::string& fen, bool as_white, int depth)
     tt.init();
     ctxt.set_tt(&tt);
 
-    return ctxt.eval(as_white, depth);
+    return ctxt.eval(as_white, depth, millis);
 }
 
 

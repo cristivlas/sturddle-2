@@ -394,7 +394,7 @@ cdef extern from 'context.h' nogil:
     map[string, int] _get_params() except+
     map[string, Param] _get_param_info() except+
 
-    score_t cpp_eval "eval"(const string&, bool, int) nogil
+    score_t cpp_eval "eval"(const string&, bool, int, int) nogil
 
 
 cdef extern from 'context.h' namespace 'search':
@@ -406,8 +406,8 @@ cdef extern from 'context.h' namespace 'search':
         int delta
 
 
-def eval(fen, as_white=False, depth=0):
-    return cpp_eval(fen.encode(), as_white, depth)
+def eval(fen, as_white=False, depth=0, millis=-1):
+    return cpp_eval(fen.encode(), as_white, depth, millis)
 
 
 cdef extern from 'nnue.h' namespace 'nnue':
@@ -633,7 +633,7 @@ cdef bool book_init(const string& filepath) except* with gil:
     return opening_book_init(filepath.decode())
 
 
-cdef BaseMove book_lookup(const State& state, bool best_move) except* with gil:
+cdef BaseMove book_lookup(const State& state, bool best_move) except*:
     board = board_from_cxx_state(state)
     entry = opening_book_lookup(board, best_move)
     if entry and entry.move:

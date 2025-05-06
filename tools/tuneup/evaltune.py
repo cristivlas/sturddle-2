@@ -13,6 +13,7 @@ import signal
 import sys
 
 
+
 def load_engine(args, name='chess_engine'):
     engine_module_path = os.path.abspath(args.engine)
     if not os.path.isdir(engine_module_path):
@@ -90,7 +91,7 @@ def engine_eval(args, engine, scaled, epd, **params):
 
     logging.info(f'recommended param: {params}')
 
-    return engine.eval(epd, args.eval_as_white, max(1, args.depth))
+    return engine.eval(epd, args.eval_as_white, max(1, args.depth), args.time_limit_ms)
 
 
 def convert_mate_score(score, from_mate_value, to_mate_value):
@@ -264,6 +265,7 @@ if __name__ == '__main__':
     parser.add_argument('--max-loss', type=int, default=10000, help='Max absolute loss value (default: 10000)')
     parser.add_argument('--step-size-decay-rate', '-a', type=float)
     parser.add_argument('--threads', type=int, default=1, help='Engine threads')
+    parser.add_argument('--time-limit-ms', type=int, default=10000, help='Time limit per evaluation, unlimited if <= 0 (default: 10000)')
 
     args = parser.parse_args()
 
