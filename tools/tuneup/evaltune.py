@@ -151,7 +151,7 @@ def tune(args, optimizer):
             logging.info(f'epd: {epd}, eval: {eval}, engine: {score}, loss: {loss}')
 
             if abs(loss) >= args.max_loss:
-                if (eval * score) > 0:
+                if (eval * score) > 0 and abs(score) >= args.max_loss:
                     loss = 0
                     logging.info('large loss with same sign - setting to zero')
                 else:  # Different signs (one positive, one negative)
