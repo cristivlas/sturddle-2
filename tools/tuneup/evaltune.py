@@ -2,9 +2,10 @@
 import argparse
 import ast
 from collections import OrderedDict
+import contextlib
 import importlib.util
 import importlib.machinery
-from loguru import logger
+import logging
 import nevergrad as ng
 import os
 import sqlite3
@@ -50,7 +51,7 @@ def log_best_param(optimizer, scaled):
     logger.info(f'best config: {config}\n')
 
 
-def checkpoint(args, optimizer, scaled):
+def checkpoint(args, optimizer):
     if args.checkpoint:
         # Flag to track if Ctrl+C was pressed during checkpoint
         interrupt_received = []
@@ -92,23 +93,6 @@ def create_scaled_ranges_map(engine_params):
             scaled[name] = (lo, hi)
 
     return scaled
-
-
-def engine_eval(args, engine, scaled, epd, **params):
-    """Run engine evaluation on the position given by epd"""
-    for k, v in params.items():
-        # Apply scaling to parameters that need it
-        if k in scaled:
-            lo, hi = scaled[k]
-            v = int((v + 1) * (hi - lo) / 2 + lo)
-        engine.set_param(k, v)
-
-    engine.set_param('Threads', args.threads)
-    engine.set_param('Hash', args.hash)
-
-    logger.info(f'recommended param: {params}')
-
-    return engine.eval(epd, args.eval_as_white, max(1, args.depth), args.time_limit_ms)
 
 
 def convert_mate_score(score, from_mate_value, to_mate_value):
@@ -153,9 +137,24 @@ def huber_loss(y_true, y_pred, delta):
         return delta * (abs_error - 0.5 * delta) * sign
 
 
+@contextlib.contextmanager
+def logging_context(logger, should_log):
+    original_level = logger.level
+    if not should_log:
+        logger.setLevel(logging.CRITICAL)
+
+    try:
+        yield
+    finally:
+        logger.setLevel(original_level)
+
+
 def tune(args, optimizer):
     engine = load_engine(args)
     logger.info(f'engine version: {engine.version()}\n')
+
+    engine.set_param('Threads', args.threads)
+    engine.set_param('Hash', args.hash)
 
     engine_params = engine.get_param_info()
     scaled = create_scaled_ranges_map(engine_params)
@@ -165,7 +164,8 @@ def tune(args, optimizer):
     if positions_to_skip:
         logger.info(f'Resuming from offset - skipping first {positions_to_skip} positions\n')
 
-    save_freq = max(1, args.save_frequency)
+    SAVE_FREQ = max(1, args.save_frequency)
+    LOG_FREQ = max(1, args.log_frequency)
 
     with sqlite3.connect(args.eval_db) as conn:
         cursor = conn.cursor()
@@ -191,34 +191,48 @@ def tune(args, optimizer):
             if args.budget > 0 and optimizer.num_ask > args.budget:
                 break
 
-            logger.info(f'budget: {optimizer.num_ask}')
-
             x = optimizer.ask()
 
-            score = engine_eval(args, engine, scaled, epd, **x.kwargs)
-            score = convert_mate_score(score, args.mate_value, args.db_mate_value)
+            with logging_context(logger, optimizer.num_ask % LOG_FREQ == 0):
+                params = x.kwargs
+                for k, v in params.items():
+                    # Apply scaling to parameters that need it
+                    if k in scaled:
+                        lo, hi = scaled[k]
+                        v = int((v + 1) * (hi - lo) / 2 + lo)
+                    engine.set_param(k, v)
 
-            loss = eval - score
+                logger.info(f'budget: {optimizer.num_ask}')
+                logger.info(f'recommended param: {params}')
 
-            logger.info(f'epd: {epd}, eval: {eval}, engine: {score}, loss: {loss}')
+                # Run engine evaluation on the position given by EPD
+                score = engine.eval(epd, args.eval_as_white, max(1, args.depth), args.time_limit_ms)
+                score = convert_mate_score(score, args.mate_value, args.db_mate_value)
 
-            if abs(loss) >= args.max_loss:
-                if (eval * score) > 0 and abs(score) >= args.max_loss:
-                    loss = 0
-                    logger.info('large loss with same sign - setting to zero')
-                else:  # Different signs (one positive, one negative)
-                    logger.info('max loss exceeded with different signs - skipping')
-                    continue
-            loss = huber_loss(eval, score, delta=args.huber_delta)
+                loss = eval - score
 
-            optimizer.tell(x, loss * args.loss_scale)
+                logger.info(f'epd: {epd}, eval: {eval}, engine: {score}, loss: {loss}')
 
-            if optimizer.num_ask % save_freq == 0:
-                checkpoint(args, optimizer, scaled)
+                if abs(loss) >= args.max_loss:
+                    if (eval * score) > 0 and abs(score) >= args.max_loss:
+                        loss = 0
+                        logger.info('large loss with same sign - setting to zero')
+                    else:  # Different signs (one positive, one negative)
+                        logger.info('max loss exceeded with different signs - skipping')
+                        continue
 
-            log_best_param(optimizer, scaled)
+                loss = huber_loss(eval, score, delta=args.huber_delta)
+                logger.info(f'huber_loss: {loss}')
 
-        checkpoint(args, optimizer, scaled)
+                optimizer.tell(x, loss * args.loss_scale)
+
+                if optimizer.num_ask % SAVE_FREQ == 0:
+                    checkpoint(args, optimizer)
+
+                log_best_param(optimizer, scaled)
+
+        checkpoint(args, optimizer)
+        log_best_param(optimizer, scaled)
 
 
 def optimizer_instance(args, instrum):
@@ -298,31 +312,35 @@ if __name__ == '__main__':
     parser.add_argument('--initial-amplification', '-A', type=int, help='Initial SPSA amplification (stability constant)')
     parser.add_argument('--input-param', required=True, type=str, help='The parameters that will be optimized')
     parser.add_argument('--log-file', help='Path to log file', default='log_tune.txt')
+    parser.add_argument('--log-frequency', '-f', type=int, default=10, help='INFO Logging frequency (default: 10)')
     parser.add_argument('--loss-scale', type=float, default=1.0, help='Scale factor for loss amplification (default: 1.0)')
     parser.add_argument('--mate-value', type=int, default=29999, help='Mate value used by the engine (default: 29999)')
     parser.add_argument('--max-loss', type=int, default=10000, help='Max absolute loss value (default: 10000)')
     parser.add_argument('--offset', type=int, help='Offset in the db to start from')
     parser.add_argument('--perturbation-magnitude', '-c', type=float)
     parser.add_argument('--progress', action='store_true', help='Show progress bar and disable console output')
-    parser.add_argument('--save-frequency', type=int, default=1000, help='Checkpoint frequencey (save state)')
+    parser.add_argument('--save-frequency', type=int, default=1000, help='Checkpoint frequency (save state)')
     parser.add_argument('--step-size-decay-rate', '-a', type=float)
     parser.add_argument('--threads', type=int, default=1, help='Engine threads')
     parser.add_argument('--time-limit-ms', type=int, default=10000, help='Time limit per evaluation, unlimited if <= 0 (default: 10000)')
 
     args = parser.parse_args()
 
-    # Configure loguru logger
-    # Remove default handler
-    logger.remove()
+    # Configure logging
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
 
-    # Add handlers based on configuration
+    formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s', '%Y-%m-%d %H:%M:%S')
+
     if not args.progress:
-        # Add console output only if not in progress bar mode
-        logger.add(sys.stderr, level="INFO", format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}")
+        console_handler = logging.StreamHandler(sys.stderr)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
 
-    # Always add file handler if log_file is specified
     if args.log_file:
-        logger.add(args.log_file, level="INFO", format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}")
+        file_handler = logging.FileHandler(args.log_file)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
 
     try:
         main(args)

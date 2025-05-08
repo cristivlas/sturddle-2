@@ -32,8 +32,9 @@ def scale_param(name, val):
 def parse_best_params(logfile, recommended=False):
     pat = ("recommended param", r"recommended param: ({.*})") if recommended else ("best param", r"best param: ({.*})")
     logging.info(f"Reading log file: {logfile}")
-    with open(logfile, 'r') as f:
-        content = f.read()
+    with open(logfile, 'rb') as f:
+        f.seek(-4096, os.SEEK_END)
+        content = f.read().decode()
 
     chunks = content.strip().split('\n\n')
     logging.info(f"Found {len(chunks)} chunks in the log file")
