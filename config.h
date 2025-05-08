@@ -109,15 +109,15 @@ constexpr bool normalize_weights = true;
 Config::Namespace Config::_namespace = {
 #if WEIGHT_TUNING_ENABLED
     /* Piece weights */
-    { "PAWN", Config::Param{ &WEIGHT[PieceType::PAWN], 75, 90, "Eval", normalize_weights} },
-    { "KNIGHT", Config::Param{ &WEIGHT[PieceType::KNIGHT], 300, 400, "Eval", normalize_weights } },
+    { "PAWN", Config::Param{ &WEIGHT[PieceType::PAWN], 65, 80, "Eval", normalize_weights} },
+    { "KNIGHT", Config::Param{ &WEIGHT[PieceType::KNIGHT], 300, 380, "Eval", normalize_weights } },
     { "BISHOP", Config::Param{ &WEIGHT[PieceType::BISHOP], 340, 400, "Eval", normalize_weights } },
-    { "ROOK", Config::Param{ &WEIGHT[PieceType::ROOK], 450, 625, "Eval", normalize_weights } },
+    { "ROOK", Config::Param{ &WEIGHT[PieceType::ROOK], 455, 625, "Eval", normalize_weights } },
     { "QUEEN", Config::Param{ &WEIGHT[PieceType::QUEEN], 900, 1200, "Eval", normalize_weights } },
 
 #if EVAL_PIECE_GRADING
     /* Endgame adjustments */
-    { "ENDGAME_PAWN_ADJUST", Config::Param{ &ADJUST[PieceType::PAWN], 0, 30, "Eval", normalize_weights} },
+    { "ENDGAME_PAWN_ADJUST", Config::Param{ &ADJUST[PieceType::PAWN], 0, 35, "Eval", normalize_weights} },
     { "ENDGAME_KNIGHT_ADJUST", Config::Param{ &ADJUST[PieceType::KNIGHT], -35, 0, "Eval", normalize_weights } },
     { "ENDGAME_BISHOP_ADJUST", Config::Param{ &ADJUST[PieceType::BISHOP], -40, 0, "Eval", normalize_weights } },
     { "ENDGAME_ROOK_ADJUST", Config::Param{ &ADJUST[PieceType::ROOK], 0, 70, "Eval", normalize_weights } },
@@ -272,8 +272,8 @@ DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,     100)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
 
 #if WITH_NNUE
-DECLARE_VALUE(  NNUE_EVAL_TERM,                     502,    0,    1000)
-DECLARE_VALUE(  NNUE_MAX_EVAL,                      452,    0,    1000)
+DECLARE_VALUE(  NNUE_EVAL_TERM,                     571,    0,    1000)
+DECLARE_VALUE(  NNUE_MAX_EVAL,                      390,    0,    1000)
 #endif /* WITH_NNUE */
 
 DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,              25,    0,     100)

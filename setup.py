@@ -38,7 +38,7 @@ else:
 
 
 def get_compiler_major_version(compiler=None):
-    # Get the compiler from the CC environment variable
+
     if compiler is None:
         compiler = environ.get('CC', 'gcc')
 
@@ -67,6 +67,11 @@ sourcefiles = [
 ]
 
 
+cxx = environ.get('CXX')
+if cxx and cxx.startswith('clang++') and 'CC' not in environ:
+    cc = cxx.replace('clang++', 'clang')
+    environ['CC'] = cc
+
 """
 Compiler args.
 """
@@ -88,7 +93,6 @@ if environ.get('BUILD_ASSERT', None):
 
 platform = sysconfig.get_platform()
 
-# Experimental
 NATIVE_UCI = environ.get('NATIVE_UCI', '').lower() in ['1', 'true', 'yes']
 
 # Debug build
@@ -156,7 +160,7 @@ else:
 
     # Silence off Py_DEPRECATED warnings for clang;
     # clang is the default compiler on macosx.
-    cc = 'clang' if platform.startswith('macos') else environ.get('CC', None)
+    cc = 'clang' if platform.startswith('macos') else environ.get('CC')
     if cc and cc.startswith('clang'):
         args += [
             '-Wno-macro-redefined',

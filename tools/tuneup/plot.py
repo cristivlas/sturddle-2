@@ -104,11 +104,14 @@ def plot_parameters(budget_numbers, param_data, selected_params, legend_ncols=1)
     plt.grid(True, alpha=0.3)
 
     fontsize = 'small' if len(selected_params) > 50 else 'medium'
-    plt.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), ncol=legend_ncols, fontsize=fontsize)
+    if legend_ncols == 1:
+        plt.legend()
+    else:
+        plt.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), ncol=legend_ncols, fontsize=fontsize)
 
-    # Adjust layout to make room for legend
-    plt.tight_layout()
-    plt.subplots_adjust(right=0.75)
+        # Adjust layout to make room for legend
+        plt.tight_layout()
+        plt.subplots_adjust(right=0.75)
 
     plt.savefig('parameter_plot.png', dpi=300, bbox_inches='tight')
     print("Plot saved to: parameter_plot.png")

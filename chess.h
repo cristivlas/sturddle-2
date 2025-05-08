@@ -422,8 +422,8 @@ namespace chess
         BB_SQUARES[A1] | BB_SQUARES[H1] | BB_SQUARES[A8] | BB_SQUARES[H8];
 
 
-#define PIECE_VALUES { 0, 85, 319, 343, 522, 986, 20000 }
-#define ENDGAME_ADJUST { 0, 0, 0, 0, 0, 0, 0 }
+#define PIECE_VALUES { 0, 72, 307, 368, 527, 1079, 20000 }
+#define ENDGAME_ADJUST { 0, 21, -14, -18, 66, -26, 0 }
 
 
     /* Piece values */
