@@ -185,8 +185,13 @@ def print_piece_square_tables(best_params):
         print(f"     ", end='')
         for i in range(64):
             key = f"PS_{piece}_{i}"
-            val = scale_param(key, best_params.get(key, 0))
-            end_char = ', ' if (i % 8 != 7) else (',\n' if i != 63 else '\n')
+            val = best_params.get(key)
+            if val:
+                val = scale_param(key, val)
+            else:
+                # Use default value
+                val = params.get(key, (0,))[0]
+            end_char = ', ' if (i % 8 != 7) else ',\n'
             if i % 8 == 0 and i != 0:
                 print("     ", end='')  # align rows
             print(f"{val:>4}", end=end_char)

@@ -31,7 +31,26 @@ def load_engine(args, name='chess_engine'):
     raise ImportError(f"Cannot find binary module {name} in {engine_module_path}")
 
 
-def checkpoint(args, optimizer):
+def log_best_param(optimizer, scaled):
+    recommendation = optimizer.provide_recommendation()
+    best_param = recommendation.value[1]
+
+    # Log best params
+    logger.info(f'best param: {best_param}')
+
+    # Scale the best parameters for logging
+    config = {}
+    for k, v in best_param.items():
+        if k in scaled:
+            lo, hi = scaled[k]
+            config[k] = int((v + 1) * (hi - lo) / 2 + lo)
+        else:
+            config[k] = v
+
+    logger.info(f'best config: {config}\n')
+
+
+def checkpoint(args, optimizer, scaled):
     if args.checkpoint:
         # Flag to track if Ctrl+C was pressed during checkpoint
         interrupt_received = []
@@ -115,6 +134,25 @@ def convert_mate_score(score, from_mate_value, to_mate_value):
         return score
 
 
+def huber_loss(y_true, y_pred, delta):
+    """
+    Calculate directional Huber loss between true and predicted values
+    - Preserves sign of the error
+    - Quadratic for errors smaller than delta in magnitude
+    - Linear for errors larger than delta in magnitude
+    """
+    error = y_true - y_pred
+    sign = 1 if error >= 0 else -1
+    abs_error = abs(error)
+
+    if abs_error <= delta:
+        # Quadratic region
+        return 0.5 * (abs_error ** 2) * sign
+    else:
+        # Linear region
+        return delta * (abs_error - 0.5 * delta) * sign
+
+
 def tune(args, optimizer):
     engine = load_engine(args)
     logger.info(f'engine version: {engine.version()}\n')
@@ -171,30 +209,16 @@ def tune(args, optimizer):
                 else:  # Different signs (one positive, one negative)
                     logger.info('max loss exceeded with different signs - skipping')
                     continue
+            loss = huber_loss(eval, score, delta=args.huber_delta)
 
             optimizer.tell(x, loss * args.loss_scale)
 
             if optimizer.num_ask % save_freq == 0:
-                checkpoint(args, optimizer)
+                checkpoint(args, optimizer, scaled)
 
-            recommendation = optimizer.provide_recommendation()
-            best_param = recommendation.value[1]
+            log_best_param(optimizer, scaled)
 
-            # Log best params
-            logger.info(f'best param: {best_param}')
-
-            # Scale the best parameters for logging
-            config = {}
-            for k, v in best_param.items():
-                if k in scaled:
-                    lo, hi = scaled[k]
-                    config[k] = int((v + 1) * (hi - lo) / 2 + lo)
-                else:
-                    config[k] = v
-
-            logger.info(f'best config: {config}\n')
-
-        checkpoint(args, optimizer)
+        checkpoint(args, optimizer, scaled)
 
 
 def optimizer_instance(args, instrum):
@@ -270,6 +294,7 @@ if __name__ == '__main__':
     parser.add_argument('--engine', required=True, help='Path to engine')
     parser.add_argument('--eval-as-white', action='store_true', help="Engine evaluates from white's perspective")
     parser.add_argument('--hash', type=int, default=256, help='Engine hashtable size in MB')
+    parser.add_argument('--huber-delta', type=int, default=50, help='Delta parameter for Huber loss (default: 50)')
     parser.add_argument('--initial-amplification', '-A', type=int, help='Initial SPSA amplification (stability constant)')
     parser.add_argument('--input-param', required=True, type=str, help='The parameters that will be optimized')
     parser.add_argument('--log-file', help='Path to log file', default='log_tune.txt')
@@ -279,7 +304,7 @@ if __name__ == '__main__':
     parser.add_argument('--offset', type=int, help='Offset in the db to start from')
     parser.add_argument('--perturbation-magnitude', '-c', type=float)
     parser.add_argument('--progress', action='store_true', help='Show progress bar and disable console output')
-    parser.add_argument('--save-frequency', type=int, default=1000, help='Checkpoint frequency (save state)')
+    parser.add_argument('--save-frequency', type=int, default=1000, help='Checkpoint frequencey (save state)')
     parser.add_argument('--step-size-decay-rate', '-a', type=float)
     parser.add_argument('--threads', type=int, default=1, help='Engine threads')
     parser.add_argument('--time-limit-ms', type=int, default=10000, help='Time limit per evaluation, unlimited if <= 0 (default: 10000)')
