@@ -1786,6 +1786,8 @@ score_t eval(const std::string& fen, bool as_white, int depth, int millis)
     chess::parse_fen(fen, state);
     ASSERT(state.piece_count() == chess::popcount(state.occupied()));
 
+    search::TranspositionTable::clear_shared_hashtable();
+
     search::TranspositionTable tt;
     tt.init();
     ctxt.set_tt(&tt);
