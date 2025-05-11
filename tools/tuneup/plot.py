@@ -15,67 +15,112 @@ except:
     pass
 
 
+BEST_PARAM_REGEX = re.compile(r'.*\|\s*INFO\s*\|\s*best param:\s*({.*})')
+BUDGET_REGEX = re.compile(r'.*\|\s*INFO\s*\|\s*budget:\s*(\d+)')
+LOSS_REGEX = re.compile(r'.*\|\s*INFO\s*\|\s*actual result:.*minimized result or loss:\s*([\d\.]+)')
+
+"""Default smoothening for EMA"""
+DEFAULT_ALPHAS = [0.3, 0.1, 0.05]
+
+
 def scan_for_params(filename, sample_size=100):
-    """Scan the first part of the lakas.py log file to detect available parameter names."""
+    """Scan the first part of the log file to detect available parameter names."""
     param_names = set()
-    found_param_line = False
 
     with open(filename, 'r') as f:
         for i, line in enumerate(f):
-            if i >= sample_size and found_param_line:
+            if i >= sample_size and param_names:
                 break
 
-            best_match = re.match(r'.*\|\s*INFO\s*\|\s*best param:\s*({.*})', line)
+            best_match = BEST_PARAM_REGEX.match(line)
             if best_match:
-                try:
-                    param_str = best_match.group(1)
-                    params = eval(param_str)
-                    param_names.update(params.keys())
-                    found_param_line = True
-                except Exception as e:
-                    print(f"Warning: Could not parse parameters on line {i+1}: {str(e)}")
+                param_str = best_match.group(1)
+                params = eval(param_str)
+                param_names.update(params.keys())
 
     return sorted(list(param_names))
 
 
-def parse_log_file(filename):
-    """Parse the lakas.py log file and extract best parameter values with budget numbers."""
+def parse_log_file(args):
+    """Parse the log file and extract best parameter values with budget numbers and minimized loss values."""
     param_data = defaultdict(list)
     budget_numbers = []
+    loss_values = []
+    loss_budgets = []  # Track budgets where we have loss values
 
-    with open(filename, 'r') as f:
+    with open(args.logfile, 'r') as f:
         lines = f.readlines()
 
     current_budget = None
 
     for i, line in enumerate(lines):
         # Extract budget number
-        budget_match = re.match(r'.*\|\s*INFO\s*\|\s*budget:\s*(\d+)', line)
+        budget_match = BUDGET_REGEX.match(line)
         if budget_match:
             current_budget = int(budget_match.group(1))
 
         # Extract best parameters
-        best_match = re.match(r'.*\|\s*INFO\s*\|\s*best param:\s*({.*})', line)
+        best_match = BEST_PARAM_REGEX.match(line)
         if best_match and current_budget is not None:
-            try:
-                # Extract dictionary string
-                param_str = best_match.group(1)
-                # Convert string representation to dictionary
-                params = eval(param_str)
+            # Extract dictionary string
+            param_str = best_match.group(1)
+            # Convert string representation to dictionary
+            params = eval(param_str)
 
-                budget_numbers.append(current_budget)
+            budget_numbers.append(current_budget)
 
-                for param_name, value in params.items():
-                    param_data[param_name].append(value)
+            for param_name, value in params.items():
+                param_data[param_name].append(value)
 
-            except Exception as e:
-                print(f"Warning: Could not parse parameters on line {i+1}: {str(e)}")
+            if args.loss:
+                # Look for "minimized result or loss" in the next few lines
+                for j in range(i+1, min(i+10, len(lines))):
+                    min_loss_match = LOSS_REGEX.match(lines[j])
+                    if min_loss_match:
+                        loss_values.append(float(min_loss_match.group(1)))
+                        loss_budgets.append(current_budget)
+                        break
 
-    return budget_numbers, param_data
+    return budget_numbers, param_data, loss_values, loss_budgets
 
 
-def plot_parameters(budget_numbers, param_data, selected_params, legend_ncols=1):
-    _fig, _ax = plt.subplots(figsize=(12, 8))
+def calculate_ema(loss_values, alphas):
+    """Calculate Exponential Moving Averages with different smoothing factors.
+    https://en.wikipedia.org/wiki/Moving_average
+    """
+    ema_results = {}
+
+    for alpha in alphas:
+        ema = []
+        if loss_values:
+            ema_value = loss_values[0]  # Initialize with first value
+            ema.append(ema_value)
+
+            # Calculate EMA for the rest of the values
+            for i in range(1, len(loss_values)):
+                ema_value = alpha * loss_values[i] + (1 - alpha) * ema_value
+                ema.append(ema_value)
+
+        ema_results[alpha] = ema
+
+    return ema_results
+
+
+def plot_parameters(args, budget_numbers, param_data, selected_params, loss_values, loss_budgets):
+    """Plot parameters and EMAs of loss values."""
+
+    plot_loss = loss_values and loss_budgets and len(loss_values)
+
+    # Create two separate subplots for cleaner visualization
+    if plot_loss:
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 9), gridspec_kw={'height_ratios': [1, 1]})
+    else:
+        fig, ax1 = plt.subplots(figsize=(12, 8))
+        ax2 = None
+
+    plt.get_current_fig_manager().set_window_title('Parameter Optimization')
+
+    # Plot parameters on the top subplot or main plot
     cmap = plt.cm.tab20c
     indices = np.linspace(0, 1, len(selected_params))
     colors = [cmap(i) for i in indices]
@@ -89,60 +134,90 @@ def plot_parameters(budget_numbers, param_data, selected_params, legend_ncols=1)
         if param_name in param_data:
             values = param_data[param_name]
             style = next(line_styles)
-            plt.plot(budget_numbers, values,
-                     label=param_name,
-                     color=colors[idx // len(styles)],
-                     linestyle=style[0],
-                     linewidth=style[1],
-                     marker='s',
-                     markerfacecolor=colors[idx],
-                     markevery=mark_spacing)
+            ax1.plot(budget_numbers, values,
+                    label=param_name,
+                    color=colors[idx // len(styles)],
+                    linestyle=style[0],
+                    linewidth=style[1],
+                    marker='s',
+                    markerfacecolor=colors[idx],
+                    markevery=mark_spacing)
 
-    plt.xlabel('Iteration')
-    # plt.ylabel('Parameter Value')
-    plt.title('Best Parameter Values over Iterations')
-    plt.grid(True, alpha=0.3)
+    ax1.set_xlabel('Iteration' if ax2 is None else '')
+    ax1.set_ylabel('Parameter Value')
+    ax1.set_title('Best Parameter Values over Iterations')
+    ax1.grid(True, alpha=0.3)
 
+    # Configure parameter legend
     fontsize = 'small' if len(selected_params) > 50 else 'medium'
-    if legend_ncols == 1:
-        plt.legend()
-    else:
-        plt.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), ncol=legend_ncols, fontsize=fontsize)
+    ax1.legend(loc='upper left', ncol=args.legend_ncols, fontsize=fontsize)
 
-        # Adjust layout to make room for legend
-        plt.tight_layout()
-        plt.subplots_adjust(right=0.75)
+    # If loss values are provided, calculate EMAs and plot them on the bottom subplot
+    if plot_loss:
+        plot_ax = ax2 if ax2 is not None else ax1
 
-    plt.savefig('parameter_plot.png', dpi=300, bbox_inches='tight')
-    print("Plot saved to: parameter_plot.png")
+        # Calculate EMAs
+        ema_results = calculate_ema(loss_values, args.alpha)
+
+        # Plot raw loss values with low opacity
+        plot_ax.plot(loss_budgets, loss_values, 'r-', alpha=0.15, linewidth=0.8, label='Raw Loss')
+
+        # Plot EMAs with different colors
+        ema_colors = ['darkred', 'lightsalmon', 'orangered']
+        for i, alpha in enumerate(args.alpha):
+            if len(ema_results[alpha]) > 0:
+                plot_ax.plot(loss_budgets, ema_results[alpha],
+                        color=ema_colors[i % len(ema_colors)],
+                        linewidth=2,
+                        label=f'EMA (α={alpha})')
+
+        plot_ax.set_xlabel('Iteration')
+        plot_ax.set_ylabel('Loss Value and EMAs')
+        plot_ax.set_title('Loss Values and Exponential Moving Averages')
+        plot_ax.grid(True, alpha=0.3)
+        plot_ax.legend(loc='upper left')
+
+    plt.tight_layout()
+    if ax2 is not None:
+        plt.subplots_adjust(top=0.92)
+
+    plt.savefig(args.output, dpi=300, bbox_inches='tight')
+    print(f'Plot saved to: {args.output}')
     plt.show()
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Plot best parameters from lakas.py optimization log files')
-    parser.add_argument('logfile', help='Path to the lakas.py log file')
+    parser = argparse.ArgumentParser(description='Plot best parameters and minimized loss with EMAs from optimization log files')
+    parser.add_argument('logfile', help='Path to the log file')
     parser.add_argument('params', nargs='*', help='Names of parameters to plot (optional)')
-    parser.add_argument('--list', action='store_true', help='List available parameters and exit')
     parser.add_argument('--all', action='store_true', help='Plot all available parameters')
-    parser.add_argument('-n', '--legend-columns', type=int, default=1)
+    parser.add_argument('--alpha', type=float, nargs='+', default=DEFAULT_ALPHAS, help='EMA smoothing factor(s) (between 0 and 1)')
+    parser.add_argument('--list', action='store_true', help='List available parameters and exit')
+    parser.add_argument('--loss', action='store_true', help='Plot loss values and EMA (exponential moving average)')
+    parser.add_argument('--legend-ncols', '-n', type=int, default=1)
+    parser.add_argument('--output', '-o', default='parameter_plot.png', help='Output image filename')
 
     args = parser.parse_args()
 
     # If --list is specified, scan for parameters and display them
     if args.list:
         available_params = scan_for_params(args.logfile)
-        print("Available parameters in the lakas.py log file:")
+        print("Available parameters in the log file:")
         for i, param in enumerate(available_params, 1):
             print(f"{i:2d}. {param}")
         return
 
     # Parse the log file
-    budget_numbers, param_data = parse_log_file(args.logfile)
+    budget_numbers, param_data, loss_values, loss_budgets = parse_log_file(args)
 
     if not budget_numbers:
-        print("Error: No data found in the lakas.py log file!")
+        print("Error: No data found in the log file!")
         print("Make sure the log file contains 'best param:' entries.")
         return
+
+    if args.loss and not all(0 < alpha < 1 for alpha in args.alpha):
+        print("Warning: Alpha values should be between 0 and 1. Using default values.")
+        args.alpha = DEFAULT_ALPHAS
 
     # Determine which parameters to plot
     if args.all:
@@ -155,30 +230,14 @@ def main():
             else:
                 print(f"Warning: Parameter '{param}' not found in log file")
     else:
-        print("Error: No parameters specified. Use --list to see available parameters.")
-        print("       Use --all to plot all parameters, or specify parameters to plot.")
-        return
+        print("No parameters specified. Defaulting to --all.")
+        selected_params = list(param_data.keys())
 
-    if not selected_params:
+    if selected_params:
+        plot_parameters(args, budget_numbers, param_data, selected_params, loss_values, loss_budgets)
+    else:
         print("Error: None of the requested parameters were found in the log file")
         print(f"Available parameters: {', '.join(param_data.keys())}")
-        return
-
-    # Print summary statistics
-    print("\nBest Parameter Summary:")
-    for param in selected_params:
-        values = param_data[param]
-        print(f"\n{param}:")
-        print(f"  Initial value: {values[0]:.6f}")
-        print(f"  Final value: {values[-1]:.6f}")
-        print(f"  Min value: {min(values):.6f}")
-        print(f"  Max value: {max(values):.6f}")
-        print(f"  Average value: {np.mean(values):.6f}")
-        print(f"  Standard deviation: {np.std(values):.6f}")
-        print(f"  Change: {values[-1] - values[0]:.6f}")
-
-    # Plot the parameters
-    plot_parameters(budget_numbers, param_data, selected_params, args.legend_columns)
 
 
 if __name__ == '__main__':
