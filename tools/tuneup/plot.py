@@ -191,7 +191,7 @@ def main():
     parser.add_argument('logfile', help='Path to the log file')
     parser.add_argument('params', nargs='*', help='Names of parameters to plot (optional)')
     parser.add_argument('--all', action='store_true', help='Plot all available parameters')
-    parser.add_argument('--alpha', type=float, nargs='+', default=DEFAULT_ALPHAS, help='EMA smoothing factor(s) (between 0 and 1)')
+    parser.add_argument('--alpha', '-a', type=float, nargs='+', default=DEFAULT_ALPHAS, help='EMA smoothing factor(s) (between 0 and 1)')
     parser.add_argument('--list', action='store_true', help='List available parameters and exit')
     parser.add_argument('--loss', action='store_true', help='Plot loss values and EMA (exponential moving average)')
     parser.add_argument('--legend-ncols', '-n', type=int, default=1)
@@ -206,6 +206,9 @@ def main():
         for i, param in enumerate(available_params, 1):
             print(f"{i:2d}. {param}")
         return
+
+    if args.alpha != DEFAULT_ALPHAS:
+        args.loss = True  # if user specified alphas, implicitly plot loss
 
     # Parse the log file
     budget_numbers, param_data, loss_values, loss_budgets = parse_log_file(args)
