@@ -128,6 +128,9 @@ def get_endgame_adjustments(best_params):
             val = 0
         m_map[m_sym[k]] = val
 
+    if all([v == 0 for v in m_map.values()]):
+        return None
+
     weights = ', '.join(map(str, m_map.values()))
     return (f'#define ENDGAME_ADJUST {{ {weights} }}')
 
@@ -150,6 +153,10 @@ def get_weights(best_params):
             val = params[k][0]
         else:
             val = 20000 if k == 'KING' else 0
+
+        if val <= 1:
+            return None
+
         m_map[m_sym[k]] = val
 
     weights = ', '.join(map(str, m_map.values()))
@@ -158,15 +165,21 @@ def get_weights(best_params):
 
 def patch_header(header_file, best_params):
 
-    adjust = get_endgame_adjustments(best_params)
     weights = get_weights(best_params)
+
+    if weights is None:
+        logging.warning('Piece weights not tuned')
+        return
 
     logging.info(f"Reading header file: {header_file}")
     with open(header_file, 'r') as f:
         text = f.read()
 
     new_text = re.sub(r"#define PIECE_VALUES .*", weights, text)
-    new_text = re.sub(r"#define ENDGAME_ADJUST .*", adjust, new_text)
+
+    adjust = get_endgame_adjustments(best_params)
+    if adjust:
+        new_text = re.sub(r"#define ENDGAME_ADJUST .*", adjust, new_text)
 
     if new_text == text:
         logging.info(f'Unmodified: {header_file}')

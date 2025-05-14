@@ -109,7 +109,11 @@ def calculate_ema(loss_values, alphas):
 def plot_parameters(args, budget_numbers, param_data, selected_params, loss_values, loss_budgets):
     """Plot parameters and EMAs of loss values."""
 
-    plot_loss = loss_values and loss_budgets and len(loss_values)
+    assert len(loss_values) == len(loss_budgets), "Bad data?"
+
+    plot_loss = len(loss_values) > args.skip_loss
+    loss_values = loss_values[args.skip_loss:]
+    loss_budgets = loss_budgets[args.skip_loss:]
 
     # Create two separate subplots for cleaner visualization
     if plot_loss:
@@ -168,7 +172,7 @@ def plot_parameters(args, budget_numbers, param_data, selected_params, loss_valu
             if len(ema_results[alpha]) > 0:
                 plot_ax.plot(loss_budgets, ema_results[alpha],
                         color=ema_colors[i % len(ema_colors)],
-                        linewidth=2,
+                        linewidth=1.5,
                         label=f'EMA (α={alpha})')
 
         plot_ax.set_xlabel('Iteration')
@@ -181,8 +185,10 @@ def plot_parameters(args, budget_numbers, param_data, selected_params, loss_valu
     if ax2 is not None:
         plt.subplots_adjust(top=0.92)
 
-    plt.savefig(args.output, dpi=300, bbox_inches='tight')
-    print(f'Plot saved to: {args.output}')
+    if args.output:
+        plt.savefig(args.output, dpi=300, bbox_inches='tight')
+        print(f'Plot saved to: {args.output}')
+
     plt.show()
 
 
@@ -195,7 +201,8 @@ def main():
     parser.add_argument('--list', action='store_true', help='List available parameters and exit')
     parser.add_argument('--loss', action='store_true', help='Plot loss values and EMA (exponential moving average)')
     parser.add_argument('--legend-ncols', '-n', type=int, default=1)
-    parser.add_argument('--output', '-o', default='parameter_plot.png', help='Output image filename')
+    parser.add_argument('--output', '-o', help='Output image filename')
+    parser.add_argument('--skip-loss', '-s', type=int, default=0, help='Number of loss entries to skip')
 
     args = parser.parse_args()
 

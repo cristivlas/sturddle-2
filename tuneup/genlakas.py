@@ -41,7 +41,7 @@ if __name__ == '__main__':
     parser.add_argument('-b', '--budget', type=int, default=200000)
     parser.add_argument('-c', '--concurrency', type=int, default=os.cpu_count())
     parser.add_argument('-d', '--data-file', default='checkpoint.dat')
-    parser.add_argument('-D', '--depth', type=int, default=9)
+    parser.add_argument('-D', '--depth', type=int)
     parser.add_argument('-g', '--games_per_budget', type=int, default=8)
     parser.add_argument('-H', '--hash', type=int, default=256, help='Engine hash table size in MB')
     parser.add_argument('-l', '--log-file', default='log.txt')
@@ -92,7 +92,8 @@ if __name__ == '__main__':
 
     # construct time control arguments
     tc = args.time_control.split('+')
-    time_control = f'--base-time-sec {tc[0]} --inc-time-sec {tc[1] if len(tc) > 1 else 0}'
+    time_control = f'--base-time-sec {tc[0]} --inc-time-sec {tc[1] if len(tc) > 1 else 0}' if args.depth is None else ''
+    depth = '' if args.depth is None else f'--depth {args.depth}'
 
     # detect cutechess-cli location
     cutechess = shutil.which('cutechess-cli')
@@ -112,20 +113,18 @@ if __name__ == '__main__':
     if windows:
         input_param=''.join(tune_params).replace('\\\n', ' ')
         script = f'''
-python {os.path.join(args.lakas_path, 'lakas.py')} ^
+@python {os.path.join(args.lakas_path, 'lakas.py')} ^
     --budget {args.budget} --games-per-budget {args.games_per_budget} ^
+    --common-param="{{'OwnBook':'false', 'Hash':{args.hash}, 'Threads':{args.threads} }}" ^
     --concurrency {min(args.games_per_budget, args.concurrency)} ^
-    --depth {args.depth} ^
     --engine {get_engine_path(args, True)} ^
-    --enhance-hashmb {args.hash} ^
-    --enhance-threads {args.threads} ^
     --input-data-file {args.data_file} ^
     --opening-file "{opening_file}" ^
     --optimizer {args.strategy} ^
     --optimizer-log-file {args.log_file} ^
     --output-data-file {args.data_file} ^
     --match-manager-path "{cutechess}" ^
-    {time_control} ^
+    {depth}{time_control} ^
     --input-param="{{{input_param} }}"
 '''
     else:
@@ -133,18 +132,16 @@ python {os.path.join(args.lakas_path, 'lakas.py')} ^
 
 python3 {os.path.join(args.lakas_path, 'lakas.py')} \\
     --budget {args.budget} --games-per-budget {args.games_per_budget} \\
+    --common-param="{{'OwnBook':'false', 'Hash':{args.hash}, 'Threads':{args.threads} }}" \\
     --concurrency {min(args.games_per_budget, args.concurrency)} \\
-    --depth {args.depth} \\
     --engine {get_engine_path(args)} \\
-    --enhance-hashmb {args.hash} \\
-    --enhance-threads {args.threads} \\
     --input-data-file {args.data_file} \\
     --opening-file {opening_file} \\
     --optimizer {args.strategy} \\
     --optimizer-log-file {args.log_file} \\
     --output-data-file {args.data_file} \\
     --match-manager-path {cutechess} \\
-    {time_control} \\
+    {depth}{time_control} \\
     --input-param="{{{"".join(tune_params)}\\
 }}"
 '''

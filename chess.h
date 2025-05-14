@@ -862,7 +862,7 @@ namespace chess
 
         INLINE Bitboard pieces_mask(PieceType piece_type, Color color) const
         {
-            return const_cast<Position*>(this)->pieces(piece_type) & occupied_co(color);
+            return pieces(piece_type) & occupied_co(color);
         }
 
         INLINE PieceType piece_type_at(Square square) const
@@ -1573,7 +1573,6 @@ namespace chess
                 score += sign * weight(piece_type) * popcount(mask);
 
             #if USE_PIECE_SQUARE_TABLES
-                /* TODO: interpolate King endgame table */
                 const auto& table = select_piece_square_table_rt(endgame, piece_type, color);
 
                 for_each_square_r(mask, [&](Square square) {
