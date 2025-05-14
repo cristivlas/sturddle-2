@@ -18,7 +18,12 @@ Monkey-patch MSVCCompiler to use clang-cl.exe on Windows.
 '''
 cl_exe = environ.get('CL_EXE', '')
 if cl_exe:
-    from setuptools._distutils._msvccompiler import MSVCCompiler, _find_exe
+    try:
+        from setuptools._distutils._msvccompiler import MSVCCompiler, _find_exe
+    except:
+        # setuptools >= 80
+        from setuptools._distutils._msvccompiler import MSVCCompiler
+        from setuptools._distutils.compilers.C.msvc import _find_exe
 
     _initialize = MSVCCompiler.initialize
 
