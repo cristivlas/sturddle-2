@@ -87,7 +87,7 @@ public:
         , _current_size(other._current_size)
     {}
 
-    INLINE MaxSizeVector& operator=(MaxSizeVector& other)
+    INLINE MaxSizeVector& operator=(const MaxSizeVector& other)
     {
         auto that(other);
         this->swap(that);

@@ -30,7 +30,6 @@
 #include <unordered_set> /* unordered_multiset */
 #include "Python.h"
 #include "config.h"
-#include "nnue.h"
 #include "search.h"
 #include "utility.h"
 

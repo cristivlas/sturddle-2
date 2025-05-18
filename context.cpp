@@ -31,6 +31,7 @@
 #include <fstream>
 #include <sstream>
 #include "chess.h"
+#include "nnue.h"
 #include "weights.h"
 #include "nlohmann/json.hpp"
 
