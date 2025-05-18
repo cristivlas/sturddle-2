@@ -77,15 +77,7 @@ using score_t = int;
 /* Collect extra stats for troubleshooting */
 #define EXTRA_STATS                         false
 
-/* Use C++ implementation for Polyglot opening book (NATIVE_UCI only) */
-#if !defined(NATIVE_BOOK)
-  #define NATIVE_BOOK                       true
-#endif /* NATIVE_BOOK */
-
-/* Use C++ implementation for UCI protocol */
-#if !defined(NATIVE_UCI)
-  #define NATIVE_UCI                        true
-#endif /* NATIVE_UCI */
+#define FRACTIONAL_EXTENSIONS               true
 
 /* Filter out quiet moves if extended at leaf (depth < 0) */
 #define GROUP_QUIET_MOVES                   true
@@ -95,6 +87,16 @@ using score_t = int;
 #define MTDF_CSTAR_BISECT                   true
 
 #define MTDF_REORDER_MOVES                  true
+
+/* Use C++ implementation for Polyglot opening book (NATIVE_UCI only) */
+#if !defined(NATIVE_BOOK)
+  #define NATIVE_BOOK                       true
+#endif /* NATIVE_BOOK */
+
+/* Use C++ implementation for UCI protocol */
+#if !defined(NATIVE_UCI)
+  #define NATIVE_UCI                        true
+#endif /* NATIVE_UCI */
 
 #define RAZORING                            true
 

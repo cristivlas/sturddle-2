@@ -1071,14 +1071,15 @@ namespace search
     }
 
 
-    /*
-     * Fractional extensions: https://www.chessprogramming.org/Extensions
-     * "[...] extension can be added that does not yet extend the search,
-     * but further down the tree may cause an extension when another
-     * fractional extension causes the net extension to exceed one ply."
-     */
     void Context::extend()
     {
+    #if FRACTIONAL_EXTENSIONS
+       /*
+        * Fractional extensions: https://www.chessprogramming.org/Extensions
+        * "[...] extension can be added that does not yet extend the search,
+        * but further down the tree may cause an extension when another
+        * fractional extension causes the net extension to exceed one ply."
+        */
         if (_extension || depth() >= MIN_EXT_DEPTH)
         {
             /*
@@ -1107,6 +1108,7 @@ namespace search
             _extension %= ONE_PLY;
             _double_ext += extend > 1;
         }
+    #endif /* FRACTIONAL_EXTENSIONS */
 
         /* https://www.chessprogramming.org/Capture_Extensions */
         if (is_capture()
