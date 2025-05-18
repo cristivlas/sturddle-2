@@ -1707,3 +1707,16 @@ INLINE void _uci_loop(std::unordered_map<std::string, std::string> params) noexc
 {
     cython_wrapper::call_nogil(uci_loop, params);
 }
+
+
+namespace nnue
+{
+    /**
+     * Evaluate FEN from White's point of view, for testing.
+     */
+#if WITH_NNUE
+    int eval_fen(const std::string&);
+#else
+    INLINE int eval_fen(const std::string&) { return 0; }
+#endif
+}

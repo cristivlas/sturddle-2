@@ -219,7 +219,7 @@ namespace search
     };
 
 
-    template <typename T>
+    template <typename T, size_t BUCKET_SIZE = std::max<size_t>(128, CACHE_LINE_SIZE) / sizeof(T)>
     class hash_table
     {
         template <size_t S>
@@ -239,7 +239,7 @@ namespace search
             static constexpr size_t size() { static_assert(S); return S; }
         };
 
-        using bucket_t = Bucket<CACHE_LINE_SIZE / sizeof(T)>;
+        using bucket_t = Bucket<BUCKET_SIZE>;
         using data_t = std::vector<bucket_t, cache_line_allocator<bucket_t>>;
 
         using shared_lock_t = SharedLock<typename bucket_t::lock_state_t, HASH_TABLE_MAX_READERS>;

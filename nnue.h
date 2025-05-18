@@ -1,6 +1,6 @@
 #pragma once
 /*
- * Sturddle Chess Engine (C) 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2023 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -527,8 +527,8 @@ namespace nnue
         {
             static_assert(LA::OUTPUTS == OUTPUTS_A);
             static_assert(LB::OUTPUTS == OUTPUTS_B);
-            static_assert(LA::OUTPUTS % Vec16s::size() == 0);
-            static_assert(LB::OUTPUTS % Vec16s::size() == 0);
+            static_assert(LA::OUTPUTS % Vec32s::size() == 0);
+            static_assert(LB::OUTPUTS % Vec32s::size() == 0);
 
             int update_layer_b = 0;
             for (int i = 0; i < r_idx && !update_layer_b; ++i)
@@ -536,7 +536,7 @@ namespace nnue
             for (int i = 0; i < a_idx && !update_layer_b; ++i)
                 update_layer_b += add_inputs[i] < LB::INPUTS;
 
-            using VecShort = Vec16s;
+            using VecShort = Vec32s;
 
             VecShort vo, vw;
 
@@ -693,15 +693,5 @@ namespace nnue
         out.dot(l3_out, output);
         return 100 * output[0];
     }
-
-
-    /**
-     * Evaluate FEN from White's point of view, for testing.
-     */
-    int eval_fen(const std::string&);
-
-#if !WITH_NNUE
-    INLINE int eval_fen(const std::string&) { return 0; }
-#endif
-
 } /* namespace nnue */
+

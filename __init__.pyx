@@ -410,7 +410,7 @@ def eval(fen, as_white=False, depth=0, millis=-1):
     return cpp_eval(fen.encode(), as_white, depth, millis)
 
 
-cdef extern from 'nnue.h' namespace 'nnue':
+cdef extern from 'context.h' namespace 'nnue':
     int eval_fen(const string&) nogil
 
 
