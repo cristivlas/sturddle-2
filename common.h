@@ -72,7 +72,7 @@ using score_t = int;
 #endif
 
 /* Experimental in 2.03 */
-#define EVAL_PIECE_GRADING                  false /* TODO: tuneup */
+#define EVAL_PIECE_GRADING                  true /* TODO: tuneup */
 
 /* Collect extra stats for troubleshooting */
 #define EXTRA_STATS                         false

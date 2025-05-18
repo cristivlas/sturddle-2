@@ -379,11 +379,6 @@ void search::Context::eval_with_nnue()
 
         auto eval = evaluate_material();
 
-    #if EVAL_PIECE_GRADING
-        /* eval_piece_grading applies adjustments from white's perspective. */
-        eval += SIGN[turn()] * eval_piece_grading(state(), state().piece_count());
-    #endif /* EVAL_PIECE_GRADING */
-
         if (state().just_king(!turn()) || (depth() >= 0 && abs(eval) <= eval_margin(*this)))
         {
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
@@ -546,6 +541,7 @@ namespace search
     {
         score_t eval;
 
+        /* Get simple evaluation score from white's perspective */
         if (state.simple_score == State::UNKNOWN_SCORE)
         {
             if (prev && move)
@@ -557,6 +553,12 @@ namespace search
         {
             ASSERT(state.simple_score == state.eval_simple());
             eval = state.simple_score;
+        }
+
+        if constexpr (EVAL_PIECE_GRADING)
+        {
+            /* eval_piece_grading applies adjustments from white's perspective */
+            eval += eval_piece_grading(state, state.piece_count());
         }
 
         /* Evaluate from the point of view of the side that just moved. */

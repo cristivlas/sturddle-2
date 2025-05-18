@@ -422,7 +422,12 @@ namespace chess
         BB_SQUARES[A1] | BB_SQUARES[H1] | BB_SQUARES[A8] | BB_SQUARES[H8];
 
 
+#if EVAL_PIECE_GRADING
 #define PIECE_VALUES { 0, 72, 307, 368, 527, 1079, 20000 }
+#else
+#define PIECE_VALUES { 0, 85, 319, 343, 522, 986, 20000 }
+#endif /* EVAL_PIECE_GRADING */
+
 #define ENDGAME_ADJUST { 0, 21, -14, -18, 66, -26, 0 }
 
 

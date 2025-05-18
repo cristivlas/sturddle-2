@@ -1563,7 +1563,7 @@ namespace search
             /* The futility margin is calculated after at least one move has been searched. */
             ASSERT(_current > 0);
 
-            const auto val = futility + move._state->simple_score * SIGN[!move._state->turn];
+            const auto val = futility + eval_material_for_side_that_moved(*move._state, ctxt._state, move);
 
             if (val < ctxt._alpha && ctxt.can_prune_move<true>(move))
             {
