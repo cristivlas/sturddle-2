@@ -272,9 +272,9 @@ DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,     100)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
 
 #if WITH_NNUE
-DECLARE_VALUE(  NNUE_BLEND_PERCENT,                  70,    0,     100)
-DECLARE_VALUE(  NNUE_EVAL_TERM,                     571,    0,    1000)
-DECLARE_VALUE(  NNUE_MAX_EVAL,                      390,    0,    1000)
+DECLARE_VALUE(  NNUE_BLEND_PERCENT,                  75,    0,     100)
+DECLARE_VALUE(  NNUE_EVAL_TERM,                     502,    0,    1000)
+DECLARE_VALUE(  NNUE_MAX_EVAL,                      452,    0,    1000)
 #endif /* WITH_NNUE */
 
 DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,              25,    0,     100)

@@ -72,7 +72,7 @@ using score_t = int;
 #endif
 
 /* Experimental in 2.03 */
-#define EVAL_PIECE_GRADING                  true /* TODO: tuneup */
+#define EVAL_PIECE_GRADING                  false /* TODO: tuneup */
 
 /* Collect extra stats for troubleshooting */
 #define EXTRA_STATS                         false
@@ -113,7 +113,7 @@ using score_t = int;
 #define SMP                                 true
 
 #if !defined(USE_PIECE_SQUARE_TABLES)
-  #define USE_PIECE_SQUARE_TABLES           true /* TODO: tuneup */
+  #define USE_PIECE_SQUARE_TABLES           false /* TODO: tuneup */
 #endif
 
 /* Experimental */

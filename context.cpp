@@ -559,11 +559,13 @@ namespace search
             eval = state.simple_score;
         }
 
-        if constexpr (EVAL_PIECE_GRADING)
-        {
-            /* eval_piece_grading applies adjustments from white's perspective */
-            eval += eval_piece_grading(state, state.piece_count());
-        }
+
+    #if EVAL_PIECE_GRADING
+
+        /* eval_piece_grading applies adjustments from white's perspective */
+        eval += eval_piece_grading(state, state.piece_count());
+
+    #endif /* EVAL_PIECE_GRADING */
 
         /* Evaluate from the point of view of the side that just moved. */
         return eval * SIGN[!state.turn];
