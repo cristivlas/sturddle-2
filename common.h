@@ -113,7 +113,7 @@ using score_t = int;
 #define SMP                                 true
 
 #if !defined(USE_PIECE_SQUARE_TABLES)
-  #define USE_PIECE_SQUARE_TABLES           false /* TODO: tuneup */
+  #define USE_PIECE_SQUARE_TABLES           true /* TODO: tuneup */
 #endif
 
 /* Experimental */

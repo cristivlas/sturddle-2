@@ -381,7 +381,11 @@ void search::Context::eval_with_nnue()
 
         if (state().just_king(!turn()) || (depth() >= 0 && abs(eval) <= eval_margin(*this)))
         {
+        #if 0
             eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
+        #else
+            eval = (eval_nnue_raw() * NNUE_BLEND_PERCENT + eval * (100 - NNUE_BLEND_PERCENT)) / 100;
+        #endif
         }
         else
         {
