@@ -232,6 +232,7 @@ namespace search
         using MoveStack = std::array<MovesList, MAX_MOVE>;
 
         using StateStack = std::array<std::vector<State>, PLY_MAX>;
+        using TopMoves = std::pair<std::array<Move, 5>, size_t>;
 
         friend class MoveMaker;
 
@@ -469,7 +470,6 @@ namespace search
         static std::vector<ContextStack>    _context_stacks;
         static std::vector<MoveStack>       _move_stacks;
         static std::vector<StateStack>      _state_stacks;
-        static std::vector<State>           _last_play;
     };
 
 

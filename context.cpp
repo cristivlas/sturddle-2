@@ -297,13 +297,14 @@ static nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2> L2(hidden_2_w, hidden_2_b);
 static nnue::Layer<HIDDEN_1B, _countof(dynamic_weights_b)> L_DYN(dynamic_weights_w, dynamic_weights_b);
 
 static nnue::Layer<HIDDEN_2, HIDDEN_3> L3(hidden_3_w, hidden_3_b);
-static nnue::Layer<HIDDEN_3, 1> L4(out_w, out_b);
+static nnue::Layer<HIDDEN_3, 1> OUT(out_w, out_b);
 
-#if 0 // TODO
-static nnue::Layer<HIDDEN_3, 32> L_MOVE_FEATURES(move_features_w, move_features_b);
-static nnue::Layer<32, 64> L_FROM_MOVE(from_square_w, from_square_b);
-static nnue::Layer<32, 64> L_TO_MOVE(to_square_w, to_square_b);
-#endif
+#if USE_ROOT_MOVES
+static nnue::Layer<HIDDEN_3, 32> L_MOVES(move_features_w, move_features_b);
+static nnue::Layer<32, 64> L_FROM(from_square_w, from_square_b);
+static nnue::Layer<32, 64> L_TO(to_square_w, to_square_b);
+#endif /* USE_ROOT_MOVES */
+
 
 score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side_to_move_pov /* = true */)
 {
@@ -333,7 +334,19 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
     }
     else
     {
-        _eval_raw = nnue::eval(acc, L_DYN, L2, L3, L4);
+    #if !USE_ROOT_MOVES
+        _eval_raw = nnue::eval(acc, L_DYN, L2, L3, OUT);
+    #else
+        if (is_root() && iteration() == 1)
+        {
+            ASSERT(has_moves());
+            _eval_raw = nnue::eval_with_moves(acc, L_DYN, L2, L3, L_MOVES, L_FROM, L_TO, OUT, moves());
+        }
+        else
+        {
+            _eval_raw = nnue::eval(acc, L_DYN, L2, L3, OUT);
+        }
+    #endif /* USE_ROOT_MOVES */
 
         if (side_to_move_pov)
         {
@@ -346,6 +359,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
         _eval_raw = eval_insufficient_material(state(), _eval_raw, [this](){ return _eval_raw; });
     #endif
     }
+
     return _eval_raw;
 }
 
@@ -424,6 +438,11 @@ int nnue::eval_fen(const std::string& fen)
     ASSERT_ALWAYS(ctxt._ply == 0);
     ctxt._state = &state;
     chess::parse_fen(fen, state);
+
+    search::TranspositionTable tt;
+    tt.init();
+    ctxt.set_tt(&tt);
+
     return ctxt.eval_nnue_raw(false, false);
 }
 #endif /* WITH_NNUE */
@@ -444,7 +463,6 @@ namespace search
     std::vector<Context::MoveStack> Context::_move_stacks(SMP_CORES);
     std::vector<Context::StateStack> Context::_state_stacks(SMP_CORES);
     std::vector<MovesCache> _moves_cache(SMP_CORES);
-    std::vector<State> Context::_last_play(SMP_CORES);
 
     /* Cython callbacks */
     PyObject* Context::_engine = nullptr;
@@ -595,8 +613,6 @@ namespace search
             _moves_cache.resize(n_threads);
             _move_stacks.resize(n_threads);
             _state_stacks.resize(n_threads);
-
-            _last_play.resize(n_threads);
 
         #if WITH_NNUE
             NNUE_data.resize(n_threads);
