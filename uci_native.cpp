@@ -1076,7 +1076,7 @@ void UCI::newgame()
 {
     stop(true);
     search::TranspositionTable::clear_shared_hashtable();
-    search::Context::clear_last_play();
+
     set_start_position();
     _book_depth = max_depth;
 
@@ -1203,11 +1203,6 @@ INLINE score_t UCI::search(F set_time_limit)
     const auto score = search::iterative(ctxt, _tt, _depth + 1);
 
     _score_delta = score - _score;
-
-#if USE_ROOT_MOVES
-    if (ctxt.move_count() >= 0)
-        ctxt.set_last_play(ctxt.state());
-#endif /* USE_ROOT_MOVES */
 
     return score;
 }

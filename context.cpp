@@ -1341,29 +1341,6 @@ namespace search
     }
 
 
-    const State& Context::last_play() const
-    {
-        return _last_play[tid()];
-    }
-
-
-    void Context::set_last_play(const State& state)
-    {
-        ASSERT(is_root());
-
-        _last_play[tid()] = state;
-
-        const auto& moves_list = moves(tid(), 0);
-        _moves_cache[tid()].write(state, moves_list);
-    }
-
-    /* static */ void Context::clear_last_play()
-    {
-        for (auto& state : _last_play)
-            state = State();
-    }
-
-
     /*---------------------------------------------------------------------
      * MoveMaker
      *---------------------------------------------------------------------*/
@@ -1509,21 +1486,6 @@ namespace search
         /* Confidence bar for historical scores */
         const double hist_high = (Phase == 3) ? hist_thresholds[ctxt.iteration()] : 0;
 
-
-    #if USE_ROOT_MOVES
-        /* Previous root moves */
-        MovesList* prev_moves = nullptr;
-
-        if (Phase == 4 && ctxt.is_root())
-        {
-            prev_moves = &Context::moves(ctxt.tid(), PLY_MAX);
-            auto& moves_cache = _moves_cache[ctxt.tid()];
-
-            if (!moves_cache.lookup(ctxt.last_play(), *prev_moves))
-                prev_moves = nullptr;
-        }
-    #endif /* USE_ROOT_MOVES */
-
         /********************************************************************/
         /* Iterate over pseudo-legal moves                                  */
         /********************************************************************/
@@ -1624,21 +1586,6 @@ namespace search
                     remake_move(ctxt, move);
                     continue;
                 }
-            #if USE_ROOT_MOVES
-                if (prev_moves)
-                {
-                    const auto i = std::find(prev_moves->begin(), prev_moves->end(), move);
-                    if (i != prev_moves->end() && i->_old_group <= MoveOrder::KILLER_MOVES)
-                    {
-                        move._score = -std::distance(prev_moves->begin(), i);
-                        if (make_move<true>(ctxt, move, futility))
-                        {
-                            move._group = MoveOrder::ROOT_MOVES;
-                        }
-                        continue;
-                    }
-                }
-            #endif /* USE_ROOT_MOVES */
                 if (make_move<true>(ctxt, move, futility))
                 {
                     incremental_update(move, ctxt);
