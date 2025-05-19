@@ -16,7 +16,11 @@ class SQLConnExtended(SQLConn):
         _create_table = '''
         CREATE TABLE IF NOT EXISTS position(
             epd text PRIMARY KEY,
-            score integer
+            depth integer,
+            score integer,
+            best_move_uci text,
+            best_move_from integer,
+            best_move_to integer
         )'''
         self.exec(_create_table)
         self._conn.commit()
@@ -29,9 +33,37 @@ class SQLConnExtended(SQLConn):
 shutdown = []
 
 
+def uci_to_square_indices(uci_move):
+    """Convert UCI move notation (e.g., 'e2e4') to square indices (from, to)."""
+    if not uci_move or len(uci_move) < 4:
+        return None, None
+
+    # UCI notation uses algebraic coordinates like 'e2e4'
+    # Convert to 0-63 indices where a1=0, b1=1, ..., h8=63
+    file_map = {'a': 0, 'b': 1, 'c': 2, 'd': 3, 'e': 4, 'f': 5, 'g': 6, 'h': 7}
+
+    try:
+        from_file = file_map.get(uci_move[0].lower())
+        from_rank = int(uci_move[1]) - 1
+        to_file = file_map.get(uci_move[2].lower())
+        to_rank = int(uci_move[3]) - 1
+
+        if None in (from_file, to_file) or not (0 <= from_rank <= 7) or not (0 <= to_rank <= 7):
+            return None, None
+
+        from_square = from_rank * 8 + from_file
+        to_square = to_rank * 8 + to_file
+
+        return from_square, to_square
+    except (IndexError, ValueError):
+        return None, None
+
+
 def parse_lines(map_file, queue, batch_size, progress_bar):
     fen = b''
     score = 0
+    move = b''
+    depth = 0
     count = 0
 
     for line in iter(map_file.readline, b''):
@@ -47,12 +79,20 @@ def parse_lines(map_file, queue, batch_size, progress_bar):
             fen = line[4:].strip()
         elif line.startswith(b'score'):
             score = int(line[6:])
+        elif line.startswith(b'move'):
+            move = line[5:].strip()
+        elif line.startswith(b'ply'):
+            depth = int(line[4:])
         elif line.startswith(b'e'):
-            queue.put((fen.decode('utf-8'), score))
+            move_str = move.decode('utf-8')
+            from_square, to_square = uci_to_square_indices(move_str)
+            queue.put((fen.decode('utf-8'), depth, score, move_str, from_square, to_square))
             progress_bar.update()
 
 
 def write_to_db(db_path, queue, batch_size, progress_bar):
+    INSERT_SQL = 'INSERT OR IGNORE INTO position (epd, depth, score, best_move_uci, best_move_from, best_move_to) VALUES (?, ?, ?, ?, ?, ?)'
+
     with SQLConnExtended(db_path) as conn:
         batch = []
         while True:
@@ -62,13 +102,13 @@ def write_to_db(db_path, queue, batch_size, progress_bar):
 
             batch.append(record)
             if len(batch) >= batch_size:
-                conn.executemany('INSERT OR IGNORE INTO position VALUES (?, ?)', batch)
+                conn.executemany(INSERT_SQL, batch)
                 progress_bar.update(len(batch))
                 batch.clear()
 
         if batch:  # handle any remaining records
             progress_bar.update(len(batch))
-            conn.executemany('INSERT OR IGNORE INTO position VALUES (?, ?)', batch)
+            conn.executemany(INSERT_SQL, batch)
 
 
 def process_file(args):
