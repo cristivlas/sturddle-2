@@ -643,7 +643,15 @@ namespace nnue
 
 
     template <typename A, typename ATTN, typename L2, typename L3, typename OUT>
-    INLINE int eval(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out)
+    INLINE int eval(const A& accumulator, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out)
+    {
+        ALIGN float l3_out[L3::OUTPUTS];
+        return eval_core(accumulator, attn, l2, l3, out, l3_out);
+    }
+
+
+    template <typename A, typename ATTN, typename L2, typename L3, typename OUT>
+    INLINE int eval_core(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out, float (&l3_out)[L3::OUTPUTS])
     {
         constexpr size_t POOL_STRIDE = 4;
 
@@ -655,7 +663,6 @@ namespace nnue
         ALIGN float l1_out[A::OUTPUTS_A];
         ALIGN float l2_in[L2::INPUTS];
         ALIGN float l2_out[L2::OUTPUTS];
-        ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1];
 
         activation(a._output_a, l1_out); // process output of hidden_1a
@@ -693,5 +700,107 @@ namespace nnue
         out.dot(l3_out, output);
         return 100 * output[0];
     }
-} /* namespace nnue */
 
+
+    /** Process from/to square predictions into sorted moves */
+    template<size_t N>
+    INLINE void process_move_predictions(
+        const float (&from_probs)[64],
+        const float (&to_probs)[64],
+        Move (&moves)[N],
+        size_t& count)
+    {
+        static constexpr auto LOW_PROB = 0.001f;
+
+        count = 0; // Zero out the moves array
+
+        // Keep track of the min score in our top-N list for quick replacement
+        float min_score = 0.0f;
+        int min_score_idx = 0;
+
+        // Generate scores for each from/to combination
+        for (int from_sq = 0; from_sq < 64; ++from_sq)
+        {
+            const auto from_prob = from_probs[from_sq];
+            if (from_prob < LOW_PROB) continue; // Skip very low probability from squares
+
+            for (int to_sq = 0; to_sq < 64; ++to_sq)
+            {
+                if (from_sq == to_sq) continue; // Skip same square
+
+                const auto to_prob = to_probs[to_sq];
+                if (to_prob < LOW_PROB) continue; // Skip very low probability to squares
+
+                const auto combined_score = from_prob * to_prob;
+
+                // If we haven't filled the array yet, just add it
+                if (count < N)
+                {
+                    moves[count] = Move(Square(from_sq), Square(to_sq));
+                    moves[count]._score = combined_score;
+
+                    // Update min_score if needed
+                    if (count == 0 || combined_score < min_score)
+                    {
+                        min_score = combined_score;
+                        min_score_idx = count;
+                    }
+
+                    ++count;
+                }
+                // If the array is full, replace the lowest score if this one is higher
+                else if (combined_score > min_score)
+                {
+                    moves[min_score_idx] = Move(Square(from_sq), Square(to_sq));
+                    moves[min_score_idx]._score = combined_score;
+
+                    // Find the new minimum
+                    min_score = combined_score;
+                    min_score_idx = 0;
+
+                    auto min_it = std::min_element(moves.begin() + 1, moves.end(),
+                                                [](const auto& a, const auto& b) {
+                                                    return a._score < b._score;
+                                                });
+                    min_score_idx = std::distance(moves.begin(), min_it);
+                    min_score = min_it->_score;
+                }
+            }
+        }
+
+        // Sort moves by score (highest first)
+        std::sort(moves, moves + count,
+                [](const Move& a, const Move& b) {
+                    return a._score > b._score;
+                });
+    }
+
+
+    template <typename A, typename ATTN, typename L2, typename L3, typename OUT, typename FROM, typename TO, size_t TOP_N>
+    INLINE int
+    eval_with_moves(
+        const A& accumulator,
+        const ATTN& attn,
+        const L2& l2,
+        const L3& l3,
+        const FROM& from,   // "from" square probabilities
+        const TO& to,       // "to" square probabilites
+        const OUT& out,     // evaluation
+        Move (&moves)[TOP_N],
+        size_t& move_count
+    )
+    {
+        ALIGN float l3_out[L3::OUTPUTS];
+        ALIGN float from_out[64];
+        ALIGN float to_out[64];
+
+        const auto eval = eval_core(accumulator, attn, l2, l3, out, l3_out);
+
+        from.dot(l3_out, from_out);
+        to.dot(l3_out, to_out);
+
+        process_move_predictions(from, to, moves, move_count);
+
+        return eval;
+    }
+} /* namespace nnue */

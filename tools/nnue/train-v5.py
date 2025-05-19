@@ -211,7 +211,7 @@ def make_model(args, strategy):
         hidden_3 = hidden_3_layer(hidden_2)  # 3rd hidden layer
 
         # Define the position evaluation output (original output)
-        eval_output = Dense(1, name='eval_out', dtype='float32')(hidden_3)
+        eval_output = Dense(1, name='out', dtype='float32')(hidden_3)
 
         # Add move prediction heads if enabled
         outputs = [eval_output]
@@ -257,8 +257,8 @@ def make_model(args, strategy):
                 model = tfmot.quantization.keras.quantize_apply(model)
 
         # Create loss dictionary
-        losses = {'eval_out': clipped_loss}
-        loss_weights = {'eval_out': 1.0}
+        losses = {'out': clipped_loss}
+        loss_weights = {'out': 1.0}
         metrics = {}
 
         if args.predict_moves:

@@ -290,24 +290,6 @@ namespace
     };
 
 
-    struct OptionNNUEModel : public OptionBase
-    {
-        std::string _json_file_path;
-
-        OptionNNUEModel() : OptionBase("NNUEModel") {}
-
-        void print(std::ostream& out) const override
-        {
-            OptionBase::print(out);
-            out << "type string default " << _json_file_path;
-        }
-        void set(std::string_view value) override
-        {
-            search::Context::load_nnue_model(std::string(value));
-            _json_file_path = value;
-        }
-    };
-
 #if DATAGEN
     /* Collect data to use for training a neural net. */
     /* Data is written to CSV files under the DB path (set via uci).
@@ -448,9 +430,6 @@ public:
         _options.emplace("algorithm", std::make_shared<OptionAlgo>(_algorithm));
         _options.emplace("best opening", std::make_shared<OptionBool>("Best Opening", _best_book_move));
         _options.emplace("debug", std::make_shared<OptionBool>("Debug", _debug));
-    #if WITH_NNUE
-        _options.emplace("nnuemodel", std::make_shared<OptionNNUEModel>());
-    #endif
         _options.emplace("ownbook", std::make_shared<OptionBool>("OwnBook", _use_opening_book));
         _options.emplace("ponder", std::make_shared<OptionBool>("Ponder", _ponder));
         _options.emplace("syzygypath", std::make_shared<OptionSyzygy>());
