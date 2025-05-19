@@ -72,6 +72,17 @@ def add_range_to_query(args, query):
     return query
 
 
+def check_schema(sql):
+    """Check if the database has the new schema with best_move fields"""
+    # Just check if the columns exist in the schema without loading all rows
+    try:
+        # Test query that will fail if columns don't exist
+        sql.exec("SELECT best_move_from, best_move_to FROM position LIMIT 1")
+        return True
+    except:
+        return False
+
+
 def main(args):
     clip = args.clip
     dtype = np.uint64
@@ -79,7 +90,19 @@ def main(args):
     board = chess.Board()
 
     with SQLConn(*args.input) as sql:
-        count = sql.exec(f'SELECT COUNT(*) FROM ({add_range_to_query(args, "SELECT * FROM position")})', echo=True).fetchone()[0]
+        has_new_schema = check_schema(sql)
+
+        if has_new_schema:
+            print("Detected new schema with best_move fields.")
+            output_shape = (0, 16)  # 13 board state + score + from + to
+            query_fields = "epd, score, best_move_from, best_move_to"
+        else:
+            print("Detected old schema (epd, score, depth only).")
+            output_shape = (0, 14)  # 13 board state + score
+            query_fields = "epd, score"
+
+        count_query = add_range_to_query(args, "SELECT * FROM position")
+        count = sql.exec(f'SELECT COUNT(*) FROM ({count_query})', echo=True).fetchone()[0]
 
         if args.row_count is not None and count < args.row_count:
             args.row_count = count
@@ -87,14 +110,24 @@ def main(args):
 
         print(f'\nWriting out: {args.output}')
         f = h5py.File(args.output, 'x')
-        out = f.create_dataset('data', shape=(count, 14), dtype=dtype)
+        out = f.create_dataset('data', shape=(count, output_shape[1]), dtype=dtype)
 
-        query = add_range_to_query(args, 'SELECT epd, score from position')
+        query = add_range_to_query(args, f'SELECT {query_fields} from position')
         for i, row in tenumerate(sql.exec(query, echo=True), start=0, total=count, desc='Encoding'):
             board.set_fen(row[0])
             score = np.clip(row[1], -clip, clip)
-            out[i, :-1] = encode(board, args.test).astype(dtype)
-            out[i, -1] = score.astype(dtype)
+            encoded_board = encode(board, args.test).astype(dtype)
+
+            # For old schema: just store board + score
+            out[i, :13] = encoded_board
+            out[i, 13] = score.astype(dtype)
+
+            # For new schema: also store best_move_from and best_move_to
+            if has_new_schema:
+                best_move_from = row[2] if row[2] is not None else 0
+                best_move_to = row[3] if row[3] is not None else 0
+                out[i, 14] = np.uint64(best_move_from)
+                out[i, 15] = np.uint64(best_move_to)
 
 
 def format(num):
