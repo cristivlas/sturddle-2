@@ -3,7 +3,7 @@
 **********************************************************************
 Trainer for the Sturddle Chess 2.0 engine's neural net.
 
-Copyright (c) 2023 2025 Cristian Vlasceanu.
+Copyright (c) 2023 - 2025 Cristian Vlasceanu.
 
 Expects H5 files as inputs (produced by toh5.py)
 Uses a custom layer to unpack features, which allows unpacking on GPU.
@@ -684,13 +684,13 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
-        parser.add_argument('-c', '--clip', type=float, default=3.5, help='Huber delta (used to be hard clip)')
+        parser.add_argument('-c', '--clip', type=float, default=3.0, help='Huber delta (used to be hard clip)')
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
         parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
-        parser.add_argument('-F', '--filter', type=int, default=15000, help='hard clip (filter out) scores with higher abs value')
+        parser.add_argument('-F', '--filter', type=int, default=3000, help='hard clip (filter out) scores with higher abs value')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-3, help='learning rate')

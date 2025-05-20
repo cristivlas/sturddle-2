@@ -151,7 +151,7 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(description='Convert training data from sqlite3 to H5')
         parser.add_argument('input', nargs=1)
         parser.add_argument('-b', '--begin', type=int)
-        parser.add_argument('-c', '--clip', type=int, default=15000)
+        parser.add_argument('-c', '--clip', type=int, default=15000, help="clip score (default: 15000)")
         parser.add_argument('-o', '--output')
         parser.add_argument('-r', '--row-count', type=int)
         parser.add_argument('-t', '--test', action='store_true')
