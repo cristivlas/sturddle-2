@@ -645,13 +645,13 @@ namespace nnue
     template <typename A, typename ATTN, typename L2, typename L3, typename OUT>
     INLINE int eval(const A& accumulator, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out)
     {
-        ALIGN float l3_out[L3::OUTPUTS];
-        return eval_core(accumulator, attn, l2, l3, out, l3_out);
+        ALIGN float l1_out[A::OUTPUTS_A];
+        return eval_core(accumulator, attn, l2, l3, out, l1_out);
     }
 
 
     template <typename A, typename ATTN, typename L2, typename L3, typename OUT>
-    INLINE int eval_core(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out, float (&l3_out)[L3::OUTPUTS])
+    INLINE int eval_core(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out, float (&l1_out)[A::OUTPUTS_A])
     {
         constexpr size_t POOL_STRIDE = 4;
 
@@ -660,10 +660,10 @@ namespace nnue
 
         ALIGN float attn_in[ATTN::INPUTS];
         ALIGN float attn_out[ATTN::OUTPUTS];
-        ALIGN float l1_out[A::OUTPUTS_A];
         ALIGN float l2_in[L2::INPUTS];
         ALIGN float l2_out[L2::OUTPUTS];
-        ALIGN float output[1];
+        ALIGN float l3_out[L3::OUTPUTS];
+        ALIGN float output[1]; // eval
 
         activation(a._output_a, l1_out); // process output of hidden_1a
         activation(a._output_b, attn_in); // process output of hidden_1b
@@ -745,14 +745,14 @@ namespace nnue
         const OUT& out,     // evaluation
         T& pseudo_legal_moves)
     {
-        ALIGN float l3_out[L3::OUTPUTS];
-        ALIGN float moves_out[MFEAT::OUTPUTS];
+        ALIGN float l1_out[A::OUTPUTS_A];
+        ALIGN float moves_out[M::OUTPUTS];
         ALIGN float from_out[64];
         ALIGN float to_out[64];
 
-        const auto eval = eval_core(accumulator, attn, l2, l3, out, l3_out);
+        const auto eval = eval_core(accumulator, attn, l2, l3, out, l1_out);
 
-        moves.dot(l3_out, moves_out, [](const Vector& v) { return max(v, v_zero); });
+        moves.dot(l1_out, moves_out, [](const Vector& v) { return max(v, v_zero); });
         from.dot(moves_out, from_out);
         to.dot(moves_out, to_out);
         sort_moves(from_out, to_out, pseudo_legal_moves);

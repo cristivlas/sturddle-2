@@ -300,7 +300,7 @@ static nnue::Layer<HIDDEN_2, HIDDEN_3> L3(hidden_3_w, hidden_3_b);
 static nnue::Layer<HIDDEN_3, 1> OUT(out_w, out_b);
 
 #if USE_ROOT_MOVES
-static nnue::Layer<HIDDEN_3, 32> L_MOVES(move_features_w, move_features_b);
+static nnue::Layer<HIDDEN_1A, 32> L_MOVES(moves_w, moves_b);
 static nnue::Layer<32, 64> L_FROM(F_w, F_b);
 static nnue::Layer<32, 64> L_TO(T_w, T_b);
 #endif /* USE_ROOT_MOVES */
@@ -1457,8 +1457,7 @@ namespace search
 
             for (auto& move : moves_list)
             {
-                if (move._score < 0.01)
-                    break;
+                // std::cout << move << ": " << move._score << "\n";
                 make_move<false>(ctxt, move, MoveOrder::ROOT_MOVES, move._score);
             }
         }

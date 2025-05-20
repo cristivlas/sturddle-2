@@ -218,14 +218,14 @@ def make_model(args, strategy):
 
         if args.predict_moves:
             # Create a shared feature layer for move prediction with constraints
-            move_features = Dense(
+            moves = Dense(
                 32,
                 activation=activation,
-                name='move_features',
+                name='moves',
                 kernel_constraint=constr,
                 bias_constraint=constr,
                 kernel_initializer=tf.keras.initializers.RandomUniform(minval=-0.01, maxval=0.01)
-            )(hidden_3)
+            )(hidden_1a)
 
             # Create prediction heads for from/to squares (0-63) with constraints
             from_square = Dense(
@@ -234,7 +234,7 @@ def make_model(args, strategy):
                 kernel_constraint=constr,
                 bias_constraint=constr,
                 kernel_initializer=tf.keras.initializers.RandomUniform(minval=-0.01, maxval=0.01)
-            )(move_features)
+            )(moves)
 
             to_square = Dense(
                 64,
@@ -242,7 +242,7 @@ def make_model(args, strategy):
                 kernel_constraint=constr,
                 bias_constraint=constr,
                 kernel_initializer=tf.keras.initializers.RandomUniform(minval=-0.01, maxval=0.01)
-            )(move_features)
+            )(moves)
 
             outputs.extend([from_square, to_square])
 
