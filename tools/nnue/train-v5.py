@@ -217,12 +217,32 @@ def make_model(args, strategy):
         outputs = [eval_output]
 
         if args.predict_moves:
-            # Create a shared feature layer for move prediction
-            move_features = Dense(32, activation=activation, name='move_features')(hidden_3)
+            # Create a shared feature layer for move prediction with constraints
+            move_features = Dense(
+                32,
+                activation=activation,
+                name='move_features',
+                kernel_constraint=constr,
+                bias_constraint=constr,
+                kernel_initializer=tf.keras.initializers.RandomUniform(minval=-0.01, maxval=0.01)
+            )(hidden_3)
 
-            # Create prediction heads for from/to squares (0-63)
-            from_square = Dense(64, name='F')(move_features)
-            to_square = Dense(64, name='T')(move_features)
+            # Create prediction heads for from/to squares (0-63) with constraints
+            from_square = Dense(
+                64,
+                name='F',
+                kernel_constraint=constr,
+                bias_constraint=constr,
+                kernel_initializer=tf.keras.initializers.RandomUniform(minval=-0.01, maxval=0.01)
+            )(move_features)
+
+            to_square = Dense(
+                64,
+                name='T',
+                kernel_constraint=constr,
+                bias_constraint=constr,
+                kernel_initializer=tf.keras.initializers.RandomUniform(minval=-0.01, maxval=0.01)
+            )(move_features)
 
             outputs.extend([from_square, to_square])
 
@@ -262,9 +282,26 @@ def make_model(args, strategy):
         metrics = {}
 
         if args.predict_moves:
-            # Add losses for move prediction - using from_logits=True for raw logits
-            losses['F'] = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
-            losses['T'] = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
+            """
+            #losses['F'] = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
+            #losses['T'] = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
+
+            Constrained weights may not allow the NN to produce sufficiently differentiated logits
+            MSE and constraints work better together because:
+                1) Linear Error Scaling:
+                MSE produces gradients proportional to the error magnitude
+                This leads to more stable updates within constrained models
+
+                2) No Exponential Terms:
+                MSE doesn't involve exponential calculations like softmax
+                This avoids numerical issues when working with constrained outputs
+
+                3) Gentler Learning Signal:
+                MSE provides a more gradual learning signal
+                This works better when the model can only make limited adjustments due to constraints
+            """
+            losses['F'] = tf.keras.losses.MeanSquaredError()
+            losses['T'] = tf.keras.losses.MeanSquaredError()
             loss_weights['F'] = args.move_weight
             loss_weights['T'] = args.move_weight
             metrics['F'] = 'accuracy'

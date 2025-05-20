@@ -123,7 +123,7 @@ def run_tests(args, model):
             for j, (move, prob) in enumerate(top_moves, 1):
                 move_uci = move.uci()
                 is_expected = move_uci == expected_move
-                print(f"{j}. {board.san(move)} ({move_uci}) (probability: {prob:.4f}){' ✓' if is_expected else ''}")
+                print(f"{j}. {board.san(move)} ({move_uci}) (score: {prob:.4f}){' ✓' if is_expected else ''}")
 
                 # Update accuracy metrics
                 if j == 1 and is_expected:

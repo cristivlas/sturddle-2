@@ -236,8 +236,8 @@ def process_file(args):
         print(f'\nWriting out: {args.output}')
         h5_file = h5py.File(args.output, 'w')
 
-        read_progress = tqdm(desc='Reading', total=records_to_process)
-        write_progress = tqdm(desc='Writing', total=records_to_process)
+        read_progress = tqdm(desc='Reading', total=records_to_process, colour='cyan')
+        write_progress = tqdm(desc='Writing', total=records_to_process, colour='green')
 
         # Start the processing threads
         parser_thread = Thread(
