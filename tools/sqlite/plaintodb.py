@@ -59,20 +59,21 @@ def uci_to_square_indices(uci_move):
         return None, None
 
 
-def parse_lines(map_file, queue, batch_size, progress_bar):
+def parse_lines(map_file, queue, batch_size, progress_bar, record_limit):
     fen = b''
     score = 0
     move = b''
     depth = 0
-    count = 0
+    line_count = 0
+    record_count = 0
 
     for line in iter(map_file.readline, b''):
-        if shutdown:
+        if shutdown or (record_limit is not None and record_count >= record_limit):
             queue.put(None)
             break
 
-        count += 1
-        if count % batch_size == 0:
+        line_count += 1
+        if line_count % batch_size == 0:
             time.sleep(0.01)  # Yield execution
 
         if line.startswith(b'fen'):
@@ -88,6 +89,12 @@ def parse_lines(map_file, queue, batch_size, progress_bar):
             from_square, to_square = uci_to_square_indices(move_str)
             queue.put((fen.decode('utf-8'), depth, score, move_str, from_square, to_square))
             progress_bar.update()
+            record_count += 1
+
+            # Check if we've reached the limit after processing a record
+            if record_limit is not None and record_count >= record_limit:
+                queue.put(None)
+                break
 
 
 def write_to_db(db_path, queue, batch_size, progress_bar):
@@ -132,7 +139,7 @@ def process_file(args):
         read_progress = tqdm(desc='Reading', total=record_count)
         write_progress = tqdm(desc='Writing', total=record_count)
 
-        parser_thread = Thread(target=parse_lines, args=(map_file, queue, args.batch_size, read_progress))
+        parser_thread = Thread(target=parse_lines, args=(map_file, queue, args.batch_size, read_progress, record_count))
         db_thread = Thread(target=write_to_db, args=(args.output, queue, args.batch_size, write_progress))
 
         parser_thread.start()
@@ -160,4 +167,3 @@ if __name__ == '__main__':
     signal.signal(signal.SIGINT, signal_handler)
 
     process_file(args)
-
