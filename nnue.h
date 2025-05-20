@@ -708,8 +708,6 @@ namespace nnue
         const float (&to_probs)[64],
         T& moves)
     {
-        static constexpr auto LOW_PROB = 0.001f;
-
         // Calculate score for each pseudo-legal move in the container
         for (auto& move : moves) {
             const auto from_sq = static_cast<int>(move.from_square());
@@ -718,7 +716,11 @@ namespace nnue
             const auto from_prob = from_probs[from_sq];
             const auto to_prob = to_probs[to_sq];
 
-            // Set the score as the product of from and to probabilities
+            // Set the score as the product of from and to values.
+            // NOTE: Despite the variable names, these are unnormalized logits
+            // rather than true probabilities. Skip the softmax computation
+            // since only the relative ordering matters for move sorting.
+
             move._score = from_prob * to_prob;
         }
 
@@ -730,14 +732,14 @@ namespace nnue
     }
 
 
-    template <typename A, typename ATTN, typename L2, typename L3, typename MFEAT, typename FROM, typename TO, typename OUT, typename T>
+    template <typename A, typename ATTN, typename L2, typename L3, typename M, typename FROM, typename TO, typename OUT, typename T>
     INLINE int
     eval_with_moves(
         const A& accumulator,
         const ATTN& attn,
         const L2& l2,
         const L3& l3,
-        const MFEAT& moves, // move features
+        const M& moves,     // move features
         const FROM& from,   // "from" square probabilities
         const TO& to,       // "to" square probabilites
         const OUT& out,     // evaluation
