@@ -1412,11 +1412,13 @@ namespace search
         ASSERT(_phase == 0);
         ASSERT(_state_index == 0);
 
+        bool from_cache = false;
         auto& moves_list = ctxt.moves();
 
         auto& moves_cache = _moves_cache[ctxt.tid()];
         if (moves_cache.lookup(ctxt.state(), moves_list))
         {
+            from_cache = true;
             for (auto& move : moves_list)
             {
                 move._state = nullptr;
@@ -1427,7 +1429,6 @@ namespace search
         else
         {
             ctxt.state().generate_pseudo_legal_moves(moves_list);
-            moves_cache.write(ctxt.state(), moves_list);
         }
 
         _count = int(moves_list.size());
@@ -1462,6 +1463,9 @@ namespace search
             }
         }
     #endif /* USE_ROOT_MOVES */
+
+        if (!from_cache)
+            moves_cache.write(ctxt.state(), moves_list);
     }
 
 

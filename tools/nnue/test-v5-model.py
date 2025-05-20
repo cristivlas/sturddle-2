@@ -3,33 +3,34 @@ import argparse
 
 import chess
 import numpy as np
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 import tensorflow as tf
 
-# New tests from the rows provided with expected evals
 tests = [
-    'rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq -',     # f7f5
-    'rnbqkbnr/ppppp1pp/8/5p2/8/5N2/PPPPPPPP/RNBQKB1R w KQkq -',   # f3e5 (Ne5)
-    'rnbqkbnr/ppppp1pp/8/4Np2/8/8/PPPPPPPP/RNBQKB1R b KQkq -',    # d7d6
-    'rnbqkbnr/ppp1p1pp/3p4/4Np2/8/8/PPPPPPPP/RNBQKB1R w KQkq -',  # e2e4
-    'rnbqkbnr/ppp1p1pp/3p4/4Np2/4P3/8/PPPP1PPP/RNBQKB1R b KQkq -', # d6e5 (dxe5)
-    'rnbqkbnr/ppp1p1pp/8/4pp2/4P3/8/PPPP1PPP/RNBQKB1R w KQkq -',  # e4f5 (exf5)
-    'rnbqkbnr/ppp1p1pp/8/4pP2/8/8/PPPP1PPP/RNBQKB1R b KQkq -',    # e5e4
-    'rnbqkbnr/ppp1p1pp/8/5P2/4p3/8/PPPP1PPP/RNBQKB1R w KQkq -',   # d2d3 
-    'rnbqkbnr/ppp1p1pp/8/5P2/4p3/3P4/PPP2PPP/RNBQKB1R b KQkq -',  # e4e3
-    'rnbqkbnr/ppp1p1pp/8/5P2/8/3Pp3/PPP2PPP/RNBQKB1R w KQkq -',   # d1d2 (Qd2)
+    'rnbqkbnr/ppp5/3pp3/5p2/2PP2p1/2NBP1Pp/PP1N1P1P/R1BQK2R b KQkq -',
+    '5b1r/6pp/5p1k/5q2/1P5P/P5Q1/5PPK/8 w - -',
+    'r4rk1/pb3ppp/1p6/3pP3/6q1/P1P2Nn1/1P1N2B1/R1BQR1K1 w - -',
+    'r1b1k2r/pp2qppp/8/3p4/3n4/5N2/PP2BPPP/R2QK2R w KQkq -',
+    '8/1R4p1/p1p4p/2k4n/P1P3B1/1P3KP1/1r3P2/8 b - -',
+    '8/5kp1/4p2p/5p2/2r5/1N3P2/5PKP/8 b - -',
+    '5bk1/1p3p2/6pp/pPR1p3/P7/1P4P1/3r3P/5BK1 w - -',
+    'r4rk1/ppq2p1p/4pp2/1P1p4/P7/3N1P2/6Pb/R2Q1R1K w - -',
+    'rnbq1rk1/pp3pbp/3ppnp1/2p3N1/2BPP3/2N2Q2/PPP2PPP/R1B1K2R w KQ -',
+    'r7/8/5kp1/2p2p1p/1pRbbP1P/1P2p1PK/P3B3/5R2 b - -'
 ]
 
 # Expected best moves and evaluations for each position
 expected_moves = [
-    'f7f5', 'f3e5', 'd7d6', 'e2e4', 'd6e5', 
-    'e4f5', 'e5e4', 'd2d3', 'e4e3', 'd1d2'
+    'b7b6', 'g3e3', 'b2b4', 'd1d4', 'h5f6', 
+    'g7g5', 'c5c7', 'd3f2', 'e4e5', 'a8a2'
 ]
 
 expected_evals = [
-    -0.14, 0.49, 0.20, -0.33, 3.58, 
-    -4.23, 4.29, -1.71, 3.88, -1.45
+    -0.09, -5.97, 5.62, 4.78, -0.44, 
+    4.79, -0.20, 1.82, -0.52, 5.77
 ]
-
 
 def encode(board):
     mask_black = board.occupied_co[chess.BLACK]
