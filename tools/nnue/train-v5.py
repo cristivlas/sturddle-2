@@ -221,8 +221,8 @@ def make_model(args, strategy):
             move_features = Dense(32, activation=activation, name='move_features')(hidden_3)
 
             # Create prediction heads for from/to squares (0-63)
-            from_square = Dense(64, name='from_square')(move_features)
-            to_square = Dense(64, name='to_square')(move_features)
+            from_square = Dense(64, name='F')(move_features)
+            to_square = Dense(64, name='T')(move_features)
 
             outputs.extend([from_square, to_square])
 
@@ -263,12 +263,12 @@ def make_model(args, strategy):
 
         if args.predict_moves:
             # Add losses for move prediction - using from_logits=True for raw logits
-            losses['from_square'] = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
-            losses['to_square'] = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
-            loss_weights['from_square'] = args.move_weight
-            loss_weights['to_square'] = args.move_weight
-            metrics['from_square'] = 'accuracy'
-            metrics['to_square'] = 'accuracy'
+            losses['F'] = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
+            losses['T'] = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
+            loss_weights['F'] = args.move_weight
+            loss_weights['T'] = args.move_weight
+            metrics['F'] = 'accuracy'
+            metrics['T'] = 'accuracy'
 
         model.compile(
             loss=losses,

@@ -301,8 +301,8 @@ static nnue::Layer<HIDDEN_3, 1> OUT(out_w, out_b);
 
 #if USE_ROOT_MOVES
 static nnue::Layer<HIDDEN_3, 32> L_MOVES(move_features_w, move_features_b);
-static nnue::Layer<32, 64> L_FROM(from_square_w, from_square_b);
-static nnue::Layer<32, 64> L_TO(to_square_w, to_square_b);
+static nnue::Layer<32, 64> L_FROM(F_w, F_b);
+static nnue::Layer<32, 64> L_TO(T_w, T_b);
 #endif /* USE_ROOT_MOVES */
 
 
