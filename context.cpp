@@ -334,19 +334,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
     }
     else
     {
-    #if !USE_ROOT_MOVES
         _eval_raw = nnue::eval(acc, L_DYN, L2, L3, OUT);
-    #else
-        if (is_root() && iteration() == 1)
-        {
-            ASSERT(has_moves());
-            _eval_raw = nnue::eval_with_moves(acc, L_DYN, L2, L3, L_MOVES, L_FROM, L_TO, OUT, moves());
-        }
-        else
-        {
-            _eval_raw = nnue::eval(acc, L_DYN, L2, L3, OUT);
-        }
-    #endif /* USE_ROOT_MOVES */
 
         if (side_to_move_pov)
         {
@@ -1457,6 +1445,23 @@ namespace search
          */
         _group_quiet_moves = (ctxt.depth() < 0 && !ctxt.is_check());
     #endif /* GROUP_QUIET_MOVES */
+
+    #if USE_ROOT_MOVES
+        if (ctxt.is_root() && ctxt.iteration() <= 1)
+        {
+            auto& acc = NNUE_data[ctxt.tid()][0];
+            acc.update(L1A, L1B, ctxt.state());
+            const auto eval = nnue::eval_with_moves(acc, L_DYN, L2, L3, L_MOVES, L_FROM, L_TO, OUT, moves_list);
+            ctxt._eval_raw = eval * SIGN[ctxt.turn()];
+
+            for (auto& move : moves_list)
+            {
+                if (move._score < 0.01)
+                    break;
+                make_move<false>(ctxt, move, MoveOrder::ROOT_MOVES, move._score);
+            }
+        }
+    #endif /* USE_ROOT_MOVES */
     }
 
 
