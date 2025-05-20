@@ -199,7 +199,8 @@ def process_file(args):
         # Count records if not provided
         total_records = count_records(args.input)
     else:
-        total_records = args.row_count
+        # Adjust total records to include skipped + to be processed
+        total_records = args.row_count + (args.begin if args.begin else 0)
 
     # If begin is specified, we need to skip some records
     begin = args.begin if args.begin else 0
@@ -211,16 +212,23 @@ def process_file(args):
 
         # Skip records if begin is specified
         if begin > 0:
-            print(f"Skipping {begin} records...")
+            print(f"Skipping first {begin} records...")
             skipped = 0
+            # Create a progress bar for skipping
+            skip_progress = tqdm(desc='Skipping', total=begin)
+
             for line in iter(map_file.readline, b''):
                 if line.startswith(b'e'):
                     skipped += 1
+                    skip_progress.update(1)
                     if skipped >= begin:
                         break
 
+            skip_progress.close()
+            print(f"Skipped {skipped} records. Now processing {args.row_count} records.")
+
         # Calculate how many records to process
-        records_to_process = total_records - begin if args.row_count is None else min(args.row_count, total_records - begin)
+        records_to_process = total_records - begin if args.row_count is None else args.row_count
 
         # Create H5 file
         if args.output is None:
@@ -234,7 +242,7 @@ def process_file(args):
         # Start the processing threads
         parser_thread = Thread(
             target=parse_and_process,
-            args=(map_file, queue, args.batch_size, args.clip, args.test, read_progress, total_records)
+            args=(map_file, queue, args.batch_size, args.clip, args.test, read_progress, records_to_process)
         )
 
         writer_thread = Thread(
