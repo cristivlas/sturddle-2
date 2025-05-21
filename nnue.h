@@ -703,28 +703,18 @@ namespace nnue
 
 
     template <typename T>
-    INLINE void sort_moves(
-        const float (&from_probs)[64],
-        const float (&to_probs)[64],
-        T& moves)
+    INLINE void sort_moves(float from_pred, float to_pred, T& moves)
     {
-        // Calculate score for each pseudo-legal move in the container
         for (auto& move : moves) {
-            const auto from_sq = static_cast<int>(move.from_square());
-            const auto to_sq = static_cast<int>(move.to_square());
+            const auto from_square = static_cast<int>(move.from_square());
+            const auto to_square = static_cast<int>(move.to_square());
+            const auto from_distance = 63.0 - std::abs(from_square - from_pred);
+            const auto to_distance = 63.0 - std::abs(to_square - to_pred);
 
-            const auto from_prob = from_probs[from_sq];
-            const auto to_prob = to_probs[to_sq];
-
-            // Set the score as the product of from and to values.
-            // NOTE: Despite the variable names, these are unnormalized logits
-            // rather than true probabilities. Skip the softmax computation
-            // since only the relative ordering matters for move sorting.
-
-            move._score = from_prob * to_prob;
+            move._score = (from_distance + to_distance) / 126.0;
         }
 
-        // Sort the moves by score (highest first)
+        // Sort highest scores first
         std::sort(moves.begin(), moves.end(),
                 [](const Move& a, const Move& b) {
                     return a._score > b._score;
@@ -747,15 +737,15 @@ namespace nnue
     {
         ALIGN float l1_out[A::OUTPUTS_A];
         ALIGN float moves_out[M::OUTPUTS];
-        ALIGN float from_out[64];
-        ALIGN float to_out[64];
+        ALIGN float from_out[1];
+        ALIGN float to_out[1];
 
         const auto eval = eval_core(accumulator, attn, l2, l3, out, l1_out);
 
         moves.dot(l1_out, moves_out, [](const Vector& v) { return max(v, v_zero); });
         from.dot(moves_out, from_out);
         to.dot(moves_out, to_out);
-        sort_moves(from_out, to_out, pseudo_legal_moves);
+        sort_moves(from_out[0] * 63, to_out[0] * 63, pseudo_legal_moves);
 
         return eval;
     }

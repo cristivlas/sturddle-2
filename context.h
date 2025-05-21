@@ -109,12 +109,14 @@ namespace search
     public:
         MoveMaker() = default;
 
-        const Move* get_next_move(Context& ctxt, score_t futility = 0);
-
         /* Return upperbound of legal moves, which may include pruned and quiet moves. */
         int count() const { return _count; }
 
         int current(Context&);
+
+        void ensure_moves(Context&, bool order_root_moves = false);
+
+        const Move* get_next_move(Context& ctxt, score_t futility = 0);
 
         bool group_quiet_moves() const { return _group_quiet_moves; }
         bool has_moves(Context&);
@@ -139,9 +141,8 @@ namespace search
 
     private:
         bool can_late_move_prune(const Context& ctxt) const;
-        void ensure_moves(Context&);
 
-        void generate_unordered_moves(Context&);
+        void generate_unordered_moves(Context&, bool order_root_moves = false);
         const Move* get_move_at(Context& ctxt, int index, score_t futility = 0);
 
         void make_capture(Context&, Move&);
@@ -1283,14 +1284,15 @@ namespace search
     }
 
 
-    INLINE void MoveMaker::ensure_moves(Context& ctxt)
+    INLINE void MoveMaker::ensure_moves(Context& ctxt, bool order_root_moves)
     {
+        ASSERT(ctxt.iteration());
         if (_count < 0)
         {
             ASSERT(_current < 0);
             ASSERT(_phase == 0);
 
-            generate_unordered_moves(ctxt);
+            generate_unordered_moves(ctxt, order_root_moves);
 
             ASSERT(_count >= 0);
             ASSERT(_current >= 0);

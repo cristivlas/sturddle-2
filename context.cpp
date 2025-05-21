@@ -301,8 +301,8 @@ static nnue::Layer<HIDDEN_3, 1> OUT(out_w, out_b);
 
 #if USE_ROOT_MOVES
 static nnue::Layer<HIDDEN_1A, 32> L_MOVES(moves_w, moves_b);
-static nnue::Layer<32, 64> L_FROM(F_w, F_b);
-static nnue::Layer<32, 64> L_TO(T_w, T_b);
+static nnue::Layer<32, 1> L_FROM(F_w, F_b);
+static nnue::Layer<32, 1> L_TO(T_w, T_b);
 #endif /* USE_ROOT_MOVES */
 
 
@@ -369,6 +369,7 @@ void search::Context::eval_with_nnue()
     {
         if (is_valid(_tt_entry._eval))
         {
+            ASSERT(!is_root());
             _eval = _tt_entry._eval;
             return;
         }
@@ -377,10 +378,23 @@ void search::Context::eval_with_nnue()
 
         if (state().just_king(!turn()) || (depth() >= 0 && abs(eval) <= eval_margin(*this)))
         {
+            score_t eval_nn = SCORE_MIN;
+
+        #if USE_ROOT_MOVES
+            if (is_root() && iteration() == 1)
+            {
+                _move_maker.ensure_moves(*this, true);
+                eval_nn = _eval_raw;
+            }
+        #endif /* USE_ROOT_MOVES */
+
+            if (!is_valid(eval_nn))
+                eval_nn = eval_nnue_raw();
+
         #if 0
-            eval = eval_nnue_raw() * (NNUE_EVAL_TERM + eval / 32) / 1024;
+            eval = eval_nn * (NNUE_EVAL_TERM + eval / 32) / 1024;
         #else
-            eval = (eval_nnue_raw() * NNUE_BLEND_PERCENT + eval * (100 - NNUE_BLEND_PERCENT)) / 100;
+            eval = (eval_nn * NNUE_BLEND_PERCENT + eval * (100 - NNUE_BLEND_PERCENT)) / 100;
         #endif
         }
         else
@@ -1351,8 +1365,12 @@ namespace search
 
     int MoveMaker::rewind(Context& ctxt, int where, bool force_reorder)
     {
-        ensure_moves(ctxt);
-
+    #if 0
+        ensure_moves(ctxt); // why?
+    #else
+        if (_count < 0)
+            return -1;
+    #endif
         ASSERT(_count > 0 || where == 0);
         ASSERT(where == 0 || where == -1); /* other cases not supported */
 
@@ -1404,7 +1422,7 @@ namespace search
     }
 
 
-    void MoveMaker::generate_unordered_moves(Context& ctxt)
+    void MoveMaker::generate_unordered_moves(Context& ctxt, bool order_root_moves)
     {
         /* pre-conditions */
         ASSERT(_count < 0);
@@ -1436,8 +1454,9 @@ namespace search
 
         auto& states_vec = Context::states(ctxt.tid(), ctxt._ply);
         if (states_vec.size() < size_t(_count))
+        {
             states_vec.resize(_count);
-
+        }
     #if GROUP_QUIET_MOVES
         /*
          * In quiescent search, only quiet moves are interesting.
@@ -1448,18 +1467,27 @@ namespace search
     #endif /* GROUP_QUIET_MOVES */
 
     #if USE_ROOT_MOVES
-        if (ctxt.is_root() && ctxt.iteration() <= 1)
+        if (order_root_moves)
         {
             auto& acc = NNUE_data[ctxt.tid()][0];
             acc.update(L1A, L1B, ctxt.state());
             const auto eval = nnue::eval_with_moves(acc, L_DYN, L2, L3, L_MOVES, L_FROM, L_TO, OUT, moves_list);
             ctxt._eval_raw = eval * SIGN[ctxt.turn()];
 
+            int count = 0;
             for (auto& move : moves_list)
             {
-                // std::cout << move << ": " << move._score << "\n";
-                make_move<false>(ctxt, move, MoveOrder::ROOT_MOVES, move._score);
+                ASSERT(move._group == MoveOrder::UNORDERED_MOVES);
+
+                if (count >= MAX_ROOT_MOVES)
+                    move._score = 0;
+                else if (make_move<false>(ctxt, move, MoveOrder::ROOT_MOVES, move._score))
+                    ++count;
+                else
+                    move._score = 0;
             }
+
+            sort_moves(ctxt, 0, moves_list.size());
         }
     #endif /* USE_ROOT_MOVES */
 

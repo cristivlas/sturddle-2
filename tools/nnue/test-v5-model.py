@@ -52,27 +52,28 @@ def encode(board):
 
 def load_model(args):
     path = args.input[0]
-    return tf.keras.models.load_model(path, custom_objects={'_clipped_mae': None, 'clipped_loss': None})
+    return tf.keras.models.load_model(path, custom_objects={'clipped_loss': None, 'top_k': None})
 
 
 def get_top_moves(from_probs, to_probs, board, num_moves=5):
-    """Get the top predicted moves based on from/to probabilities"""
-    # Convert probabilities to numpy arrays for easier manipulation
-    from_probs = from_probs[0]  # Remove batch dimension
-    to_probs = to_probs[0]  # Remove batch dimension
+    # Unscale the predictions back to board coordinates
+    from_pred = from_probs[0][0] * 63.0
+    to_pred = to_probs[0][0] * 63.0
 
-    # Calculate combined probabilities for all legal moves
+    # Score all legal moves based on distance to predicted indices
     moves = []
-    legal_moves = list(board.legal_moves)
-
-    for move in legal_moves:
+    for move in board.legal_moves:
         from_square = move.from_square
         to_square = move.to_square
-        # Combine probabilities (multiply from_prob and to_prob)
-        combined_prob = from_probs[from_square] * to_probs[to_square]
-        moves.append((move, combined_prob))
 
-    # Sort moves by probability (highest first)
+        # Calculate score based on distance
+        from_distance = 63 - abs(from_square - from_pred)
+        to_distance = 63 - abs(to_square - to_pred)
+
+        score = (from_distance + to_distance) / 126
+        moves.append((move, score))
+
+    # Sort moves by score (highest first)
     moves.sort(key=lambda x: x[1], reverse=True)
 
     # Return top N moves

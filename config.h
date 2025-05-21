@@ -268,12 +268,13 @@ DECLARE_VALUE(  LMP_BASE,                             2,    2,     100)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                261,    0,    1000)
 
+DECLARE_VALUE(  MAX_ROOT_MOVES,                       5,    0,     256)
 DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,     100)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
 
 #if WITH_NNUE
 DECLARE_VALUE(  NNUE_BLEND_PERCENT,                  75,    0,     100)
-DECLARE_VALUE(  NNUE_EVAL_TERM,                     502,    0,    1000)
+DECLARE_VALUE(  NNUE_EVAL_TERM,                     502,  450,     600)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      452,    0,    1000)
 #endif /* WITH_NNUE */
 

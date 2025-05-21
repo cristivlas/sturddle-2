@@ -217,32 +217,16 @@ def make_model(args, strategy):
         outputs = [eval_output]
 
         if args.predict_moves:
-            # Create a shared feature layer for move prediction with constraints
             moves = Dense(
                 32,
                 activation=activation,
                 name='moves',
-                kernel_constraint=constr,
-                bias_constraint=constr,
-                kernel_initializer=tf.keras.initializers.RandomUniform(minval=-0.01, maxval=0.01)
+                kernel_initializer='he_normal',
             )(hidden_1a)
 
-            # Create prediction heads for from/to squares (0-63) with constraints
-            from_square = Dense(
-                64,
-                name='F',
-                kernel_constraint=constr,
-                bias_constraint=constr,
-                kernel_initializer=tf.keras.initializers.RandomUniform(minval=-0.01, maxval=0.01)
-            )(moves)
-
-            to_square = Dense(
-                64,
-                name='T',
-                kernel_constraint=constr,
-                bias_constraint=constr,
-                kernel_initializer=tf.keras.initializers.RandomUniform(minval=-0.01, maxval=0.01)
-            )(moves)
+            # Output layers predicting values in 0-1 range
+            from_square = Dense(1, name='F', kernel_initializer='he_normal', dtype='float32')(moves)
+            to_square = Dense(1, name='T', kernel_initializer='he_normal', dtype='float32')(moves)
 
             outputs.extend([from_square, to_square])
 
@@ -282,30 +266,27 @@ def make_model(args, strategy):
         metrics = {}
 
         if args.predict_moves:
-            """
-            #losses['F'] = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
-            #losses['T'] = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
+            loss_weights['F'] = args.move_weight / 2
+            loss_weights['T'] = args.move_weight / 2
+            loss_weights['out'] = 1 - args.move_weight
 
-            Constrained weights may not allow the NN to produce sufficiently differentiated logits
-            MSE and constraints work better together because:
-                1) Linear Error Scaling:
-                MSE produces gradients proportional to the error magnitude
-                This leads to more stable updates within constrained models
-
-                2) No Exponential Terms:
-                MSE doesn't involve exponential calculations like softmax
-                This avoids numerical issues when working with constrained outputs
-
-                3) Gentler Learning Signal:
-                MSE provides a more gradual learning signal
-                This works better when the model can only make limited adjustments due to constraints
-            """
             losses['F'] = tf.keras.losses.MeanSquaredError()
             losses['T'] = tf.keras.losses.MeanSquaredError()
-            loss_weights['F'] = args.move_weight
-            loss_weights['T'] = args.move_weight
-            metrics['F'] = 'accuracy'
-            metrics['T'] = 'accuracy'
+
+            @tf.function
+            def top_k(y_true, y_pred, k=3):
+                # Scale k to the 0-1 range
+                k_scaled = k / 63.0
+
+                # Calculate absolute difference between prediction and true index
+                abs_diff = tf.abs(y_pred - y_true)
+
+                # Consider prediction correct if within k_scaled
+                correct = tf.less_equal(abs_diff, k_scaled)
+                return tf.reduce_mean(tf.cast(correct, tf.float32))
+
+            metrics['F'] = top_k
+            metrics['T'] = top_k
 
         model.compile(
             loss=losses,
@@ -454,16 +435,20 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
             # Prepare outputs based on whether move prediction is enabled
             if args.predict_moves and self.data.shape[1] > self.feature_count + 1:
-                # Get move coordinates (from_square, to_square)
+                # Get move coordinates (from_square, to_square) as indices (NOT one-hot)
                 from_square = self.data[start:end, self.feature_count+1]
                 to_square = self.data[start:end, self.feature_count+2]
 
-                # Convert move coordinates to one-hot encoding
-                from_square_onehot = tf.one_hot(from_square, 64)
-                to_square_onehot = tf.one_hot(to_square, 64)
+                # Scale values from 0-63 to 0-1 range
+                from_square = tf.cast(from_square, tf.float32) / 63.0
+                to_square = tf.cast(to_square, tf.float32) / 63.0
 
-                # Return as tuple instead of list
-                return x, (y_eval, from_square_onehot, to_square_onehot)
+                # Reshape to match expected output shape
+                from_square = tf.reshape(from_square, (-1, 1))
+                to_square = tf.reshape(to_square, (-1, 1))
+
+                # Return as tuple
+                return x, (y_eval, from_square, to_square)
             else:
                 return x, y_eval
 
@@ -530,7 +515,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             )
             output_shapes = (
                 (None, packed_feature_count),
-                ((None, 1), (None, 64), (None, 64))
+                ((None, 1), (None, 1), (None, 1))
             )
         else:
             output_types = (np.uint64, np.float32)
@@ -582,8 +567,9 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
 
 def load_model(path):
-    ''' Load model ignoring missing loss functions. '''
-    custom_objects = {}
+    ''' Load model ignoring missing loss function. '''
+    custom_objects = { 'top_k': None }
+
     while True:
         try:
             return tf.keras.models.load_model(path, custom_objects=custom_objects)
@@ -736,7 +722,7 @@ if __name__ == '__main__':
 
         # Move prediction related arguments
         parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')
-        parser.add_argument('--move-weight', type=float, default=0.2, help='weight for move prediction loss')
+        parser.add_argument('--move-weight', type=float, default=0.4, help='weight for move prediction loss')
 
         parser.add_argument('--attn', choices=('16', '32'), default='32', help='attention layer size')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
@@ -769,6 +755,10 @@ if __name__ == '__main__':
 
         args = parser.parse_args()
 
+        # Validate move_weight
+        if args.predict_moves and args.move_weight <= 0 or args.move_weight >= 1:
+            parser.error("--move-weight must be between 0 and 1 (exclusive)")
+
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout
 
@@ -785,6 +775,7 @@ if __name__ == '__main__':
         tf.get_logger().setLevel(log_level)
 
         if args.quantization:
+            # Experimental only
             import tensorflow_compression as tfc
             import tensorflow_model_optimization as tfmot
             from tensorflow_model_optimization.python.core.quantization.keras.quantize import quantizers
