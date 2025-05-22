@@ -63,6 +63,21 @@ def make_model(args, strategy):
         linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
         return tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
 
+    # @tf.function
+    # def clipped_loss(y_true, y_pred, delta=args.clip):
+    #     error = soft_clip(y_true - y_pred, delta)
+    #     squared_loss = 0.5 * tf.square(error)
+    #     linear_loss = delta * tf.abs(error) - 0.5 * delta**2
+    #     loss_values = tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
+    #     tf.print("=== Position Eval Loss Debug ===")
+    #     tf.print("y_true range:", tf.reduce_min(y_true), "to", tf.reduce_max(y_true))
+    #     tf.print("y_pred range:", tf.reduce_min(y_pred), "to", tf.reduce_max(y_pred))
+    #     tf.print("error range:", tf.reduce_min(error), "to", tf.reduce_max(error))
+    #     tf.print("loss_values range:", tf.reduce_min(loss_values), "to", tf.reduce_max(loss_values))
+    #     tf.print("loss_values mean:", tf.reduce_mean(loss_values))
+    #     tf.print("================================")
+    #     return loss_values
+
     class UnpackLayer(tf.keras.layers.Layer):
         def __init__(self, num_outputs, **kwargs):
             super(UnpackLayer, self).__init__(**kwargs)
@@ -125,7 +140,8 @@ def make_model(args, strategy):
                 return cls()
 
     with strategy.scope():
-        activation = tf.keras.activations.relu
+        ACTIVATION = tf.keras.activations.relu
+        K_INIT = tf.keras.initializers.HeNormal
 
         # Define the input layer
         input_layer = Input(shape=(13,), dtype=tf.uint64, name='input')
@@ -155,8 +171,9 @@ def make_model(args, strategy):
 
         hidden_1a_layer = Dense(
             hidden_1a_inputs,
-            activation=activation,
+            activation=ACTIVATION,
             name='hidden_1a',
+            kernel_initializer=K_INIT,
             kernel_constraint=constr,
             bias_constraint=constr
         )
@@ -166,8 +183,9 @@ def make_model(args, strategy):
         input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
         hidden_1b_layer = Dense(
             64,
-            activation=activation,
+            activation=ACTIVATION,
             name='hidden_1b',
+            kernel_initializer=K_INIT,
             kernel_constraint=constr,
             bias_constraint=constr
         )
@@ -177,10 +195,10 @@ def make_model(args, strategy):
         attention_layer = Dense(attn_fan_out, activation=None, name='dynamic_weights')
 
         # Add 2nd hidden layer
-        hidden_2_layer = Dense(16, activation=activation, name='hidden_2')
+        hidden_2_layer = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_2')
 
         # ... and 3rd
-        hidden_3_layer = Dense(16, activation=activation, name='hidden_3')
+        hidden_3_layer = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_3')
 
         if args.quantization:
             quantization_config = CustomQuantizeConfig()
@@ -218,15 +236,24 @@ def make_model(args, strategy):
 
         if args.predict_moves:
             moves = Dense(
-                32,
-                activation=activation,
+                128,
+                activation=ACTIVATION,
+                kernel_initializer=K_INIT,
                 name='moves',
-                kernel_initializer='he_normal',
             )(hidden_1a)
 
+            moves_ref = Dense(32, activation=ACTIVATION, kernel_initializer=K_INIT, name='moves_ref')(moves)
+
             # Output layers predicting values in 0-1 range
-            from_square = Dense(1, name='F', kernel_initializer='he_normal', dtype='float32')(moves)
-            to_square = Dense(1, name='T', kernel_initializer='he_normal', dtype='float32')(moves)
+            from_square = Dense(1,
+                       kernel_initializer=tf.keras.initializers.RandomNormal(0, 0.01),
+                       bias_initializer=tf.keras.initializers.Constant(0.3),
+                       name='F', dtype='float32')(moves_ref)
+
+            to_square = Dense(1,
+                     kernel_initializer=tf.keras.initializers.RandomNormal(0, 0.01),
+                     bias_initializer=tf.keras.initializers.Constant(0.7),
+                     name='T', dtype='float32')(moves_ref)
 
             outputs.extend([from_square, to_square])
 
@@ -266,24 +293,58 @@ def make_model(args, strategy):
         metrics = {}
 
         if args.predict_moves:
+            @tf.function
+            def manhattan_distance(y_true, y_pred):
+                # Convert from 0-1 range to 0-63 for chess board coordinates
+                true_idx = y_true * 63.0
+                pred_idx = y_pred * 63.0
+
+                # Convert to 2D board coordinates (file, rank)
+                true_file = true_idx % 8
+                true_rank = tf.floor(true_idx / 8)
+                pred_file = pred_idx % 8
+                pred_rank = tf.floor(pred_idx / 8)
+
+                return tf.abs(true_file - pred_file) + tf.abs(true_rank - pred_rank)
+
+            @tf.function
+            def manhattan_loss(y_true, y_pred):
+                return tf.square(manhattan_distance(y_true, y_pred))
+
+            @tf.function
+            def chess_move_loss(y_true, y_pred):
+                out_of_bounds = tf.logical_or(y_pred < 0.0, y_pred > 1.0)
+                loss = tf.where(out_of_bounds,  tf.ones_like(y_pred) * 500, manhattan_loss(y_true, y_pred))
+                return loss / 10 # scale down so clipped_loss is not overwhelmed
+
+            # @tf.function
+            # def chess_move_loss(y_true, y_pred):
+            #     out_of_bounds = tf.logical_or(y_pred < 0.0, y_pred > 1.0)
+            #     manhattan_loss_vals = manhattan_loss(y_true, y_pred)
+            #     loss_values = tf.where(out_of_bounds, tf.ones_like(y_pred) * 1000, manhattan_loss_vals)
+            #     tf.print("=== Move Loss Debug ===")
+            #     tf.print("y_true range:", tf.reduce_min(y_true), "to", tf.reduce_max(y_true))
+            #     tf.print("y_pred range:", tf.reduce_min(y_pred), "to", tf.reduce_max(y_pred))
+            #     tf.print("out_of_bounds count:", tf.reduce_sum(tf.cast(out_of_bounds, tf.int32)), "out of", tf.size(y_pred))
+            #     tf.print("manhattan_loss range:", tf.reduce_min(manhattan_loss_vals), "to", tf.reduce_max(manhattan_loss_vals))
+            #     tf.print("final loss range:", tf.reduce_min(loss_values), "to", tf.reduce_max(loss_values))
+            #     tf.print("final loss mean:", tf.reduce_mean(loss_values))
+            #     tf.print("=======================")
+            #     return loss_values
+
+            @tf.function
+            def top_k(y_true, y_pred, k=1):
+                # Consider prediction correct if within k squares (Manhattan distance)
+                dist = manhattan_distance(y_true, y_pred)
+                correct = tf.less_equal(dist, tf.cast(k, tf.float32))
+                return tf.reduce_mean(tf.cast(correct, tf.float32))
+
             loss_weights['F'] = args.move_weight / 2
             loss_weights['T'] = args.move_weight / 2
             loss_weights['out'] = 1 - args.move_weight
 
-            losses['F'] = tf.keras.losses.MeanSquaredError()
-            losses['T'] = tf.keras.losses.MeanSquaredError()
-
-            @tf.function
-            def top_k(y_true, y_pred, k=3):
-                # Scale k to the 0-1 range
-                k_scaled = k / 63.0
-
-                # Calculate absolute difference between prediction and true index
-                abs_diff = tf.abs(y_pred - y_true)
-
-                # Consider prediction correct if within k_scaled
-                correct = tf.less_equal(abs_diff, k_scaled)
-                return tf.reduce_mean(tf.cast(correct, tf.float32))
+            losses['F'] = chess_move_loss
+            losses['T'] = chess_move_loss
 
             metrics['F'] = top_k
             metrics['T'] = top_k
@@ -568,7 +629,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
 def load_model(path):
     ''' Load model ignoring missing loss function. '''
-    custom_objects = { 'top_k': None }
+    custom_objects = { 'chess_move_loss': None, 'top_k': None }
 
     while True:
         try:
@@ -722,7 +783,7 @@ if __name__ == '__main__':
 
         # Move prediction related arguments
         parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')
-        parser.add_argument('--move-weight', type=float, default=0.4, help='weight for move prediction loss')
+        parser.add_argument('--move-weight', type=float, default=0.5, help='weight for move prediction loss')
 
         parser.add_argument('--attn', choices=('16', '32'), default='32', help='attention layer size')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')

@@ -703,26 +703,46 @@ namespace nnue
 
 
     template <typename T>
-    INLINE void sort_moves(float from_pred, float to_pred, T& moves)
+    INLINE void sort_moves(float from, float to, T& moves)
     {
-        for (auto& move : moves) {
-            const auto from_square = static_cast<int>(move.from_square());
-            const auto to_square = static_cast<int>(move.to_square());
-            const auto from_distance = 63.0 - std::abs(from_square - from_pred);
-            const auto to_distance = 63.0 - std::abs(to_square - to_pred);
+        ASSERT(from >= 0 && from < 64);
+        ASSERT(to >= 0 && to < 64);
 
-            move._score = (from_distance + to_distance) / 126.0;
+        const auto from_file = std::fmod(from, 8.0f);
+        const auto from_rank = std::floor(from / 8.0f);
+        const auto to_file = std::fmod(to, 8.0f);
+        const auto to_rank = std::floor(to / 8.0f);
+
+        for (auto& move : moves)
+        {
+            const auto move_from_file = chess::square_file(move.from_square());
+            const auto move_from_rank = chess::square_rank(move.from_square());
+
+            const auto move_to_file = chess::square_file(move.to_square());
+            const auto move_to_rank = chess::square_rank(move.to_square());
+
+            // Manhattan distances (same as training loss)
+            const auto from_manhattan = std::abs(move_from_file - from_file) + std::abs(move_from_rank - from_rank);
+            const auto to_manhattan = std::abs(move_to_file - to_file) + std::abs(move_to_rank - to_rank);
+
+            move._score = (28 - (from_manhattan + to_manhattan)) / 28.0;  // 28 = 2 * 14 (max total distance)
         }
 
         // Sort highest scores first
-        std::sort(moves.begin(), moves.end(),
-                [](const Move& a, const Move& b) {
-                    return a._score > b._score;
-                });
+        std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) { return a._score > b._score; });
     }
 
-
-    template <typename A, typename ATTN, typename L2, typename L3, typename M, typename FROM, typename TO, typename OUT, typename T>
+    template <
+        typename A,
+        typename ATTN,
+        typename L2,
+        typename L3,
+        typename M,
+        typename MR,
+        typename FROM,
+        typename TO,
+        typename OUT,
+        typename T>
     INLINE int
     eval_with_moves(
         const A& accumulator,
@@ -730,6 +750,7 @@ namespace nnue
         const L2& l2,
         const L3& l3,
         const M& moves,     // move features
+        const MR& moves_ref,// moves refinement layer
         const FROM& from,   // "from" square probabilities
         const TO& to,       // "to" square probabilites
         const OUT& out,     // evaluation
@@ -737,15 +758,23 @@ namespace nnue
     {
         ALIGN float l1_out[A::OUTPUTS_A];
         ALIGN float moves_out[M::OUTPUTS];
+        ALIGN float moves_ref_out[MR::OUTPUTS];
         ALIGN float from_out[1];
         ALIGN float to_out[1];
 
         const auto eval = eval_core(accumulator, attn, l2, l3, out, l1_out);
 
         moves.dot(l1_out, moves_out, [](const Vector& v) { return max(v, v_zero); });
-        from.dot(moves_out, from_out);
-        to.dot(moves_out, to_out);
-        sort_moves(from_out[0] * 63, to_out[0] * 63, pseudo_legal_moves);
+        moves_ref.dot(moves_out, moves_ref_out, [](const Vector& v) { return max(v, v_zero); });
+
+        from.dot(moves_ref_out, from_out);
+        to.dot(moves_ref_out, to_out);
+
+        sort_moves(
+            std::clamp<float>(from_out[0], 0, 1) * 63,
+            std::clamp<float>(to_out[0], 0, 1) * 63,
+            pseudo_legal_moves
+        );
 
         return eval;
     }

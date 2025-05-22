@@ -300,7 +300,8 @@ static nnue::Layer<HIDDEN_2, HIDDEN_3> L3(hidden_3_w, hidden_3_b);
 static nnue::Layer<HIDDEN_3, 1> OUT(out_w, out_b);
 
 #if USE_ROOT_MOVES
-static nnue::Layer<HIDDEN_1A, 32> L_MOVES(moves_w, moves_b);
+static nnue::Layer<HIDDEN_1A, 128> L_MOVES(moves_w, moves_b);
+static nnue::Layer<128, 32> L_MOVES_REF(moves_ref_w, moves_ref_b);
 static nnue::Layer<32, 1> L_FROM(F_w, F_b);
 static nnue::Layer<32, 1> L_TO(T_w, T_b);
 #endif /* USE_ROOT_MOVES */
@@ -1471,8 +1472,10 @@ namespace search
         {
             auto& acc = NNUE_data[ctxt.tid()][0];
             acc.update(L1A, L1B, ctxt.state());
-            const auto eval = nnue::eval_with_moves(acc, L_DYN, L2, L3, L_MOVES, L_FROM, L_TO, OUT, moves_list);
+            const auto eval = nnue::eval_with_moves(acc, L_DYN, L2, L3, L_MOVES, L_MOVES_REF, L_FROM, L_TO, OUT, moves_list);
             ctxt._eval_raw = eval * SIGN[ctxt.turn()];
+
+            bool all_valid = true;
 
             int count = 0;
             for (auto& move : moves_list)
@@ -1480,14 +1483,24 @@ namespace search
                 ASSERT(move._group == MoveOrder::UNORDERED_MOVES);
 
                 if (count >= MAX_ROOT_MOVES)
+                {
                     move._score = 0;
+                }
                 else if (make_move<false>(ctxt, move, MoveOrder::ROOT_MOVES, move._score))
+                {
+                    // std::cout << move << ": " << move._score << std::endl;
                     ++count;
+                }
                 else
-                    move._score = 0;
+                {
+                    all_valid = move._score = 0;
+                }
             }
 
-            sort_moves(ctxt, 0, moves_list.size());
+            if (all_valid)
+                _need_sort = false; /* moves already sorted by eval_with_moves */
+            else
+                sort_moves(ctxt, 0, moves_list.size());
         }
     #endif /* USE_ROOT_MOVES */
 

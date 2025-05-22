@@ -47,13 +47,11 @@ def truncate_h5_file(input_path, output_path, verbose=False):
 
         if first_empty_index == total_records:
             print("No empty records found in the file.")
-            if input_path == output_path:
-                print("Input and output are the same, nothing to do.")
-                return
+            return False
 
         if first_empty_index == 0:
             print("All records are empty in the file!")
-            return
+            return False
 
         valid_record_count = first_empty_index
         print(f"Found {valid_record_count} valid records out of {total_records} total.")
@@ -82,6 +80,7 @@ def truncate_h5_file(input_path, output_path, verbose=False):
 
             print(f"Successfully truncated file from {total_records} to {valid_record_count} records.")
             print(f"Output saved to: {output_path}")
+    return True
 
 def main():
     parser = argparse.ArgumentParser(description='Truncate HDF5 file to remove empty records at the end')
@@ -99,9 +98,11 @@ def main():
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.h5')
         temp_file.close()
         try:
-            truncate_h5_file(args.input, temp_file.name, args.verbose)
-            os.replace(temp_file.name, args.input)
-            print(f"Original file successfully replaced with truncated version")
+            if truncate_h5_file(args.input, temp_file.name, args.verbose):
+                os.replace(temp_file.name, args.input)
+                print(f"Original file successfully replaced with truncated version")
+            else:
+                 os.unlink(temp_file.name)
         except Exception as e:
             print(f"Error during truncation: {e}")
             os.unlink(temp_file.name)

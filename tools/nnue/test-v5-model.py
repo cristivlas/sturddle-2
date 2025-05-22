@@ -52,7 +52,7 @@ def encode(board):
 
 def load_model(args):
     path = args.input[0]
-    return tf.keras.models.load_model(path, custom_objects={'clipped_loss': None, 'top_k': None})
+    return tf.keras.models.load_model(path, custom_objects={'chess_move_loss': None, 'clipped_loss': None, 'top_k': None})
 
 
 def get_top_moves(from_probs, to_probs, board, num_moves=5):
@@ -60,23 +60,39 @@ def get_top_moves(from_probs, to_probs, board, num_moves=5):
     from_pred = from_probs[0][0] * 63.0
     to_pred = to_probs[0][0] * 63.0
 
-    # Score all legal moves based on distance to predicted indices
+    # Safety clamps
+    from_pred = max(0, min(63, from_pred))
+    to_pred = max(0, min(63, to_pred))
+
+    # Convert predictions to 2D coordinates (same as training)
+    pred_from_file = from_pred % 8
+    pred_from_rank = from_pred // 8
+    pred_to_file = to_pred % 8
+    pred_to_rank = to_pred // 8
+
+    # Score all legal moves based on Manhattan distance
     moves = []
     for move in board.legal_moves:
-        from_square = move.from_square
-        to_square = move.to_square
+        # Convert move squares to 2D coordinates
+        move_from_file = move.from_square % 8
+        move_from_rank = move.from_square // 8
+        move_to_file = move.to_square % 8
+        move_to_rank = move.to_square // 8
 
-        # Calculate score based on distance
-        from_distance = 63 - abs(from_square - from_pred)
-        to_distance = 63 - abs(to_square - to_pred)
+        # Calculate Manhattan distances (same as training loss)
+        from_manhattan = abs(move_from_file - pred_from_file) + abs(move_from_rank - pred_from_rank)
+        to_manhattan = abs(move_to_file - pred_to_file) + abs(move_to_rank - pred_to_rank)
 
-        score = (from_distance + to_distance) / 126
+        # Total Manhattan distance (lower is better)
+        total_distance = from_manhattan + to_manhattan
+
+        # Convert to score (higher is better) - max possible distance is 14
+        score = (28 - total_distance) / 28  # 28 = 2 * 14 (max total distance)
+
         moves.append((move, score))
 
     # Sort moves by score (highest first)
     moves.sort(key=lambda x: x[1], reverse=True)
-
-    # Return top N moves
     return moves[:num_moves]
 
 
