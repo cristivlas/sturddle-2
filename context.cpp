@@ -1366,12 +1366,9 @@ namespace search
 
     int MoveMaker::rewind(Context& ctxt, int where, bool force_reorder)
     {
-    #if 0
-        ensure_moves(ctxt); // why?
-    #else
         if (_count < 0)
             return -1;
-    #endif
+
         ASSERT(_count > 0 || where == 0);
         ASSERT(where == 0 || where == -1); /* other cases not supported */
 

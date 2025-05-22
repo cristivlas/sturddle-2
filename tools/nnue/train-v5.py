@@ -57,26 +57,11 @@ def make_model(args, strategy):
         return (2 * tf.math.sigmoid(.5 * x) - 1) * clip_value + x * alpha
 
     @tf.function
-    def clipped_loss(y_true, y_pred, delta=args.clip):
-        error = soft_clip(y_true - y_pred, delta)
+    def clipped_loss(y_true, y_pred, delta=0.3 * args.clip):
+        error = soft_clip(y_true - y_pred, args.clip)
         squared_loss = 0.5 * tf.square(error)
         linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
         return tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
-
-    # @tf.function
-    # def clipped_loss(y_true, y_pred, delta=args.clip):
-    #     error = soft_clip(y_true - y_pred, delta)
-    #     squared_loss = 0.5 * tf.square(error)
-    #     linear_loss = delta * tf.abs(error) - 0.5 * delta**2
-    #     loss_values = tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
-    #     tf.print("=== Position Eval Loss Debug ===")
-    #     tf.print("y_true range:", tf.reduce_min(y_true), "to", tf.reduce_max(y_true))
-    #     tf.print("y_pred range:", tf.reduce_min(y_pred), "to", tf.reduce_max(y_pred))
-    #     tf.print("error range:", tf.reduce_min(error), "to", tf.reduce_max(error))
-    #     tf.print("loss_values range:", tf.reduce_min(loss_values), "to", tf.reduce_max(loss_values))
-    #     tf.print("loss_values mean:", tf.reduce_mean(loss_values))
-    #     tf.print("================================")
-    #     return loss_values
 
     class UnpackLayer(tf.keras.layers.Layer):
         def __init__(self, num_outputs, **kwargs):
@@ -190,8 +175,8 @@ def make_model(args, strategy):
             bias_constraint=constr
         )
 
-        # Add "attention layer" that computes dynamic weights based on hidden_1b (pawns & kings features).
-        attn_fan_out = int(args.attn)
+        # Compute dynamic weights based on hidden_1b (pawns & kings features).
+        attn_fan_out = int(args.dynw)
         attention_layer = Dense(attn_fan_out, activation=None, name='dynamic_weights')
 
         # Add 2nd hidden layer
@@ -245,15 +230,15 @@ def make_model(args, strategy):
             moves_ref = Dense(32, activation=ACTIVATION, kernel_initializer=K_INIT, name='moves_ref')(moves)
 
             # Output layers predicting values in 0-1 range
-            from_square = Dense(1,
-                       kernel_initializer=tf.keras.initializers.RandomNormal(0, 0.01),
-                       bias_initializer=tf.keras.initializers.Constant(0.3),
-                       name='F', dtype='float32')(moves_ref)
-
-            to_square = Dense(1,
-                     kernel_initializer=tf.keras.initializers.RandomNormal(0, 0.01),
-                     bias_initializer=tf.keras.initializers.Constant(0.7),
-                     name='T', dtype='float32')(moves_ref)
+            from_square, to_square = [
+                Dense(1,
+                    kernel_initializer=tf.keras.initializers.RandomNormal(0, 0.05),
+                    bias_initializer=tf.keras.initializers.Constant(0.5),
+                    # kernel_constraint=tf.keras.constraints.MinMaxNorm(min_value=-2.0, max_value=2.0),
+                    # bias_constraint=tf.keras.constraints.MinMaxNorm(min_value=0.0, max_value=1.0),
+                    name=name,
+                    dtype='float32')(moves_ref) for name in ['F', 'T']
+            ]
 
             outputs.extend([from_square, to_square])
 
@@ -265,11 +250,13 @@ def make_model(args, strategy):
                 amsgrad=args.optimizer=='amsgrad',
                 beta_1=0.99,
                 beta_2=0.995,
+                clipnorm=1.0,
                 learning_rate=args.learn_rate,
                 use_ema=args.ema,
                 weight_decay=args.decay if args.decay else None)
         elif args.optimizer == 'sgd':
             optimizer=tf.keras.optimizers.SGD(
+                clipnorm=1.0,
                 learning_rate=args.learn_rate,
                 momentum=args.momentum,
                 nesterov=args.nesterov,
@@ -308,29 +295,9 @@ def make_model(args, strategy):
                 return tf.abs(true_file - pred_file) + tf.abs(true_rank - pred_rank)
 
             @tf.function
-            def manhattan_loss(y_true, y_pred):
-                return tf.square(manhattan_distance(y_true, y_pred))
-
-            @tf.function
-            def chess_move_loss(y_true, y_pred):
-                out_of_bounds = tf.logical_or(y_pred < 0.0, y_pred > 1.0)
-                loss = tf.where(out_of_bounds,  tf.ones_like(y_pred) * 500, manhattan_loss(y_true, y_pred))
-                return loss / 10 # scale down so clipped_loss is not overwhelmed
-
-            # @tf.function
-            # def chess_move_loss(y_true, y_pred):
-            #     out_of_bounds = tf.logical_or(y_pred < 0.0, y_pred > 1.0)
-            #     manhattan_loss_vals = manhattan_loss(y_true, y_pred)
-            #     loss_values = tf.where(out_of_bounds, tf.ones_like(y_pred) * 1000, manhattan_loss_vals)
-            #     tf.print("=== Move Loss Debug ===")
-            #     tf.print("y_true range:", tf.reduce_min(y_true), "to", tf.reduce_max(y_true))
-            #     tf.print("y_pred range:", tf.reduce_min(y_pred), "to", tf.reduce_max(y_pred))
-            #     tf.print("out_of_bounds count:", tf.reduce_sum(tf.cast(out_of_bounds, tf.int32)), "out of", tf.size(y_pred))
-            #     tf.print("manhattan_loss range:", tf.reduce_min(manhattan_loss_vals), "to", tf.reduce_max(manhattan_loss_vals))
-            #     tf.print("final loss range:", tf.reduce_min(loss_values), "to", tf.reduce_max(loss_values))
-            #     tf.print("final loss mean:", tf.reduce_mean(loss_values))
-            #     tf.print("=======================")
-            #     return loss_values
+            def chess_move_loss(y_true, y_pred, scaling_factor=100):
+                error = soft_clip(manhattan_distance(y_true, y_pred), 14)
+                return tf.square(error) / scaling_factor
 
             @tf.function
             def top_k(y_true, y_pred, k=1):
@@ -768,13 +735,13 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
-        parser.add_argument('-c', '--clip', type=float, default=3.0, help='Huber delta (used to be hard clip)')
+        parser.add_argument('-c', '--clip', type=float, default=15.0, help='soft clip')
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
         parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
-        parser.add_argument('-F', '--filter', type=int, default=3000, help='hard clip (filter out) scores with higher abs value')
+        parser.add_argument('-F', '--filter', type=int, default=20000, help='filter out position with higher abs scores')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-3, help='learning rate')
@@ -785,7 +752,7 @@ if __name__ == '__main__':
         parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')
         parser.add_argument('--move-weight', type=float, default=0.5, help='weight for move prediction loss')
 
-        parser.add_argument('--attn', choices=('16', '32'), default='32', help='attention layer size')
+        parser.add_argument('--dynw', choices=('16', '32'), default='32', help='dynamic weights layer size')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
 
