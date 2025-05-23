@@ -40,7 +40,14 @@ def encode(board):
 
 def load_model(args):
     path = args.input[0]
-    return tf.keras.models.load_model(path, custom_objects={'_clipped_mae': None, 'clipped_loss': None})
+    return tf.keras.models.load_model(path, custom_objects = {
+            'clipped_loss': None,
+            'chess_move_loss': None,
+            'scaled_sparse_categorical_crossentropy': None,
+            'top': None,
+            'top_3': None,
+            'top_5': None,
+        })
 
 
 def run_tests(args, model):
@@ -54,8 +61,8 @@ def run_tests(args, model):
         res = eval[0][0][0] if len(eval) > 1 else eval[0][0]
         evals.append(res * 100)
     print(evals)
-    
-    
+
+
 def main(args):
     model = load_model(args)
     model.summary()

@@ -901,3 +901,4 @@ if __name__ == '__main__':
 
     except KeyboardInterrupt:
         print()
+        os._exit(0)

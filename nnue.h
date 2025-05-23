@@ -53,6 +53,7 @@ namespace nnue
     using namespace chess;
     using input_t = int16_t;
 
+    constexpr auto POOL_STRIDE = Vec4f::size();
     constexpr int QSCALE = 1024;
 
     /* bit index of the side-to-move feature within one-hot encoding */
@@ -386,7 +387,7 @@ namespace nnue
         constexpr size_t stride = INPUTS / OUTPUTS;
 
         static_assert(INPUTS % OUTPUTS == 0);
-        static_assert(stride == 4);
+        static_assert(stride == POOL_STRIDE);
 
         Vec4f v;
 
