@@ -57,7 +57,7 @@ def make_model(args, strategy):
         return (2 * tf.math.sigmoid(.5 * x) - 1) * clip_value + x * alpha
 
     @tf.function
-    def clipped_loss(y_true, y_pred, delta=0.3 * args.clip):
+    def clipped_loss(y_true, y_pred, delta=3.0):
         error = soft_clip(y_true - y_pred, args.clip)
         squared_loss = 0.5 * tf.square(error)
         linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
@@ -220,27 +220,21 @@ def make_model(args, strategy):
         outputs = [eval_output]
 
         if args.predict_moves:
-            moves = Dense(
-                128,
-                activation=ACTIVATION,
-                kernel_initializer=K_INIT,
-                name='moves',
-            )(hidden_1a)
+            moves_branch = Dense(256, activation=ACTIVATION, kernel_initializer=K_INIT, name='moves_1')(hidden_1a)
+            moves_branch = Dense(128, activation=ACTIVATION, kernel_initializer=K_INIT, name='moves_2')(moves_branch)
 
-            moves_ref = Dense(32, activation=ACTIVATION, kernel_initializer=K_INIT, name='moves_ref')(moves)
+            # Output layer: 4096 logits for all possible moves (64x64)
+            move_logits = Dense(
+                4096,
+                activation=None,  # Raw logits, no softmax
+                # Use smaller initialization to prevent gradient explosion
+                kernel_initializer=tf.keras.initializers.RandomNormal(0, 0.01),
+                bias_initializer=tf.keras.initializers.Zeros(),
+                name='M',
+                dtype='float32'
+            )(moves_branch)
 
-            # Output layers predicting values in 0-1 range
-            from_square, to_square = [
-                Dense(1,
-                    kernel_initializer=tf.keras.initializers.RandomNormal(0, 0.05),
-                    bias_initializer=tf.keras.initializers.Constant(0.5),
-                    # kernel_constraint=tf.keras.constraints.MinMaxNorm(min_value=-2.0, max_value=2.0),
-                    # bias_constraint=tf.keras.constraints.MinMaxNorm(min_value=0.0, max_value=1.0),
-                    name=name,
-                    dtype='float32')(moves_ref) for name in ['F', 'T']
-            ]
-
-            outputs.extend([from_square, to_square])
+            outputs.append(move_logits)
 
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=outputs, name=args.name)
@@ -250,13 +244,13 @@ def make_model(args, strategy):
                 amsgrad=args.optimizer=='amsgrad',
                 beta_1=0.99,
                 beta_2=0.995,
-                clipnorm=1.0,
+                clipnorm=args.clip_norm,  # Gradient clipping
                 learning_rate=args.learn_rate,
                 use_ema=args.ema,
                 weight_decay=args.decay if args.decay else None)
         elif args.optimizer == 'sgd':
             optimizer=tf.keras.optimizers.SGD(
-                clipnorm=1.0,
+                clipnorm=args.clip_norm,  # Gradient clipping
                 learning_rate=args.learn_rate,
                 momentum=args.momentum,
                 nesterov=args.nesterov,
@@ -264,6 +258,9 @@ def make_model(args, strategy):
                 weight_decay=args.decay if args.decay else None)
         else:
             assert False
+
+        # if args.mixed_precision:
+        #     optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer)
 
         if args.quantization:
             with SafeModeScope(safe_mode=False), tfmot.quantization.keras.quantize_scope({
@@ -281,40 +278,49 @@ def make_model(args, strategy):
 
         if args.predict_moves:
             @tf.function
-            def manhattan_distance(y_true, y_pred):
-                # Convert from 0-1 range to 0-63 for chess board coordinates
-                true_idx = y_true * 63.0
-                pred_idx = y_pred * 63.0
+            def scaled_sparse_categorical_crossentropy(y_true, y_pred):
+                """
+                Scaled cross-entropy loss to prevent gradient explosion.
+                Uses label smoothing and temperature scaling.
+                """
+                # y_true: move_indices
 
-                # Convert to 2D board coordinates (file, rank)
-                true_file = true_idx % 8
-                true_rank = tf.floor(true_idx / 8)
-                pred_file = pred_idx % 8
-                pred_rank = tf.floor(pred_idx / 8)
+                # Apply temperature scaling to logits to reduce magnitude
+                temperature = tf.constant(args.move_temperature, dtype=tf.float32)
+                scaled_logits = y_pred / temperature
 
-                return tf.abs(true_file - pred_file) + tf.abs(true_rank - pred_rank)
+                # Clip to logits to prevent extreme values
+                max_logit = tf.constant(args.move_logit_clip, dtype=tf.float32)
+                clipped_logits = soft_clip(scaled_logits, -max_logit, max_logit)
+
+                # Compute cross-entropy with label smoothing
+                loss = tf.keras.losses.sparse_categorical_crossentropy(y_true, clipped_logits, from_logits=True)
+
+                # Scale down the loss to balance with position evaluation
+                return loss * args.move_loss_scale
 
             @tf.function
-            def chess_move_loss(y_true, y_pred, scaling_factor=100):
-                error = soft_clip(manhattan_distance(y_true, y_pred), 14)
-                return tf.square(error) / scaling_factor
+            def top(y_true, y_pred, k=1):
+                """Top-k accuracy for move prediction."""
+                move_indices = tf.cast(y_true, tf.int32)
+                return tf.keras.metrics.sparse_top_k_categorical_accuracy(
+                    move_indices, y_pred, k=k
+                )
 
             @tf.function
-            def top_k(y_true, y_pred, k=1):
-                # Consider prediction correct if within k squares (Manhattan distance)
-                dist = manhattan_distance(y_true, y_pred)
-                correct = tf.less_equal(dist, tf.cast(k, tf.float32))
-                return tf.reduce_mean(tf.cast(correct, tf.float32))
+            def top_3(y_true, y_pred):
+                return top(y_true, y_pred, k=3)
 
-            loss_weights['F'] = args.move_weight / 2
-            loss_weights['T'] = args.move_weight / 2
+            @tf.function
+            def top_5(y_true, y_pred):
+                return top(y_true, y_pred, k=5)
+
+            # Set up move prediction loss and metrics
+            loss_weights['M'] = args.move_weight
             loss_weights['out'] = 1 - args.move_weight
 
-            losses['F'] = chess_move_loss
-            losses['T'] = chess_move_loss
-
-            metrics['F'] = top_k
-            metrics['T'] = top_k
+            losses['M'] = scaled_sparse_categorical_crossentropy
+            metrics['M'] = [top, top_3, top_5]
 
         model.compile(
             loss=losses,
@@ -463,20 +469,18 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
             # Prepare outputs based on whether move prediction is enabled
             if args.predict_moves and self.data.shape[1] > self.feature_count + 1:
-                # Get move coordinates (from_square, to_square) as indices (NOT one-hot)
+                # Get move coordinates (from_square, to_square) as indices
                 from_square = self.data[start:end, self.feature_count+1]
                 to_square = self.data[start:end, self.feature_count+2]
 
-                # Scale values from 0-63 to 0-1 range
-                from_square = tf.cast(from_square, tf.float32) / 63.0
-                to_square = tf.cast(to_square, tf.float32) / 63.0
+                # Convert from/to squares to move index (from_square * 64 + to_square)
+                move_indices = from_square * 64 + to_square
 
                 # Reshape to match expected output shape
-                from_square = tf.reshape(from_square, (-1, 1))
-                to_square = tf.reshape(to_square, (-1, 1))
+                move_indices = tf.reshape(move_indices, (-1, 1))
 
                 # Return as tuple
-                return x, (y_eval, from_square, to_square)
+                return x, (y_eval, move_indices)
             else:
                 return x, y_eval
 
@@ -512,6 +516,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                     hyperparam = {
                         'batch size': args.batch_size,
                         'clip': args.clip,
+                        'clip_norm': args.clip_norm,
                         'dataset size': f'{generator.rows():,}',
                         'filter': args.filter,
                         'learn rate': f'{self.model.optimizer.lr.read_value():.2e}',
@@ -521,7 +526,12 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
                     # Add move prediction parameters if enabled
                     if args.predict_moves:
-                        hyperparam['move_weight'] = args.move_weight
+                        hyperparam.update({
+                            'move_weight': args.move_weight,
+                            'move_temperature': args.move_temperature,
+                            'move_logit_clip': args.move_logit_clip,
+                            'move_loss_scale': args.move_loss_scale,
+                        })
 
                     # Log main loss if available
                     loss = logs.get('loss', math.nan) if logs else math.nan
@@ -539,11 +549,11 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         if args.predict_moves:
             output_types = (
                 np.uint64,
-                (np.float32, np.float32, np.float32)
+                (np.float32, np.float32)
             )
             output_shapes = (
                 (None, packed_feature_count),
-                ((None, 1), (None, 1), (None, 1))
+                ((None, 1), (None, 1))
             )
         else:
             output_types = (np.uint64, np.float32)
@@ -596,7 +606,14 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
 def load_model(path):
     ''' Load model ignoring missing loss function. '''
-    custom_objects = { 'chess_move_loss': None, 'top_k': None }
+    custom_objects = {
+        'clipped_loss': None,
+        'chess_move_loss': None,
+        'scaled_sparse_categorical_crossentropy': None,
+        'top': None,
+        'top_3': None,
+        'top_5': None,
+    }
 
     while True:
         try:
@@ -735,13 +752,13 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
-        parser.add_argument('-c', '--clip', type=float, default=15.0, help='soft clip')
+        parser.add_argument('-c', '--clip', type=float, default=15.0, help='position eval gradient soft clip')
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
         parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
-        parser.add_argument('-F', '--filter', type=int, default=20000, help='filter out position with higher abs scores')
+        parser.add_argument('-F', '--filter', type=int, default=15000, help='filter out positions with absolute score higher than this')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-3, help='learning rate')
@@ -750,7 +767,13 @@ if __name__ == '__main__':
 
         # Move prediction related arguments
         parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')
-        parser.add_argument('--move-weight', type=float, default=0.5, help='weight for move prediction loss')
+        parser.add_argument('--move-weight', type=float, default=0.5, help='blending weight for move prediction loss')
+
+        # Arguments for move prediction stability
+        parser.add_argument('--move-temperature', type=float, default=2.0, help='temperature scaling for move logits')
+        parser.add_argument('--move-logit-clip', type=float, default=10.0, help='clip move logits to prevent extreme values')
+        parser.add_argument('--move-loss-scale', type=float, default=0.1, help='scale factor for move prediction loss')
+        parser.add_argument('--clip-norm', type=float, default=1.0, help='gradient clipping norm')
 
         parser.add_argument('--dynw', choices=('16', '32'), default='32', help='dynamic weights layer size')
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
@@ -784,8 +807,17 @@ if __name__ == '__main__':
         args = parser.parse_args()
 
         # Validate move_weight
-        if args.predict_moves and args.move_weight <= 0 or args.move_weight >= 1:
+        if args.predict_moves and (args.move_weight <= 0 or args.move_weight >= 1):
             parser.error("--move-weight must be between 0 and 1 (exclusive)")
+
+        # Validate new move prediction parameters
+        if args.predict_moves:
+            if args.move_temperature <= 0:
+                parser.error("--move-temperature must be positive")
+            if args.move_logit_clip <= 0:
+                parser.error("--move-logit-clip must be positive")
+            if args.move_loss_scale <= 0:
+                parser.error("--move-loss-scale must be positive")
 
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout

@@ -300,10 +300,9 @@ static nnue::Layer<HIDDEN_2, HIDDEN_3> L3(hidden_3_w, hidden_3_b);
 static nnue::Layer<HIDDEN_3, 1> OUT(out_w, out_b);
 
 #if USE_ROOT_MOVES
-static nnue::Layer<HIDDEN_1A, 128> L_MOVES(moves_w, moves_b);
-static nnue::Layer<128, 32> L_MOVES_REF(moves_ref_w, moves_ref_b);
-static nnue::Layer<32, 1> L_FROM(F_w, F_b);
-static nnue::Layer<32, 1> L_TO(T_w, T_b);
+static nnue::Layer<HIDDEN_1A, 256> L_M1(moves_1_w, moves_1_b);
+static nnue::Layer<256, 128> L_M2(moves_2_w, moves_2_b);
+static nnue::Layer<128, 4096> L_M(M_w, M_b);
 #endif /* USE_ROOT_MOVES */
 
 
@@ -1469,7 +1468,7 @@ namespace search
         {
             auto& acc = NNUE_data[ctxt.tid()][0];
             acc.update(L1A, L1B, ctxt.state());
-            const auto eval = nnue::eval_with_moves(acc, L_DYN, L2, L3, L_MOVES, L_MOVES_REF, L_FROM, L_TO, OUT, moves_list);
+            const auto eval = nnue::eval_with_moves(acc, L_DYN, L2, L3, L_M1, L_M2, L_M, OUT, moves_list);
             ctxt._eval_raw = eval * SIGN[ctxt.turn()];
 
             bool all_valid = true;

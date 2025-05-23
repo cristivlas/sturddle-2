@@ -259,14 +259,14 @@ namespace nnue
         }
 
         /* input */
-        template <size_t S, typename F>
+        template <size_t S, typename NO_ACTIVATION>
         static INLINE void dot(
             const input_t (&input)[S],
             int16_t (&output)[OUTPUTS],
             const int16_t(&b)[OUTPUTS],
             const int16_t(&w)[INPUTS][OUTPUTS],
             const int16_t(&wt)[OUTPUTS][INPUTS],
-            F /* activation applied separately */
+            NO_ACTIVATION /* activation applied separately */
         )
         {
             static_assert(S >= INPUTS);
@@ -309,7 +309,7 @@ namespace nnue
 
                 auto sums = horizontal_add(sum);
 
-            #if 0 /* not needed when padding up the inputs */
+            #if 0 /* not needed, inputs are padded up */
                 for (int i = R; i != INPUTS; ++i)
                 {
                     vw.load_a(&w[i][j]);
@@ -323,14 +323,14 @@ namespace nnue
         }
 
         /* hidden, output */
-        template <typename F>
+        template <typename ACTIVATION>
         static INLINE void dot(
             const float (&input)[INPUTS],
             float (&output)[OUTPUTS],
             const float(&b)[OUTPUTS],
             const float(&)[INPUTS][OUTPUTS],
             const float(&wt)[OUTPUTS][INPUTS],
-            F activate
+            ACTIVATION activate
         )
         {
             constexpr int N = Vector::size();
@@ -372,8 +372,8 @@ namespace nnue
             dot(input, output, _b, _w, _wt, [](const Vector& v) { return v; });
         }
 
-        template <size_t N, typename U, typename V, typename F>
-        INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], F activate) const
+        template <size_t N, typename U, typename V, typename ACTIVATION>
+        INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], ACTIVATION activate) const
         {
             dot(input, output, _b, _w, _wt, activate);
         }
@@ -674,6 +674,7 @@ namespace nnue
          * The dynamic weights computed by the "attention" layer
          * are used to modulate the output of another hidden layer
          * through element-wise multiplication.
+         * TODO: replace "attention" with "modulation" -- clearer terminology?
          */
         attn.dot(attn_in, attn_out);
 
@@ -703,29 +704,14 @@ namespace nnue
 
 
     template <typename T>
-    INLINE void sort_moves(float from, float to, T& moves)
+    INLINE void sort_moves(T& moves, const float(& logits)[4096])
     {
-        ASSERT(from >= 0 && from < 64);
-        ASSERT(to >= 0 && to < 64);
-
-        const auto from_file = std::fmod(from, 8.0f);
-        const auto from_rank = std::floor(from / 8.0f);
-        const auto to_file = std::fmod(to, 8.0f);
-        const auto to_rank = std::floor(to / 8.0f);
-
         for (auto& move : moves)
         {
-            const auto move_from_file = chess::square_file(move.from_square());
-            const auto move_from_rank = chess::square_rank(move.from_square());
-
-            const auto move_to_file = chess::square_file(move.to_square());
-            const auto move_to_rank = chess::square_rank(move.to_square());
-
-            // Manhattan distances (same as training loss)
-            const auto from_manhattan = std::abs(move_from_file - from_file) + std::abs(move_from_rank - from_rank);
-            const auto to_manhattan = std::abs(move_to_file - to_file) + std::abs(move_to_rank - to_rank);
-
-            move._score = (28 - (from_manhattan + to_manhattan)) / 28.0;  // 28 = 2 * 14 (max total distance)
+            const auto index = move.from_square() * 64 + move.to_square();
+            ASSERT(index >= 0);
+            ASSERT(index < 4096);
+            move._score = logits[index];
         }
 
         // Sort highest scores first
@@ -737,11 +723,10 @@ namespace nnue
         typename ATTN,
         typename L2,
         typename L3,
-        typename M,
-        typename MR,
-        typename FROM,
-        typename TO,
-        typename OUT,
+        typename L_M1,  // 1st move prediction layer type
+        typename L_M2,  // 2nd
+        typename L_M,   // move prediction layer type
+        typename OUT,   // position eval output layer type
         typename T>
     INLINE int
     eval_with_moves(
@@ -749,32 +734,24 @@ namespace nnue
         const ATTN& attn,
         const L2& l2,
         const L3& l3,
-        const M& moves,     // move features
-        const MR& moves_ref,// moves refinement layer
-        const FROM& from,   // "from" square probabilities
-        const TO& to,       // "to" square probabilites
-        const OUT& out,     // evaluation
+        const L_M1& m1,
+        const L_M2& m2,
+        const L_M& moves,  // layer for computing moves logits
+        const OUT& out,    // position eval output layer
         T& pseudo_legal_moves)
     {
         ALIGN float l1_out[A::OUTPUTS_A];
-        ALIGN float moves_out[M::OUTPUTS];
-        ALIGN float moves_ref_out[MR::OUTPUTS];
-        ALIGN float from_out[1];
-        ALIGN float to_out[1];
+        ALIGN float m1_out[L_M1::OUTPUTS];
+        ALIGN float m2_out[L_M2::OUTPUTS];
+        ALIGN float logits[L_M::OUTPUTS];
 
         const auto eval = eval_core(accumulator, attn, l2, l3, out, l1_out);
 
-        moves.dot(l1_out, moves_out, [](const Vector& v) { return max(v, v_zero); });
-        moves_ref.dot(moves_out, moves_ref_out, [](const Vector& v) { return max(v, v_zero); });
+        m1.dot(l1_out, m1_out, [](const Vector& v) { return max(v, v_zero); });
+        m2.dot(m1_out, m2_out, [](const Vector& v) { return max(v, v_zero); });
+        moves.dot(m2_out, logits);
 
-        from.dot(moves_ref_out, from_out);
-        to.dot(moves_ref_out, to_out);
-
-        sort_moves(
-            std::clamp<float>(from_out[0], 0, 1) * 63,
-            std::clamp<float>(to_out[0], 0, 1) * 63,
-            pseudo_legal_moves
-        );
+        sort_moves(pseudo_legal_moves, logits);
 
         return eval;
     }

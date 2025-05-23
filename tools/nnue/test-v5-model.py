@@ -52,46 +52,39 @@ def encode(board):
 
 def load_model(args):
     path = args.input[0]
-    return tf.keras.models.load_model(path, custom_objects={'chess_move_loss': None, 'clipped_loss': None, 'top_k': None})
+    return tf.keras.models.load_model(
+        path,
+        custom_objects = {
+            'clipped_loss': None,
+            'chess_move_loss': None,
+            'scaled_sparse_categorical_crossentropy': None,
+            'top': None,
+            'top_3': None,
+            'top_5': None,
+        }
+    )
 
 
-def get_top_moves(from_probs, to_probs, board, num_moves=5):
-    # Unscale the predictions back to board coordinates
-    from_pred = from_probs[0][0] * 63.0
-    to_pred = to_probs[0][0] * 63.0
-
-    # Safety clamps
-    from_pred = max(0, min(63, from_pred))
-    to_pred = max(0, min(63, to_pred))
-
-    # Convert predictions to 2D coordinates (same as training)
-    pred_from_file = from_pred % 8
-    pred_from_rank = from_pred // 8
-    pred_to_file = to_pred % 8
-    pred_to_rank = to_pred // 8
-
-    # Score all legal moves based on Manhattan distance
+def get_top_moves(move_logits, board, num_moves=5):
+    """
+    Get top moves from 4096 move logits output by scoring all legal moves.
+    move_logits shape: (1, 4096) representing all 64x64 from-to combinations
+    """
+    # Get the logits
+    logits = move_logits[0]  # Shape: (4096,)
+    assert len(logits) == 4096
+    # Score all legal moves based on their logit values
     moves = []
     for move in board.legal_moves:
-        # Convert move squares to 2D coordinates
-        move_from_file = move.from_square % 8
-        move_from_rank = move.from_square // 8
-        move_to_file = move.to_square % 8
-        move_to_rank = move.to_square // 8
+        # Convert move to index in the 4096 logit array
+        move_index = move.from_square * 64 + move.to_square
 
-        # Calculate Manhattan distances (same as training loss)
-        from_manhattan = abs(move_from_file - pred_from_file) + abs(move_from_rank - pred_from_rank)
-        to_manhattan = abs(move_to_file - pred_to_file) + abs(move_to_rank - pred_to_rank)
-
-        # Total Manhattan distance (lower is better)
-        total_distance = from_manhattan + to_manhattan
-
-        # Convert to score (higher is better) - max possible distance is 14
-        score = (28 - total_distance) / 28  # 28 = 2 * 14 (max total distance)
+        # Get the logit score for this move
+        score = float(logits[move_index])
 
         moves.append((move, score))
 
-    # Sort moves by score (highest first)
+    # Sort moves by score (highest logits first)
     moves.sort(key=lambda x: x[1], reverse=True)
     return moves[:num_moves]
 
@@ -100,6 +93,7 @@ def run_tests(args, model):
     eval_errors = []
     move_accuracy = 0
     top_3_accuracy = 0
+    top_5_accuracy = 0
 
     for i, (fen, expected_move, expected_eval) in enumerate(zip(tests, expected_moves, expected_evals)):
         board = chess.Board(fen=fen)
@@ -111,7 +105,7 @@ def run_tests(args, model):
 
         # Check if model outputs move predictions
         if isinstance(predictions, list):
-            eval_score, from_probs, to_probs = predictions
+            eval_score, move_logits = predictions
             has_move_prediction = True
         else:
             eval_score = predictions
@@ -134,7 +128,7 @@ def run_tests(args, model):
 
         # If model has move prediction capability, show top moves
         if has_move_prediction:
-            top_moves = get_top_moves(from_probs, to_probs, board)
+            top_moves = get_top_moves(move_logits, board)
 
             print("Top predicted moves:")
             for j, (move, prob) in enumerate(top_moves, 1):
@@ -147,6 +141,8 @@ def run_tests(args, model):
                     move_accuracy += 1
                 if j <= 3 and is_expected:
                     top_3_accuracy += 1
+                if j <= 5 and is_expected:
+                    top_5_accuracy += 1
 
     # Print summary
     print("\n--- Summary ---")
@@ -156,7 +152,7 @@ def run_tests(args, model):
     if has_move_prediction:
         print(f"Top-1 move accuracy: {move_accuracy}/{len(tests)} ({move_accuracy/len(tests)*100:.2f}%)")
         print(f"Top-3 move accuracy: {top_3_accuracy}/{len(tests)} ({top_3_accuracy/len(tests)*100:.2f}%)")
-
+        print(f"Top-5 move accuracy: {top_5_accuracy}/{len(tests)} ({top_5_accuracy/len(tests)*100:.2f}%)")
 
 def main(args):
     model = load_model(args)
