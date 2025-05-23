@@ -690,7 +690,7 @@ namespace nnue
             (v1 * v2).store_a(&l2_in[i]);
         }
     #else
-        for (int i = 0; i < A::OUTPUTS_A; ++i)
+        for (int i = 0; i < L2::INPUTS; ++i)
         {
             l2_in[i] *= attn_out[i % ATTN::OUTPUTS];
         }
