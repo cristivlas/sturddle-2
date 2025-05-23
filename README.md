@@ -42,9 +42,7 @@ of Stockfish, then use `tools/sqlite/plaintodb.py`, or
 6) Generate `weights.h` by exporting model trained in step 5:
 <code>tools/nnue/train.py export -m <path-to-model> -o weights.h</code>
 7) Build engine (using `tools/build.py`, or by running <code>python3 setup.py build\_ext --inplace</code>).
-Alternatively models can be saved as JSON with tools/nnue/modeltojson.py. The model can then be
-loaded into the engine at runtime by using the UCI command:
-<code>setoption name NNUEModel value YOUR-JSON-FILE-HERE</code>.
+
 
 Note that the name NNUE used here only means that the neural net is updated efficiently (i.e. in an
 incremental fashion). The model is original and consists of a relatively small number of parameters (596113).
