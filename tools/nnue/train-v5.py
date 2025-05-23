@@ -199,7 +199,7 @@ def make_model(args, strategy):
 
         def custom_pooling(x):
             reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // pool_size, pool_size))
-            # Take the max over the last dimension
+            # Take the mean over the last dimension
             return tf.reduce_mean(reshaped, axis=-1)
 
         pooled = Lambda(custom_pooling, name='pool')(hidden_1a)
@@ -752,7 +752,7 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
-        parser.add_argument('-c', '--clip', type=float, default=15.0, help='position eval gradient soft clip')
+        parser.add_argument('-c', '--clip', type=float, default=3.0, help='position eval gradient soft clip')
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
         parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
@@ -901,4 +901,3 @@ if __name__ == '__main__':
 
     except KeyboardInterrupt:
         print()
-        os._exit(0)
