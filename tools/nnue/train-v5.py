@@ -220,7 +220,8 @@ def make_model(args, strategy):
         outputs = [eval_output]
 
         if args.predict_moves:
-            moves_branch = Dense(256, activation=ACTIVATION, kernel_initializer=K_INIT, name='moves_1')(hidden_1a)
+            hidden_1a_stop_grad = tf.stop_gradient(hidden_1a)
+            moves_branch = Dense(256, activation=ACTIVATION, kernel_initializer=K_INIT, name='moves_1')(hidden_1a_stop_grad)
             moves_branch = Dense(128, activation=ACTIVATION, kernel_initializer=K_INIT, name='moves_2')(moves_branch)
 
             # Output layer: 4096 logits for all possible moves (64x64)
@@ -274,7 +275,7 @@ def make_model(args, strategy):
         # Create loss dictionary
         losses = {'out': clipped_loss}
         loss_weights = {'out': 1.0}
-        metrics = {}
+        metrics = {'out': ['mae']}
 
         if args.predict_moves:
             @tf.function
@@ -605,7 +606,6 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
 
 def load_model(path):
-    ''' Load model ignoring missing loss function. '''
     custom_objects = {
         'clipped_loss': None,
         'chess_move_loss': None,
@@ -615,16 +615,7 @@ def load_model(path):
         'top_5': None,
     }
 
-    while True:
-        try:
-            return tf.keras.models.load_model(path, custom_objects=custom_objects)
-        except ValueError as e:
-            match = re.search(r'Unknown loss function: \'(\w+)\'.*', str(e))
-            if match:
-                missing_object = match.group(1)
-                custom_objects[missing_object.strip()] = None
-                continue
-            raise
+    return tf.keras.models.load_model(path, custom_objects=custom_objects)
 
 
 def set_weights(from_model, to_model):
@@ -660,6 +651,10 @@ def main(args):
     else:
         strategy = tf.distribute.OneDeviceStrategy(device='/cpu:0')
 
+    alt_model = None
+    if args.alt_model and os.path.exists(args.alt_model):
+        alt_model = load_model(args.alt_model)
+
     if args.model and os.path.exists(args.model):
         saved_model = load_model(args.model)
         if not args.name:
@@ -669,6 +664,10 @@ def main(args):
         print(f'Loaded model {os.path.abspath(args.model)}.')
     else:
         model = make_model(args, strategy)
+
+    if alt_model:
+        set_weights(alt_model, model)
+        print(f'Applied alternate weights from {os.path.abspath(args.alt_model)}.')
 
     if args.plot_file:  # Display the model architecture
         tf.keras.utils.plot_model(
@@ -767,7 +766,7 @@ if __name__ == '__main__':
 
         # Move prediction related arguments
         parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')
-        parser.add_argument('--move-weight', type=float, default=0.5, help='blending weight for move prediction loss')
+        parser.add_argument('--move-weight', type=float, default=0.3, help='blending weight for move prediction loss')
 
         # Arguments for move prediction stability
         parser.add_argument('--move-temperature', type=float, default=2.0, help='temperature scaling for move logits')
@@ -775,7 +774,9 @@ if __name__ == '__main__':
         parser.add_argument('--move-loss-scale', type=float, default=0.1, help='scale factor for move prediction loss')
         parser.add_argument('--clip-norm', type=float, default=1.0, help='gradient clipping norm')
 
+        parser.add_argument('--alt-model', help='Path to another model to load weights from')
         parser.add_argument('--dynw', choices=('16', '32'), default='32', help='dynamic weights layer size')
+
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
 
