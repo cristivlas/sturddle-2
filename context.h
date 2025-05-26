@@ -751,7 +751,8 @@ namespace search
     template<std::size_t... I>
     static constexpr std::array<int, sizeof ... (I)> margins(std::index_sequence<I...>)
     {
-        return { static_cast<int>(75 * I + pow(I, 1.99)) ... };
+        // return { static_cast<int>(75 * I + pow(I, 1.99)) ... };
+        return { static_cast<int>(std::min(75.0 * I + pow(I, 1.99), 1289.0 + 175.0 * log(I))) ... };
     }
 
 
@@ -1221,29 +1222,29 @@ namespace search
 
     INLINE void Context::set_time_ctrl(const TimeControl& ctrl)
     {
-        constexpr int AVERAGE_MOVES_PER_GAME = 80;
-
         const auto side_to_move = turn();
         const auto millisec = ctrl.millisec[side_to_move];
 
-        int moves;
+        int moves = ctrl.moves;
 
         if (ctrl.score > CHECKMATE - 10)
         {
-            moves = 10;
+            moves = std::min(moves, 20);
         }
         else if (ctrl.delta < TIME_CTRL_EVAL_THRESHOLD_LOW)
         {
-            /* score worsened? take more time */
-            moves = std::min(10, ctrl.moves + 1);
+            /* Score worsened? Take more time */
+            moves = std::min(10, moves + 1);
         }
         else
         {
-            /* estimate how many moves are left in the game */
-            int moves_left = AVERAGE_MOVES_PER_GAME - int(_history->size());
+            /* Estimate how many moves are left in the game */
+            constexpr int AVERAGE_MOVES_PER_GAME = 80;
 
-            moves = std::max(ctrl.moves, std::max(2, moves_left));
+            const int estimate_moves_left = AVERAGE_MOVES_PER_GAME - int(_history->size());
+            moves = std::max(moves, std::max(2, estimate_moves_left));
         }
+
         int time_limit = millisec / moves;
 
         /* Apply per-move time bonus, if any */
@@ -1252,18 +1253,20 @@ namespace search
             time_limit += bonus;
         }
 
-        /*
-         * If there's a time deficit, and search improved: lower the time limit.
-         */
-        const auto t_diff = (millisec - ctrl.millisec[!side_to_move] - 1) / moves;
+        /* If there's a time deficit, and search improved: lower the time limit. */
+        const int t_diff = (millisec - ctrl.millisec[!side_to_move] - 1) / moves;
 
-        if (t_diff < 0 && time_limit + t_diff > 0
-            && (ctrl.score >= 0 || ctrl.delta > TIME_CTRL_EVAL_THRESHOLD_HIGH))
+        if ((t_diff < 0) && (ctrl.score >= 0 || ctrl.delta > TIME_CTRL_EVAL_THRESHOLD_HIGH))
         {
-            time_limit += t_diff;
+            time_limit = std::max(time_limit / 2, time_limit + t_diff);
         }
 
-        _time_limit.store(std::max(1, time_limit), std::memory_order_relaxed);
+        /* Subtract small margin for OS context-switching, communication with GUI */
+        // const int margin = std::min(50, time_limit / 20);
+        const int margin = std::min(75, time_limit / 12);
+        time_limit = std::max(1, time_limit - margin);
+
+        _time_limit.store(time_limit, std::memory_order_relaxed);
     }
 
 

@@ -262,7 +262,7 @@ DECLARE_CONST(  MULTICUT,                             1,    0,       1)
 GROUP(Search)
 
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
-DECLARE_VALUE(  DOUBLE_EXT_MAX,                      12,    0,     100)
+DECLARE_CONST(  DOUBLE_EXT_MAX,                       5,    0,     100)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
 DECLARE_VALUE(  LMP_BASE,                             2,    2,     100)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
