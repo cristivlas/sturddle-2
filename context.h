@@ -233,7 +233,6 @@ namespace search
         using MoveStack = std::array<MovesList, MAX_MOVE>;
 
         using StateStack = std::array<std::vector<State>, PLY_MAX>;
-        using TopMoves = std::pair<std::array<Move, 5>, size_t>;
 
         friend class MoveMaker;
 
@@ -1229,7 +1228,7 @@ namespace search
 
         if (ctrl.score > CHECKMATE - 10)
         {
-            moves = std::min(moves, 20);
+            moves = std::min(moves, 15);
         }
         else if (ctrl.delta < TIME_CTRL_EVAL_THRESHOLD_LOW)
         {
@@ -1253,6 +1252,7 @@ namespace search
             time_limit += bonus;
         }
 
+    #if 0
         /* If there's a time deficit, and search improved: lower the time limit. */
         const int t_diff = (millisec - ctrl.millisec[!side_to_move] - 1) / moves;
 
@@ -1260,10 +1260,12 @@ namespace search
         {
             time_limit = std::max(time_limit / 2, time_limit + t_diff);
         }
+    #endif
 
         /* Subtract small margin for OS context-switching, communication with GUI */
         // const int margin = std::min(50, time_limit / 20);
         const int margin = std::min(75, time_limit / 12);
+
         time_limit = std::max(1, time_limit - margin);
 
         _time_limit.store(time_limit, std::memory_order_relaxed);
