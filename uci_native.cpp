@@ -930,7 +930,7 @@ void UCI::go(const Arguments &args)
     stop();
 
     bool explicit_movetime = false, do_analysis = false, do_ponder = false;
-    int movestogo = 40, movetime = 0;
+    int movestogo = 0, movetime = 0;
     double time_remaining[] = {0, 0};
     int time_increments[] = {0, 0};
 

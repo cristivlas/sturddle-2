@@ -164,7 +164,7 @@ class UCI:
         self.depth = 100
         explicit_movetime = False
         analysis = False
-        movestogo = 40
+        movestogo = 0
         movetime = 0
         ponder = False
         time_remaining = [0, 0]

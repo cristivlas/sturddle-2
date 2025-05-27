@@ -750,8 +750,7 @@ namespace search
     template<std::size_t... I>
     static constexpr std::array<int, sizeof ... (I)> margins(std::index_sequence<I...>)
     {
-        // return { static_cast<int>(75 * I + pow(I, 1.99)) ... };
-        return { static_cast<int>(std::min(75.0 * I + pow(I, 1.99), 1289.0 + 175.0 * log(I))) ... };
+        return { static_cast<int>(std::min(75.0 * I + pow(I, 1.99), 1289.0 + 200.0 * log(I))) ... };
     }
 
 
@@ -1156,7 +1155,11 @@ namespace search
 
     INLINE bool Context::should_verify_null_move() const
     {
+    #if 0
         return depth() >= NULL_MOVE_MIN_VERIFICATION_DEPTH;
+    #else
+        return depth() >= std::max(NULL_MOVE_MIN_VERIFICATION_DEPTH, _max_depth - 8);
+    #endif
     }
 
 
@@ -1221,52 +1224,42 @@ namespace search
 
     INLINE void Context::set_time_ctrl(const TimeControl& ctrl)
     {
+        /* Margin for OS context-switching, communication with GUI (I/O overhead) */
+        constexpr int MAX_SAFETY_MARGIN = 75;
+
         const auto side_to_move = turn();
         const auto millisec = ctrl.millisec[side_to_move];
+        const auto bonus = ctrl.increments[side_to_move];
 
         int moves = ctrl.moves;
 
-        if (ctrl.score > CHECKMATE - 10)
-        {
-            moves = std::min(moves, 15);
-        }
-        else if (ctrl.delta < TIME_CTRL_EVAL_THRESHOLD_LOW)
-        {
-            /* Score worsened? Take more time */
-            moves = std::min(10, moves + 1);
-        }
-        else
+        if (moves == 0)
         {
             /* Estimate how many moves are left in the game */
-            constexpr int AVERAGE_MOVES_PER_GAME = 80;
+            constexpr int AVERAGE_MOVES_PER_GAME = 40;
+            const int estimated_moves_left = AVERAGE_MOVES_PER_GAME - int(_history->size());
 
-            const int estimate_moves_left = AVERAGE_MOVES_PER_GAME - int(_history->size());
-            moves = std::max(moves, std::max(2, estimate_moves_left));
+            if (bonus >= millisec - MAX_SAFETY_MARGIN)
+            {
+                moves = 1;
+            }
+            else if (bonus > 0)
+            {
+                moves = std::max(10, estimated_moves_left / 2);
+            }
+            else
+            {
+                moves = std::max(AVERAGE_MOVES_PER_GAME / 2, estimated_moves_left);
+            }
         }
 
         int time_limit = millisec / moves;
 
-        /* Apply per-move time bonus, if any */
-        if (const auto bonus = ctrl.increments[side_to_move])
-        {
-            time_limit += bonus;
-        }
-
-    #if 0
-        /* If there's a time deficit, and search improved: lower the time limit. */
-        const int t_diff = (millisec - ctrl.millisec[!side_to_move] - 1) / moves;
-
-        if ((t_diff < 0) && (ctrl.score >= 0 || ctrl.delta > TIME_CTRL_EVAL_THRESHOLD_HIGH))
-        {
-            time_limit = std::max(time_limit / 2, time_limit + t_diff);
-        }
-    #endif
-
-        /* Subtract small margin for OS context-switching, communication with GUI */
-        // const int margin = std::min(50, time_limit / 20);
-        const int margin = std::min(75, time_limit / 12);
-
+        const int margin = std::min(MAX_SAFETY_MARGIN, time_limit / 15);
         time_limit = std::max(1, time_limit - margin);
+
+        // DEBUG
+        // std::cout << "info string movestogo " << moves << " time_limit " << time_limit << std::endl;
 
         _time_limit.store(time_limit, std::memory_order_relaxed);
     }
