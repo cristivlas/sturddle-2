@@ -1224,8 +1224,9 @@ namespace search
 
     INLINE void Context::set_time_ctrl(const TimeControl& ctrl)
     {
-        /* Margin for OS context-switching, communication with GUI (I/O overhead) */
-        constexpr int MAX_SAFETY_MARGIN = 75;
+        constexpr int AVERAGE_MOVES_PER_GAME = 50;
+        constexpr int MAX_SAFETY_MARGIN = 75; /* Margin for OS context-switching, I/O overhead, etc. */
+        constexpr size_t OPENING_MOVES = 12;
 
         const auto side_to_move = turn();
         const auto millisec = std::max(0, ctrl.millisec[side_to_move]);
@@ -1236,7 +1237,6 @@ namespace search
         if (moves == 0)
         {
             /* Estimate how many moves are left in the game */
-            constexpr int AVERAGE_MOVES_PER_GAME = 40;
             const int estimated_moves_left = AVERAGE_MOVES_PER_GAME - int(_history->size());
 
             if (bonus >= millisec - MAX_SAFETY_MARGIN)
@@ -1245,12 +1245,16 @@ namespace search
             }
             else if (bonus > 0)
             {
-                moves = std::max(10, estimated_moves_left / 2);
+                moves = std::max(10, estimated_moves_left / (1 + _history->size() > OPENING_MOVES));
             }
             else
             {
                 moves = std::max(AVERAGE_MOVES_PER_GAME / 2, estimated_moves_left);
             }
+        }
+        else if (_history->size() <= OPENING_MOVES)
+        {
+            moves += OPENING_MOVES;
         }
 
         int time_limit = std::max(millisec / moves, std::min(millisec, bonus));
