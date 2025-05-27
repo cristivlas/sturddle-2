@@ -391,7 +391,7 @@ class UCI:
         else:
             whitelist = ['Hash', 'SEE', 'Threads']
 
-        for name, (val, val_min, val_max, _) in engine.get_param_info().items():
+        for name, (val, val_min, val_max, _, _) in engine.get_param_info().items():
             if name not in whitelist or name.startswith('DEBUG_'):
                 continue
             if val_min == 0 and val_max == 1:
