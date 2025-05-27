@@ -1228,8 +1228,8 @@ namespace search
         constexpr int MAX_SAFETY_MARGIN = 75;
 
         const auto side_to_move = turn();
-        const auto millisec = ctrl.millisec[side_to_move];
-        const auto bonus = ctrl.increments[side_to_move];
+        const auto millisec = std::max(0, ctrl.millisec[side_to_move]);
+        const auto bonus = std::max(0, ctrl.increments[side_to_move]);
 
         int moves = ctrl.moves;
 
@@ -1253,7 +1253,7 @@ namespace search
             }
         }
 
-        int time_limit = millisec / moves;
+        int time_limit = std::max(millisec / moves, std::min(millisec, bonus));
 
         const int margin = std::min(MAX_SAFETY_MARGIN, time_limit / 15);
         time_limit = std::max(1, time_limit - margin);
