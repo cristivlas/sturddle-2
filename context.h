@@ -699,6 +699,7 @@ namespace search
         return evaluate_material();
     }
 
+
 #if !WITH_NNUE
     INLINE void search::Context::eval_with_nnue() {}
     INLINE score_t search::Context::eval_nnue_raw(bool update_only, bool pov) { return 0; }

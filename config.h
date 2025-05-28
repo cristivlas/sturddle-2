@@ -275,21 +275,25 @@ DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
 #if WITH_NNUE
 DECLARE_VALUE(  NNUE_BLEND_PERCENT,                  75,    0,     100)
 DECLARE_VALUE(  NNUE_EVAL_TERM,                     502,  450,     600)
-DECLARE_VALUE(  NNUE_MAX_EVAL,                      452,  300,    600)
+DECLARE_VALUE(  NNUE_MAX_EVAL,                      452,  300,     600)
 #endif /* WITH_NNUE */
 
+//#undef DECLARE_VALUE
+//#define DECLARE_VALUE DECLARE_NORMAL // Tune --------------------------
 /* is_null_move_ok */
-DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,               3,    2,       4)
-DECLARE_VALUE(  NULL_MOVE_MARGIN,                    50,   20,      80)
-DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  2,    2,       3)
+DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,               3,    2,       5)
+DECLARE_VALUE(  NULL_MOVE_MARGIN,                    75,   20,      80)
+DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  2,    2,       4)
 
 /* Minimum depth when verifying */
-DECLARE_VALUE(  NULL_MOVE_MIN_DRAUGHT,                0,   -1,      10)
+DECLARE_VALUE(  NULL_MOVE_MIN_DRAUGHT,                0,   -1,       7)
 
 /* null_move_reduction */
 DECLARE_VALUE(  NULL_MOVE_REDUCTION_BASE,             3,    2,       4)
 DECLARE_VALUE(  NULL_MOVE_REDUCTION_DEPTH_DIV,        6,    4,       8)
-DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,            200,  150,     250)
+DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,            205,  150,     250)
+//#undef DECLARE_VALUE
+//#define DECLARE_VALUE DECLARE_CONST // ---------------------------------
 
 /* Do not verify null move below this depth */
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,     100)
@@ -322,7 +326,7 @@ DECLARE_VALUE(  WINDOW_HALF,                         25,    5,     200)
 
 /* Time management */
 DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              50,   40,     120)
-DECLARE_VALUE(  OPENING_MOVES,                       12,    8,     120)
+DECLARE_VALUE(  OPENING_MOVES,                       16,    8,      20)
 
 GROUP(MoveOrdering)
 DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 223,    0,     500)
