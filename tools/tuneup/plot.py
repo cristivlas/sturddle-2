@@ -150,7 +150,8 @@ def plot_parameters(args, budget_numbers, param_data, selected_params, loss_valu
     ax1.set_xlabel('Iteration' if ax2 is None else '')
     ax1.set_ylabel('Parameter Value')
     ax1.set_title('Best Parameter Values over Iterations')
-    ax1.grid(True, alpha=0.3)
+    ax1.grid(True, alpha=0.3, which='both')
+    ax1.minorticks_on()
 
     # Configure parameter legend
     fontsize = 'small' if len(selected_params) > 50 else 'medium'

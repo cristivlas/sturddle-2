@@ -312,7 +312,7 @@ DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 DECLARE_VALUE(  SINGULAR_ACCURACY,                   24,    1,     150)
 DECLARE_VALUE(  SINGULAR_COEFF,                      12,    0,      50)
 DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                2,    0,      10)
-DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,          25,    0,     150)
+DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,         100,   50,     150)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                6,    3,      10)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            4,    1,      10)
 
