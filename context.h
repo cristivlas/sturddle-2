@@ -401,7 +401,7 @@ namespace search
         void        set_time_ctrl(const TimeControl&);
         INLINE void set_tt(TranspositionTable* tt) { _tt = tt; }
         bool        should_verify_null_move() const;
-        int         singular_margin() const;
+
         int         tid() const { return _tt ? _tt->_tid : 0; }
         static int  time_limit() { return _time_limit.load(std::memory_order_relaxed); }
         Color       turn() const { return state().turn; }
@@ -1163,12 +1163,6 @@ namespace search
     }
 
 
-    INLINE int Context::singular_margin() const
-    {
-        return SINGULAR_DEPTH_MARGIN * depth();
-    }
-
-
     template<bool Construct> INLINE Context* Context::next_ply() const
     {
         ASSERT(_ply < PLY_MAX);
@@ -1224,9 +1218,7 @@ namespace search
 
     INLINE void Context::set_time_ctrl(const TimeControl& ctrl)
     {
-        constexpr int AVERAGE_MOVES_PER_GAME = 50;
         constexpr int MAX_SAFETY_MARGIN = 75; /* Margin for OS context-switching, I/O overhead, etc. */
-        constexpr size_t OPENING_MOVES = 12;
 
         const auto side_to_move = turn();
         const auto millisec = std::max(0, ctrl.millisec[side_to_move]);

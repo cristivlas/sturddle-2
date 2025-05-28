@@ -262,11 +262,11 @@ DECLARE_CONST(  MULTICUT,                             1,    0,       1)
 GROUP(Search)
 
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
-DECLARE_CONST(  DOUBLE_EXT_MAX,                       5,    0,     100)
+DECLARE_CONST(  DOUBLE_EXT_MAX,                       2,    0,       5)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
-DECLARE_VALUE(  LMP_BASE,                             2,    2,     100)
+DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
-DECLARE_VALUE(  KILLER_MOVES_MARGIN,                261,    0,    1000)
+DECLARE_VALUE(  KILLER_MOVES_MARGIN,                 50,   10,     150)
 
 DECLARE_VALUE(  MAX_ROOT_MOVES,                       5,    0,     256)
 DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,     100)
@@ -275,25 +275,27 @@ DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
 #if WITH_NNUE
 DECLARE_VALUE(  NNUE_BLEND_PERCENT,                  75,    0,     100)
 DECLARE_VALUE(  NNUE_EVAL_TERM,                     502,  450,     600)
-DECLARE_VALUE(  NNUE_MAX_EVAL,                      452,    0,    1000)
+DECLARE_VALUE(  NNUE_MAX_EVAL,                      452,  300,    600)
 #endif /* WITH_NNUE */
 
-DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,              25,    0,     100)
-DECLARE_VALUE(  NULL_MOVE_MARGIN,                   313,    0,    1000)
-DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  4,    0,      20)
+/* is_null_move_ok */
+DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,               3,    2,       4)
+DECLARE_VALUE(  NULL_MOVE_MARGIN,                    50,   20,      80)
+DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  2,    2,       3)
 
 /* Minimum depth when verifying */
 DECLARE_VALUE(  NULL_MOVE_MIN_DRAUGHT,                0,   -1,      10)
 
-DECLARE_VALUE(  NULL_MOVE_REDUCTION_BASE,             4,    0,     100)
-DECLARE_VALUE(  NULL_MOVE_REDUCTION_DEPTH_DIV,        4,    1,     100)
-DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,            278,    1,    1000)
+/* null_move_reduction */
+DECLARE_VALUE(  NULL_MOVE_REDUCTION_BASE,             3,    2,       4)
+DECLARE_VALUE(  NULL_MOVE_REDUCTION_DEPTH_DIV,        6,    4,       8)
+DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,            200,  150,     250)
 
 /* Do not verify null move below this depth */
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,     100)
 
-DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  248,    0,     300)
-DECLARE_VALUE(  RAZOR_INTERCEPT,                    224,    0,     300)
+DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                   50,   25,      75)
+DECLARE_VALUE(  RAZOR_INTERCEPT,                    200,  150,     250)
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
 DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     500)
 DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             33,    0,     150)
@@ -303,21 +305,24 @@ DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
 /* -1 disables pin awareness */
 DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 
-DECLARE_VALUE( SINGULAR_ACCURACY,                   127,    1,     500)
-DECLARE_VALUE( SINGULAR_COEFF,                       45,    0,     100)
-DECLARE_VALUE( SINGULAR_DEPTH_MARGIN,                 2,    0,      20)
-DECLARE_VALUE( SINGULAR_DOUBLE_EXT_MARGIN,         1354,    0,    2000)
+DECLARE_VALUE(  SINGULAR_ACCURACY,                   24,    1,     150)
+DECLARE_VALUE(  SINGULAR_COEFF,                      12,    0,      50)
+DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                2,    0,      10)
+DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,          25,    0,     150)
+DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                6,    3,      10)
+DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            4,    1,      10)
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
-DECLARE_VALUE(  STANDPAT_MARGIN,                     85,    0,    1000)
-
-DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_LOW,       -48, -150,       0)
-DECLARE_VALUE(  TIME_CTRL_EVAL_THRESHOLD_HIGH,       12,    0,     150)
+DECLARE_VALUE(  STANDPAT_MARGIN,                     85,    0,     350)
 
 /* Aspiration window */
 DECLARE_VALUE(  WINDOW_COEFF,                         6,    0,     100)
 DECLARE_VALUE(  WINDOW_DIV,                          67,    1,     200)
 DECLARE_VALUE(  WINDOW_HALF,                         25,    5,     200)
+
+/* Time management */
+DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              50,   40,     120)
+DECLARE_VALUE(  OPENING_MOVES,                       12,    8,     120)
 
 GROUP(MoveOrdering)
 DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 223,    0,     500)
