@@ -265,10 +265,10 @@ DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
 DECLARE_CONST(  DOUBLE_EXT_MAX,                       2,    0,       5)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
+DECLARE_VALUE(  KILLER_MOVES_MARGIN,                 25,    0,     100)
+DECLARE_VALUE(  KILLER_MOVES_DEPTH_MARGIN,          261,   10,     300)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
-DECLARE_VALUE(  KILLER_MOVES_MARGIN,                 50,   10,     150)
 
-DECLARE_VALUE(  MAX_ROOT_MOVES,                       5,    0,     256)
 DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,     100)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
 
@@ -281,28 +281,34 @@ DECLARE_VALUE(  NNUE_MAX_EVAL,                      452,  300,     600)
 //#undef DECLARE_VALUE
 //#define DECLARE_VALUE DECLARE_NORMAL // Tune --------------------------
 /* is_null_move_ok */
-DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,               3,    2,       5)
-DECLARE_VALUE(  NULL_MOVE_MARGIN,                    75,   20,      80)
-DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  2,    2,       4)
+DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,               2,    1,       5)
+DECLARE_VALUE(  NULL_MOVE_MARGIN,                    75,   20,     150)
+DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  4,    2,       5)
 
 /* Minimum depth when verifying */
 DECLARE_VALUE(  NULL_MOVE_MIN_DRAUGHT,                0,   -1,       7)
 
 /* null_move_reduction */
-DECLARE_VALUE(  NULL_MOVE_REDUCTION_BASE,             3,    2,       4)
-DECLARE_VALUE(  NULL_MOVE_REDUCTION_DEPTH_DIV,        6,    4,       8)
-DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,            205,  150,     250)
+DECLARE_VALUE(  NULL_MOVE_REDUCTION_BASE,             4,    2,       5)
+DECLARE_VALUE(  NULL_MOVE_REDUCTION_DEPTH_DIV,        4,    1,       8)
+DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,            278,    1,     500)
 //#undef DECLARE_VALUE
 //#define DECLARE_VALUE DECLARE_CONST // ---------------------------------
 
 /* Do not verify null move below this depth */
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,     100)
 
-DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                   50,   25,      75)
-DECLARE_VALUE(  RAZOR_INTERCEPT,                    200,  150,     250)
+DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  248,   25,     300)
+DECLARE_VALUE(  RAZOR_INTERCEPT,                    224,  150,     250)
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
 DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     500)
 DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             33,    0,     150)
+
+#if USE_ROOT_MOVES
+DECLARE_VALUE(  ROOT_MAX_MOVES,                       3,    0,     256)
+DECLARE_VALUE(  ROOT_MIN_MOVE_SCORE,                 95,    0,     200)
+#endif /* USE_ROOT_MOVES */
+
 /* SEE */
 DECLARE_VALUE(  SEE_PRUNING,                          1,    0,       1)
 DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
@@ -310,11 +316,11 @@ DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
 DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 
 DECLARE_VALUE(  SINGULAR_ACCURACY,                   24,    1,     150)
-DECLARE_VALUE(  SINGULAR_COEFF,                      12,    0,      50)
+DECLARE_VALUE(  SINGULAR_COEFF,                      45,    0,      50)
 DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                2,    0,      10)
-DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,         100,   50,     150)
-DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                6,    3,      10)
-DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            4,    1,      10)
+DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,         250,   50,     350)
+DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                7,    3,      10)
+DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    1,      10)
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 DECLARE_VALUE(  STANDPAT_MARGIN,                     85,    0,     350)

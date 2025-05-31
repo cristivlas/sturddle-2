@@ -40,10 +40,14 @@
   #define INLINE __forceinline
 #elif __GNUC__
   #define INLINE __attribute__((always_inline)) inline
-#endif
+#endif /* _MSC_VER */
 #else
-  #define INLINE inline
-#endif
+#if _MSC_VER
+  #define INLINE
+#elif __GNUC__
+  #define INLINE __attribute__((noinline))
+#endif /* _MSC_VER */
+#endif /* _DEBUG */
 
 #include <cmath>
 #include "backtrace.h"

@@ -222,13 +222,14 @@ namespace search
     template <typename T, size_t BUCKET_SIZE = std::max<size_t>(128, CACHE_LINE_SIZE) / sizeof(T)>
     class hash_table
     {
-        template <size_t S>
+        template <size_t SIZE>
         struct Bucket
         {
             using lock_state_t = int8_t;
 
             lock_state_t _lock_state;
-            std::array<T, S> _entries;
+            uint8_t _pad[7];
+            std::array<T, SIZE> _entries;
 
             std::atomic<lock_state_t> &mutex()
             {
@@ -236,7 +237,7 @@ namespace search
                 return *reinterpret_cast<std::atomic<lock_state_t> *>(&_lock_state);
             }
 
-            static constexpr size_t size() { static_assert(S); return S; }
+            static constexpr size_t size() { static_assert(SIZE); return SIZE; }
         };
 
         using bucket_t = Bucket<BUCKET_SIZE>;
@@ -252,6 +253,8 @@ namespace search
     private:
         static INLINE size_t get_num_buckets(size_t megabytes, size_t mem_avail)
         {
+            static_assert(bucket_size() == 128);
+
             auto buckets = megabytes * 1024 * 1024 / bucket_size();
             auto prime_buckets = pick_prime(buckets);
 
@@ -368,7 +371,10 @@ namespace search
                 for (auto &e : bucket._entries)
                 {
                     if (e._hash == h)
+                    {
+                        e._clock = _clock;
                         return Proxy<lock_t>(&e, std::move(lock));
+                    }
                 }
             }
             return Proxy<lock_t>();

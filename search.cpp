@@ -785,6 +785,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     */
                     if (ctxt.depth() >= (ctxt.is_pv_node() ? 7 : 5)
                         && ctxt._tt_entry.is_lower()
+                        && !ctxt._tt_entry.is_stale()
                         && next_ctxt->_move._group == MoveOrder::BEST_MOVES
                         && abs(ctxt._tt_entry._value) < MATE_HIGH
                         && !ctxt._excluded
@@ -928,7 +929,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         if (ctxt.depth() >= COUNTER_MOVE_MIN_DEPTH)
                             table.store_countermove(ctxt);
 
-                        if (ctxt._alpha + KILLER_MOVES_MARGIN / ctxt.depth() >= ctxt._beta)
+                        if (ctxt._alpha + KILLER_MOVES_DEPTH_MARGIN / ctxt.depth() + KILLER_MOVES_MARGIN >= ctxt._beta)
                             table.store_killer_move(ctxt);
 
                         if (next_ctxt->depth() >= HISTORY_MIN_DEPTH)

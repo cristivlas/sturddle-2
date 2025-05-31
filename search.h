@@ -156,19 +156,26 @@ namespace search
     class TT_Entry
     {
     public:
+        uint64_t    _hash = 0;
         TT_Type     _type = TT_Type::NONE;
         uint8_t     _age = 0;
+        uint8_t     _clock = 0;
         int8_t      _depth = std::numeric_limits<int8_t>::min();
         BaseMove    _best_move;
         BaseMove    _hash_move;
         int16_t     _eval = SCORE_MIN; /* static */
         int16_t     _value = SCORE_MIN;
         int16_t     _captures = SCORE_MIN;
-        uint64_t    _hash = 0;
 
         INLINE bool is_lower() const { return _type == TT_Type::LOWER; }
         INLINE bool is_upper() const { return _type == TT_Type::UPPER; }
         INLINE bool is_valid() const { return _type != TT_Type::NONE; }
+
+    #if 0 /* TODO: TEST */
+        INLINE bool is_stale() const { return _age != _clock; }
+    #else
+        INLINE constexpr bool is_stale() const { return false; }
+    #endif
 
         INLINE bool matches(const State& state) const
         {
@@ -178,7 +185,7 @@ namespace search
         template<typename C>
         INLINE const int16_t* lookup_score(C& ctxt) const
         {
-            if (_depth >= ctxt.depth())
+            if (_depth >= ctxt.depth() && !is_stale())
             {
                 ASSERT(is_valid());
 

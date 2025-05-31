@@ -1225,12 +1225,13 @@ namespace search
         const auto millisec = std::max(0, ctrl.millisec[side_to_move]);
         const auto bonus = std::max(0, ctrl.increments[side_to_move]);
 
-        int moves = ctrl.moves;
+        int moves = ctrl.moves; /* moves left until next time control */
+        const int moves_played = int(_history->size());
 
         if (moves == 0)
         {
             /* Estimate how many moves are left in the game */
-            const int estimated_moves_left = AVERAGE_MOVES_PER_GAME - int(_history->size());
+            const int estimated_moves_left = AVERAGE_MOVES_PER_GAME - moves_played;
 
             if (bonus >= millisec - MAX_SAFETY_MARGIN)
             {
@@ -1238,14 +1239,14 @@ namespace search
             }
             else if (bonus > 0)
             {
-                moves = std::max(10, estimated_moves_left / (1 + _history->size() > OPENING_MOVES));
+                moves = std::max(10, estimated_moves_left / (1 + moves_played > OPENING_MOVES));
             }
             else
             {
                 moves = std::max(AVERAGE_MOVES_PER_GAME / 2, estimated_moves_left);
             }
         }
-        else if (_history->size() <= OPENING_MOVES)
+        else if (moves_played <= OPENING_MOVES)
         {
             moves += OPENING_MOVES;
         }

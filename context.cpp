@@ -1478,7 +1478,7 @@ namespace search
             {
                 ASSERT(move._group == MoveOrder::UNORDERED_MOVES);
 
-                if (count >= MAX_ROOT_MOVES)
+                if (count >= ROOT_MAX_MOVES || move._score < (ROOT_MIN_MOVE_SCORE / 10.0))
                 {
                     move._score = 0;
                 }
