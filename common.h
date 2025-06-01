@@ -122,7 +122,7 @@ using score_t = int;
 
 /* Experimental */
 #define USE_BOOK_HINT                       false
-#define USE_ROOT_MOVES                      true
+#define USE_ROOT_MOVES                      false
 
 #define USE_LIBPOPCOUNT                     true
 
@@ -143,8 +143,11 @@ using score_t = int;
 
 
 /* default hash table size in megabytes */
+#if USE_MMAP_HASH_TABLE
+constexpr size_t DEFAULT_HASH_TABLE_SIZE =  256;
+#else
 constexpr size_t DEFAULT_HASH_TABLE_SIZE =  32;
-
+#endif /* USE_MMAP_HASH_TABLE */
 
 /*
  * When TUNING_ENABLED is true, values introduced by DECLARE_VALUE in config.h
@@ -196,7 +199,7 @@ namespace search
     enum MoveOrder : int8_t
     {
         UNDEFINED = 0,
-        ROOT_MOVES = 1,
+        ROOT_MOVES = 1, /* NN suggestions -- @root & top iterations */
         PREV_ITER = 2, /* best move from previous iteration */
         BEST_MOVES = 3, /* best move(s) from cache (hashtable) */
         HASH_MOVES = 4, /* moves from hashtable */

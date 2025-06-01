@@ -580,56 +580,50 @@ namespace chess
     /* Move representation */
     class BaseMove
     {
-        Square _from_square = Square::UNDEFINED;
-        Square _to_square = Square::UNDEFINED;
-        PieceType _promotion = PieceType::NONE;
+        uint16_t _move = 0xFFFF;
 
     public:
         BaseMove() = default;
+
         BaseMove(Square from, Square to, PieceType promo) noexcept
-            : _from_square(from)
-            , _to_square(to)
-            , _promotion(promo)
-        {}
-
-        BaseMove(Square from, Square to) noexcept
-            : _from_square(from)
-            , _to_square(to)
-            , _promotion(PieceType::NONE)
-        {}
-
-        static BaseMove from_raw(uint16_t raw_move)
         {
-            const int from = (raw_move >> 6) & 0x3F;
-            const int to = raw_move & 0x3F;
-            const int promotion = (raw_move >> 12) & 0x7;
             ASSERT(from >= 0 && from < 64);
             ASSERT(to >= 0 && to < 64);
-            ASSERT(promotion >= 0 && promotion < 6);
+            ASSERT(static_cast<int>(promo) >= 0 && static_cast<int>(promo) < 8);
 
-            return BaseMove(static_cast<Square>(from), static_cast<Square>(to), static_cast<PieceType>(promotion));
+            // promotion(3 bits) | from(6 bits) | to(6 bits)
+            _move = (static_cast<uint16_t>(promo) << 12) |
+                    (static_cast<uint16_t>(from) << 6) |
+                    static_cast<uint16_t>(to);
         }
+
+        BaseMove(Square from, Square to) noexcept
+            : BaseMove(from, to, PieceType::NONE)
+        {}
+
+        BaseMove(uint16_t move) : _move(move) {}
 
         INLINE constexpr Square to_square() const
         {
-            return _to_square;
+            ASSERT(_move != 0xFFFF);
+            return static_cast<Square>(_move & 0x3F);
         }
 
         INLINE constexpr Square from_square() const
         {
-            return _from_square;
+            ASSERT(_move != 0xFFFF);
+            return static_cast<Square>((_move >> 6) & 0x3F);
         }
 
         constexpr PieceType promotion() const
         {
-            return _promotion;
+            if (_move == 0xFFFF) return PieceType::NONE;
+            return static_cast<PieceType>((_move >> 12) & 0x7);
         }
 
         constexpr bool is_equal(const BaseMove& other) const
         {
-            return _from_square == other._from_square
-                && _to_square == other._to_square
-                && _promotion == other._promotion;
+            return _move == other._move;
         }
 
         std::string uci() const;
@@ -641,10 +635,7 @@ namespace chess
 
         bool is_none() const
         {
-            bool none = (_from_square == _to_square);
-
-            ASSERT(none || (_from_square != UNDEFINED && _to_square != UNDEFINED));
-            return none;
+            return _move == 0xFFFF;
         }
     };
 

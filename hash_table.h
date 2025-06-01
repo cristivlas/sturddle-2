@@ -6,9 +6,18 @@
 #include <limits>
 #include <new>
 
+#if _WIN32
+  #include "ms_windows.h"
+#else
+  #include <sys/mman.h>
+#endif /* !_WIN32 */
+
 constexpr size_t HASH_TABLE_MAX_READERS = 64;
 constexpr int SPIN_LOCK_MAX_RETRY = 1024 * 1024;
 
+namespace
+{
+/* Allocators */
 #if _MSC_VER
 static constexpr auto CACHE_LINE_SIZE = std::hardware_destructive_interference_size;
 
@@ -80,6 +89,131 @@ INLINE bool operator!=(const cache_line_allocator<T> &a, const cache_line_alloca
     return !(a == b);
 }
 
+template <typename T>
+class mmap_allocator
+{
+public:
+    static constexpr size_t PAGE_SIZE = 4096;
+
+    using value_type = T;
+    using pointer = T *;
+
+    mmap_allocator() = default;
+
+    template <typename U>
+    struct rebind
+    {
+        using other = mmap_allocator<U>;
+    };
+
+    template <typename U>
+    mmap_allocator(const mmap_allocator<U> &) noexcept {}
+
+private:
+#if _WIN32
+    /* Stored before user data */
+    struct alignas(sizeof(T)) allocation_header
+    {
+        uint32_t magic;
+        HANDLE mapping_handle;
+        size_t user_size;
+    };
+#endif
+
+public:
+    INLINE pointer allocate(std::size_t n)
+    {
+#if _WIN32
+        constexpr size_t header_size = sizeof(allocation_header);
+        static_assert(header_size == sizeof(value_type));
+        const auto user_bytes = n * sizeof(value_type);
+        const auto total_bytes = ((header_size + user_bytes + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+
+        HANDLE h_mapping = ::CreateFileMapping(
+            INVALID_HANDLE_VALUE,
+            nullptr,
+            PAGE_READWRITE,
+            static_cast<DWORD>(total_bytes >> 32),
+            static_cast<DWORD>(total_bytes & 0xFFFFFFFF),
+            nullptr);
+
+        if (!h_mapping)
+            throw std::bad_alloc();
+
+        void* ptr = ::MapViewOfFile(h_mapping, FILE_MAP_ALL_ACCESS, 0, 0, total_bytes);
+        if (!ptr)
+        {
+            ::CloseHandle(h_mapping);
+            throw std::bad_alloc();
+        }
+
+        // Store header info
+        allocation_header* header = static_cast<allocation_header*>(ptr);
+        header->magic = 0xC0FFEFFE;
+        header->mapping_handle = h_mapping;
+        header->user_size = user_bytes;
+
+        // Return aligned pointer after the header
+        return reinterpret_cast<pointer>(header + 1);
+
+#else
+        const auto bytes = ((n * sizeof(value_type) + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+        void* ptr = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (ptr == MAP_FAILED)
+            throw std::bad_alloc();
+
+        return reinterpret_cast<pointer>(ptr);
+#endif /* !_WIN32 */
+    }
+
+    INLINE void deallocate(pointer p, std::size_t n)
+    {
+#if _WIN32
+        if (p)
+        {
+            // Get the header that precedes the user data
+            allocation_header* header = reinterpret_cast<allocation_header*>(p) - 1;
+            ASSERT(header->magic == 0xC0FFEFFE);
+            HANDLE h_mapping = header->mapping_handle;
+
+            // Unmap the view starting from the header
+            ::UnmapViewOfFile(header);
+            ::CloseHandle(h_mapping);
+        }
+#else
+        // POSIX implementation
+        if (p)
+        {
+            const auto bytes = ((n * sizeof(value_type) + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+            ::munmap(p, bytes);
+        }
+#endif /* !_WIN32 */
+    }
+
+    template <typename U, typename... Args>
+    INLINE void construct(U *p, Args &&...args) {
+        new (p) U(std::forward<Args>(args)...);
+    }
+
+    template <typename U>
+    INLINE void destroy(U *p) {
+        p->~U();
+    }
+};
+
+template <typename T, typename U>
+INLINE bool operator==(const mmap_allocator<T> &, const mmap_allocator<U> &) noexcept
+{
+    return true;
+}
+
+template <typename T, typename U>
+INLINE bool operator!=(const mmap_allocator<T> &a, const mmap_allocator<U> &b) noexcept
+{
+    return !(a == b);
+}
+} /* Allocators */
+
 /*
  * Thomas Neumann's primes.hpp requires __int128
  * http://databasearchitects.blogspot.com/2020/01/all-hash-table-sizes-you-will-ever-need.html
@@ -106,6 +240,7 @@ INLINE uint64_t scramble64(uint64_t h)
     h ^= h >> 33;
     h *= 0xc4ceb9fe1a85ec53;
     h ^= h >> 33;
+
     return h;
 }
 
@@ -227,8 +362,10 @@ namespace search
         {
             using lock_state_t = int8_t;
 
-            lock_state_t _lock_state;
-            uint8_t _pad[7];
+            lock_state_t        _lock_state;
+            uint8_t             _used = 0;
+            uint16_t            _pad;
+            uint32_t            _clock = 0;
             std::array<T, SIZE> _entries;
 
             std::atomic<lock_state_t> &mutex()
@@ -241,18 +378,27 @@ namespace search
         };
 
         using bucket_t = Bucket<BUCKET_SIZE>;
-        using data_t = std::vector<bucket_t, cache_line_allocator<bucket_t>>;
+
+    #if USE_MMAP_HASH_TABLE
+        using allocator_type = mmap_allocator<bucket_t>;
+    #else
+        using allocator_type = cache_line_allocator<bucket_t>;
+    #endif
+
+        using data_t = std::vector<bucket_t, allocator_type>;
 
         using shared_lock_t = SharedLock<typename bucket_t::lock_state_t, HASH_TABLE_MAX_READERS>;
         using unique_lock_t = UniqueLock<typename bucket_t::lock_state_t>;
 
-        uint8_t _clock = 0;
+        uint32_t _clock = 0;
         count_t _used = 0;
         data_t _data; /* table entries */
 
     private:
         static INLINE size_t get_num_buckets(size_t megabytes, size_t mem_avail)
         {
+            static_assert(sizeof(T) == 20);
+            static_assert(bucket_t::size() == 6);
             static_assert(bucket_size() == 128);
 
             auto buckets = megabytes * 1024 * 1024 / bucket_size();
@@ -328,21 +474,36 @@ namespace search
 
         void clear()
         {
-            if (_used)
+        #if 0
+            if (_data.size() <= 4096)
+            {
                 std::fill_n(&_data[0], _data.size(), bucket_t());
+            }
+            else
+            {
+                const auto size = _data.size();
+                _data.clear();
+                _data.resize(size);
+            }
+        #else
+
+            ++_clock;
+
+        #endif
+
             _used = 0;
         }
 
-        INLINE uint8_t clock() const { return _clock; }
-        INLINE void increment_clock() { ++_clock; }
 
-        INLINE void increment_usage()
+        INLINE void increment_usage(bucket_t& bucket)
         {
 #if SMP
             _used.fetch_add(1, std::memory_order_relaxed);
 #else
             ++_used;
 #endif
+            ASSERT(bucket._used < bucket_t::size());
+            ++bucket._used;
         }
 
         INLINE size_t size() const { return _used; }
@@ -366,13 +527,12 @@ namespace search
             auto &bucket = get_bucket(h);
 
             lock_t lock(bucket.mutex());
-            if (lock.is_valid())
+            if (lock.is_valid() && (bucket._clock == this->_clock))
             {
                 for (auto &e : bucket._entries)
                 {
                     if (e._hash == h)
                     {
-                        e._clock = _clock;
                         return Proxy<lock_t>(&e, std::move(lock));
                     }
                 }
@@ -380,8 +540,8 @@ namespace search
             return Proxy<lock_t>();
         }
 
-        template <typename S, typename lock_t = unique_lock_t>
-        INLINE Proxy<lock_t> lookup_write(const S &s, int depth)
+        template <typename S, typename P, typename lock_t = unique_lock_t>
+        INLINE Proxy<lock_t> lookup_write(const S &s, int depth, P&& priority)
         {
             const auto h = s.hash();
             ASSERT(h);
@@ -391,27 +551,42 @@ namespace search
             lock_t lock(bucket.mutex());
             if (lock.is_valid())
             {
+                if (bucket._clock != this->_clock)
+                {
+                    bucket._entries.fill(entry_t());
+                    bucket._clock = this->_clock;
+                    bucket._used = 0;
+                }
+
                 entry_t *entry = &bucket._entries[0];
+
+                P lowest_priority{};
+                lowest_priority.set_depth(7 * (bucket._used >= 4));
 
                 for (auto &e : bucket._entries)
                 {
                     if (!e.is_valid())
                     {
-                        increment_usage();
+                        increment_usage(bucket);
                         entry = &e;
                         break;
                     }
 
-                    if (e._hash == h || e._age != _clock)
+                    if (e._hash == h)
                     {
+                        if (e.priority() > priority)
+                        {
+                            return Proxy<lock_t>();
+                        }
+
                         entry = &e;
                         break;
                     }
 
-                    if (depth >= e._depth)
+                    if (auto p = e.priority(); p < lowest_priority)
                     {
+                        lowest_priority = p;
                         entry = &e;
-                        depth = e._depth;
                     }
                 }
 

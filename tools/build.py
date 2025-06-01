@@ -42,6 +42,8 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    os.environ['CXXFLAGS'] = '-DUSE_MMAP_HASH_TABLE '
+
     if args.native_uci:
         os.environ['NATIVE_UCI'] = '1'
 
@@ -78,7 +80,7 @@ if __name__ == '__main__':
         elif arch == 'ARMv8_2':
             arch_flags = '-march=armv8.2-a+fp16'
 
-        os.environ['CXXFLAGS'] = arch_flags
+        os.environ['CXXFLAGS'] += arch_flags
         arch = arch.lower()
         os.environ['TARGET'] = f'chess_engine_{arch}' if arch else 'chess_engine'
 

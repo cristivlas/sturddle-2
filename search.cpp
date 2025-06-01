@@ -64,6 +64,12 @@ static void log_pv(const TranspositionTable& tt, const Context* ctxt, const char
 
 static size_t mem_avail()
 {
+#if USE_MMAP_HASH_TABLE
+    if (sizeof(void*) == 8)
+        return 32 * 1024 * ONE_MEGABYTE;
+    else
+        return 1024 * ONE_MEGABYTE;
+#else
 #if __linux__
     struct sysinfo info = {};
     if (sysinfo(&info) == 0)
@@ -92,6 +98,8 @@ static size_t mem_avail()
 #endif
     /* failover to psutil via Cython */
     return static_cast<size_t>(cython_wrapper::call(search::Context::_vmem_avail));
+
+#endif /* USE_MMAP_HASH_TABLE */
 }
 
 
@@ -179,12 +187,6 @@ void TranspositionTable::clear()
 }
 
 
-/* static */ void TranspositionTable::increment_clock()
-{
-    _table.increment_clock();
-}
-
-
 /* static */ double TranspositionTable::usage()
 {
     return (100.0 * _table.size()) / _table.capacity();
@@ -201,31 +203,21 @@ void TranspositionTable::update_stats(const Context& ctxt)
 }
 
 
-void TranspositionTable::store(Context& ctxt, TT_Entry& entry, int depth)
+void TranspositionTable::store(Context& ctxt, TT_Entry& entry, TT_Type type, int depth)
 {
     ASSERT(ctxt._score > SCORE_MIN);
     ASSERT(ctxt._score < SCORE_MAX);
 
-    entry._eval = ctxt._eval;
-    entry._value = ctxt._score;
-
-    if (entry._value >= ctxt._beta)
+    if (type == TT_Type::LOWER || (type == TT_Type::EXACT && !entry._best_move))
     {
-        entry._type = TT_Type::LOWER;
         entry._best_move = ctxt._best_move;
     }
-    else if (entry._value <= ctxt._alpha)
-    {
-        entry._type = TT_Type::UPPER;
-    }
-    else
-    {
-        entry._type = TT_Type::EXACT;
-    }
+    entry._type = type;
+    entry._eval = ctxt._eval; /* static eval */
+    entry._value = ctxt._score;
     entry._hash_move = ctxt._best_move;
     entry._hash = ctxt.state().hash();
     entry._depth = depth;
-    entry._age = _table.clock();
     entry._captures = ctxt._tt_entry._captures;
 }
 
@@ -785,7 +777,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     */
                     if (ctxt.depth() >= (ctxt.is_pv_node() ? 7 : 5)
                         && ctxt._tt_entry.is_lower()
-                        && !ctxt._tt_entry.is_stale()
                         && next_ctxt->_move._group == MoveOrder::BEST_MOVES
                         && abs(ctxt._tt_entry._value) < MATE_HIGH
                         && !ctxt._excluded
@@ -1261,8 +1252,6 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
     ASSERT(ctxt.is_root());
 
     score_t score = 0, prev_score = 0;
-
-    table.increment_clock();
 
     max_iter_count = std::min(PLY_MAX, max_iter_count);
 

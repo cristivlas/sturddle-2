@@ -1277,7 +1277,7 @@ namespace search
             return false;
 
         /* treat it as leaf for now but retry and extend if it beats alpha */
-        if (is_reduced())
+        if (is_reduced() && !_retry_above_alpha)
             _retry_above_alpha = RETRY::Reduced;
 
         return true;
@@ -1478,7 +1478,7 @@ namespace search
             {
                 ASSERT(move._group == MoveOrder::UNORDERED_MOVES);
 
-                if (count >= ROOT_MAX_MOVES || move._score < (ROOT_MIN_MOVE_SCORE / 10.0))
+                if (count >= ROOT_MAX_MOVES || move._score < (ROOT_MIN_MOVE_SCORE / 100.0))
                 {
                     move._score = 0;
                 }
@@ -1582,7 +1582,7 @@ namespace search
                 {
                     make_move<false>(ctxt, move, MoveOrder::PROMOTIONS, WEIGHT[move.promotion()]);
                 }
-                else if ((move.to_square() == ctxt._move.to_square() || ctxt.state().is_en_passant(move))
+                else if (((ctxt._move && move.to_square() == ctxt._move.to_square()) || ctxt.state().is_en_passant(move))
                     && make_move<false>(ctxt, move, MoveOrder::LAST_MOVED_CAPTURE))
                 {
                     ASSERT(move._state->is_capture());

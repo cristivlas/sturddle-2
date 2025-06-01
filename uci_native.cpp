@@ -579,7 +579,7 @@ private:
         const auto mode = _best_book_move ? PolyglotBook::BEST_WEIGHT : PolyglotBook::WEIGHTED_CHOICE;
         if (const auto raw_move = _opening_book.lookup_move(_buf._state.hash(), mode))
         {
-            const auto move = chess::BaseMove::from_raw(raw_move);
+            const auto move = chess::BaseMove(raw_move);
 
             if (!validate || _buf._state.is_valid(move))
             {

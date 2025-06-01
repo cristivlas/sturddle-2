@@ -187,6 +187,7 @@ namespace search
     /* Reason for retrying */
     enum class RETRY : uint8_t { None = 0, Reduced, PVS };
 
+    INLINE constexpr bool operator!(RETRY retry) { return retry == RETRY::None; }
 
     struct IterationInfo
     {
@@ -1412,7 +1413,7 @@ namespace search
     INLINE void MoveMaker::make_capture(Context& ctxt, Move& move)
     {
         /* captures of the last piece moved by the opponent are handled separately */
-        ASSERT(move.to_square() != ctxt._move.to_square());
+        ASSERT(!ctxt._move || move.to_square() != ctxt._move.to_square());
 
         ASSERT(is_valid(ctxt._eval));
 

@@ -146,10 +146,64 @@ namespace search
     enum class TT_Type : int8_t
     {
         NONE = 0,
+        UPPER,
         EXACT,
         LOWER,
-        UPPER,
     };
+
+    /* Hash table eviction priority. Higher kicks out lower. */
+    class Priority
+    {
+        int8_t  _depth;
+        TT_Type _type;
+        uint8_t _stability;
+
+    public:
+        static constexpr int DEPTH_THRESHOLD = 2;
+
+        Priority() : _depth(std::numeric_limits<int8_t>::max()), _type(TT_Type::NONE), _stability(0)
+        {}
+
+        Priority(int8_t depth, TT_Type type, score_t static_eval, score_t search_score)
+            : _depth(depth)
+            , _type(type)
+            , _stability(255 * 1000 / (1000 + std::abs(static_eval - search_score)))
+        {}
+
+        Priority(const Priority& other) : _depth(other._depth), _type(other._type), _stability(other._stability)
+        {}
+
+        INLINE Priority& operator=(const Priority& other)
+        {
+            _depth = other._depth;
+            _type = other._type;
+            _stability = other._stability;
+
+            return *this;
+        }
+
+        INLINE bool is_less_than(const Priority& other) const
+        {
+            const int depth_diff = int(_depth) - int(other._depth);
+            const int threshold = DEPTH_THRESHOLD + int(_type == TT_Type::LOWER && _type != other._type);
+
+            if (depth_diff < -threshold)
+                return true;
+            if (depth_diff > threshold)
+                return false;
+
+            if (_type != other._type)
+                return _type < other._type;
+
+            return _stability < other._stability;
+        }
+
+        INLINE void set_depth(int8_t depth) { _depth = depth;}
+    };
+
+    INLINE bool operator < (const Priority& lhs, const Priority& rhs) { return lhs.is_less_than(rhs); }
+    INLINE bool operator > (const Priority& lhs, const Priority& rhs) { return rhs.is_less_than(lhs); }
+
 
 #pragma pack(push, 4)
 
@@ -158,34 +212,28 @@ namespace search
     public:
         uint64_t    _hash = 0;
         TT_Type     _type = TT_Type::NONE;
-        uint8_t     _age = 0;
-        uint8_t     _clock = 0;
         int8_t      _depth = std::numeric_limits<int8_t>::min();
         BaseMove    _best_move;
         BaseMove    _hash_move;
-        int16_t     _eval = SCORE_MIN; /* static */
-        int16_t     _value = SCORE_MIN;
+        int16_t     _eval = SCORE_MIN; /* static eval */
+        int16_t     _value = SCORE_MIN; /* search score */
         int16_t     _captures = SCORE_MIN;
 
         INLINE bool is_lower() const { return _type == TT_Type::LOWER; }
         INLINE bool is_upper() const { return _type == TT_Type::UPPER; }
         INLINE bool is_valid() const { return _type != TT_Type::NONE; }
 
-    #if 0 /* TODO: TEST */
-        INLINE bool is_stale() const { return _age != _clock; }
-    #else
-        INLINE constexpr bool is_stale() const { return false; }
-    #endif
-
         INLINE bool matches(const State& state) const
         {
             return is_valid() && _hash == state.hash();
         }
 
+        INLINE Priority priority() const { return Priority(_depth, _type, _eval, _value); }
+
         template<typename C>
         INLINE const int16_t* lookup_score(C& ctxt) const
         {
-            if (_depth >= ctxt.depth() && !is_stale())
+            if (_depth >= ctxt.depth())
             {
                 ASSERT(is_valid());
 
@@ -246,10 +294,9 @@ namespace search
         ~TranspositionTable() = default;
 
                void clear();
-        static void clear_shared_hashtable();
-        static void increment_clock();
+        static void clear_shared_hashtable(); /* call before new game */
 
-        INLINE void init() { clear(); shift(); increment_clock(); _eval_depth = 0; }
+        INLINE void init() { clear(); shift(); _eval_depth = 0; } /* call before new search */
 
         int _tid = 0;
         int _iteration = 0;
@@ -302,7 +349,7 @@ namespace search
         template<TT_Type=TT_Type::NONE, typename C=struct Context>
         void store(C& ctxt, int depth);
 
-        void store(Context&, TT_Entry&, int depth);
+        void store(Context&, TT_Entry&, TT_Type, int depth);
 
         template<typename C> void store_countermove(C& ctxt);
         void store_killer_move(const Context&);
@@ -453,7 +500,7 @@ namespace search
         }
 
         /* http://www.talkchess.com/forum3/viewtopic.php?topic_view=threads&p=305236&t=30788 */
-        if (!ctxt.is_pv_node())
+        if (!ctxt.is_pv_node() && !ctxt.is_retry())
         {
             if (auto value = ctxt._tt_entry.lookup_score(ctxt))
             {
@@ -469,19 +516,40 @@ namespace search
     }
 
 
-    template<TT_Type type, typename C>
+    template<TT_Type T, typename C>
     INLINE void TranspositionTable::store(C& ctxt, int depth)
     {
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
 
-        if (auto p = _table.lookup_write(ctxt.state(), depth))
+        auto type = T;
+
+        /* type unknown at compile-time? */
+        if constexpr(T == TT_Type::NONE)
+        {
+            type = TT_Type::EXACT;
+            if (ctxt._score >= ctxt._beta)
+            {
+                type = TT_Type::LOWER;
+            }
+            else if (ctxt._score <= ctxt._alpha)
+            {
+                type = TT_Type::UPPER;
+            }
+        }
+
+    #if 0
+        /* manipulate depth for recency bias effect -- lower it for nodes that are scheduled for retry */
+        Priority priority(depth + Priority::DEPTH_THRESHOLD * SIGN[!ctxt._retry_above_alpha], type, ctxt._eval, ctxt._score);
+    #else
+        auto priority = !ctxt._retry_above_alpha
+            ? Priority(depth + Priority::DEPTH_THRESHOLD, type, ctxt._eval, ctxt._score)
+            : Priority();
+    #endif
+        if (auto p = _table.lookup_write(ctxt.state(), depth, std::move(priority)))
         {
             auto& entry = *p;
-            store(ctxt, entry, depth);
-
-            if constexpr(type != TT_Type::NONE)
-                entry._type = type;
+            store(ctxt, entry, type, depth);
         }
     }
 

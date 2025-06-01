@@ -306,7 +306,7 @@ DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             33,    0,     150)
 
 #if USE_ROOT_MOVES
 DECLARE_VALUE(  ROOT_MAX_MOVES,                       3,    0,     256)
-DECLARE_VALUE(  ROOT_MIN_MOVE_SCORE,                 95,    0,     200)
+DECLARE_VALUE(  ROOT_MIN_MOVE_SCORE,                950,  750,    1500)
 #endif /* USE_ROOT_MOVES */
 
 /* SEE */
@@ -315,10 +315,15 @@ DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
 /* -1 disables pin awareness */
 DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 
+//#undef DECLARE_VALUE
+//#define DECLARE_VALUE DECLARE_NORMAL // Tune --------------------------
 DECLARE_VALUE(  SINGULAR_ACCURACY,                   24,    1,     150)
 DECLARE_VALUE(  SINGULAR_COEFF,                      45,    0,      50)
 DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                2,    0,      10)
 DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,         250,   50,     350)
+//#undef DECLARE_VALUE
+//#define DECLARE_VALUE DECLARE_CONST // ---------------------------------
+
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                7,    3,      10)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    1,      10)
 
