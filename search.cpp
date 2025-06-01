@@ -42,8 +42,6 @@
 using namespace chess;
 using namespace search;
 
-constexpr size_t ONE_MEGABYTE = 1024 * 1024;
-
 
 template<bool Debug = false>
 static void log_pv(const TranspositionTable& tt, const Context* ctxt, const char* info)

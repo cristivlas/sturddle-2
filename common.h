@@ -54,6 +54,8 @@
 
 using score_t = int;
 
+constexpr size_t ONE_MEGABYTE = 1024 * 1024;
+
 #if WEIGHT_TUNING_ENABLED
   #define TUNING_PARTIAL                    true
 #endif

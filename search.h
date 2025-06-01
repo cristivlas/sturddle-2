@@ -538,14 +538,13 @@ namespace search
             }
         }
 
-    #if 0
-        /* manipulate depth for recency bias effect -- lower it for nodes that are scheduled for retry */
-        Priority priority(depth + Priority::DEPTH_THRESHOLD * SIGN[!ctxt._retry_above_alpha], type, ctxt._eval, ctxt._score);
-    #else
-        auto priority = !ctxt._retry_above_alpha
+        /* Priority for replacing TT slots with the same hash in case there's a collision;
+         * manipulate depth for recency bias effect; lowest prio for nodes that may be retried.
+         */
+        const auto priority = !ctxt._retry_above_alpha
             ? Priority(depth + Priority::DEPTH_THRESHOLD, type, ctxt._eval, ctxt._score)
             : Priority();
-    #endif
+
         if (auto p = _table.lookup_write(ctxt.state(), depth, std::move(priority)))
         {
             auto& entry = *p;

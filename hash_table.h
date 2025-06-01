@@ -112,9 +112,9 @@ public:
 private:
 #if _WIN32
     /* Stored before user data */
-    struct alignas(sizeof(T)) allocation_header
+    struct alignas(CACHE_LINE_SIZE) allocation_header
     {
-        uint32_t magic;
+        size_t size;
         HANDLE mapping_handle;
         size_t user_size;
     };
@@ -125,7 +125,7 @@ public:
     {
 #if _WIN32
         constexpr size_t header_size = sizeof(allocation_header);
-        static_assert(header_size == sizeof(value_type));
+        static_assert(header_size == CACHE_LINE_SIZE);
         const auto user_bytes = n * sizeof(value_type);
         const auto total_bytes = ((header_size + user_bytes + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
 
@@ -149,7 +149,7 @@ public:
 
         // Store header info
         allocation_header* header = static_cast<allocation_header*>(ptr);
-        header->magic = 0xC0FFEFFE;
+        header->size = header_size;
         header->mapping_handle = h_mapping;
         header->user_size = user_bytes;
 
@@ -173,7 +173,7 @@ public:
         {
             // Get the header that precedes the user data
             allocation_header* header = reinterpret_cast<allocation_header*>(p) - 1;
-            ASSERT(header->magic == 0xC0FFEFFE);
+            ASSERT(header->size == sizeof(allocation_header));
             HANDLE h_mapping = header->mapping_handle;
 
             // Unmap the view starting from the header
@@ -226,6 +226,7 @@ static INLINE size_t pick_prime(size_t n)
     return primes::Prime::pick(n).get();
 }
 #else
+#warning pick_prime not available
 static INLINE size_t pick_prime(size_t n)
 {
     return n;
@@ -395,13 +396,14 @@ namespace search
         data_t _data; /* table entries */
 
     private:
+        /* Allocation helper, find the closest prime number of buckets that fits in. */
         static INLINE size_t get_num_buckets(size_t megabytes, size_t mem_avail)
         {
             static_assert(sizeof(T) == 20);
             static_assert(bucket_t::size() == 6);
             static_assert(bucket_size() == 128);
 
-            auto buckets = megabytes * 1024 * 1024 / bucket_size();
+            auto buckets = megabytes * ONE_MEGABYTE / bucket_size();
             auto prime_buckets = pick_prime(buckets);
 
             while (prime_buckets * bucket_size() > mem_avail)
@@ -474,23 +476,7 @@ namespace search
 
         void clear()
         {
-        #if 0
-            if (_data.size() <= 4096)
-            {
-                std::fill_n(&_data[0], _data.size(), bucket_t());
-            }
-            else
-            {
-                const auto size = _data.size();
-                _data.clear();
-                _data.resize(size);
-            }
-        #else
-
-            ++_clock;
-
-        #endif
-
+            ++_clock; // O(1) -- buckets are lazily erased on next use
             _used = 0;
         }
 
@@ -541,7 +527,7 @@ namespace search
         }
 
         template <typename S, typename P, typename lock_t = unique_lock_t>
-        INLINE Proxy<lock_t> lookup_write(const S &s, int depth, P&& priority)
+        INLINE Proxy<lock_t> lookup_write(const S &s, int depth, P priority)
         {
             const auto h = s.hash();
             ASSERT(h);
