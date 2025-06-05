@@ -263,7 +263,7 @@ GROUP(Search)
 
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
 DECLARE_CONST(  DOUBLE_EXT_MAX,                       2,    0,       5)
-DECLARE_VALUE(  LATE_MOVE_REDUCTION_COUNT,            4,    0,     100)
+DECLARE_VALUE(  LATE_MOVE_REDUCTION_THRESHOLD,        4,    0,      10)
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                 25,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_DEPTH_MARGIN,          261,   10,     300)
@@ -278,12 +278,10 @@ DECLARE_VALUE(  NNUE_EVAL_TERM,                     502,  450,     600)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      452,  300,     600)
 #endif /* WITH_NNUE */
 
-//#undef DECLARE_VALUE
-//#define DECLARE_VALUE DECLARE_NORMAL // Tune --------------------------
 /* is_null_move_ok */
-DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,               2,    1,       5)
-DECLARE_VALUE(  NULL_MOVE_MARGIN,                    75,   20,     150)
-DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  4,    2,       5)
+DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,               2,    1,      10)
+DECLARE_VALUE(  NULL_MOVE_MARGIN,                    65,   40,      80)
+DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  3,    2,       5)
 
 /* Minimum depth when verifying */
 DECLARE_VALUE(  NULL_MOVE_MIN_DRAUGHT,                0,   -1,       7)
@@ -291,9 +289,7 @@ DECLARE_VALUE(  NULL_MOVE_MIN_DRAUGHT,                0,   -1,       7)
 /* null_move_reduction */
 DECLARE_VALUE(  NULL_MOVE_REDUCTION_BASE,             4,    2,       5)
 DECLARE_VALUE(  NULL_MOVE_REDUCTION_DEPTH_DIV,        4,    1,       8)
-DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,            278,    1,     500)
-//#undef DECLARE_VALUE
-//#define DECLARE_VALUE DECLARE_CONST // ---------------------------------
+DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,            278,  200,     300)
 
 /* Do not verify null move below this depth */
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,     100)
@@ -315,17 +311,22 @@ DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
 /* -1 disables pin awareness */
 DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 
-//#undef DECLARE_VALUE
-//#define DECLARE_VALUE DECLARE_NORMAL // Tune --------------------------
-DECLARE_VALUE(  SINGULAR_ACCURACY,                   24,    1,     150)
-DECLARE_VALUE(  SINGULAR_COEFF,                      45,    0,      50)
-DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                2,    0,      10)
-DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,         250,   50,     350)
-//#undef DECLARE_VALUE
-//#define DECLARE_VALUE DECLARE_CONST // ---------------------------------
+#undef DECLARE_VALUE
+#define DECLARE_VALUE DECLARE_NORMAL // Tune --------------------------
+DECLARE_VALUE(  SINGULAR_ACCURACY,                   24,   10,      60)
+DECLARE_VALUE(  SINGULAR_COEFF,                      45,   20,      55)
+DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                2,    0,       8)
+DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,         250,  150,     350)
+#undef DECLARE_VALUE
+#define DECLARE_VALUE DECLARE_CONST // ---------------------------------
 
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                7,    3,      10)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    1,      10)
+
+#if 0
+DECLARE_VALUE(  STABILITY_MAX_THRESHOLD,            150,   50,     500)
+DECLARE_VALUE(  STABILITY_TACTICAL_THRESHOLD,       180,  125,     250)
+#endif
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 DECLARE_VALUE(  STANDPAT_MARGIN,                     85,    0,     350)
@@ -333,7 +334,7 @@ DECLARE_VALUE(  STANDPAT_MARGIN,                     85,    0,     350)
 /* Aspiration window */
 DECLARE_VALUE(  WINDOW_COEFF,                         6,    0,     100)
 DECLARE_VALUE(  WINDOW_DIV,                          67,    1,     200)
-DECLARE_VALUE(  WINDOW_HALF,                         25,    5,     200)
+DECLARE_VALUE(  WINDOW_HALF,                         25,    5,     100)
 
 /* Time management */
 DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              50,   40,     120)

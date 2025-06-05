@@ -149,6 +149,7 @@ namespace search
         UPPER,
         EXACT,
         LOWER,
+        MAX = LOWER,
     };
 
     /* Hash table eviction priority. Higher kicks out lower. */
@@ -159,37 +160,26 @@ namespace search
         uint8_t _stability;
 
     public:
-        static constexpr int DEPTH_THRESHOLD = 2;
+        static constexpr auto MAX_STABILITY = std::numeric_limits<decltype(_stability)>::max();
 
-        Priority() : _depth(std::numeric_limits<int8_t>::max()), _type(TT_Type::NONE), _stability(0)
-        {}
+        Priority() : Priority(std::numeric_limits<int8_t>::min(), TT_Type::NONE, 0) {}
+        Priority(int8_t d, TT_Type t, uint8_t s) : _depth(d), _type(t), _stability(s) {}
 
         Priority(int8_t depth, TT_Type type, score_t static_eval, score_t search_score)
-            : _depth(depth)
-            , _type(type)
-            , _stability(255 * 1000 / (1000 + std::abs(static_eval - search_score)))
+            : Priority(depth, type, MAX_STABILITY * 1000 / (1000 + std::abs(static_eval - search_score)))
         {}
 
-        Priority(const Priority& other) : _depth(other._depth), _type(other._type), _stability(other._stability)
-        {}
-
-        INLINE Priority& operator=(const Priority& other)
+        static INLINE Priority highest()
         {
-            _depth = other._depth;
-            _type = other._type;
-            _stability = other._stability;
-
-            return *this;
+            return Priority(std::numeric_limits<int8_t>::max(), TT_Type::MAX, MAX_STABILITY);
         }
 
         INLINE bool is_less_than(const Priority& other) const
         {
-            const int depth_diff = int(_depth) - int(other._depth);
-            const int threshold = DEPTH_THRESHOLD + int(_type == TT_Type::LOWER && _type != other._type);
-
-            if (depth_diff < -threshold)
+            if (_depth < other._depth)
                 return true;
-            if (depth_diff > threshold)
+
+            if (_depth > other._depth)
                 return false;
 
             if (_type != other._type)
@@ -197,8 +187,6 @@ namespace search
 
             return _stability < other._stability;
         }
-
-        INLINE void set_depth(int8_t depth) { _depth = depth;}
     };
 
     INLINE bool operator < (const Priority& lhs, const Priority& rhs) { return lhs.is_less_than(rhs); }
@@ -538,14 +526,7 @@ namespace search
             }
         }
 
-        /* Priority for replacing TT slots with the same hash in case there's a collision;
-         * manipulate depth for recency bias effect; lowest prio for nodes that may be retried.
-         */
-        const auto priority = !ctxt._retry_above_alpha
-            ? Priority(depth + Priority::DEPTH_THRESHOLD, type, ctxt._eval, ctxt._score)
-            : Priority();
-
-        if (auto p = _table.lookup_write(ctxt.state(), depth, std::move(priority)))
+        if (auto p = _table.lookup_write(ctxt.state(), depth, Priority(depth, type, ctxt._eval, ctxt._score)))
         {
             auto& entry = *p;
             store(ctxt, entry, type, depth);

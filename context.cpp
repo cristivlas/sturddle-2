@@ -1128,7 +1128,12 @@ namespace search
 
     static INLINE int window_delta(int iteration, int depth, double score)
     {
+    #if 1
         return WINDOW_HALF * pow2(iteration) + WINDOW_COEFF * depth * log(0.001 + abs(score) / WINDOW_DIV);
+    #else
+        /* Alternative: widen proportional with squared effective (selective) depth from prev. iter. */
+        return WINDOW_HALF * pow2(depth) + WINDOW_COEFF * iteration * log(0.001 + abs(score) / WINDOW_DIV);
+    #endif
     }
 
 
@@ -1164,8 +1169,31 @@ namespace search
             const score_t delta = score - prev_score;
             prev_score = score;
 
+        #if 1
             _alpha = std::max<score_t>(SCORE_MIN, score - std::max(WINDOW_HALF, delta));
             _beta = std::min<score_t>(SCORE_MAX, score + std::max(WINDOW_HALF, -delta));
+        #else
+            /* Widen in the OPPOSITE direction of the score trend, in case the raise/fall in
+             * the score is caused by too narrow a window and a refutation / tactic was missed.
+             * Widen in the direction of large discrepancies between static eval and search score
+             * in case something tactical is brewing or static eval is way off (NN error?).
+             */
+            const score_t eval_diff = abs(score - _eval);
+
+            auto lower_delta = std::max(WINDOW_HALF, delta);
+            auto upper_delta = std::max(WINDOW_HALF, -delta);
+
+            if (eval_diff >= STABILITY_TACTICAL_THRESHOLD)
+            {
+                if (score > _eval)
+                    upper_delta += std::min(eval_diff, STABILITY_MAX_THRESHOLD);
+                else
+                    lower_delta += std::min(eval_diff, STABILITY_MAX_THRESHOLD);
+            }
+
+            _alpha = std::max<score_t>(SCORE_MIN, score - lower_delta);
+            _beta = std::min<score_t>(SCORE_MAX, score + upper_delta);
+        #endif
         }
 
         /* save iteration bounds */
@@ -1192,7 +1220,7 @@ namespace search
             return LMRAction::Prune;
 
         /* no reductions at very low depth and in qsearch */
-        if (depth < 3 || count < LATE_MOVE_REDUCTION_COUNT || !can_reduce())
+        if (depth < 3 || count < LATE_MOVE_REDUCTION_THRESHOLD || !can_reduce())
             return LMRAction::None;
 
         /* Lookup reduction in the Late Move Reduction table. */
@@ -1223,7 +1251,8 @@ namespace search
          * "Classical implementation assumes a re-search at full depth
          * if the reduced depth search returns a score above alpha."
          */
-        _retry_above_alpha = RETRY::Reduced;
+        if (!_retry_above_alpha)
+            _retry_above_alpha = RETRY::Reduced;
 
         if constexpr(EXTRA_STATS)
             ++_tt->_reductions;

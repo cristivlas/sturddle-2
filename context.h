@@ -1157,7 +1157,7 @@ namespace search
 
     INLINE bool Context::should_verify_null_move() const
     {
-    #if 0
+    #if 1
         return depth() >= NULL_MOVE_MIN_VERIFICATION_DEPTH;
     #else
         return depth() >= std::max(NULL_MOVE_MIN_VERIFICATION_DEPTH, _max_depth - 8);

@@ -173,7 +173,7 @@ public:
         {
             // Get the header that precedes the user data
             allocation_header* header = reinterpret_cast<allocation_header*>(p) - 1;
-            ASSERT(header->size == sizeof(allocation_header));
+            ASSERT_ALWAYS(header->size == sizeof(allocation_header));
             HANDLE h_mapping = header->mapping_handle;
 
             // Unmap the view starting from the header
@@ -226,7 +226,6 @@ static INLINE size_t pick_prime(size_t n)
     return primes::Prime::pick(n).get();
 }
 #else
-#warning pick_prime not available
 static INLINE size_t pick_prime(size_t n)
 {
     return n;
@@ -359,13 +358,12 @@ namespace search
     class hash_table
     {
         template <size_t SIZE>
-        struct Bucket
+        struct alignas(128) Bucket
         {
             using lock_state_t = int8_t;
 
             lock_state_t        _lock_state;
             uint8_t             _used = 0;
-            uint16_t            _pad;
             uint32_t            _clock = 0;
             std::array<T, SIZE> _entries;
 
@@ -527,7 +525,7 @@ namespace search
         }
 
         template <typename S, typename P, typename lock_t = unique_lock_t>
-        INLINE Proxy<lock_t> lookup_write(const S &s, int depth, P priority)
+        INLINE Proxy<lock_t> lookup_write(const S &s, int depth, P&& priority)
         {
             const auto h = s.hash();
             ASSERT(h);
@@ -545,9 +543,7 @@ namespace search
                 }
 
                 entry_t *entry = &bucket._entries[0];
-
-                P lowest_priority{};
-                lowest_priority.set_depth(7 * (bucket._used >= 4));
+                auto lowest_priority = P::highest();
 
                 for (auto &e : bucket._entries)
                 {
@@ -558,9 +554,11 @@ namespace search
                         break;
                     }
 
+                    const auto ep = e.priority();
+
                     if (e._hash == h)
                     {
-                        if (e.priority() > priority)
+                        if (ep > priority)
                         {
                             return Proxy<lock_t>();
                         }
@@ -569,9 +567,9 @@ namespace search
                         break;
                     }
 
-                    if (auto p = e.priority(); p < lowest_priority)
+                    if (ep < lowest_priority)
                     {
-                        lowest_priority = p;
+                        lowest_priority = ep;
                         entry = &e;
                     }
                 }

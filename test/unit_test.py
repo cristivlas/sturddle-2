@@ -208,7 +208,7 @@ def test_static_exchanges():
         ('capt.14', '2r3k1/p5p1/4p3/1p1bP3/2pb2Q1/5N2/1q3P1P/3R1RK1 b - - 3 32', 'd4', chess.WHITE, 343),
 
         #('capt.15', 'rqr3k1/p4p1p/5Qp1/2b5/2N5/2Pn2NP/P2B1PP1/2R2RK1 w - - 0 24', 'g3', chess.BLACK, 319),
-        #depends on SEE_PIN_AWARENESS_DEPTH in common.h
+        #depends on SEE_PIN_AWARENESS_DEPTH in config.h
         ('capt.15', 'rqr3k1/p4p1p/5Qp1/2b5/2N5/2Pn2NP/P2B1PP1/2R2RK1 w - - 0 24', 'g3', chess.BLACK, 0),
 
         ('capt.16', '5r1k/pp4pp/2p5/2b1q3/4P3/1PB1p3/P3Q1PP/3N2K1 w - -', 'e5', chess.WHITE, 986),

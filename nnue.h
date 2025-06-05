@@ -110,7 +110,8 @@ namespace nnue
         return horizontal_add(v[0]);
     }
 
-    INLINE bool all_zero(const Vec16s& v)
+    template <typename V>
+    INLINE bool all_zero(V&& v)
     {
         return !horizontal_or(v);
     }
@@ -209,16 +210,39 @@ namespace nnue
     }
 
 
-    template <int I, int O, typename T=float, int Scale=1>
-    struct Layer
+    template <int I, int O, typename T, int Scale>
+    struct BaseLayer
     {
         /* Round up to Vec16s::size() to deal with the 897 inputs. */
         static constexpr int INPUTS = round_up<16>(I);
         static constexpr int OUTPUTS = O;
 
         ALIGN T _b[OUTPUTS]; /* biases */
-        ALIGN T _w[INPUTS][OUTPUTS]; /* weights */
         ALIGN T _wt[OUTPUTS][INPUTS]; /* weights transposed */
+        ALIGN T _w[INPUTS][OUTPUTS]; /* weights - only in accumulator layers */
+    };
+
+
+    template <int I, int O>
+    struct BaseLayer<I, O, float, 1>
+    {
+        static_assert(I % 16 == 0);
+        static constexpr int INPUTS = I;
+        static constexpr int OUTPUTS = O;
+
+        ALIGN float _b[OUTPUTS]; /* biases */
+        ALIGN float _wt[OUTPUTS][INPUTS]; /* weights transposed */
+    };
+
+
+    template <int I, int O, typename T=float, int Scale=1>
+    struct Layer : BaseLayer<I, O, T, Scale>
+    {
+        using Base = BaseLayer<I, O, T, Scale>;
+        using Base::INPUTS;
+        using Base::OUTPUTS;
+        using Base::_b;
+        using Base::_wt;
 
         Layer(const float(&w)[I][OUTPUTS], const float(&b)[OUTPUTS])
         {
@@ -233,30 +257,22 @@ namespace nnue
             for (int i = 0; i != I; ++i)
             {
                 for (int j = 0; j != OUTPUTS; ++j)
-                    _w[i][j] = _wt[j][i] = w[i][j] * Scale;
+                {
+                    _wt[j][i] = w[i][j] * Scale;
+                    if constexpr (Scale != 1)
+                        this->_w[i][j] = _wt[j][i];
+                }
             }
             /* padding, if needed */
             for (int i = I; i != INPUTS; ++i)
+            {
                 for (int j = 0; j != OUTPUTS; ++j)
-                    _w[i][j] = _wt[j][i] = 0;
-        }
-
-        void set_weights(const std::vector<std::vector<float>>& w, const std::vector<float>& b)
-        {
-            if (w.size() != I || w[0].size() != OUTPUTS || b.size() != OUTPUTS)
-                throw std::invalid_argument("Input dimensions do not match layer dimensions");
-
-            float weights[I][OUTPUTS];
-            float biases[OUTPUTS];
-
-            for (int i = 0; i < I; ++i)
-                for (int j = 0; j < OUTPUTS; ++j)
-                    weights[i][j] = w[i][j];
-
-            for (int j = 0; j < OUTPUTS; ++j)
-                biases[j] = b[j];
-
-            set_weights(weights, biases);
+                {
+                    if constexpr (Scale != 1)
+                        this->_w[i][j] = 0;
+                    _wt[j][i] = 0;
+                }
+            }
         }
 
         /* input */
@@ -265,7 +281,6 @@ namespace nnue
             const input_t (&input)[S],
             int16_t (&output)[OUTPUTS],
             const int16_t(&b)[OUTPUTS],
-            const int16_t(&w)[INPUTS][OUTPUTS],
             const int16_t(&wt)[OUTPUTS][INPUTS],
             NO_ACTIVATION /* activation applied separately */
         )
@@ -309,14 +324,6 @@ namespace nnue
                 }
 
                 auto sums = horizontal_add(sum);
-
-            #if 0 /* not needed, inputs are padded up */
-                for (int i = R; i != INPUTS; ++i)
-                {
-                    vw.load_a(&w[i][j]);
-                    sums += input[i] * vw;
-                }
-            #endif
                 vw.load_a(&b[j]);
                 (vw + sums).store_a(&output[j]);
             }
@@ -329,7 +336,6 @@ namespace nnue
             const float (&input)[INPUTS],
             float (&output)[OUTPUTS],
             const float(&b)[OUTPUTS],
-            const float(&)[INPUTS][OUTPUTS],
             const float(&wt)[OUTPUTS][INPUTS],
             ACTIVATION activate
         )
@@ -370,13 +376,13 @@ namespace nnue
         template <size_t N, typename U, typename V>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS]) const
         {
-            dot(input, output, _b, _w, _wt, [](const Vector& v) { return v; });
+            dot(input, output, _b, _wt, [](const Vector& v) { return v; });
         }
 
         template <size_t N, typename U, typename V, typename ACTIVATION>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], ACTIVATION activate) const
         {
-            dot(input, output, _b, _w, _wt, activate);
+            dot(input, output, _b, _wt, activate);
         }
     };
 
