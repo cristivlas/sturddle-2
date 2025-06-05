@@ -311,14 +311,14 @@ DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
 /* -1 disables pin awareness */
 DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 
-#undef DECLARE_VALUE
-#define DECLARE_VALUE DECLARE_NORMAL // Tune --------------------------
+// #undef DECLARE_VALUE
+// #define DECLARE_VALUE DECLARE_NORMAL // Tune --------------------------
 DECLARE_VALUE(  SINGULAR_ACCURACY,                   24,   10,      60)
 DECLARE_VALUE(  SINGULAR_COEFF,                      45,   20,      55)
 DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                2,    0,       8)
 DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,         250,  150,     350)
-#undef DECLARE_VALUE
-#define DECLARE_VALUE DECLARE_CONST // ---------------------------------
+// #undef DECLARE_VALUE
+// #define DECLARE_VALUE DECLARE_CONST // ---------------------------------
 
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                7,    3,      10)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    1,      10)
