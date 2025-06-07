@@ -1186,9 +1186,9 @@ namespace search
             if (eval_diff >= STABILITY_TACTICAL_THRESHOLD)
             {
                 if (score > _eval)
-                    upper_delta += std::min(eval_diff, STABILITY_MAX_THRESHOLD);
+                    upper_delta += eval_diff / STABILITY_DIV;
                 else
-                    lower_delta += std::min(eval_diff, STABILITY_MAX_THRESHOLD);
+                    lower_delta += eval_diff / STABILITY_DIV;
             }
 
             _alpha = std::max<score_t>(SCORE_MIN, score - lower_delta);

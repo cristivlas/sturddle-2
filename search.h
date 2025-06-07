@@ -157,24 +157,17 @@ namespace search
     {
         int8_t  _depth;
         TT_Type _type;
-        uint8_t _stability;
+        bool    _pv;
 
     public:
-        static constexpr auto MAX_STABILITY = std::numeric_limits<decltype(_stability)>::max();
-
-        Priority() : Priority(std::numeric_limits<int8_t>::min(), TT_Type::NONE, 0) {}
-        Priority(int8_t d, TT_Type t, uint8_t s) : _depth(d), _type(t), _stability(s) {}
-
-        Priority(int8_t depth, TT_Type type, score_t static_eval, score_t search_score)
-            : Priority(depth, type, MAX_STABILITY * 1000 / (1000 + std::abs(static_eval - search_score)))
-        {}
+        Priority(int8_t d, TT_Type t, bool pv) : _depth(d), _type(t), _pv(pv) {}
 
         static INLINE Priority highest()
         {
-            return Priority(std::numeric_limits<int8_t>::max(), TT_Type::MAX, MAX_STABILITY);
+            return Priority(std::numeric_limits<int8_t>::max(), TT_Type::MAX, true);
         }
 
-        INLINE bool is_less_than(const Priority& other) const
+        INLINE constexpr bool is_less_than(const Priority& other) const
         {
             if (_depth < other._depth)
                 return true;
@@ -182,10 +175,10 @@ namespace search
             if (_depth > other._depth)
                 return false;
 
-            if (_type != other._type)
-                return _type < other._type;
+            if (_pv != other._pv)
+                return _pv < other._pv;
 
-            return _stability < other._stability;
+            return _type < other._type;
         }
     };
 
@@ -199,13 +192,16 @@ namespace search
     {
     public:
         uint64_t    _hash = 0;
-        TT_Type     _type = TT_Type::NONE;
+        TT_Type     _type : 7;
+        bool        _pv : 1;
         int8_t      _depth = std::numeric_limits<int8_t>::min();
         BaseMove    _best_move;
         BaseMove    _hash_move;
         int16_t     _eval = SCORE_MIN; /* static eval */
         int16_t     _value = SCORE_MIN; /* search score */
         int16_t     _captures = SCORE_MIN;
+
+        TT_Entry() : _type(TT_Type::NONE), _pv(false) {}
 
         INLINE bool is_lower() const { return _type == TT_Type::LOWER; }
         INLINE bool is_upper() const { return _type == TT_Type::UPPER; }
@@ -216,7 +212,7 @@ namespace search
             return is_valid() && _hash == state.hash();
         }
 
-        INLINE Priority priority() const { return Priority(_depth, _type, _eval, _value); }
+        INLINE Priority priority() const { return Priority(_depth, _type, _pv); }
 
         template<typename C>
         INLINE const int16_t* lookup_score(C& ctxt) const
@@ -526,7 +522,7 @@ namespace search
             }
         }
 
-        if (auto p = _table.lookup_write(ctxt.state(), depth, Priority(depth, type, ctxt._eval, ctxt._score)))
+        if (auto p = _table.lookup_write(ctxt.state(), depth, Priority(depth, type, ctxt.is_pv_node())))
         {
             auto& entry = *p;
             store(ctxt, entry, type, depth);

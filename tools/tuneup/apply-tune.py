@@ -37,7 +37,7 @@ def parse_best_params(logfile, recommended=False):
         content = f.read().decode()
 
     chunks = content.strip().split('\n\n')
-    logging.info(f"Found {len(chunks)} chunks in the log file")
+    logging.info(f"Found {len(chunks)} chunk(s) in the log file")
 
     best_params = None
     for i, chunk in enumerate(reversed(chunks)):

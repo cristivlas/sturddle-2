@@ -313,10 +313,10 @@ DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
 
 // #undef DECLARE_VALUE
 // #define DECLARE_VALUE DECLARE_NORMAL // Tune --------------------------
-DECLARE_VALUE(  SINGULAR_ACCURACY,                   24,   10,      60)
-DECLARE_VALUE(  SINGULAR_COEFF,                      45,   20,      55)
-DECLARE_VALUE(  SINGULAR_DEPTH_MARGIN,                2,    0,       8)
-DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,         250,  150,     350)
+DECLARE_VALUE(  SINGULAR_DEPTH_SCALE,                57,   30,     100)
+DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,         277,  150,     350)
+DECLARE_VALUE(  SINGULAR_MARGIN_NORMAL,              58,   30,     100)
+DECLARE_VALUE(  SINGULAR_MARGIN_TT_PV,              136,   80,     200)
 // #undef DECLARE_VALUE
 // #define DECLARE_VALUE DECLARE_CONST // ---------------------------------
 
@@ -324,7 +324,7 @@ DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                7,    3,      10)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    1,      10)
 
 #if 0
-DECLARE_VALUE(  STABILITY_MAX_THRESHOLD,            150,   50,     500)
+DECLARE_VALUE(  STABILITY_DIV,                       10,    1,     100)
 DECLARE_VALUE(  STABILITY_TACTICAL_THRESHOLD,       180,  125,     250)
 #endif
 

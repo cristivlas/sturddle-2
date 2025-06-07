@@ -10,7 +10,7 @@ import numpy as np
 from collections import defaultdict
 
 try:
-    matplotlib.use('TkAgg')
+    matplotlib.use('Qt5Agg')
 except:
     pass
 

@@ -211,6 +211,7 @@ void TranspositionTable::store(Context& ctxt, TT_Entry& entry, TT_Type type, int
         entry._best_move = ctxt._best_move;
     }
     entry._type = type;
+    entry._pv = ctxt.is_pv_node();
     entry._eval = ctxt._eval; /* static eval */
     entry._value = ctxt._score;
     entry._hash_move = ctxt._best_move;
@@ -773,20 +774,18 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     * does not beat beta, it means the move is singular (the only cutoff
                     * in the current position).
                     */
-                    if (ctxt.depth() >= (ctxt.is_pv_node() ? 7 : 5)
+                    if (ctxt.depth() >= (ctxt.is_pv_node() ? SINGULAR_MIN_DEPTH_PV : SINGULAR_MIN_DEPTH_NON_PV)
                         && ctxt._tt_entry.is_lower()
-                        && next_ctxt->_move._group == MoveOrder::BEST_MOVES
+                        && next_ctxt->_move == ctxt._tt_entry._best_move
                         && abs(ctxt._tt_entry._value) < MATE_HIGH
                         && !ctxt._excluded
                         && ctxt._tt_entry._depth >= ctxt.depth() - 3
-                        && abs(ctxt._eval - ctxt._tt_entry._value)
-                            <= std::max<int>(0, SINGULAR_ACCURACY + SINGULAR_COEFF * pow2(ctxt._tt_entry._depth) / 100.0)
                        )
                     {
-                        ASSERT(next_ctxt->_move == ctxt._tt_entry._best_move
-                            || next_ctxt->_move._old_group == MoveOrder::BEST_MOVES);
+                        ASSERT(is_valid(ctxt._tt_entry._value));
 
-                        const auto s_beta = std::max(int(ctxt._tt_entry._value) - SINGULAR_DEPTH_MARGIN * ctxt.depth(), MATE_LOW);
+                        const auto margin = ctxt._tt_entry._pv && !ctxt.is_pv_node() ? SINGULAR_MARGIN_TT_PV : SINGULAR_MARGIN_NORMAL;
+                        const auto s_beta = std::max(score_t(ctxt._tt_entry._value) - margin * ctxt.depth() / SINGULAR_DEPTH_SCALE, MATE_LOW);
 
                         /*
                          * Hack: use ply + 2 for the singular search to avoid clobbering
