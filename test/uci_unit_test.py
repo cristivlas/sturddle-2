@@ -70,7 +70,7 @@ def extract_depth(info_line):
 '''
 Send a "go" command to the engine, optionally setting up the position.
 '''
-class GoCommand(chess.engine.BaseCommand[chess.engine.UciProtocol, None]):
+class GoCommand(chess.engine.BaseCommand[chess.engine.UciProtocol]):
     depth = 0
 
     def __init__(self, engine, **kwargs):
@@ -79,19 +79,19 @@ class GoCommand(chess.engine.BaseCommand[chess.engine.UciProtocol, None]):
         self.time = kwargs.pop('movetime', 0)
         self.moves = kwargs.pop('moves', [])
 
-    def start(self, engine):
+    def start(self):
         if self.pos:
             if self.moves:
-                engine.send_line(f'position fen {self.pos} moves {" ".join(self.moves)}')
+                self._engine.send_line(f'position fen {self.pos} moves {" ".join(self.moves)}')
             else:
-                engine.send_line(f'position fen {self.pos}')
+                self._engine.send_line(f'position fen {self.pos}')
         # Do not use the opening book
         if 'stockfish' not in args.engine:
-            engine.send_line('setoption name OwnBook value false')
-        engine.send_line('setoption name Ponder value false')
-        engine.send_line(f'go movetime {self.time}')
+            self._engine.send_line('setoption name OwnBook value false')
+        self._engine.send_line('setoption name Ponder value false')
+        self._engine.send_line(f'go movetime {self.time}')
 
-    def line_received(self, engine, line):
+    def line_received(self, line):
         if line.startswith('info '):
             if args.verbose:
                 print(line)
