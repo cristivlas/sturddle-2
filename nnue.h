@@ -25,6 +25,7 @@
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
 #elif (__arm__) || (__arm64__) || (__aarch64__)
+    #define __ARM__ true
     #include "armvector.h"
 #endif
 
@@ -554,18 +555,22 @@ namespace nnue
             const int r_idx,
             const int a_idx)
         {
+        #if __ARM__
+            using VecShort = Vec16s;
+        #else
+            using VecShort = Vec32s;
+        #endif /* __ARM__ */
+
             static_assert(LA::OUTPUTS == OUTPUTS_A);
             static_assert(LB::OUTPUTS == OUTPUTS_B);
-            static_assert(LA::OUTPUTS % Vec32s::size() == 0);
-            static_assert(LB::OUTPUTS % Vec32s::size() == 0);
+            static_assert(LA::OUTPUTS % VecShort::size() == 0);
+            static_assert(LB::OUTPUTS % VecShort::size() == 0);
 
             int update_layer_b = 0;
             for (int i = 0; i < r_idx && !update_layer_b; ++i)
                 update_layer_b += remove_inputs[i] < LB::INPUTS;
             for (int i = 0; i < a_idx && !update_layer_b; ++i)
                 update_layer_b += add_inputs[i] < LB::INPUTS;
-
-            using VecShort = Vec32s;
 
             VecShort vo, vw;
 
