@@ -1428,7 +1428,7 @@ namespace search
         {
             ASSERT(move._state->is_capture());
 
-            const auto gain = capture_gain(ctxt.state(), *move._state, move) - eval_exchanges<false>(ctxt.tid(), move);
+            const auto gain = capture_gain(ctxt.state(), *move._state, move) - eval_exchanges<true>(ctxt.tid(), move);
 
             if (SEE_PRUNING
                 && gain < 0
@@ -1503,6 +1503,7 @@ namespace search
             ASSERT(_state_index < Context::states(ctxt.tid(), ctxt._ply).size());
 
             move._state = &Context::states(ctxt.tid(), ctxt._ply)[_state_index++];
+            PREFETCH(move._state, 1);
         }
         /* Check legality in case this was a quiet, or previously pruned move */
         else if ((move._old_group == MoveOrder::UNDEFINED || move._old_group >= MoveOrder::UNORDERED_MOVES)

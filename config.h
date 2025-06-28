@@ -263,6 +263,7 @@ GROUP(Search)
 
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
 DECLARE_CONST(  DOUBLE_EXT_MAX,                       2,    0,       5)
+DECLARE_VALUE(  EXCHANGES_MAX_DEPTH,                  4,    2,      32)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_THRESHOLD,        4,    0,      10)
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                 25,    0,     100)

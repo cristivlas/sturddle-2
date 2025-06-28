@@ -78,7 +78,8 @@ if __name__ == '__main__':
         elif arch == 'ARMv8_2':
             arch_flags = '-march=armv8.2-a+fp16'
 
-        os.environ['CXXFLAGS'] = f'{arch_flags} -DUSE_MMAP_HASH_TABLE'
+        # os.environ['CXXFLAGS'] = f'{arch_flags} -DUSE_MMAP_HASH_TABLE'
+        os.environ['CXXFLAGS'] = f'{arch_flags}'
 
         arch = arch.lower()
         os.environ['TARGET'] = f'chess_engine_{arch}' if arch else 'chess_engine'

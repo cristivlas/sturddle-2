@@ -64,7 +64,6 @@ build_stamp = datetime.now().strftime('%m%d%y.%H%M')
 
 sourcefiles = [
     '__init__.pyx',
-    'captures.cpp',
     'chess.cpp',
     'context.cpp',
     'search.cpp',

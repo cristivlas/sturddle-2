@@ -278,7 +278,7 @@ namespace search
         ~TranspositionTable() = default;
 
                void clear();
-        static void clear_shared_hashtable(); /* call before new game */
+        static void clear_shared_hashtable(bool = false); /* call before new game */
 
         INLINE void init() { clear(); shift(); _eval_depth = 0; } /* call before new search */
 

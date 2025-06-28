@@ -114,6 +114,8 @@ namespace
             {
                 const auto i = (slot + j) % _data.size();
                 auto& entry = _data[i];
+                PREFETCH(&entry, 0);
+
                 if (hash == entry._state.hash() && state == entry._state)
                 {
                     ++entry._use_count;
@@ -134,6 +136,7 @@ namespace
             {
                 const auto i = (slot + j) % _data.size();
                 auto& entry = _data[i];
+                PREFETCH(&entry, 1);
 
                 if (force_write /* bypass eviction mechanism and forcefully write */
                     || hash == entry._state.hash()
@@ -805,17 +808,25 @@ namespace search
             if (next_state.is_check(state.turn))
                 continue; /* not a legal move */
 
-            next_state.castling_rights = 0;  /* castling moves do not capture */
-            const auto their_best = do_exchanges<Debug>(next_state, mask, tid, ply + 1);
-
-            if constexpr(Debug)
+            if (size_t(ply + 1) >= PLY_MAX + EXCHANGES_MAX_DEPTH)
             {
-                std::ostringstream out;
-                out << "\t<<< " << move << ": " << our_gain << " - " << their_best;
-                Context::log_message(LogLevel::DEBUG, out.str());
+                const auto their_best = estimate_static_exchanges(next_state, next_state.turn, move.to_square());
+                score = std::max(score, our_gain - their_best);
             }
+            else
+            {
+                next_state.castling_rights = 0;  /* castling moves do not capture */
+                const auto their_best = do_exchanges<Debug>(next_state, mask, tid, ply + 1);
 
-            score = std::max(score, our_gain - their_best);
+                if constexpr(Debug)
+                {
+                    std::ostringstream out;
+                    out << "\t<<< " << move << ": " << our_gain << " - " << their_best;
+                    Context::log_message(LogLevel::DEBUG, out.str());
+                }
+
+                score = std::max(score, our_gain - their_best);
+            }
         }
 
         if constexpr(Debug)

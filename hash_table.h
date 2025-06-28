@@ -12,10 +12,18 @@
   #include <sys/mman.h>
 #endif /* !_WIN32 */
 
+#ifdef _MSC_VER
+  #include <intrin.h>
+  #define PREFETCH(ptr, rw) _mm_prefetch((char*)(ptr), _MM_HINT_T0)
+#elif defined(__GNUC__)
+  #define PREFETCH(ptr, rw) __builtin_prefetch(ptr, rw)
+#endif
+
+
 constexpr size_t HASH_TABLE_MAX_READERS = 64;
 constexpr int SPIN_LOCK_MAX_RETRY = 1024 * 1024;
 
-namespace
+namespace alloc
 {
 /* Allocators */
 #if _MSC_VER
@@ -354,7 +362,7 @@ namespace search
     };
 
 
-    template <typename T, size_t BUCKET_SIZE = std::max<size_t>(128, CACHE_LINE_SIZE) / sizeof(T)>
+    template <typename T, size_t BUCKET_SIZE = std::max<size_t>(128, alloc::CACHE_LINE_SIZE) / sizeof(T)>
     class hash_table
     {
         template <size_t SIZE>
@@ -379,9 +387,9 @@ namespace search
         using bucket_t = Bucket<BUCKET_SIZE>;
 
     #if USE_MMAP_HASH_TABLE
-        using allocator_type = mmap_allocator<bucket_t>;
+        using allocator_type = alloc::mmap_allocator<bucket_t>;
     #else
-        using allocator_type = cache_line_allocator<bucket_t>;
+        using allocator_type = alloc::cache_line_allocator<bucket_t>;
     #endif
 
         using data_t = std::vector<bucket_t, allocator_type>;
@@ -414,9 +422,12 @@ namespace search
             return prime_buckets;
         }
 
+        template<bool ReadWrite>
         INLINE bucket_t &get_bucket(uint64_t hash)
         {
-            return _data[scramble64(hash) % _data.size()];
+            const auto idx = scramble64(hash) % _data.size();
+            PREFETCH(&_data[idx], ReadWrite);
+            return _data[idx];
         }
 
     public:
@@ -472,8 +483,12 @@ namespace search
         /* Capacity in entries of type T */
         INLINE size_t capacity() const { return _data.size() * bucket_t::size(); }
 
-        void clear()
+        void clear(bool wipe)
         {
+            // Fully erase if reasonably sized
+            if (wipe && _data.size() <= 1024 * ONE_MEGABYTE)
+                std::fill_n(&_data[0], _data.size(), bucket_t());
+
             ++_clock; // O(1) -- buckets are lazily erased on next use
             _used = 0;
         }
@@ -508,13 +523,15 @@ namespace search
             const auto h = s.hash();
             ASSERT(h);
 
-            auto &bucket = get_bucket(h);
+            auto &bucket = get_bucket<false>(h);
 
             lock_t lock(bucket.mutex());
-            if (lock.is_valid() && (bucket._clock == this->_clock))
+            if (lock.is_valid() && bucket._used && bucket._clock == this->_clock)
             {
-                for (auto &e : bucket._entries)
+                for (size_t i = 0; i < bucket._used; ++i)
                 {
+                    ASSERT(i < bucket.size());
+                    auto& e = bucket._entries[i];
                     if (e._hash == h)
                     {
                         return Proxy<lock_t>(&e, std::move(lock));
@@ -530,16 +547,19 @@ namespace search
             const auto h = s.hash();
             ASSERT(h);
 
-            auto &bucket = get_bucket(h);
+            auto &bucket = get_bucket<true>(h);
 
             lock_t lock(bucket.mutex());
             if (lock.is_valid())
             {
                 if (bucket._clock != this->_clock)
                 {
-                    bucket._entries.fill(entry_t());
+                    if (bucket._used)
+                    {
+                        bucket._entries.fill(entry_t());
+                        bucket._used = 0;
+                    }
                     bucket._clock = this->_clock;
-                    bucket._used = 0;
                 }
 
                 entry_t *entry = &bucket._entries[0];

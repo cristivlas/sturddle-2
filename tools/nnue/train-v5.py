@@ -25,8 +25,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 Q_SCALE = 1024
 # Quantization range: use int16_t with Q_SCALE, prevent overflow
-Q_MAX = 32767 / Q_SCALE / 130
-Q_MIN = -32768 / Q_SCALE / 130
+Q_MAX = 32767 / Q_SCALE / 98
+Q_MIN = -32768 / Q_SCALE / 98
 
 SCALE = 100.0
 
@@ -50,7 +50,9 @@ def make_model(args, strategy):
             self.qmax = qmax
 
         def __call__(self, w):
-            return tf.clip_by_value(w, self.qmin, self.qmax)
+            # return tf.clip_by_value(w, self.qmin, self.qmax)
+            w_quantized = tf.round(w * Q_SCALE) / Q_SCALE
+            return tf.clip_by_value(w_quantized, self.qmin, self.qmax)
 
     @tf.function
     def soft_clip(x, clip_value, alpha=0.1):
@@ -73,56 +75,6 @@ def make_model(args, strategy):
 
             f = tf.concat([tf_unpack_bits(bitboards), turn], axis=1)
             return tf.cast(f, tf.float32)
-
-    if args.quantization:
-        class FixedScaleQuantizer(quantizers.Quantizer):
-            def build(self, tensor_shape, name, layer):
-                return {}  # No new TensorFlow variables needed.
-
-            @tf.function
-            def __call__(self, inputs, training, weights, **kwargs):
-                half_range = 32768  # 16-bit quantization
-                alpha = tf.cast(args.soft_alpha, inputs.dtype)
-
-                quantized_values = tfc.ops.soft_round(inputs * Q_SCALE, alpha)
-                clipped_values = tf.keras.backend.clip(quantized_values, -half_range, half_range - 1)
-
-                return clipped_values / Q_SCALE
-
-            def get_config(self):
-                return {}
-
-        '''
-        https://www.tensorflow.org/model_optimization/guide/quantization/training_comprehensive_guide.md
-        '''
-        class CustomQuantizeConfig(tfmot.quantization.keras.QuantizeConfig):
-            # Return a list of tuple, each of which is:
-            # (weight_variable, quantizer_function)
-            def get_weights_and_quantizers(self, layer):
-                return [(layer.kernel, FixedScaleQuantizer())]
-
-            # Return a list of tuple, each of which is:
-            # (activation_output, quantizer_function)
-            def get_activations_and_quantizers(self, layer):
-                return [(layer.activation, FixedScaleQuantizer())]
-
-            # Given quantized weights, set the weights of the layer.
-            def set_quantize_weights(self, layer, quantized_weights):
-                layer.kernel = quantized_weights[0]
-
-            # Given quantized activations, set the activations of the layer.
-            def set_quantize_activations(self, layer, quantize_activations):
-                layer.activation = quantize_activations[0]
-
-            def get_output_quantizers(self, layer):
-                return [FixedScaleQuantizer()]
-
-            def get_config(self):
-                return {}
-
-            @classmethod
-            def from_config(cls, config):
-                return cls()
 
     with strategy.scope():
         ACTIVATION = tf.keras.activations.relu
@@ -184,13 +136,6 @@ def make_model(args, strategy):
 
         # ... and 3rd
         hidden_3_layer = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_3')
-
-        if args.quantization:
-            quantization_config = CustomQuantizeConfig()
-            hidden_1a_layer, hidden_1b_layer = (
-                tfmot.quantization.keras.quantize_annotate_layer(layer, quantize_config=quantization_config)
-                for layer in [hidden_1a_layer, hidden_1b_layer]
-            )
 
         hidden_1a = hidden_1a_layer(concat)
         hidden_1b = hidden_1b_layer(input_1b)
@@ -262,15 +207,6 @@ def make_model(args, strategy):
 
         # if args.mixed_precision:
         #     optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer)
-
-        if args.quantization:
-            with SafeModeScope(safe_mode=False), tfmot.quantization.keras.quantize_scope({
-                'CustomConstraint': CustomConstraint,
-                'CustomQuantizeConfig': CustomQuantizeConfig,
-                'FixedScaleQuantizer': FixedScaleQuantizer,
-                'UnpackLayer': UnpackLayer,
-            }):
-                model = tfmot.quantization.keras.quantize_apply(model)
 
         # Create loss dictionary
         losses = {'out': clipped_loss}
@@ -619,27 +555,17 @@ def load_model(path):
 
 
 def set_weights(from_model, to_model):
-    q_prefix = 'quant_'
     for layer in from_model.layers:
         params = layer.get_weights()
         if not params:
             continue
         name = layer.name
-        if name.startswith(q_prefix):
-            # quantized -> plain
-            name = name[len(q_prefix):]
-            params = params[:-1]
         try:
             to_layer = to_model.get_layer(name)
         except ValueError:
-            try:
-                # plain -> quantized
-                to_layer = to_model.get_layer(q_prefix + name)
-                params.append(np.empty(shape=()))
-            except ValueError:
-                # Layer doesn't exist in target model (e.g., move prediction layers)
-                logging.warning(f"Layer {name} not found in target model, skipping")
-                continue
+            # Layer doesn't exist in target model (e.g., move prediction layers)
+            logging.warning(f"Layer {name} not found in target model, skipping")
+            continue
 
         if len(to_layer.get_weights()):
             to_layer.set_weights(params)
@@ -795,7 +721,6 @@ if __name__ == '__main__':
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
         parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad', help='optimization algorithm')
         parser.add_argument('--plot-file', help='plot model architecture to file')
-        parser.add_argument('--quantization', '-q', action='store_true', help='simulate quantization effects during training')
         parser.add_argument('--sample', type=float, help='sampling ratio')
         parser.add_argument('--soft-alpha', type=float, default=0.01, help='alpha for soft_round operation')
         parser.add_argument('--tensorboard', '-t', action='store_true', help='enable TensorBoard logging callback')
@@ -834,12 +759,6 @@ if __name__ == '__main__':
 
         import tensorflow as tf
         tf.get_logger().setLevel(log_level)
-
-        if args.quantization:
-            # Experimental only
-            import tensorflow_compression as tfc
-            import tensorflow_model_optimization as tfmot
-            from tensorflow_model_optimization.python.core.quantization.keras.quantize import quantizers
 
         print(f'TensorFlow version: {tf.__version__}')
         tf_ver = [int(v) for v in tf.__version__.split('.')]
@@ -884,10 +803,7 @@ if __name__ == '__main__':
         # data types during training, with float32 being used for the activations and the parameters
         # of the model, and float16 being used for the intermediate computations. !!!! GPU Only !!!!
 
-        # Turn off mixed mode when using quantization-aware training,
-        # due to issues with tfc.ops.soft_round during graph construction.
-
-        if args.gpu and args.mixed_precision and not args.quantization:
+        if args.gpu and args.mixed_precision:
             from tensorflow.keras import mixed_precision
             if compute >= 7:
                 mixed_precision.set_global_policy('mixed_float16')

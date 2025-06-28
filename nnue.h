@@ -53,7 +53,7 @@ namespace nnue
     using namespace chess;
     using input_t = int16_t;
 
-    constexpr auto POOL_STRIDE = Vec4f::size();
+    constexpr auto POOL_STRIDE = 4;
     constexpr int QSCALE = 1024;
 
     /* bit index of the side-to-move feature within one-hot encoding */
@@ -95,6 +95,9 @@ namespace nnue
 #endif /* __FMA__ */
 
     static const Vector v_zero(0.0);
+    static const Vec8s  v8_zero(0);
+    static const Vec16s v16_zero(0);
+
 
     INLINE Vec16s horizontal_add(const Vec16s (&v)[16])
     {
@@ -199,16 +202,47 @@ namespace nnue
     }
 
     /** Rectified Linear Unit (reLU) activation */
+    template <typename V> INLINE V relu(V v) { return max(v, 0); }
+
+    template <>
+    INLINE Vector relu<Vector>(Vector v) { return max(v, v_zero); }
+
+    template <>
+    INLINE Vec8s relu<Vec8s>(Vec8s v) { return max(v, v8_zero); }
+
+    template <>
+    INLINE Vec16s relu<Vec16s>(Vec16s v) { return max(v, v16_zero); }
+
     template <int N>
     INLINE void activation(const int16_t (&input)[N], float (&output)[N])
     {
         constexpr float QSCALE_RECIP = 1.0f / QSCALE;
 
+#if __ARM__
+        /* Vec8f supported only on FP16 (half-precision) Neon */
         #pragma clang loop vectorize(enable)
         for (int i = 0; i != N; ++i)
             output[i] = std::max<float>(0, float(input[i]) * QSCALE_RECIP);
-    }
+#else
+    #if INSTRSET < 9
+        using VF = Vec8f;
+        using VS = Vec8s;
+    #else
+        using VF = Vec16f;
+        using VS = Vec16s;
+    #endif /* AVX512 */
 
+        static_assert(N % VF::size() == 0);
+
+        const VF v_scale(QSCALE_RECIP);
+
+        for (size_t i = 0; i < N; i += VF::size())
+        {
+            VF v = to_float(extend(relu(VS().load_a(&input[i]))));
+            (v * v_scale).store_a(&output[i]);
+        }
+#endif /* !__ARM__ */
+    }
 
     template <int I, int O, typename T, int Scale>
     struct BaseLayer
@@ -287,15 +321,6 @@ namespace nnue
         {
             static_assert(S >= INPUTS);
 
-        #if 0 /* testing */
-            for (int j = 0; j != OUTPUTS; ++j)
-            {
-                output[j] = b[j];
-                #pragma clang loop vectorize(enable)
-                for (int i = 0; i != INPUTS; ++i)
-                    output[j] += input[i] * wt[j][i];
-            }
-        #else
             constexpr auto N = Vec16s::size();
             static_assert(OUTPUTS % N == 0);
 
@@ -327,7 +352,6 @@ namespace nnue
                 vw.load_a(&b[j]);
                 (vw + sums).store_a(&output[j]);
             }
-        #endif
         }
 
         /* hidden, output */
@@ -390,17 +414,15 @@ namespace nnue
     template <size_t INPUTS, size_t OUTPUTS>
     INLINE void pool(const float (&in)[INPUTS], float (&out)[OUTPUTS])
     {
-        constexpr size_t stride = INPUTS / OUTPUTS;
-
         static_assert(INPUTS % OUTPUTS == 0);
-        static_assert(stride == POOL_STRIDE);
+        static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
 
         Vec4f v;
 
-        for (size_t i = 0, j = 0; i + stride <= INPUTS; i += stride, ++j)
+        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
         {
             v.load_a(&in[i]);
-            out[j] = horizontal_add(v) / Vec4f::size();
+            out[j] = horizontal_add(v) / POOL_STRIDE;
         }
     }
 
@@ -660,8 +682,6 @@ namespace nnue
     template <typename A, typename ATTN, typename L2, typename L3, typename OUT>
     INLINE int eval_core(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out, float (&l1_out)[A::OUTPUTS_A])
     {
-        constexpr size_t POOL_STRIDE = 4;
-
         static_assert(A::OUTPUTS_A == L2::INPUTS * POOL_STRIDE);
         static_assert(A::OUTPUTS_B == ATTN::INPUTS);
 

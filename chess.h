@@ -1892,8 +1892,109 @@ namespace chess
     void _init();
 
 
-    /* SEE captures.cpp */
-    score_t estimate_static_exchanges(const State&, Color, Square, PieceType = PieceType::NONE);
+    INLINE Square get_least_valuable_attacker(const State& board, Color color, Square target_square, Bitboard occupied)
+    {
+        Bitboard attackers = board.attackers_mask(color, target_square, occupied);
+
+        if (attackers != BB_EMPTY)
+        {
+            const PieceType piece_order[] = {PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING};
+
+            for (PieceType piece_type : piece_order)
+            {
+                Bitboard piece_attackers = attackers & board.pieces_mask(piece_type, color);
+
+                if (piece_attackers != BB_EMPTY)
+                {
+                    Square candidate = Square(lsb(piece_attackers));
+
+                    if (piece_type == KING)
+                    {
+                        // Temporarily remove the king and target piece
+                        Bitboard temp_occupied = occupied & ~BB_SQUARES[candidate] & ~BB_SQUARES[target_square];
+
+                        // Check if king would be in check on target square
+                        if (board.attackers_mask(!color, target_square, temp_occupied) != BB_EMPTY)
+                        {
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        Bitboard pin_mask = board.pin_mask(color, candidate);
+                        if (pin_mask != BB_ALL && !(pin_mask & BB_SQUARES[target_square]))
+                        {
+                            continue; // Piece is pinned and target is not on the pin ray
+                        }
+                    }
+
+                    return candidate;
+                }
+            }
+        }
+
+        return Square::UNDEFINED;
+    }
+
+
+    /* https://www.chessprogramming.org/SEE_-_The_Swap_Algorithm */
+    INLINE score_t estimate_static_exchanges(const State& board, Color side, Square square, PieceType target = NONE)
+    {
+        static constexpr int MAX_DEPTH = 8;
+
+        if (target == NONE)
+        {
+            target = board.piece_type_at(square);
+            if (target == NONE)
+            {
+                ASSERT(false); /* expect a target piece on the square */
+                return 0;
+            }
+        }
+
+        Bitboard occupied = board.occupied();
+
+        Square from = get_least_valuable_attacker(board, side, square, occupied);
+        if (from == Square::UNDEFINED)
+            return 0;
+
+        score_t gain[MAX_DEPTH];
+        gain[0] = board.piece_value_at(square, !side, target);
+        int d = 0;
+
+        while (from != Square::UNDEFINED && d < MAX_DEPTH - 1)
+        {
+            ++d;
+
+            score_t attacker_value = board.piece_value_at(from, side);
+
+            /* Check for promotion */
+            if (board.piece_type_at(from) == PAWN)
+            {
+                int target_rank = square_rank(square);
+
+                if ((side == WHITE && target_rank == 7) || (side == BLACK && target_rank == 0))
+                {
+                    /* Assume promotion to queen (most common case). Subtract pawn value, add queen value */
+                    attacker_value = board.piece_value_at(from, side, QUEEN) - board.piece_value_at(from, side, PAWN);
+                }
+            }
+
+            gain[d] = attacker_value - gain[d - 1];
+
+            occupied &= ~BB_SQUARES[from];
+            flip(side);
+            from = get_least_valuable_attacker(board, side, square, occupied);
+        }
+
+        while (--d)
+        {
+            gain[d - 1] = -std::max(-gain[d - 1], gain[d]);
+        }
+
+        return gain[0];
+    }
+
 
     INLINE score_t estimate_captures(const State& board)
     {

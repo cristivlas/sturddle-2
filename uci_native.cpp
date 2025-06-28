@@ -648,13 +648,14 @@ private:
 #endif /* OUTPUT_POOL */
     static std::atomic_bool _output_expected;
     bool _ponder = false;
+    bool _new_game = true;
+    bool _use_opening_book = false;
+    bool _best_book_move = true;
+    chess::BaseMove _last_move;
 
 #if NATIVE_BOOK
     PolyglotBook _opening_book = {};
 #endif
-    bool _use_opening_book = false;
-    bool _best_book_move = true;
-    chess::BaseMove _last_move;
 };
 
 #if OUTPUT_POOL
@@ -1069,6 +1070,11 @@ void UCI::go(const Arguments &args)
  */
 INLINE void UCI::isready()
 {
+    if (_new_game)
+    {
+        _new_game = false;
+        search::TranspositionTable::clear_shared_hashtable(true);
+    }
     output("readyok");
 }
 
@@ -1079,6 +1085,7 @@ void UCI::newgame()
 
     set_start_position();
     _book_depth = max_depth;
+    _new_game = true;
 
 #if PST_TUNING_ENABLED
     chess::init_piece_square_tables();

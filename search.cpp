@@ -178,9 +178,9 @@ void TranspositionTable::clear()
 }
 
 
-/* static */ void TranspositionTable::clear_shared_hashtable()
+/* static */ void TranspositionTable::clear_shared_hashtable(bool wipe)
 {
-    _table.clear();
+    _table.clear(wipe);
     Context::clear_moves_cache();
 }
 
