@@ -52,14 +52,15 @@ def configure_logging(args):
 
 def make_model(args, strategy):
     class CustomConstraint(tf.keras.constraints.Constraint):
-        def __init__(self, qmin, qmax):
+        def __init__(self, qmin, qmax, quantize=args.quantize):
             self.qmin = qmin
             self.qmax = qmax
+            self.quantize = quantize
 
         def __call__(self, w):
-            # return tf.clip_by_value(w, self.qmin, self.qmax)
-            w_quantized = tf.round(w * Q_SCALE) / Q_SCALE
-            return tf.clip_by_value(w_quantized, self.qmin, self.qmax)
+            if self.quantize:
+                w = tf.round(w * Q_SCALE) / Q_SCALE
+            return tf.clip_by_value(w, self.qmin, self.qmax)
 
     @tf.function
     def soft_clip(x, clip_value, alpha=0.1):
@@ -694,6 +695,7 @@ if __name__ == '__main__':
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-3, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
+        parser.add_argument('-q', '--quantize', action='store_true')
 
         # Move prediction related arguments
         parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')

@@ -146,7 +146,6 @@ cdef extern from 'chess.h' namespace 'chess':
 
     cdef cppclass Position:
         Bitboard black, white, pawns, knights, bishops, rooks, queens, kings
-        PieceType _piece_types[64]
 
         Bitboard occupied() const
         Bitboard pin_mask(int color, int square) const

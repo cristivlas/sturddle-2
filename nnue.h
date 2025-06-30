@@ -703,10 +703,7 @@ namespace nnue
         pool(l1_out, l2_in);
 
         /*
-         * The dynamic weights computed by the "attention" layer
-         * are used to modulate the output of another hidden layer
-         * through element-wise multiplication.
-         * TODO: replace "attention" with "modulation" -- clearer terminology?
+         * The "spatial attention" layer modulates L2 using tiled multiplication.
          */
         attn.dot(attn_in, attn_out);
 
