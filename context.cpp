@@ -23,6 +23,7 @@
  * Move ordering, board state evaluation, and other stuff
  * pertaining to the Context of the node being searched.
  */
+#include <bitset>
 #include <cerrno>
 #include <chrono>
 #include <iomanip>
@@ -87,7 +88,7 @@ namespace
         static constexpr size_t BUCKET_SIZE = 2;
         struct Entry
         {
-            State       _state;
+            uint64_t    _hash = 0;
             MovesList   _moves;
             int         _use_count = 0;
             int         _write_attempts = 0;
@@ -96,13 +97,15 @@ namespace
         std::vector<Entry> _data;
 
     public:
-        explicit MovesCache(size_t size = 4007) : _data(size)
+        explicit MovesCache(size_t size = 4000) : _data(size)
         {
+            ASSERT_ALWAYS(size);
+            ASSERT_ALWAYS(size % 2 == 0);
         }
 
         INLINE void clear()
         {
-            std::vector<Entry>(_data.size()).swap(_data);
+            std::fill_n(&_data[0], _data.size(), Entry());
         }
 
         INLINE bool lookup(const State& state, MovesList& moves)
@@ -112,11 +115,11 @@ namespace
 
             for (size_t j = 0; j < BUCKET_SIZE; ++j)
             {
-                const auto i = (slot + j) % _data.size();
+                const auto i = (slot + j) & (_data.size() - 1);
+                ASSERT(i < _data.size());
                 auto& entry = _data[i];
-                PREFETCH(&entry, 0);
 
-                if (hash == entry._state.hash() && state == entry._state)
+                if (hash == entry._hash)
                 {
                     ++entry._use_count;
                     moves.assign(entry._moves.begin(), entry._moves.end());
@@ -134,19 +137,19 @@ namespace
 
             for (size_t j = 0; j < BUCKET_SIZE; ++j)
             {
-                const auto i = (slot + j) % _data.size();
+                const auto i = (slot + j) & (_data.size() - 1);
+                ASSERT(i < _data.size());
                 auto& entry = _data[i];
-                PREFETCH(&entry, 1);
 
                 if (force_write /* bypass eviction mechanism and forcefully write */
-                    || hash == entry._state.hash()
+                    || hash == entry._hash
                     || ++entry._write_attempts > 2 * entry._use_count)
                 {
                     entry._moves.assign(moves.begin(), moves.end());
                     ASSERT(entry._moves.size() == moves.size());
-                    if (hash != entry._state.hash())
+                    if (hash != entry._hash)
                         entry._use_count = 0;
-                    entry._state = state;
+                    entry._hash = hash;
                     entry._write_attempts = 0;
                     break;
                 }
@@ -316,7 +319,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
 
     auto& acc = NNUE_data[t][_ply];
 
-    if (is_root() || _ply > PLY_MAX / 2)
+    if (is_root())
     {
         acc.update(L1A, L1B, state());
     }

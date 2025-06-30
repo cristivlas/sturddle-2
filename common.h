@@ -126,6 +126,8 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define USE_BOOK_HINT                       false
 #define USE_ROOT_MOVES                      false
 
+#define USE_ENDTABLES                       false
+
 #define USE_LIBPOPCOUNT                     true
 
 #if SMP

@@ -432,7 +432,9 @@ public:
         _options.emplace("debug", std::make_shared<OptionBool>("Debug", _debug));
         _options.emplace("ownbook", std::make_shared<OptionBool>("OwnBook", _use_opening_book));
         _options.emplace("ponder", std::make_shared<OptionBool>("Ponder", _ponder));
+    #if USE_ENDTABLES
         _options.emplace("syzygypath", std::make_shared<OptionSyzygy>());
+    #endif /*USE_ENDTABLES */
     #if DATAGEN
         const auto db_path = fs::absolute(fs::path(params["dir"])) / "evals";
         _options.emplace("db", std::make_shared<OptionDB>(db_path.string()));

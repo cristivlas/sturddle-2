@@ -517,6 +517,7 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
 }
 
 
+#if USE_ENDTABLES
 /*
  * Syzygy endgame tablebase probing (https://www.chessprogramming.org/Syzygy_Bases).
  * This implementation simply calls back into the python-chess library.
@@ -542,7 +543,7 @@ static INLINE bool probe_endtables(Context& ctxt)
     }
     return false;
 }
-
+#endif /* USE_ENDTABLES */
 
 static INLINE void update_pruned(Context& ctxt, const Context& next, size_t& count)
 {
@@ -564,6 +565,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
     if (ctxt.is_root())
     {
+    #if USE_ENDTABLES
         /* Do not probe end tables if the number of pieces at root
          * position has dropped below the end tables cardinality
          * (the root of the search may already be in the tables).
@@ -572,6 +574,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             table._iteration > 3
             && Context::tb_cardinality() > 0
             && popcount(ctxt.state().occupied()) > Context::tb_cardinality();
+    #endif /* USE_ENDTABLES */
     }
     else
     {
@@ -642,6 +645,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
     }
+#if USE_ENDTABLES
     else if (table._probe_endtables && probe_endtables(ctxt))
     {
         table.store<TT_Type::EXACT>(ctxt, ctxt.depth() + 2 * ctxt.tb_cardinality());
@@ -649,6 +653,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         ctxt._prune_reason = PruneReason::PRUNE_END_TABLES;
         return ctxt._score;
     }
+#endif /* USE_ENDTABLES */
     else
     {
         ASSERT(ctxt._alpha < ctxt._beta);

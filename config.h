@@ -309,8 +309,7 @@ DECLARE_VALUE(  ROOT_MIN_MOVE_SCORE,                950,  750,    1500)
 /* SEE */
 DECLARE_VALUE(  SEE_PRUNING,                          1,    0,       1)
 DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
-/* -1 disables pin awareness */
-DECLARE_VALUE(  SEE_PIN_AWARENESS_DEPTH,             -1,   -1,     100)
+DECLARE_VALUE(  SEE_PRUNING_MARGIN,                -115, -200,       0)
 
 // #undef DECLARE_VALUE
 // #define DECLARE_VALUE DECLARE_NORMAL // Tune --------------------------
@@ -338,8 +337,7 @@ DECLARE_VALUE(  WINDOW_DIV,                          67,    1,     200)
 DECLARE_VALUE(  WINDOW_HALF,                         25,    5,     100)
 
 /* Time management */
-DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              50,   40,     120)
-DECLARE_VALUE(  OPENING_MOVES,                       16,    8,      20)
+DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              36,   20,     100)
 
 GROUP(MoveOrdering)
 DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 223,    0,     500)

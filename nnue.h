@@ -219,7 +219,7 @@ namespace nnue
     {
         constexpr float QSCALE_RECIP = 1.0f / QSCALE;
 
-#if __ARM__
+#if __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC
         /* Vec8f supported only on FP16 (half-precision) Neon */
         #pragma clang loop vectorize(enable)
         for (int i = 0; i != N; ++i)
@@ -242,7 +242,7 @@ namespace nnue
             VF v = to_float(extend(relu(VS().load_a(&input[i]))));
             (v * v_scale).store_a(&output[i]);
         }
-#endif /* !__ARM__ */
+#endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
     }
 
     template <int I, int O, typename T, int Scale>

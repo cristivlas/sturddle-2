@@ -273,8 +273,6 @@ cdef class BoardState:
             self._state.en_passant_square = b.ep_square
 
         self._state.turn = b.turn
-        for square in range(0, 64):
-            self._state._piece_types[square] = self._state._piece_type_at(chess.Square(square))
 
         self._state.rehash()
         self._state.simple_score = self._state.eval_simple()

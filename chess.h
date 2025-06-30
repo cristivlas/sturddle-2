@@ -751,8 +751,6 @@ namespace chess
             Bitboard _pieces[6] = { 0 };
         };
 
-        PieceType _piece_types[64] = { PieceType::NONE };
-
         /* Get the bitboard of squares attacked from a given square */
         Bitboard attacks_mask(Square, Bitboard occupied) const;
 
@@ -863,8 +861,7 @@ namespace chess
 
         INLINE PieceType piece_type_at(Square square) const
         {
-            ASSERT(_piece_types[square] == _piece_type_at(square));
-            return _piece_types[square];
+            return _piece_type_at(square);
         }
 
         INLINE Color piece_color_at(Square square) const
@@ -1780,8 +1777,6 @@ namespace chess
             black &= ~mask;
         }
 
-        _piece_types[square] = PieceType::NONE;
-
         return piece_type;
     }
 
@@ -1802,11 +1797,6 @@ namespace chess
 
         pieces(type) |= mask;
         _occupied_co[color] |= mask;
-
-        ASSERT(_piece_types[square] == PieceType::NONE);
-        _piece_types[square] = type;
-
-        ASSERT(type == _piece_type_at(square));
     }
 
 

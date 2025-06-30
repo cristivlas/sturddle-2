@@ -25,8 +25,15 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 Q_SCALE = 1024
 # Quantization range: use int16_t with Q_SCALE, prevent overflow
-Q_MAX = 32767 / Q_SCALE / 98
-Q_MIN = -32768 / Q_SCALE / 98
+# 64 squares + (16 + 16) occupancy + 1 side-to-move + 1 bias == 98
+Q_MAX_A = 32767 / Q_SCALE / 98
+# Q_MIN_A = -32768 / Q_SCALE / 98
+Q_MIN_A = -Q_MAX_A
+
+# (8 pawns + 1 king) x 2 + 1 bias == 19
+Q_MAX_B = 32767  / Q_SCALE / 19
+# Q_MIN_B = -32768 / Q_SCALE / 19
+Q_MIN_B = -Q_MAX_B
 
 SCALE = 100.0
 
@@ -45,7 +52,7 @@ def configure_logging(args):
 
 def make_model(args, strategy):
     class CustomConstraint(tf.keras.constraints.Constraint):
-        def __init__(self, qmin=Q_MIN, qmax=Q_MAX):
+        def __init__(self, qmin, qmax):
             self.qmin = qmin
             self.qmax = qmax
 
@@ -102,7 +109,7 @@ def make_model(args, strategy):
         white_occupied = Lambda(white_occupied_mask, name='white')(unpack_layer)
 
         concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
-        constr = CustomConstraint()
+        constr_a = CustomConstraint(Q_MIN_A, Q_MAX_A)
         pool_size = 4
         hidden_1a_inputs = 640
 
@@ -111,10 +118,11 @@ def make_model(args, strategy):
             activation=ACTIVATION,
             name='hidden_1a',
             kernel_initializer=K_INIT,
-            kernel_constraint=constr,
-            bias_constraint=constr
+            kernel_constraint=constr_a,
+            bias_constraint=constr_a,
         )
 
+        constr_b = CustomConstraint(Q_MIN_B, Q_MAX_B)
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
         # hidden_1b_layer: selects the pawns and kings features.
         input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
@@ -123,8 +131,8 @@ def make_model(args, strategy):
             activation=ACTIVATION,
             name='hidden_1b',
             kernel_initializer=K_INIT,
-            kernel_constraint=constr,
-            bias_constraint=constr
+            kernel_constraint=constr_b,
+            bias_constraint=constr_b,
         )
 
         # Compute dynamic weights based on hidden_1b (pawns & kings features).
@@ -278,11 +286,6 @@ def make_model(args, strategy):
 
 '''
 Export weights as C++ code snippet.
-
-The numpy.float32 data type in NumPy uses the 32-bit floating-point
-format defined by the IEEE 754 standard. According to the standard,
-the maximum number of decimal digits of precision that can be
-represented by a numpy.float32 value is 7.
 '''
 def write_weigths(args, model, indent):
     for layer in model.layers:
@@ -300,7 +303,8 @@ def write_weigths(args, model, indent):
                         print(f'\n{" " * 2 * indent}', end='')
                     else:
                         print(f'{" " * (indent - 1)}', end='')
-                print(f'{weights[i][j]:12.8f},', end='')
+                #print(f'{weights[i][j]:12.8f},', end='')
+                print(f'{float(weights[i][j]).hex()}f,', end='')
             if cols > 1:
                 print()
             print(f'{" " * indent}}}, /* {i} */')
@@ -314,7 +318,8 @@ def write_weigths(args, model, indent):
                 if i:
                     print()
                 print(f'{" " * 2 *indent}', end='')
-            print(f'{biases[i]:12.8f},', end='')
+            #print(f'{biases[i]:12.8f},', end='')
+            print(f'{float(biases[i]).hex()}f,', end='')
         print('\n};')
 
 

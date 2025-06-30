@@ -232,8 +232,8 @@ namespace search
         /* Note: half of the moves stack are reserved for do_exchanges. */
         static constexpr size_t MAX_MOVE = 2 * PLY_MAX;
         using MoveStack = std::array<MovesList, MAX_MOVE>;
-
-        using StateStack = std::array<std::vector<State>, PLY_MAX>;
+        using StatePool = std::vector<State>;
+        using StateStack = std::array<StatePool, PLY_MAX>;
 
         friend class MoveMaker;
 
@@ -418,7 +418,7 @@ namespace search
 
         /* buffers for generating and making moves */
         static MovesList& moves(int tid, int ply);
-        static std::vector<State>& states(int tid, int ply);
+        static StatePool& states(int tid, int ply);
 
         static void set_syzygy_path(const std::string& path) { _syzygy_path = path; }
         static const std::string& syzygy_path() { return _syzygy_path; }
@@ -1194,7 +1194,7 @@ namespace search
     }
 
 
-    /* static */ INLINE std::vector<State>& Context::states(int tid, int ply)
+    /* static */ INLINE Context::StatePool& Context::states(int tid, int ply)
     {
         ASSERT(ply >= 0);
         ASSERT(size_t(ply) < PLY_MAX);
@@ -1220,36 +1220,28 @@ namespace search
 
     INLINE void Context::set_time_ctrl(const TimeControl& ctrl)
     {
-        constexpr int MAX_SAFETY_MARGIN = 75; /* Margin for OS context-switching, I/O overhead, etc. */
+        // Margin for OS context-switching, I/O overhead, etc.
+        constexpr int MAX_SAFETY_MARGIN = 10;
 
         const auto side_to_move = turn();
         const auto millisec = std::max(0, ctrl.millisec[side_to_move]);
         const auto bonus = std::max(0, ctrl.increments[side_to_move]);
 
-        int moves = ctrl.moves; /* moves left until next time control */
-        const int moves_played = int(_history->size());
-
+        int moves = ctrl.moves; // Moves left until next time control
         if (moves == 0)
         {
-            /* Estimate how many moves are left in the game */
+            const int moves_played = int(_history->size() / 2); // plies -> moves
             const int estimated_moves_left = AVERAGE_MOVES_PER_GAME - moves_played;
 
             if (bonus >= millisec - MAX_SAFETY_MARGIN)
             {
-                moves = 1;
-            }
-            else if (bonus > 0)
-            {
-                moves = std::max(10, estimated_moves_left / (1 + moves_played > OPENING_MOVES));
+                moves = 1; // bonus dominates, play move-by-move
             }
             else
             {
-                moves = std::max(AVERAGE_MOVES_PER_GAME / 2, estimated_moves_left);
+                // moves = std::max(AVERAGE_MOVES_PER_GAME / (2 + int(bonus > 0)), estimated_moves_left);
+                moves = std::max(AVERAGE_MOVES_PER_GAME / (2 + 2 * int(bonus > 0)), estimated_moves_left);
             }
-        }
-        else if (moves_played <= OPENING_MOVES)
-        {
-            moves += OPENING_MOVES;
         }
 
         int time_limit = std::max(millisec / moves, std::min(millisec, bonus));
@@ -1431,7 +1423,7 @@ namespace search
             const auto gain = capture_gain(ctxt.state(), *move._state, move) - eval_exchanges<true>(ctxt.tid(), move);
 
             if (SEE_PRUNING
-                && gain < 0
+                && gain < SEE_PRUNING_MARGIN
                 && !ctxt.is_root()
                 && ctxt.depth() > 0
                 && ctxt.depth() <= SEE_PRUNING_DEPTH
@@ -1503,7 +1495,6 @@ namespace search
             ASSERT(_state_index < Context::states(ctxt.tid(), ctxt._ply).size());
 
             move._state = &Context::states(ctxt.tid(), ctxt._ply)[_state_index++];
-            PREFETCH(move._state, 1);
         }
         /* Check legality in case this was a quiet, or previously pruned move */
         else if ((move._old_group == MoveOrder::UNDEFINED || move._old_group >= MoveOrder::UNORDERED_MOVES)

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <bitset>
 #include <cstdlib>
 #include <limits>
 #include <new>
@@ -12,16 +13,52 @@
   #include <sys/mman.h>
 #endif /* !_WIN32 */
 
+#if 0
 #ifdef _MSC_VER
   #include <intrin.h>
   #define PREFETCH(ptr, rw) _mm_prefetch((char*)(ptr), _MM_HINT_T0)
 #elif defined(__GNUC__)
   #define PREFETCH(ptr, rw) __builtin_prefetch(ptr, rw)
 #endif
-
+#else
+  #define PREFETCH(ptr, rw)
+#endif
 
 constexpr size_t HASH_TABLE_MAX_READERS = 64;
 constexpr int SPIN_LOCK_MAX_RETRY = 1024 * 1024;
+
+template <typename T>
+struct ProfileScope
+{
+    static constexpr int PRINT_INTERVAL = 100000;
+
+    static std::chrono::high_resolution_clock::duration total_time;
+    static int num_calls;
+
+    std::chrono::time_point<std::chrono::high_resolution_clock> _start;
+
+    INLINE void report()
+    {
+        const auto end = std::chrono::high_resolution_clock::now();
+        total_time += (end - _start);
+        if (num_calls % PRINT_INTERVAL == 0)
+        {
+            const auto avg_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(total_time).count() / num_calls;
+            const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(total_time).count();
+            std::clog << &num_calls << " calls: " << num_calls << ", total: " << total_ms << "ms" << ", avg: " << avg_ns << " ns" << std::endl;
+        }
+    }
+
+    ProfileScope() : _start(std::chrono::high_resolution_clock::now()) { ++num_calls; }
+    ~ProfileScope() { report(); }
+};
+
+template <typename T>
+std::chrono::high_resolution_clock::duration ProfileScope<T>::total_time {};
+
+template <typename T>
+int ProfileScope<T>::num_calls = 0;
+
 
 namespace alloc
 {
@@ -222,23 +259,11 @@ INLINE bool operator!=(const mmap_allocator<T> &a, const mmap_allocator<U> &b) n
 }
 } /* Allocators */
 
-/*
- * Thomas Neumann's primes.hpp requires __int128
- * http://databasearchitects.blogspot.com/2020/01/all-hash-table-sizes-you-will-ever-need.html
- */
-#if HAVE_INT128
-#include "primes.hpp"
 
-static INLINE size_t pick_prime(size_t n)
+static INLINE size_t get_even(size_t n)
 {
-    return primes::Prime::pick(n).get();
+    return (n + 1) & ~1;
 }
-#else
-static INLINE size_t pick_prime(size_t n)
-{
-    return n;
-}
-#endif /* HAVE_INT128 */
 
 
 INLINE uint64_t scramble64(uint64_t h)
@@ -264,7 +289,6 @@ namespace search
 
     public:
         BaseLock() : _mutex(nullptr), _locked(false) {}
-
         BaseLock(BaseLock &&other) : _mutex(other._mutex), _locked(other._locked)
         {
             other._locked = false;
@@ -314,6 +338,8 @@ namespace search
             {
                 this->_mutex->store(T(), std::memory_order_seq_cst);
             }
+#else
+            this->_locked = false;
 #endif /* SMP */
         }
     };
@@ -357,22 +383,27 @@ namespace search
                 auto value = --(*this->_mutex);
                 ASSERT(value >= T());
             }
+#else
+            this->_locked = false;
 #endif /* SMP */
         }
     };
 
 
-    template <typename T, size_t BUCKET_SIZE = std::max<size_t>(128, alloc::CACHE_LINE_SIZE) / sizeof(T)>
+    template <typename T, size_t BUCKET_SIZE = 3>
     class hash_table
     {
+        using clock_t = uint16_t;
+        static constexpr size_t BLOOM_SIZE = 2048 * 1024;
+
         template <size_t SIZE>
-        struct alignas(128) Bucket
+        struct alignas(64) Bucket
         {
             using lock_state_t = int8_t;
 
             lock_state_t        _lock_state;
             uint8_t             _used = 0;
-            uint32_t            _clock = 0;
+            clock_t             _clock = 0;
             std::array<T, SIZE> _entries;
 
             std::atomic<lock_state_t> &mutex()
@@ -397,7 +428,8 @@ namespace search
         using shared_lock_t = SharedLock<typename bucket_t::lock_state_t, HASH_TABLE_MAX_READERS>;
         using unique_lock_t = UniqueLock<typename bucket_t::lock_state_t>;
 
-        uint32_t _clock = 0;
+        std::array<std::atomic<uint64_t>, BLOOM_SIZE / 64> _bloom_words;
+        clock_t _clock = 0;
         count_t _used = 0;
         data_t _data; /* table entries */
 
@@ -406,28 +438,61 @@ namespace search
         static INLINE size_t get_num_buckets(size_t megabytes, size_t mem_avail)
         {
             static_assert(sizeof(T) == 20);
-            static_assert(bucket_t::size() == 6);
-            static_assert(bucket_size() == 128);
+            static_assert(bucket_t::size() == 3);
+            static_assert(bucket_size() == 64);
 
             auto buckets = megabytes * ONE_MEGABYTE / bucket_size();
-            auto prime_buckets = pick_prime(buckets);
+            auto even_buckets = get_even(buckets);
 
-            while (prime_buckets * bucket_size() > mem_avail)
+            while (even_buckets * bucket_size() > mem_avail)
             {
                 if (buckets == 0)
                     return 0;
 
-                prime_buckets = pick_prime(--buckets);
+                even_buckets = get_even(--buckets);
             }
-            return prime_buckets;
+            return even_buckets;
         }
 
         template<bool ReadWrite>
         INLINE bucket_t &get_bucket(uint64_t hash)
         {
-            const auto idx = scramble64(hash) % _data.size();
+            ASSERT(!_data.empty());
+            ASSERT(_data.size() % 2 == 0);
+
+            const auto idx = scramble64(hash) & (_data.size() - 1);
+            ASSERT(idx >= 0 && idx < _data.size());
             PREFETCH(&_data[idx], ReadWrite);
+
             return _data[idx];
+        }
+
+        INLINE void bloom_insert(uint64_t hash)
+        {
+            const auto bit1 = hash & (BLOOM_SIZE - 1);
+            const auto bit2 = (hash >> 16) & (BLOOM_SIZE - 1);
+            const auto bit3 = (hash >> 32) & (BLOOM_SIZE - 1);
+
+            _bloom_words[bit1 / 64].fetch_or(1ULL << (bit1 % 64), std::memory_order_relaxed);
+            _bloom_words[bit2 / 64].fetch_or(1ULL << (bit2 % 64), std::memory_order_relaxed);
+            _bloom_words[bit3 / 64].fetch_or(1ULL << (bit3 % 64), std::memory_order_relaxed);
+        }
+
+        INLINE bool bloom_check(uint64_t hash) const
+        {
+            const auto bit1 = hash & (BLOOM_SIZE - 1);
+            const auto bit2 = (hash >> 16) & (BLOOM_SIZE - 1);
+            const auto bit3 = (hash >> 32) & (BLOOM_SIZE - 1);
+
+            return (_bloom_words[bit1 / 64].load(std::memory_order_relaxed) & (1ULL << (bit1 % 64)))
+                && (_bloom_words[bit2 / 64].load(std::memory_order_relaxed) & (1ULL << (bit2 % 64)))
+                && (_bloom_words[bit3 / 64].load(std::memory_order_relaxed) & (1ULL << (bit3 % 64)));
+        }
+
+        INLINE void bloom_clear()
+        {
+            for (auto& word : _bloom_words)
+                word.store(0, std::memory_order_relaxed);
         }
 
     public:
@@ -491,6 +556,8 @@ namespace search
 
             ++_clock; // O(1) -- buckets are lazily erased on next use
             _used = 0;
+
+            bloom_clear(); // clear bloom filter
         }
 
 
@@ -520,8 +587,14 @@ namespace search
         template <typename S, typename lock_t = shared_lock_t>
         INLINE Proxy<lock_t> lookup_read(const S &s)
         {
+            // ProfileScope<struct LOOKUP_READ> profile;
             const auto h = s.hash();
             ASSERT(h);
+
+            if (!bloom_check(h))
+            {
+                return Proxy<lock_t>();
+            }
 
             auto &bucket = get_bucket<false>(h);
 
@@ -544,6 +617,8 @@ namespace search
         template <typename S, typename P, typename lock_t = unique_lock_t>
         INLINE Proxy<lock_t> lookup_write(const S &s, int depth, P&& priority)
         {
+            // ProfileScope<struct LOOKUP_WRITE> profile;
+
             const auto h = s.hash();
             ASSERT(h);
 
@@ -573,7 +648,6 @@ namespace search
                         entry = &e;
                         break;
                     }
-
                     const auto ep = e.priority();
 
                     if (e._hash == h)
@@ -582,7 +656,6 @@ namespace search
                         {
                             return Proxy<lock_t>();
                         }
-
                         entry = &e;
                         break;
                     }
@@ -594,6 +667,7 @@ namespace search
                     }
                 }
 
+                bloom_insert(h);
                 return Proxy<lock_t>(entry, std::move(lock));
             }
 
