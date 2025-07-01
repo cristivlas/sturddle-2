@@ -243,6 +243,11 @@ namespace search
 
             return nullptr;
         }
+
+        INLINE explicit operator bool() const { return is_valid(); }
+
+        INLINE const TT_Entry* operator->() const { return this; }
+        INLINE const TT_Entry& operator *() const { return *this; }
     };
 #pragma pack(pop)
 

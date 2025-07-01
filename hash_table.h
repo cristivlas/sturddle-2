@@ -585,7 +585,7 @@ namespace search
         }
 
         template <typename S, typename lock_t = shared_lock_t>
-        INLINE Proxy<lock_t> lookup_read(const S &s)
+        INLINE entry_t lookup_read(const S &s)
         {
             // ProfileScope<struct LOOKUP_READ> profile;
             const auto h = s.hash();
@@ -593,7 +593,7 @@ namespace search
 
             if (!bloom_check(h))
             {
-                return Proxy<lock_t>();
+                return entry_t();
             }
 
             auto &bucket = get_bucket<false>(h);
@@ -607,11 +607,11 @@ namespace search
                     auto& e = bucket._entries[i];
                     if (e._hash == h)
                     {
-                        return Proxy<lock_t>(&e, std::move(lock));
+                        return e;
                     }
                 }
             }
-            return Proxy<lock_t>();
+            return entry_t();
         }
 
         template <typename S, typename P, typename lock_t = unique_lock_t>
