@@ -149,41 +149,7 @@ namespace search
         UPPER,
         EXACT,
         LOWER,
-        MAX = LOWER,
     };
-
-    /* Hash table eviction priority. Higher kicks out lower. */
-    class Priority
-    {
-        int8_t  _depth;
-        TT_Type _type;
-        bool    _pv;
-
-    public:
-        Priority(int8_t d, TT_Type t, bool pv) : _depth(d), _type(t), _pv(pv) {}
-
-        static INLINE Priority highest()
-        {
-            return Priority(std::numeric_limits<int8_t>::max(), TT_Type::MAX, true);
-        }
-
-        INLINE constexpr bool is_less_than(const Priority& other) const
-        {
-            if (_depth < other._depth)
-                return true;
-
-            if (_depth > other._depth)
-                return false;
-
-            if (_pv != other._pv)
-                return _pv < other._pv;
-
-            return _type < other._type;
-        }
-    };
-
-    INLINE bool operator < (const Priority& lhs, const Priority& rhs) { return lhs.is_less_than(rhs); }
-    INLINE bool operator > (const Priority& lhs, const Priority& rhs) { return rhs.is_less_than(lhs); }
 
 
 #pragma pack(push, 4)
@@ -211,8 +177,6 @@ namespace search
         {
             return is_valid() && _hash == state.hash();
         }
-
-        INLINE Priority priority() const { return Priority(_depth, _type, _pv); }
 
         template<typename C>
         INLINE const int16_t* lookup_score(C& ctxt) const
@@ -527,7 +491,7 @@ namespace search
             }
         }
 
-        if (auto p = _table.lookup_write(ctxt.state(), depth, Priority(depth, type, ctxt.is_pv_node())))
+        if (auto p = _table.lookup_write(ctxt.state(), depth))
         {
             auto& entry = *p;
             store(ctxt, entry, type, depth);

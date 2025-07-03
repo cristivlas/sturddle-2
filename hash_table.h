@@ -614,8 +614,8 @@ namespace search
             return entry_t();
         }
 
-        template <typename S, typename P, typename lock_t = unique_lock_t>
-        INLINE Proxy<lock_t> lookup_write(const S &s, int depth, P&& priority)
+        template <typename S, typename lock_t = unique_lock_t>
+        INLINE Proxy<lock_t> lookup_write(const S &s, int depth)
         {
             // ProfileScope<struct LOOKUP_WRITE> profile;
 
@@ -637,38 +637,41 @@ namespace search
                     bucket._clock = this->_clock;
                 }
 
-                entry_t *entry = &bucket._entries[0];
-                auto lowest_priority = P::highest();
+                entry_t *entry = nullptr;
 
-                for (auto &e : bucket._entries)
+                for (size_t slot = 0; slot < bucket_t::size(); ++slot)
                 {
+                    const int depth_threshold = (slot == 0) ? -4 : -1;
+                    auto& e = bucket._entries[slot];
+
                     if (!e.is_valid())
                     {
                         increment_usage(bucket);
                         entry = &e;
                         break;
                     }
-                    const auto ep = e.priority();
 
                     if (e._hash == h)
                     {
-                        if (ep > priority)
+                        if (depth < e._depth + depth_threshold)
                         {
-                            return Proxy<lock_t>();
+                            return Proxy<lock_t>();  // Don't replace better entry
                         }
                         entry = &e;
                         break;
                     }
-
-                    if (ep < lowest_priority)
+                    else if (depth >= e._depth + depth_threshold)
                     {
-                        lowest_priority = ep;
                         entry = &e;
+                        break;
                     }
                 }
 
-                bloom_insert(h);
-                return Proxy<lock_t>(entry, std::move(lock));
+                if (entry)
+                {
+                    bloom_insert(h);
+                    return Proxy<lock_t>(entry, std::move(lock));
+                }
             }
 
             return Proxy<lock_t>();
