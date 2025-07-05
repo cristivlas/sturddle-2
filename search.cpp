@@ -328,13 +328,13 @@ void TranspositionTable::get_pv_from_table(Context& root, const Context& ctxt, P
         /* Add the move to the principal variation. */
         pv.emplace_back(move);
 
-        auto r = _table.probe(state, 0);
-        if (!r._entry)
+        auto e = _table.probe(state);
+        if (!e.is_valid())
             break;
 
-        ASSERT(r._entry->matches(state));
+        ASSERT(e.matches(state));
 
-        move = r._entry->_hash_move;
+        move = e._hash_move;
     }
 
     if (abs(root._score) < MATE_HIGH && state.is_checkmate())

@@ -163,11 +163,9 @@ namespace
 } /* namespace */
 
 
-template <typename T>
+template <typename T, int PRINT_INTERVAL = 100000>
 struct ProfileScope
 {
-    static constexpr int PRINT_INTERVAL = 100000;
-
     static std::chrono::high_resolution_clock::duration total_time;
     static int num_calls;
 
@@ -189,8 +187,8 @@ struct ProfileScope
     ~ProfileScope() { report(); }
 };
 
-template <typename T>
-std::chrono::high_resolution_clock::duration ProfileScope<T>::total_time {};
+template <typename T, int PRINT_INTERVAL>
+std::chrono::high_resolution_clock::duration ProfileScope<T, PRINT_INTERVAL>::total_time{};
 
-template <typename T>
-int ProfileScope<T>::num_calls = 0;
+template <typename T, int PRINT_INTERVAL>
+int ProfileScope<T, PRINT_INTERVAL>::num_calls = 0;

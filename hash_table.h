@@ -477,11 +477,34 @@ namespace search
             int         _replacement_slot = -1;
         };
 
+        template <typename S>
+        INLINE entry_t probe(const S &s)
+        {
+            entry_t entry;
+
+            const auto h = s.hash();
+            ASSERT(h);
+
+            auto& bucket = get_bucket(h);
+            shared_lock_t lock(bucket.mutex());
+
+            if (lock.is_valid() && bucket._used && bucket._clock == this->_clock)
+            {
+                for (const auto& e : bucket._entries)
+                {
+                    if (e._hash == h)
+                    {
+                        entry = e;
+                        break;
+                    }
+                }
+            }
+            return entry;
+        }
 
         template <typename S>
         INLINE Result probe(const S &s, int depth)
         {
-            // ProfileScope<struct PROBE> profile;
             Result result;
 
             const auto h = s.hash();
@@ -535,34 +558,32 @@ namespace search
 
         INLINE void update(Result& r)
         {
-            if (r._replacement_slot >= 0)
+            ASSERT(r._replacement_slot >= 0 && r._entry.is_valid());
+            ASSERT(r._bucket);
+            auto& bucket = *r._bucket;
+
+            unique_lock_t lock(bucket.mutex());
+            if (lock.is_valid())
             {
-                ASSERT(r._bucket);
-                auto& bucket = *r._bucket;
-
-                unique_lock_t lock(bucket.mutex());
-                if (lock.is_valid())
+                // Lazily erase stale buckets
+                if (bucket._clock != this->_clock)
                 {
-                    // Lazily erase stale bucket
-                    if (bucket._clock != this->_clock)
+                    if (bucket._used)
                     {
-                        if (bucket._used)
-                        {
-                            bucket._entries.fill(entry_t());
-                            bucket._used = 0;
-                        }
-                        bucket._clock = this->_clock;
+                        bucket._entries.fill(entry_t());
+                        bucket._used = 0;
                     }
-
-                    auto& e = bucket._entries[r._replacement_slot];
-
-                    if (!e.is_valid())
-                    {
-                        increment_usage(bucket);
-                    }
-
-                    e = r._entry;
+                    bucket._clock = this->_clock;
                 }
+
+                auto& e = bucket._entries[r._replacement_slot];
+
+                if (!e.is_valid())
+                {
+                    increment_usage(bucket);
+                }
+
+                e = r._entry;
             }
         }
     };

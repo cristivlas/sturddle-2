@@ -207,11 +207,6 @@ namespace search
 
             return nullptr;
         }
-
-        INLINE explicit operator bool() const { return is_valid(); }
-
-        INLINE const TT_Entry* operator->() const { return this; }
-        INLINE const TT_Entry& operator *() const { return *this; }
     };
 #pragma pack(pop)
 
@@ -474,24 +469,27 @@ namespace search
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
 
-        auto type = T;
-
-        /* type unknown at compile-time? */
-        if constexpr(T == TT_Type::NONE)
+        if (ctxt._tt_probe._replacement_slot >= 0)
         {
-            type = TT_Type::EXACT;
-            if (ctxt._score >= ctxt._beta)
-            {
-                type = TT_Type::LOWER;
-            }
-            else if (ctxt._score <= ctxt._alpha)
-            {
-                type = TT_Type::UPPER;
-            }
-        }
+            auto type = T;
 
-        store(ctxt, ctxt._tt_probe._entry, type, depth);
-        _table.update(ctxt._tt_probe);
+            /* type unknown at compile-time? */
+            if constexpr(T == TT_Type::NONE)
+            {
+                type = TT_Type::EXACT;
+                if (ctxt._score >= ctxt._beta)
+                {
+                    type = TT_Type::LOWER;
+                }
+                else if (ctxt._score <= ctxt._alpha)
+                {
+                    type = TT_Type::UPPER;
+                }
+            }
+
+            store(ctxt, ctxt._tt_probe._entry, type, depth);
+            _table.update(ctxt._tt_probe);
+        }
     }
 
 
