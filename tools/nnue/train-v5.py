@@ -27,13 +27,11 @@ Q_SCALE = 1024
 # Quantization range: use int16_t with Q_SCALE, prevent overflow
 # 64 squares + (16 + 16) occupancy + 1 side-to-move + 1 bias == 98
 Q_MAX_A = 32767 / Q_SCALE / 98
-# Q_MIN_A = -32768 / Q_SCALE / 98
 Q_MIN_A = -Q_MAX_A
 
 # (8 pawns + 1 king) x 2 + 1 bias == 19
-Q_MAX_B = 32767  / Q_SCALE / 19
-# Q_MIN_B = -32768 / Q_SCALE / 19
-Q_MIN_B = -Q_MAX_B
+# Q_MAX_B = 32767  / Q_SCALE / 19
+# Q_MIN_B = -Q_MAX_B
 
 SCALE = 100.0
 
@@ -67,7 +65,7 @@ def make_model(args, strategy):
         return (2 * tf.math.sigmoid(.5 * x) - 1) * clip_value + x * alpha
 
     @tf.function
-    def clipped_loss(y_true, y_pred, delta=3.0):
+    def clipped_loss(y_true, y_pred, delta=2.0):
         error = soft_clip(y_true - y_pred, args.clip)
         squared_loss = 0.5 * tf.square(error)
         linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
@@ -123,7 +121,9 @@ def make_model(args, strategy):
             bias_constraint=constr_a,
         )
 
-        constr_b = CustomConstraint(Q_MIN_B, Q_MAX_B)
+        # constr_b = CustomConstraint(Q_MIN_B, Q_MAX_B)
+        constr_b = constr_a
+
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
         # hidden_1b_layer: selects the pawns and kings features.
         input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
@@ -174,9 +174,8 @@ def make_model(args, strategy):
         outputs = [eval_output]
 
         if args.predict_moves:
-            hidden_1a_stop_grad = tf.stop_gradient(hidden_1a)
-            moves_branch = Dense(256, activation=ACTIVATION, kernel_initializer=K_INIT, name='moves_1')(hidden_1a_stop_grad)
-            moves_branch = Dense(128, activation=ACTIVATION, kernel_initializer=K_INIT, name='moves_2')(moves_branch)
+            # stop_grad = tf.stop_gradient(hidden_1a)
+            stop_grad = tf.stop_gradient(concat)
 
             # Output layer: 4096 logits for all possible moves (64x64)
             move_logits = Dense(
@@ -185,9 +184,9 @@ def make_model(args, strategy):
                 # Use smaller initialization to prevent gradient explosion
                 kernel_initializer=tf.keras.initializers.RandomNormal(0, 0.01),
                 bias_initializer=tf.keras.initializers.Zeros(),
-                name='M',
+                name='moves_out',
                 dtype='float32'
-            )(moves_branch)
+            )(stop_grad)
 
             outputs.append(move_logits)
 
@@ -262,11 +261,11 @@ def make_model(args, strategy):
                 return top(y_true, y_pred, k=5)
 
             # Set up move prediction loss and metrics
-            loss_weights['M'] = args.move_weight
+            loss_weights['moves_out'] = args.move_weight
             loss_weights['out'] = 1 - args.move_weight
 
-            losses['M'] = scaled_sparse_categorical_crossentropy
-            metrics['M'] = [top, top_3, top_5]
+            losses['moves_out'] = scaled_sparse_categorical_crossentropy
+            metrics['moves_out'] = [top, top_3, top_5]
 
         model.compile(
             loss=losses,
@@ -617,7 +616,7 @@ def main(args):
 
         if args.schedule:
             from keras.callbacks import ReduceLROnPlateau
-            lr = ReduceLROnPlateau(monitor='loss', factor=0.2, patience=3, min_lr=1e-12)
+            lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=1, min_lr=1e-12)
             callbacks.append(lr)
 
         if args.model is not None:
