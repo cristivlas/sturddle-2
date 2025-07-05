@@ -261,8 +261,7 @@ namespace nnue
     template <int I, int O>
     struct BaseLayer<I, O, float, 1>
     {
-        static_assert(I % 16 == 0);
-        static constexpr int INPUTS = I;
+        static constexpr int INPUTS = round_up<16>(I);
         static constexpr int OUTPUTS = O;
 
         ALIGN float _b[OUTPUTS]; /* biases */
@@ -278,6 +277,8 @@ namespace nnue
         using Base::OUTPUTS;
         using Base::_b;
         using Base::_wt;
+
+        Layer() = default;
 
         Layer(const float(&w)[I][OUTPUTS], const float(&b)[OUTPUTS])
         {
@@ -442,13 +443,11 @@ namespace nnue
         uint64_t _hash = 0;
 
         /** Compute 1st layer output from scratch at root */
-        template <typename LA, typename LB>
-        INLINE void update(const LA& layer_1a, const LB& layer_1b, const State& state)
+        template <typename LA, typename LB, size_t IN_OUT = 1>
+        INLINE void update(const LA& layer_1a, const LB& layer_1b, const State& state, float (*in_out)[IN_OUT] = nullptr)
         {
-            if (needs_update(state))
+            if (in_out || needs_update(state))
             {
-                _hash = state.hash();
-
             #if DEBUG_INCREMENTAL
                 memset(&_input, 0, sizeof(_input));
             #else
@@ -456,8 +455,19 @@ namespace nnue
             #endif
                 one_hot_encode(state, _input);
 
-                layer_1a.dot(_input, _output_a);
-                layer_1b.dot(_input, _output_b);
+                if constexpr (IN_OUT > 1)
+                {
+                    if (in_out)
+                        std::copy_n(&_input[0], std::min(sizeof(*in_out), sizeof(_input)), &(*in_out)[0]);
+                }
+
+                if (needs_update(state))
+                {
+                    layer_1a.dot(_input, _output_a);
+                    layer_1b.dot(_input, _output_b);
+                }
+
+                _hash = state.hash();
             }
         }
 
@@ -677,21 +687,14 @@ namespace nnue
 
 
     template <typename A, typename ATTN, typename L2, typename L3, typename OUT>
-    INLINE int eval(const A& accumulator, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out)
-    {
-        ALIGN float l1_out[A::OUTPUTS_A];
-        return eval_core(accumulator, attn, l2, l3, out, l1_out);
-    }
-
-
-    template <typename A, typename ATTN, typename L2, typename L3, typename OUT>
-    INLINE int eval_core(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out, float (&l1_out)[A::OUTPUTS_A])
+    INLINE int eval(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out)
     {
         static_assert(A::OUTPUTS_A == L2::INPUTS * POOL_STRIDE);
         static_assert(A::OUTPUTS_B == ATTN::INPUTS);
 
         ALIGN float attn_in[ATTN::INPUTS];
         ALIGN float attn_out[ATTN::OUTPUTS];
+        ALIGN float l1_out[A::OUTPUTS_A];
         ALIGN float l2_in[L2::INPUTS];
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float l3_out[L3::OUTPUTS];
@@ -747,41 +750,25 @@ namespace nnue
         std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) { return a._score > b._score; });
     }
 
-    template <
-        typename A,
-        typename ATTN,
-        typename L2,
-        typename L3,
-        typename L_M1,  // 1st move prediction layer type
-        typename L_M2,  // 2nd
-        typename L_M,   // move prediction layer type
-        typename OUT,   // position eval output layer type
-        typename T>
+    template <typename A, typename I, typename ATTN, typename L2, typename L3, typename L_MOVE, typename OUT, typename T>
     INLINE int
     eval_with_moves(
         const A& accumulator,
-        const ATTN& attn,
+        const I& input,
+        const ATTN& attn,       // spatial attention
         const L2& l2,
         const L3& l3,
-        const L_M1& m1,
-        const L_M2& m2,
-        const L_M& moves,  // layer for computing moves logits
-        const OUT& out,    // position eval output layer
+        const L_MOVE& moves,    // layer that computes moves logits
+        const OUT& out,         // layer that computes position eval
         T& pseudo_legal_moves)
     {
-        ALIGN float l1_out[A::OUTPUTS_A];
-        ALIGN float m1_out[L_M1::OUTPUTS];
-        ALIGN float m2_out[L_M2::OUTPUTS];
-        ALIGN float logits[L_M::OUTPUTS];
+        const auto score = eval(accumulator, attn, l2, l3, out);
 
-        const auto eval = eval_core(accumulator, attn, l2, l3, out, l1_out);
+        ALIGN float logits[L_MOVE::OUTPUTS];
 
-        m1.dot(l1_out, m1_out, [](const Vector& v) { return max(v, v_zero); });
-        m2.dot(m1_out, m2_out, [](const Vector& v) { return max(v, v_zero); });
-        moves.dot(m2_out, logits);
-
+        moves.dot(input, logits, [](const Vector& v) { return v; });
         sort_moves(pseudo_legal_moves, logits);
 
-        return eval;
+        return score;
     }
 } /* namespace nnue */

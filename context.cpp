@@ -32,16 +32,18 @@
 #include <fstream>
 #include <sstream>
 #include "chess.h"
-#include "nnue.h"
-#include "weights.h"
 
 #define CONFIG_IMPL
   #include "context.h"
 #undef CONFIG_IMPL
 
-#if !defined(WITH_NNUE)
-  #define WITH_NNUE false
+#if WITH_NNUE
+  #include "nnue.h"
+  #if !(SHARED_WEIGHTS)
+    #include "weights.h"
+  #endif
 #endif
+
 
 #include "eval.h"
 
@@ -273,10 +275,6 @@ std::map<std::string, int> _get_params()
 
 #if WITH_NNUE
 
-#ifndef _countof
-#define _countof(x) std::extent<decltype(x)>::value
-#endif
-
 constexpr int INPUTS_A = 897;
 constexpr int INPUTS_B = 256;
 constexpr int HIDDEN_1A = 640;
@@ -285,31 +283,130 @@ constexpr int HIDDEN_1B = 64;
 constexpr int HIDDEN_2 = 16;
 constexpr int HIDDEN_3 = 16;
 
-using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
-
-static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
-
+using LAttnType = nnue::Layer<HIDDEN_1B, 32>;
+using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE>;
+using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE>;
+using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2>;
+using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
+using EVALType = nnue::Layer<HIDDEN_3, 1>;
+using LMOVEType = nnue::Layer<INPUTS_A, 4096>;
 /*
  * The accumulator takes the inputs and processes them into two outputs,
  * using (hidden) neural layers L1A and L1B. L1B processes only the 1st
- * 128 inputs, which correspond to kings and pawns. The output of L1B is
- * processed by the dynamic weights layer (attention layer). The outputs
+ * 256 inputs, which correspond to kings and pawns. The output of L1B is
+ * processed by the dynamic weights (spatial attention) layer. The outputs
  * of the dynamic weights (attention) layer are multiplied element-wise
  * with the result of the L1A layer.
  */
-static nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE> L1A(hidden_1a_w, hidden_1a_b);
-static nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE> L1B(hidden_1b_w, hidden_1b_b);
-static nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2> L2(hidden_2_w, hidden_2_b);
-static nnue::Layer<HIDDEN_1B, _countof(dynamic_weights_b)> L_DYN(dynamic_weights_w, dynamic_weights_b);
+using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
+static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
 
-static nnue::Layer<HIDDEN_2, HIDDEN_3> L3(hidden_3_w, hidden_3_b);
-static nnue::Layer<HIDDEN_3, 1> OUT(out_w, out_b);
+#if !SHARED_WEIGHTS
+static struct
+{
+    void init() {}
+
+    LAttnType L_ATTN{dynamic_weights_w, dynamic_weights_b};
+    L1AType L1A{hidden_1a_w, hidden_1a_b};
+    L1BType L1B{hidden_1b_w, hidden_1b_b};
+    L2Type L2{hidden_2_w, hidden_2_b};
+    L3Type L3{hidden_3_w, hidden_3_b};
+    EVALType EVAL{out_w, out_b};
 
 #if USE_ROOT_MOVES
-static nnue::Layer<HIDDEN_1A, 256> L_M1(moves_1_w, moves_1_b);
-static nnue::Layer<256, 128> L_M2(moves_2_w, moves_2_b);
-static nnue::Layer<128, 4096> L_M(M_w, M_b);
+    LMOVEType L_M{moves_out_w, moves_out_b};
 #endif /* USE_ROOT_MOVES */
+} model;
+
+#else
+/* Weights are built as separate module and shared between all engine flavors. */
+class WeightLoader
+{
+    PyObject* module = nullptr;
+
+public:
+    WeightLoader()
+    {
+        module = PyImport_ImportModule("weights");
+        if (!module)
+        {
+            PyErr_Print();
+            throw std::runtime_error("Failed to load weights module");
+        }
+    }
+
+    ~WeightLoader()
+    {
+        if (module)
+        {
+            Py_DECREF(module);
+            module = nullptr;
+        }
+    }
+
+    template<typename T>
+    T* get_weights(const char* name)
+    {
+        PyObject* func = PyObject_GetAttrString(module, name);
+        PyObject* capsule = PyObject_CallObject(func, nullptr);
+
+        Py_DECREF(func);
+        T* result = static_cast<T*>(PyCapsule_GetPointer(capsule, PyCapsule_GetName(capsule)));
+        Py_DECREF(capsule);
+        return result;
+    }
+};
+
+template <typename T, size_t ROWS, size_t COLS>
+class WeightAdapter
+{
+    const T* raw_ptr;
+
+public:
+    WeightAdapter(WeightLoader& loader, const char* name) : raw_ptr(loader.get_weights<T>(name)) {}
+
+    const T (&as_2d() const)[ROWS][COLS] { return *reinterpret_cast<const T(*)[ROWS][COLS]>(raw_ptr); }
+    const T (&as_1d() const)[COLS] { return *reinterpret_cast<const T(*)[COLS]>(raw_ptr); }
+};
+
+#define INIT_LAYER(layer, w_rows, w_cols, name) \
+    do { \
+        WeightAdapter<float, w_rows, w_cols> w(loader, "get_" #name "_w"); \
+        WeightAdapter<float, 1, w_cols> b(loader, "get_" #name "_b"); \
+        layer.set_weights(w.as_2d(), b.as_1d()); \
+    } while(0)
+
+static struct
+{
+    LAttnType L_ATTN;
+    L1AType L1A;
+    L1BType L1B;
+    L2Type L2;
+    L3Type L3;
+    EVALType EVAL;
+
+#if USE_ROOT_MOVES
+    LMOVEType L_M;
+#endif /* USE_ROOT_MOVES */
+
+    void init()
+    {
+        WeightLoader loader;
+
+        INIT_LAYER(L_ATTN, HIDDEN_1B, 32, dynamic_weights);
+        INIT_LAYER(L1A, INPUTS_A, HIDDEN_1A, hidden_1a);
+        INIT_LAYER(L1B, INPUTS_B, HIDDEN_1B, hidden_1b);
+        INIT_LAYER(L2, HIDDEN_1A_POOLED, HIDDEN_2, hidden_2);
+        INIT_LAYER(L3, HIDDEN_2, HIDDEN_3, hidden_3);
+        INIT_LAYER(EVAL, HIDDEN_3, 1, eval);
+
+    #if USE_ROOT_MOVES
+        INIT_LAYER(L_M, INPUTS_A, 4096, moves_out);
+    #endif /* USE_ROOT_MOVES */
+    }
+} model;
+#endif /* SHARED_WEIGHTS */
+
 
 
 score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side_to_move_pov /* = true */)
@@ -321,7 +418,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
 
     if (is_root())
     {
-        acc.update(L1A, L1B, state());
+        acc.update(model.L1A, model.L1B, state());
     }
     else
     {
@@ -331,7 +428,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
         {
             _parent->eval_nnue_raw(true);
         }
-        acc.update(L1A, L1B, _parent->state(), state(), _move, prev);
+        acc.update(model.L1A, model.L1B, _parent->state(), state(), _move, prev);
     }
 
     if (update_only)
@@ -340,7 +437,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
     }
     else
     {
-        _eval_raw = nnue::eval(acc, L_DYN, L2, L3, OUT);
+        _eval_raw = nnue::eval(acc, model.L_ATTN, model.L2, model.L3, model.EVAL);
 
         if (side_to_move_pov)
         {
@@ -534,11 +631,14 @@ namespace search
         }
     }
 
-    /* Init attack masks and other magic bitboards in chess.cpp */
     /* static */ void Context::init()
     {
         setup_crash_handler();
-        _init();
+        _init(); /* Init attack masks and other magic bitboards in chess.cpp */
+
+    #if WITH_NNUE
+        model.init();
+    #endif
     }
 
 
@@ -1506,9 +1606,10 @@ namespace search
     #if USE_ROOT_MOVES
         if (order_root_moves)
         {
+            float input[nnue::round_up<16>(INPUTS_A)] = {0};
             auto& acc = NNUE_data[ctxt.tid()][0];
-            acc.update(L1A, L1B, ctxt.state());
-            const auto eval = nnue::eval_with_moves(acc, L_DYN, L2, L3, L_M1, L_M2, L_M, OUT, moves_list);
+            acc.update(model.L1A, model.L1B, ctxt.state(), &input);
+            const auto eval = nnue::eval_with_moves(acc, input, model.L_ATTN, model.L2, model.L3, model.L_M, model.EVAL, moves_list);
             ctxt._eval_raw = eval * SIGN[ctxt.turn()];
 
             bool all_valid = true;

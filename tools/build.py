@@ -60,7 +60,7 @@ if __name__ == '__main__':
         elif platform.machine() == 'aarch64':
             ARCHS = ['ARMv8_2', '']
 
-    for arch in ARCHS:
+    for i, arch in enumerate(ARCHS):
         delete(['uci.cpp', '__init__.cpp']) # force re-cythonize
         print('*********************************************************')
         print(f'Building {arch if arch else "generic"} module')
@@ -78,8 +78,14 @@ if __name__ == '__main__':
         elif arch == 'ARMv8_2':
             arch_flags = '-march=armv8.2-a+fp16'
 
-        # os.environ['CXXFLAGS'] = f'{arch_flags} -DUSE_MMAP_HASH_TABLE'
-        os.environ['CXXFLAGS'] = f'{arch_flags}'
+        # os.environ['CXXFLAGS'] = f'{arch_flags} -DUSE_MMAP_HASH_TABLE -DSHARED_WEIGHTS'
+        os.environ['CXXFLAGS'] = f'{arch_flags} -DSHARED_WEIGHTS'
+
+        # Build the shared weights on the 1st flavor only
+        if i == 0:
+            os.environ['SHARED_WEIGHTS'] = 'true'
+        else:
+            os.environ.pop('SHARED_WEIGHTS', None)
 
         arch = arch.lower()
         os.environ['TARGET'] = f'chess_engine_{arch}' if arch else 'chess_engine'

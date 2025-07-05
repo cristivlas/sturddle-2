@@ -97,6 +97,7 @@ if environ.get('BUILD_ASSERT', None):
 platform = sysconfig.get_platform()
 
 NATIVE_UCI = environ.get('NATIVE_UCI', '').lower() in ['1', 'true', 'yes']
+SHARED_WEIGHTS = environ.get('SHARED_WEIGHTS', '').lower() in ['1', 'true', 'yes']
 
 # Debug build
 if environ.get('BUILD_DEBUG', None):
@@ -106,6 +107,9 @@ if environ.get('BUILD_DEBUG', None):
     else:
         args = [ '-O0', '-D_DEBUG', '-DTUNING_ENABLED' ]
 
+
+if SHARED_WEIGHTS:
+    args.append('-DSHARED_WEIGHTS')
 
 args.append('-DBUILD_STAMP=' + build_stamp)
 args += environ.get("CXXFLAGS", '').split()
@@ -216,7 +220,8 @@ extensions = [
         sources=sourcefiles,
         extra_compile_args=args + inc_dirs,
         extra_link_args=link
-    )]
+    )
+]
 if not NATIVE_UCI:
     extensions.append(Extension(
         name='uci',
@@ -225,5 +230,15 @@ if not NATIVE_UCI:
         extra_link_args=link
     ))
 
+ext_modules = cythonize(extensions)
 
-setup(ext_modules=cythonize(extensions), cmdclass={'build_ext': BuildExt})
+if SHARED_WEIGHTS:
+    weights = Extension(
+        name='weights',
+        sources=['weights.cpp'],
+        extra_compile_args=args + inc_dirs,
+        extra_link_args=link
+    )
+    ext_modules.append(weights)
+
+setup(ext_modules=ext_modules, cmdclass={'build_ext': BuildExt})
