@@ -40,15 +40,10 @@ static void raise_runtime_error(const char* err)
 #else
   #define LOG_DEBUG(x)
 #endif
-#define OUTPUT_POOL false
 
 using ThreadPool = thread_pool<>;
 
-#if OUTPUT_POOL || BACKGROUND_SEARCH
-static constexpr size_t initial_thread_count = 1;
-#else
 static constexpr size_t initial_thread_count = 0;
-#endif /* OUTPUT_POOL || BACKGROUND_SEARCH */
 
 static auto _compute_pool(std::make_unique<ThreadPool>(initial_thread_count));
 
@@ -514,7 +509,6 @@ private:
 
     INLINE search::Context &context() { return *_buf.as_context(); }
 
-    template <bool synchronous=false>
     INLINE void output_best_move(bool request_ponder = false)
     {
         if (output_expected())
@@ -524,16 +518,7 @@ private:
             if (!move)
                 if (auto first = ctxt.first_valid_move())
                     move = *first;
-            if constexpr(synchronous)
-                output_best_move(move, request_ponder);
-            else
-                #if OUTPUT_POOL
-                    _output_pool->push_task([this, move, request_ponder] {
-                        output_best_move(move, request_ponder);
-                    });
-                #else
-                    output_best_move(move, request_ponder);
-                #endif /* OUTPUT_POOL */
+            output_best_move(move, request_ponder);
         }
     }
 
@@ -551,7 +536,7 @@ private:
             g_out.clear();
             if (request_ponder && _ponder)
             {
-                const auto &pv = _tt.get_pv();
+                const auto &pv = context().get_pv();
                 if (pv.size() > 2 && pv[1] == move)
                 {
                     std::format_to(std::back_inserter(g_out), "bestmove {} ponder {}", move.uci(), pv[2].uci());
@@ -645,24 +630,17 @@ private:
     score_t _score = 0;
     score_t _score_delta = 0;
     EngineOptions _options;
-#if OUTPUT_POOL
-    static std::unique_ptr<ThreadPool> _output_pool;
-#endif /* OUTPUT_POOL */
     static std::atomic_bool _output_expected;
     bool _ponder = false;
     bool _new_game = true;
     bool _use_opening_book = false;
     bool _best_book_move = true;
     chess::BaseMove _last_move;
-
 #if NATIVE_BOOK
     PolyglotBook _opening_book = {};
 #endif
 };
 
-#if OUTPUT_POOL
-std::unique_ptr<ThreadPool> UCI::_output_pool(std::make_unique<ThreadPool>(1));
-#endif /* OUTPUT_POOL */
 std::atomic_bool UCI::_output_expected(false);
 
 /** Estimate number of moves (not plies!) until mate. */
@@ -678,32 +656,26 @@ struct Info : public search::IterationInfo
     const int eval_depth;
     const int hashfull;
     const int iteration;
-    search::PV* const pv;
-    static std::array<search::PV, PLY_MAX> pvs;
+    const search::PV* pv;
+    static search::PV no_pv;
 
     Info(const search::Context& ctxt, const IterationInfo& info)
         : IterationInfo(info)
         , eval_depth(ctxt.get_tt()->_eval_depth)
         , hashfull(search::TranspositionTable::usage() * 10)
         , iteration(ctxt.iteration())
-        , pv(&pvs[std::min<size_t>(pvs.size() - 1, iteration)])
+        , pv(&no_pv)
     {
-        constexpr auto TIME_LOW = 100; /* millisec */
-        const auto time_limit = search::Context::time_limit();
+        constexpr auto TIME_LOW = 1; /* millisec */
 
-        brief = (time_limit >= 0 && time_limit <= milliseconds + TIME_LOW) || !ctxt._best_move;
+        brief = milliseconds < TIME_LOW || !ctxt._best_move;
 
         if (!brief)
-        {
-            const auto& ctxt_pv = ctxt.get_pv();
-            if (!ctxt_pv.empty())
-                pv->assign(ctxt_pv.begin() + 1, ctxt_pv.end());
-        }
+            pv = &ctxt.get_pv();
     }
 };
 
-/* Hold PVs for pending output tasks */
-std::array<search::PV, PLY_MAX> Info::pvs;
+search::PV Info::no_pv;
 
 static void INLINE output_info(std::ostream& out, const Info& info)
 {
@@ -715,7 +687,7 @@ static void INLINE output_info(std::ostream& out, const Info& info)
     }
     else
     {
-        constexpr auto MATE_DIST_MAX = 10;
+        constexpr auto MATE_DIST_MAX = PATH_MAX;
 
         auto score_unit = "cp";
         auto score = info.score;
@@ -738,8 +710,11 @@ static void INLINE output_info(std::ostream& out, const Info& info)
         output(out, g_out);
 
         /* output PV */
-        for (const auto &m : *info.pv)
+        for (size_t i = 1; i < info.pv->size(); ++i)
         {
+            auto& m = (*info.pv)[i];
+            if (!m)
+                break;
             const auto uci = m.uci();
             out.write(uci.data(), uci.size());
             out.write(" ", 1);
@@ -766,14 +741,7 @@ void UCI::on_iteration(PyObject *, search::Context *ctxt, const search::Iteratio
 {
     if (ctxt && iter_info)
     {
-    #if OUTPUT_POOL
-        const Info info(*ctxt, *iter_info);
-        _output_pool->push_task([info] {
-            output_info(info);
-        });
-    #else
         output_info(Info(*ctxt, *iter_info));
-    #endif /* OUTPUT_POOL */
     }
 }
 
@@ -1049,19 +1017,10 @@ void UCI::go(const Arguments &args)
                 ctxt->set_time_ctrl(ctrl);
             }
         };
-    #if BACKGROUND_SEARCH
-        /* search asynchronously on the background thread */
-        _compute_pool->push_task([this, movetime] {
-            _score = search(set_time_limt);
-            /* Do not request to ponder below 100 ms per move. */
-            output_best_move(movetime >= 100);
-        });
-    #else
         /* search synchronously */
         _score = search(set_time_limit);
         /* Do not request to ponder below 100 ms per move. */
         output_best_move(movetime >= 100);
-    #endif /* !BACKGROUND_SEARCH */
     }
 }
 
@@ -1245,10 +1204,7 @@ void UCI::stop(bool flush)
 {
     search::Context::set_time_limit_ms(0);
     _compute_pool->wait_for_tasks([] { search::Context::cancel(); });
-#if OUTPUT_POOL
-    _output_pool->wait_for_tasks();
-#endif /* OUTOUT_POOL */
-    output_best_move<true>();
+    output_best_move();
 
     if (flush)
         data_flush(context());

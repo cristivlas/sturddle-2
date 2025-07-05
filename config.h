@@ -48,6 +48,8 @@ constexpr int PLY_MAX = 100;
 
 constexpr int PLY_HISTORY_MAX = 20;
 
+constexpr int PATH_MAX = 20;
+
 constexpr score_t SCORE_MIN = -30000;
 constexpr score_t SCORE_MAX =  30000;
 

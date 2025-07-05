@@ -471,6 +471,7 @@ namespace search
     std::vector<Context::MoveStack> Context::_move_stacks(SMP_CORES);
     std::vector<Context::StateStack> Context::_state_stacks(SMP_CORES);
     std::vector<MovesCache> _moves_cache(SMP_CORES);
+    std::vector<PV> Context::_pvs(SMP_CORES);
 
     /* Cython callbacks */
     PyObject* Context::_engine = nullptr;
@@ -576,25 +577,11 @@ namespace search
         ctxt->_is_null_move = _is_null_move;
         ctxt->_double_ext = _double_ext;
         ctxt->_extension = _extension;
+
+        std::copy_n(_path.begin(), _path_len, ctxt->_path.begin());
+        ctxt->_path_len = _path_len;
+
         return ctxt;
-    }
-
-
-    /*
-     * Lookup move in the principal variation from the previous iteration.
-     * https://www.chessprogramming.org/PV-Move
-     */
-    static INLINE const BaseMove* lookup_pv(const Context& ctxt)
-    {
-        ASSERT(ctxt.get_tt());
-
-        const auto& pv = ctxt.get_tt()->get_pv();
-        const size_t ply = ctxt._ply;
-
-        if (ply + 1 >= pv.size())
-            return nullptr;
-
-        return (pv[ply] == ctxt._move) ? &pv[ply + 1] : nullptr;
     }
 
 
@@ -603,9 +590,12 @@ namespace search
     {
         if (!is_root() && !_prev && !is_null_move() && !_excluded)
         {
-            if (const auto move = lookup_pv(*this))
+            const auto& pv = Context::_pvs[0];
+            const size_t ply = _ply;
+
+            if (ply + 1 < pv.size() && pv[ply] == _move)
             {
-                _prev = *move;
+                _prev = pv[ply + 1];
             }
         }
     }
@@ -621,6 +611,10 @@ namespace search
             _moves_cache.resize(n_threads);
             _move_stacks.resize(n_threads);
             _state_stacks.resize(n_threads);
+
+            _pvs.resize(n_threads);
+            for (size_t i = 0; i < n_threads; ++i)
+                _pvs[i].reserve(PLY_MAX);
 
         #if WITH_NNUE
             NNUE_data.resize(n_threads);
@@ -709,6 +703,9 @@ namespace search
                 ASSERT(next_ctxt->_move._state == next_ctxt->_state);
 
                 _best_move = next_ctxt->_move;
+
+                _path_len = next_ctxt->_path_len;
+                std::copy_n(next_ctxt->_path.begin(), _path_len, _path.begin());
             }
         }
 

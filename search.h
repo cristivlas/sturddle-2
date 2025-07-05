@@ -73,7 +73,6 @@ namespace search
     }
 
     using BaseMove = chess::BaseMove;
-    using PV = std::vector<BaseMove>;
     using Color = chess::Color;
     using Move = chess::Move;
     using MovesList = chess::MovesList;
@@ -249,8 +248,6 @@ namespace search
         int _tid = 0;
         int _iteration = 0;
         int _eval_depth = 0;
-        PV  _pv; /* principal variation */
-        PV  _pvBuilder;
         PlyHistory _plyHistory;
 
         /* search window bounds */
@@ -287,11 +284,6 @@ namespace search
             return &_killer_moves[ply];
         }
 
-        const PV& get_pv() const { return _pv; }
-
-        /* Reconstruct PV from hash table moves. Called by store_pv. */
-        template<bool Debug=false> void get_pv_from_table(Context&, const Context&, PV&);
-
         template<typename C> const int16_t* lookup(C& ctxt);
 
         template<TT_Type=TT_Type::NONE, typename C=struct Context>
@@ -301,8 +293,6 @@ namespace search
 
         template<typename C> void store_countermove(C& ctxt);
         void store_killer_move(const Context&);
-
-        template<bool Debug=false> void store_pv(Context&);
 
         const std::pair<int, int>& historical_counters(const State&, Color, const Move&) const;
         float history_score(int ply, const State&, Color, const Move&) const;

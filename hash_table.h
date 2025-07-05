@@ -477,30 +477,6 @@ namespace search
             int         _replacement_slot = -1;
         };
 
-        template <typename S>
-        INLINE entry_t probe(const S &s)
-        {
-            entry_t entry;
-
-            const auto h = s.hash();
-            ASSERT(h);
-
-            auto& bucket = get_bucket(h);
-            shared_lock_t lock(bucket.mutex());
-
-            if (lock.is_valid() && bucket._used && bucket._clock == this->_clock)
-            {
-                for (const auto& e : bucket._entries)
-                {
-                    if (e._hash == h)
-                    {
-                        entry = e;
-                        break;
-                    }
-                }
-            }
-            return entry;
-        }
 
         template <typename S>
         INLINE Result probe(const S &s, int depth)

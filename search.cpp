@@ -43,23 +43,6 @@ using namespace chess;
 using namespace search;
 
 
-template<bool Debug = false>
-static void log_pv(const TranspositionTable& tt, const Context* ctxt, const char* info)
-{
-    if constexpr(Debug)
-    {
-        std::ostringstream out;
-
-        out << info << ": ";
-        for (const auto& move : tt._pv)
-            out << move << " ";
-        if (ctxt)
-            out << " pos=" << ctxt->epd();
-        Context::log_message(LogLevel::INFO, out.str());
-    }
-}
-
-
 static size_t mem_avail()
 {
 #if USE_MMAP_HASH_TABLE
@@ -289,91 +272,6 @@ static bool is_valid_pv_move(
         }
     }
     return true;
-}
-
-
-template<bool Debug>
-void TranspositionTable::get_pv_from_table(Context& root, const Context& ctxt, PV& pv)
-{
-    auto state = ctxt.state().clone();
-
-    ASSERT(Context::epd(state) == ctxt.epd());
-    ASSERT(state.hash() == ctxt.state().hash());
-
-    /* keep track of state hashes, to detect cycles */
-    std::unordered_set<size_t> visited;
-
-    auto move = ctxt._best_move;
-
-    while (move)
-    {
-        if (!is_valid_pv_move<Debug>(__func__, pv, root, state, move))
-            break;
-
-        state.apply_move(move);
-
-        /* Guard against infinite loops. */
-        if (!visited.insert(state.hash()).second)
-            break;
-
-        if constexpr(Debug)
-        {
-            if (state.is_check(!state.turn))
-            {
-                log_invalid_pv(__func__, pv, root, state, move);
-                return;
-            }
-        }
-
-        /* Add the move to the principal variation. */
-        pv.emplace_back(move);
-
-        auto e = _table.probe(state);
-        if (!e.is_valid())
-            break;
-
-        ASSERT(e.matches(state));
-
-        move = e._hash_move;
-    }
-
-    if (abs(root._score) < MATE_HIGH && state.is_checkmate())
-    {
-        /* The parity of the PV length tells which side is winning. */
-        /* Subtract one for the move that lead to the root position */
-        root._mate_detected = int(pv.size()) - 1;
-    }
-}
-
-
-template<bool Debug> void TranspositionTable::store_pv(Context& root)
-{
-    ASSERT(root._best_move);
-
-    _pvBuilder.clear();
-
-    for (auto ctxt = &root; true; )
-    {
-        _pvBuilder.emplace_back(ctxt->_move);
-        auto next = ctxt->next_ply();
-
-        if (next->is_null_move())
-            break;
-
-        if ((next->_move == ctxt->_best_move)
-            && is_valid_pv_move<Debug>(__func__, _pvBuilder, root, ctxt->state(), next->_move))
-        {
-            ASSERT(next->_parent == ctxt);
-            ctxt = next;
-            continue;
-        }
-
-        get_pv_from_table<Debug>(root, *ctxt, _pvBuilder);
-        break;
-    }
-
-    _pv.swap(_pvBuilder);
-    log_pv<Debug>(*this, &root, "store_pv");
 }
 
 
@@ -1094,12 +992,9 @@ static score_t search_iteration(Context& ctxt, TranspositionTable& table, score_
     if (ctxt._best_move)
     {
         ctxt._prev = ctxt._best_move; /* save for next iteration */
-        table.store_pv(ctxt);
     }
     else if (ctxt._prev)
         ctxt._best_move = ctxt._prev;
-    else
-        table._pv.clear();
 
     return score;
 }
@@ -1170,10 +1065,6 @@ public:
         for (size_t i = 0; i < thread_count; ++i)
         {
             _tables[i]._tt._iteration = table._iteration;
-
-            /* copy principal variation from main thread */
-            if (_tables[i]._tt._pv.empty())
-                _tables[i]._tt._pv = table._pv;
 
             _tables[i]._ctxt = _root.clone(_tables[i]._raw_mem);
             _tables[i]._tt._w_alpha = _tables[i]._ctxt->_alpha;
@@ -1331,8 +1222,6 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
  */
 void TranspositionTable::shift()
 {
-    _pv.clear();
-
     shift_left_2(_killer_moves.begin(), _killer_moves.end());
     shift_left_2(_plyHistory.begin(), _plyHistory.end());
 }
