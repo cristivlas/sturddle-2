@@ -163,6 +163,7 @@ namespace
 } /* namespace */
 
 
+#if 0 /* profiling */
 template <typename T, int PRINT_INTERVAL = 100000>
 struct ProfileScope
 {
@@ -179,7 +180,7 @@ struct ProfileScope
         {
             const auto avg_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(total_time).count() / num_calls;
             const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(total_time).count();
-            std::clog << &num_calls << " calls: " << num_calls << ", total: " << total_ms << "ms" << ", avg: " << avg_ns << " ns" << std::endl;
+            std::clog << &num_calls << " calls: " << num_calls << ", total: " << total_ms << " ms" << ", avg: " << avg_ns << " ns" << std::endl;
         }
     }
 
@@ -192,3 +193,5 @@ std::chrono::high_resolution_clock::duration ProfileScope<T, PRINT_INTERVAL>::to
 
 template <typename T, int PRINT_INTERVAL>
 int ProfileScope<T, PRINT_INTERVAL>::num_calls = 0;
+
+#endif
