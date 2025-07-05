@@ -2,62 +2,17 @@
 
 #include <array>
 #include <atomic>
-#include <bitset>
 #include <cstdlib>
-#include <limits>
-#include <new>
 
 #if _WIN32
   #include "ms_windows.h"
 #else
   #include <sys/mman.h>
 #endif /* !_WIN32 */
-
-#if 0
-#ifdef _MSC_VER
-  #include <intrin.h>
-  #define PREFETCH(ptr, rw) _mm_prefetch((char*)(ptr), _MM_HINT_T0)
-#elif defined(__GNUC__)
-  #define PREFETCH(ptr, rw) __builtin_prefetch(ptr, rw)
-#endif
-#else
-  #define PREFETCH(ptr, rw)
-#endif
+#include "utility.h"
 
 constexpr size_t HASH_TABLE_MAX_READERS = 64;
 constexpr int SPIN_LOCK_MAX_RETRY = 1024 * 1024;
-
-template <typename T>
-struct ProfileScope
-{
-    static constexpr int PRINT_INTERVAL = 100000;
-
-    static std::chrono::high_resolution_clock::duration total_time;
-    static int num_calls;
-
-    std::chrono::time_point<std::chrono::high_resolution_clock> _start;
-
-    INLINE void report()
-    {
-        const auto end = std::chrono::high_resolution_clock::now();
-        total_time += (end - _start);
-        if (num_calls % PRINT_INTERVAL == 0)
-        {
-            const auto avg_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(total_time).count() / num_calls;
-            const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(total_time).count();
-            std::clog << &num_calls << " calls: " << num_calls << ", total: " << total_ms << "ms" << ", avg: " << avg_ns << " ns" << std::endl;
-        }
-    }
-
-    ProfileScope() : _start(std::chrono::high_resolution_clock::now()) { ++num_calls; }
-    ~ProfileScope() { report(); }
-};
-
-template <typename T>
-std::chrono::high_resolution_clock::duration ProfileScope<T>::total_time {};
-
-template <typename T>
-int ProfileScope<T>::num_calls = 0;
 
 
 namespace alloc
@@ -268,11 +223,11 @@ static INLINE size_t get_even(size_t n)
 
 INLINE uint64_t scramble64(uint64_t h)
 {
-    h ^= h >> 33;
-    h *= 0xff51afd7ed558ccd;
-    h ^= h >> 33;
-    h *= 0xc4ceb9fe1a85ec53;
-    h ^= h >> 33;
+    // h ^= h >> 33;
+    // h *= 0xff51afd7ed558ccd;
+    // h ^= h >> 33;
+    // h *= 0xc4ceb9fe1a85ec53;
+    // h ^= h >> 33;
 
     return h;
 }
@@ -394,7 +349,6 @@ namespace search
     class hash_table
     {
         using clock_t = uint16_t;
-        static constexpr size_t BLOOM_SIZE = 2048 * 1024;
 
         template <size_t SIZE>
         struct alignas(64) Bucket
@@ -428,7 +382,6 @@ namespace search
         using shared_lock_t = SharedLock<typename bucket_t::lock_state_t, HASH_TABLE_MAX_READERS>;
         using unique_lock_t = UniqueLock<typename bucket_t::lock_state_t>;
 
-        std::array<std::atomic<uint64_t>, BLOOM_SIZE / 64> _bloom_words;
         clock_t _clock = 0;
         count_t _used = 0;
         data_t _data; /* table entries */
@@ -454,7 +407,6 @@ namespace search
             return even_buckets;
         }
 
-        template<bool ReadWrite>
         INLINE bucket_t &get_bucket(uint64_t hash)
         {
             ASSERT(!_data.empty());
@@ -462,78 +414,14 @@ namespace search
 
             const auto idx = scramble64(hash) & (_data.size() - 1);
             ASSERT(idx >= 0 && idx < _data.size());
-            PREFETCH(&_data[idx], ReadWrite);
 
             return _data[idx];
-        }
-
-        INLINE void bloom_insert(uint64_t hash)
-        {
-            const auto bit1 = hash & (BLOOM_SIZE - 1);
-            const auto bit2 = (hash >> 16) & (BLOOM_SIZE - 1);
-            const auto bit3 = (hash >> 32) & (BLOOM_SIZE - 1);
-
-            _bloom_words[bit1 / 64].fetch_or(1ULL << (bit1 % 64), std::memory_order_relaxed);
-            _bloom_words[bit2 / 64].fetch_or(1ULL << (bit2 % 64), std::memory_order_relaxed);
-            _bloom_words[bit3 / 64].fetch_or(1ULL << (bit3 % 64), std::memory_order_relaxed);
-        }
-
-        INLINE bool bloom_check(uint64_t hash) const
-        {
-            const auto bit1 = hash & (BLOOM_SIZE - 1);
-            const auto bit2 = (hash >> 16) & (BLOOM_SIZE - 1);
-            const auto bit3 = (hash >> 32) & (BLOOM_SIZE - 1);
-
-            return (_bloom_words[bit1 / 64].load(std::memory_order_relaxed) & (1ULL << (bit1 % 64)))
-                && (_bloom_words[bit2 / 64].load(std::memory_order_relaxed) & (1ULL << (bit2 % 64)))
-                && (_bloom_words[bit3 / 64].load(std::memory_order_relaxed) & (1ULL << (bit3 % 64)));
-        }
-
-        INLINE void bloom_clear()
-        {
-            for (auto& word : _bloom_words)
-                word.store(0, std::memory_order_relaxed);
         }
 
     public:
         static constexpr size_t bucket_size() { return sizeof(bucket_t); }
 
         using entry_t = T;
-
-        template <typename L>
-        class Proxy
-        {
-            using lock_t = L;
-
-            entry_t *_entry;
-            lock_t _lock;
-
-        public:
-            Proxy() : _entry(nullptr) {}
-            Proxy(entry_t *entry, lock_t &&lock) : _entry(entry), _lock(std::move(lock)) {}
-
-            INLINE explicit operator bool() const { return _lock.is_valid(); }
-            INLINE const entry_t *operator->() const
-            {
-                ASSERT(_entry);
-                return _entry;
-            }
-            INLINE const entry_t &operator*() const
-            {
-                ASSERT(_entry);
-                return *_entry;
-            }
-            INLINE entry_t *operator->()
-            {
-                ASSERT(_entry);
-                return _entry;
-            }
-            INLINE entry_t &operator*()
-            {
-                ASSERT(_entry);
-                return *_entry;
-            }
-        };
 
         hash_table(size_t megabytes, size_t mem_avail)
         {
@@ -556,8 +444,6 @@ namespace search
 
             ++_clock; // O(1) -- buckets are lazily erased on next use
             _used = 0;
-
-            bloom_clear(); // clear bloom filter
         }
 
 
@@ -584,49 +470,78 @@ namespace search
             _data.resize(buckets);
         }
 
-        template <typename S, typename lock_t = shared_lock_t>
-        INLINE entry_t lookup_read(const S &s)
+        struct Result
         {
-            // ProfileScope<struct LOOKUP_READ> profile;
+            entry_t     _entry;
+            bucket_t*   _bucket = nullptr;
+            int         _replacement_slot = -1;
+        };
+
+
+        template <typename S>
+        INLINE Result probe(const S &s, int depth)
+        {
+            Result result;
+
             const auto h = s.hash();
             ASSERT(h);
 
-            if (!bloom_check(h))
-            {
-                return entry_t();
-            }
+            auto& bucket = get_bucket(h);
+            shared_lock_t lock(bucket.mutex());
 
-            auto &bucket = get_bucket<false>(h);
-
-            lock_t lock(bucket.mutex());
-            if (lock.is_valid() && bucket._used && bucket._clock == this->_clock)
+            if (lock.is_valid())
             {
-                for (size_t i = 0; i < bucket._used; ++i)
+                result._bucket = &bucket;
+
+                if (bucket._clock != this->_clock)
                 {
-                    ASSERT(i < bucket.size());
-                    auto& e = bucket._entries[i];
-                    if (e._hash == h)
+                    result._replacement_slot = 0;
+                }
+                else
+                {
+                    for (size_t slot = 0; slot < bucket_t::size(); ++slot)
                     {
-                        return e;
+                        auto& e = bucket._entries[slot];
+                        const int depth_threshold = (slot == 0) ? -4 : -1;
+
+                        if (e._hash == h)
+                        {
+                            result._entry = e;
+                            if (depth >= e._depth + depth_threshold)
+                            {
+                                result._replacement_slot = slot;
+                            }
+                            break;
+                        }
+
+                        if (result._replacement_slot < 0)
+                        {
+                            if (!e.is_valid())
+                            {
+                                result._replacement_slot = slot;
+                            }
+                            else if (depth >= e._depth + depth_threshold)
+                            {
+                                result._replacement_slot = slot;
+                            }
+                        }
                     }
                 }
             }
-            return entry_t();
+
+            return result;
         }
 
-        template <typename S, typename lock_t = unique_lock_t>
-        INLINE Proxy<lock_t> lookup_write(const S &s, int depth)
+        INLINE void update(Result& r)
         {
-            // ProfileScope<struct LOOKUP_WRITE> profile;
+            ASSERT(r._replacement_slot >= 0 && r._entry.is_valid());
+            ASSERT(r._bucket);
+            auto& bucket = *r._bucket;
 
-            const auto h = s.hash();
-            ASSERT(h);
-
-            auto &bucket = get_bucket<true>(h);
-
-            lock_t lock(bucket.mutex());
+            unique_lock_t lock(bucket.mutex());
             if (lock.is_valid())
             {
+                // Lazily erase stale buckets
                 if (bucket._clock != this->_clock)
                 {
                     if (bucket._used)
@@ -637,44 +552,15 @@ namespace search
                     bucket._clock = this->_clock;
                 }
 
-                entry_t *entry = nullptr;
+                auto& e = bucket._entries[r._replacement_slot];
 
-                for (size_t slot = 0; slot < bucket_t::size(); ++slot)
+                if (!e.is_valid())
                 {
-                    const int depth_threshold = (slot == 0) ? -4 : -1;
-                    auto& e = bucket._entries[slot];
-
-                    if (!e.is_valid())
-                    {
-                        increment_usage(bucket);
-                        entry = &e;
-                        break;
-                    }
-
-                    if (e._hash == h)
-                    {
-                        if (depth < e._depth + depth_threshold)
-                        {
-                            return Proxy<lock_t>();  // Don't replace better entry
-                        }
-                        entry = &e;
-                        break;
-                    }
-                    else if (depth >= e._depth + depth_threshold)
-                    {
-                        entry = &e;
-                        break;
-                    }
+                    increment_usage(bucket);
                 }
 
-                if (entry)
-                {
-                    bloom_insert(h);
-                    return Proxy<lock_t>(entry, std::move(lock));
-                }
+                e = r._entry;
             }
-
-            return Proxy<lock_t>();
         }
     };
 }

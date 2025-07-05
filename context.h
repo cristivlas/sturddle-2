@@ -222,6 +222,8 @@ namespace search
     };
 
 
+    using PV = std::vector<BaseMove>;
+
     /*
      * The context of a searched node.
      */
@@ -234,6 +236,9 @@ namespace search
         using MoveStack = std::array<MovesList, MAX_MOVE>;
         using StatePool = std::vector<State>;
         using StateStack = std::array<StatePool, PLY_MAX>;
+
+        using Path = std::array<BaseMove, PATH_MAX>;
+        using TT_Result = search::HashTable::Result;
 
         friend class MoveMaker;
 
@@ -260,6 +265,7 @@ namespace search
         score_t     _retry_beta = SCORE_MAX; /* NEGASCOUT only */
         mutable int _improvement = SCORE_MIN;
 
+        Square      _capture_square = Square::UNDEFINED;
         bool        _futility_pruning = true;
         bool        _has_singleton = false;
         bool        _is_null_move = false; /* for null-move pruning */
@@ -289,8 +295,10 @@ namespace search
         BaseMove    _excluded;      /* singular extension search */
 
         State*      _state = nullptr;
-        TT_Entry    _tt_entry;
-        Square      _capture_square = Square::UNDEFINED;
+
+        int         _path_len = 1;
+        Path        _path;
+        TT_Result   _tt_probe;      /* probe result */
 
         void        cache_scores(bool force_write /* bypass eviction strategy */ = false);
 
@@ -407,14 +415,22 @@ namespace search
         static int  time_limit() { return _time_limit.load(std::memory_order_relaxed); }
         Color       turn() const { return state().turn; }
 
+        INLINE TT_Entry& tt_entry() { return _tt_probe._entry; }
+        INLINE const TT_Entry& tt_entry() const { return _tt_probe._entry; }
+
         INLINE const State& state() const { ASSERT(_state); return *_state; }
         INLINE TranspositionTable* get_tt() const { return _tt; }
 
         INLINE const MovesList& moves() const { return moves(tid(), _ply); }
         INLINE MovesList& moves() { return moves(tid(), _ply); }
 
-        /* retrieve PV from TT */
-        INLINE const PV& get_pv() const { return get_tt()->get_pv(); }
+        INLINE const PV& get_pv() const
+        {
+            auto& pv = _pvs[tid()];
+            pv.resize(_path_len);
+            std::copy_n(_path.begin(), _path_len, pv.begin());
+            return pv;
+        }
 
         /* buffers for generating and making moves */
         static MovesList& moves(int tid, int ply);
@@ -471,6 +487,7 @@ namespace search
         static std::vector<ContextStack>    _context_stacks;
         static std::vector<MoveStack>       _move_stacks;
         static std::vector<StateStack>      _state_stacks;
+        static std::vector<PV>              _pvs;
     };
 
 
@@ -615,7 +632,8 @@ namespace search
     {
         ASSERT(move && move._state && move != _move);
 
-        return (move != _tt_entry._hash_move)
+        return (move != tt_entry()._best_move)
+            && (move != tt_entry()._hash_move)
             && (PruneCaptures || !move._state->is_capture())
             && (move.promotion() == chess::PieceType::NONE)
             && (move.from_square() != _capture_square)
@@ -694,8 +712,8 @@ namespace search
         if (is_valid(_eval))
             return _eval;
 
-        if (is_valid(_tt_entry._value) && _tt_entry._depth >= depth())
-            return _tt_entry._value;
+        if (is_valid(tt_entry()._value) && tt_entry()._depth >= depth())
+            return tt_entry()._value;
 
         return evaluate_material();
     }
@@ -704,7 +722,6 @@ namespace search
 #if !WITH_NNUE
     INLINE void search::Context::eval_with_nnue() {}
     INLINE score_t search::Context::eval_nnue_raw(bool update_only, bool pov) { return 0; }
-    INLINE void search::Context::load_nnue_model(const std::string&) {}
     INLINE void search::Context::update_root_accumulators() {}
 #endif /* !WITH_NNUE */
 
@@ -856,7 +873,7 @@ namespace search
 
     INLINE bool Context::is_mate_bound() const
     {
-        return _tt_entry._value >= MATE_HIGH && _tt_entry._depth >= depth();
+        return tt_entry()._value >= MATE_HIGH && tt_entry()._depth >= depth();
     }
 
 
@@ -995,6 +1012,8 @@ namespace search
 
         auto ctxt = next_ply<true>(); /* Construct new context */
 
+        std::copy_n(_path.begin(), _path_len, ctxt->_path.begin());
+
         if (move)
         {
             ASSERT(move->_state);
@@ -1003,6 +1022,16 @@ namespace search
             ctxt->_move = *move;
             ctxt->_state = move->_state;
             ctxt->_leftmost = is_leftmost() && next_move_index() == 1;
+
+            if (_path_len < _ply + 1 || _ply + 1 >= PATH_MAX)
+            {
+                ctxt->_path_len = _path_len;
+            }
+            else
+            {
+                ctxt->_path[_ply + 1] = *move;
+                ctxt->_path_len = _ply + 2;
+            }
 
         #if REPORT_CURRENT_MOVE
             /* Report (main thread only) the move being searched from the root. */
@@ -1025,6 +1054,8 @@ namespace search
             ctxt->_state->_check = { 0, 0 };
             flip(ctxt->_state->turn);
             ctxt->_is_null_move = true;
+
+            ctxt->_path_len = std::min(_path_len, _ply + 1);
         }
 
         ctxt->_algorithm = _algorithm;
