@@ -101,7 +101,7 @@ static size_t mem_avail()
 }
 
 
-TranspositionTable::HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE, mem_avail());
+HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE, mem_avail());
 
 
 /* static */ size_t TranspositionTable::max_hash_size()
@@ -217,7 +217,7 @@ void TranspositionTable::store(Context& ctxt, TT_Entry& entry, TT_Type type, int
     entry._hash_move = ctxt._best_move;
     entry._hash = ctxt.state().hash();
     entry._depth = depth;
-    entry._captures = ctxt._tt_entry._captures;
+    entry._captures = ctxt.tt_entry()._captures;
 }
 
 
@@ -328,13 +328,13 @@ void TranspositionTable::get_pv_from_table(Context& root, const Context& ctxt, P
         /* Add the move to the principal variation. */
         pv.emplace_back(move);
 
-        auto p = _table.lookup_read(state);
-        if (!p)
+        auto r = _table.probe(state, 0);
+        if (!r._entry)
             break;
 
-        ASSERT(p->matches(state));
+        ASSERT(r._entry->matches(state));
 
-        move = p->_hash_move;
+        move = r._entry->_hash_move;
     }
 
     if (abs(root._score) < MATE_HIGH && state.is_checkmate())
@@ -472,7 +472,7 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
      * produced cutoffs before.
      */
     const auto min_cutoffs = MULTICUT_C
-       - (ctxt._tt_entry.is_lower() && ctxt._tt_entry._value + MULTICUT_MARGIN >= ctxt._beta);
+       - (ctxt.tt_entry().is_lower() && ctxt.tt_entry()._value + MULTICUT_MARGIN >= ctxt._beta);
 
     while (auto next_ctxt = ctxt.next(false, 0, move_count))
     {
@@ -657,7 +657,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     else
     {
         ASSERT(ctxt._alpha < ctxt._beta);
-        auto eval = ctxt._tt_entry._eval;
+        auto eval = ctxt.tt_entry()._eval;
     #if WITH_NNUE
         if (is_valid(eval))
         {
@@ -719,7 +719,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         if (ctxt._ply
             && ctxt.is_pv_node()
             && ctxt.depth() >= 6
-            && !ctxt._tt_entry.is_valid()
+            && !ctxt.tt_entry().is_valid()
             && ctxt.can_reduce()
            )
             ctxt._max_depth -= 2;
@@ -780,17 +780,17 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     * in the current position).
                     */
                     if (ctxt.depth() >= (ctxt.is_pv_node() ? SINGULAR_MIN_DEPTH_PV : SINGULAR_MIN_DEPTH_NON_PV)
-                        && ctxt._tt_entry.is_lower()
-                        && next_ctxt->_move == ctxt._tt_entry._best_move
-                        && abs(ctxt._tt_entry._value) < MATE_HIGH
+                        && ctxt.tt_entry().is_lower()
+                        && next_ctxt->_move == ctxt.tt_entry()._best_move
+                        && abs(ctxt.tt_entry()._value) < MATE_HIGH
                         && !ctxt._excluded
-                        && ctxt._tt_entry._depth >= ctxt.depth() - 3
+                        && ctxt.tt_entry()._depth >= ctxt.depth() - 3
                        )
                     {
-                        ASSERT(is_valid(ctxt._tt_entry._value));
+                        ASSERT(is_valid(ctxt.tt_entry()._value));
 
-                        const auto margin = ctxt._tt_entry._pv && !ctxt.is_pv_node() ? SINGULAR_MARGIN_TT_PV : SINGULAR_MARGIN_NORMAL;
-                        const auto s_beta = std::max(score_t(ctxt._tt_entry._value) - margin * ctxt.depth() / SINGULAR_DEPTH_SCALE, MATE_LOW);
+                        const auto margin = ctxt.tt_entry()._pv && !ctxt.is_pv_node() ? SINGULAR_MARGIN_TT_PV : SINGULAR_MARGIN_NORMAL;
+                        const auto s_beta = std::max(score_t(ctxt.tt_entry()._value) - margin * ctxt.depth() / SINGULAR_DEPTH_SCALE, MATE_LOW);
 
                         /*
                          * Hack: use ply + 2 for the singular search to avoid clobbering
@@ -798,7 +798,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                          */
                         ContextBuffer buf;
                         auto s_ctxt = ctxt.clone(buf, ctxt._ply + 2);
-
+                        s_ctxt->_tt_probe._replacement_slot = -1;
                         s_ctxt->set_tt(ctxt.get_tt());
                         s_ctxt->_excluded = next_ctxt->_move;
                         s_ctxt->_max_depth = s_ctxt->_ply + (ctxt.depth() - 1) / 2;
@@ -835,7 +835,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                             ctxt._prune_reason = PruneReason::PRUNE_SINGULAR;
                             return s_beta;
                         }
-                        else if (ctxt._tt_entry._value >= ctxt._beta && next_ctxt->can_reduce())
+                        else if (ctxt.tt_entry()._value >= ctxt._beta && next_ctxt->can_reduce())
                         {
                             next_ctxt->_max_depth -= 2;
                         }
@@ -1019,6 +1019,10 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
     ASSERT_ALWAYS(ctxt._algorithm == Algorithm::MTDF);
     ASSERT_ALWAYS(ctxt.is_root());
 
+    bool first_iter = (first == 0 && table._iteration == 1);
+    if (first_iter)
+        first = ctxt.evaluate<true>();
+
     auto lower = ctxt._alpha;
     auto upper = ctxt._beta;
 
@@ -1044,7 +1048,7 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
         auto b = std::max(g, lower + 1);
 
 #endif /* MTDF_CSTAR_BISECT */
-
+        first_iter = false;
         ctxt._score = std::max<score_t>(SCORE_MIN, b - 1);
         ctxt._alpha = b - 1;
         ctxt._beta = b;

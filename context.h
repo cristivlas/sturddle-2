@@ -235,6 +235,8 @@ namespace search
         using StatePool = std::vector<State>;
         using StateStack = std::array<StatePool, PLY_MAX>;
 
+        using TT_Result = search::HashTable::Result;
+
         friend class MoveMaker;
 
         Context() = default;
@@ -289,7 +291,8 @@ namespace search
         BaseMove    _excluded;      /* singular extension search */
 
         State*      _state = nullptr;
-        TT_Entry    _tt_entry;
+
+        TT_Result   _tt_probe;      /* probe result */
         Square      _capture_square = Square::UNDEFINED;
 
         void        cache_scores(bool force_write /* bypass eviction strategy */ = false);
@@ -406,6 +409,9 @@ namespace search
         int         tid() const { return _tt ? _tt->_tid : 0; }
         static int  time_limit() { return _time_limit.load(std::memory_order_relaxed); }
         Color       turn() const { return state().turn; }
+
+        INLINE TT_Entry& tt_entry() { return _tt_probe._entry; }
+        INLINE const TT_Entry& tt_entry() const { return _tt_probe._entry; }
 
         INLINE const State& state() const { ASSERT(_state); return *_state; }
         INLINE TranspositionTable* get_tt() const { return _tt; }
@@ -615,7 +621,8 @@ namespace search
     {
         ASSERT(move && move._state && move != _move);
 
-        return (move != _tt_entry._hash_move)
+        return (move != tt_entry()._best_move)
+            && (move != tt_entry()._hash_move)
             && (PruneCaptures || !move._state->is_capture())
             && (move.promotion() == chess::PieceType::NONE)
             && (move.from_square() != _capture_square)
@@ -694,8 +701,8 @@ namespace search
         if (is_valid(_eval))
             return _eval;
 
-        if (is_valid(_tt_entry._value) && _tt_entry._depth >= depth())
-            return _tt_entry._value;
+        if (is_valid(tt_entry()._value) && tt_entry()._depth >= depth())
+            return tt_entry()._value;
 
         return evaluate_material();
     }
@@ -704,7 +711,6 @@ namespace search
 #if !WITH_NNUE
     INLINE void search::Context::eval_with_nnue() {}
     INLINE score_t search::Context::eval_nnue_raw(bool update_only, bool pov) { return 0; }
-    INLINE void search::Context::load_nnue_model(const std::string&) {}
     INLINE void search::Context::update_root_accumulators() {}
 #endif /* !WITH_NNUE */
 
@@ -856,7 +862,7 @@ namespace search
 
     INLINE bool Context::is_mate_bound() const
     {
-        return _tt_entry._value >= MATE_HIGH && _tt_entry._depth >= depth();
+        return tt_entry()._value >= MATE_HIGH && tt_entry()._depth >= depth();
     }
 
 

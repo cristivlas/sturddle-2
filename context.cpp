@@ -373,10 +373,10 @@ void search::Context::eval_with_nnue()
 {
     if (!is_valid(_eval))
     {
-        if (is_valid(_tt_entry._eval))
+        if (is_valid(tt_entry()._eval))
         {
             ASSERT(!is_root());
-            _eval = _tt_entry._eval;
+            _eval = tt_entry()._eval;
             return;
         }
 
@@ -571,7 +571,7 @@ namespace search
         *ctxt->_state = this->state();
         ctxt->_move = _move;
         ctxt->_excluded = _excluded;
-        ctxt->_tt_entry = _tt_entry;
+        ctxt->_tt_probe = _tt_probe;
         ctxt->_counter_move = _counter_move;
         ctxt->_is_null_move = _is_null_move;
         ctxt->_double_ext = _double_ext;
@@ -656,10 +656,10 @@ namespace search
                 if (!next_ctxt->is_null_move())
                 {
                     if (next_ctxt->_prune_reason == PruneReason::PRUNE_TT
-                        && next_ctxt->_tt_entry._depth >= depth() - 1)
+                        && next_ctxt->tt_entry()._depth >= depth() - 1)
                     {
                         /* Do not retry */
-                        ASSERT(next_ctxt->_tt_entry.is_valid());
+                        ASSERT(next_ctxt->tt_entry().is_valid());
                     }
                     else if (next_ctxt->_retry_above_alpha == RETRY::Reduced)
                     {
@@ -967,8 +967,8 @@ namespace search
 
     score_t eval_captures(Context& ctxt, score_t score)
     {
-        if (is_valid(ctxt._tt_entry._captures) && ctxt._tt_entry._depth >= ctxt.depth())
-            return ctxt._tt_entry._captures;
+        if (is_valid(ctxt.tt_entry()._captures) && ctxt.tt_entry()._depth >= ctxt.depth())
+            return ctxt.tt_entry()._captures;
 
         if constexpr(DEBUG_CAPTURES)
             ctxt.log_message(LogLevel::DEBUG, "eval_captures");
@@ -992,7 +992,7 @@ namespace search
         if constexpr(DEBUG_CAPTURES)
             ctxt.log_message(LogLevel::DEBUG, "captures: " + std::to_string(result));
 
-        ctxt._tt_entry._captures = result;
+        ctxt.tt_entry()._captures = result;
         return result;
     }
 
@@ -1062,8 +1062,8 @@ namespace search
              * extend if move has historically high cutoff percentages and counts
              */
             _extension += ONE_PLY
-                * (_move == _parent->_tt_entry._hash_move)
-                * (abs(_parent->_tt_entry._value) < MATE_HIGH)
+                * (_move == _parent->tt_entry()._hash_move)
+                * (abs(_parent->tt_entry()._value) < MATE_HIGH)
                 * (_parent->history_count(_move) > HISTORY_COUNT_HIGH)
                 * (_parent->history_score(_move) > HISTORY_HIGH);
 
@@ -1613,13 +1613,13 @@ namespace search
                 {
                     make_move<false>(ctxt, move, ctxt._ply < 3 ? MoveOrder::PREV_ITER : MoveOrder::HASH_MOVES);
                 }
-                else if (move == ctxt._tt_entry._best_move)
+                else if (move == ctxt.tt_entry()._best_move)
                 {
                     make_move<false>(ctxt, move, MoveOrder::BEST_MOVES);
                 }
-                else if (move == ctxt._tt_entry._hash_move)
+                else if (move == ctxt.tt_entry()._hash_move)
                 {
-                    make_move<false>(ctxt, move, MoveOrder::HASH_MOVES, ctxt._tt_entry._value);
+                    make_move<false>(ctxt, move, MoveOrder::HASH_MOVES, ctxt.tt_entry()._value);
                 }
                 else if (move.promotion())
                 {

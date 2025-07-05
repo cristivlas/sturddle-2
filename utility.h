@@ -161,3 +161,36 @@ namespace
         }
     };
 } /* namespace */
+
+
+template <typename T>
+struct ProfileScope
+{
+    static constexpr int PRINT_INTERVAL = 100000;
+
+    static std::chrono::high_resolution_clock::duration total_time;
+    static int num_calls;
+
+    std::chrono::time_point<std::chrono::high_resolution_clock> _start;
+
+    INLINE void report()
+    {
+        const auto end = std::chrono::high_resolution_clock::now();
+        total_time += (end - _start);
+        if (num_calls % PRINT_INTERVAL == 0)
+        {
+            const auto avg_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(total_time).count() / num_calls;
+            const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(total_time).count();
+            std::clog << &num_calls << " calls: " << num_calls << ", total: " << total_ms << "ms" << ", avg: " << avg_ns << " ns" << std::endl;
+        }
+    }
+
+    ProfileScope() : _start(std::chrono::high_resolution_clock::now()) { ++num_calls; }
+    ~ProfileScope() { report(); }
+};
+
+template <typename T>
+std::chrono::high_resolution_clock::duration ProfileScope<T>::total_time {};
+
+template <typename T>
+int ProfileScope<T>::num_calls = 0;

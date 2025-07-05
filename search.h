@@ -216,14 +216,14 @@ namespace search
 #pragma pack(pop)
 
 
+    using HashTable = hash_table<TT_Entry>;
+
     /*
      * Hash table, counter moves, historical counts.
      * Under SMP the hash table is shared between threads.
      */
     class TranspositionTable
     {
-        using HashTable = hash_table<TT_Entry>;
-
     #if USE_BUTTERFLY_TABLES
         using HistoryCounters = MoveTable<std::pair<int, int>>;
         using IndexedMoves = MoveTable<BaseMove>;
@@ -436,17 +436,16 @@ namespace search
     template<typename C>
     INLINE const int16_t* TranspositionTable::lookup(C& ctxt)
     {
-        ctxt._tt_entry = TT_Entry();
         if (ctxt.is_root() || ctxt._excluded)
             return nullptr;
 
         /* expect repetitions to be dealt with before calling into this function */
         ASSERT(!ctxt.is_repeated());
 
-        if (const auto p = _table.lookup_read(ctxt.state()))
+        ctxt._tt_probe = _table.probe(ctxt.state(), ctxt.depth());
+        if (ctxt.tt_entry().is_valid())
         {
-            ASSERT(p->matches(ctxt.state()));
-            ctxt._tt_entry = *p;
+            ASSERT(ctxt.tt_entry().matches(ctxt.state()));
 
             if constexpr(EXTRA_STATS)
                 ++_hits;
@@ -455,7 +454,7 @@ namespace search
         /* http://www.talkchess.com/forum3/viewtopic.php?topic_view=threads&p=305236&t=30788 */
         if (!ctxt.is_pv_node() && !ctxt.is_retry())
         {
-            if (auto value = ctxt._tt_entry.lookup_score(ctxt))
+            if (auto value = ctxt.tt_entry().lookup_score(ctxt))
             {
                 ctxt._score = *value;
                 return value;
@@ -491,11 +490,8 @@ namespace search
             }
         }
 
-        if (auto p = _table.lookup_write(ctxt.state(), depth))
-        {
-            auto& entry = *p;
-            store(ctxt, entry, type, depth);
-        }
+        store(ctxt, ctxt._tt_probe._entry, type, depth);
+        _table.update(ctxt._tt_probe);
     }
 
 
