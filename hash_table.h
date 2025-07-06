@@ -387,24 +387,14 @@ namespace search
         data_t _data; /* table entries */
 
     private:
-        /* Allocation helper, find the closest prime number of buckets that fits in. */
-        static INLINE size_t get_num_buckets(size_t megabytes, size_t mem_avail)
+        static INLINE size_t get_num_buckets(size_t megabytes)
         {
             static_assert(sizeof(T) == 20);
             static_assert(bucket_t::size() == 3);
             static_assert(bucket_size() == 64);
 
             auto buckets = megabytes * ONE_MEGABYTE / bucket_size();
-            auto even_buckets = get_even(buckets);
-
-            while (even_buckets * bucket_size() > mem_avail)
-            {
-                if (buckets == 0)
-                    return 0;
-
-                even_buckets = get_even(--buckets);
-            }
-            return even_buckets;
+            return get_even(buckets);
         }
 
         INLINE bucket_t &get_bucket(uint64_t hash)
@@ -423,9 +413,9 @@ namespace search
 
         using entry_t = T;
 
-        hash_table(size_t megabytes, size_t mem_avail)
+        explicit hash_table(size_t megabytes)
         {
-            resize(megabytes, mem_avail);
+            resize(megabytes);
         }
 
         hash_table(const hash_table &) = delete;
@@ -460,9 +450,9 @@ namespace search
 
         INLINE size_t size() const { return _used; }
 
-        void resize(size_t megabytes, size_t mem_avail)
+        void resize(size_t megabytes)
         {
-            const auto buckets = get_num_buckets(megabytes, mem_avail + byte_capacity());
+            const auto buckets = get_num_buckets(megabytes);
 
             if (buckets == 0)
                 throw std::bad_alloc();

@@ -84,7 +84,7 @@ static size_t mem_avail()
 }
 
 
-HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE, mem_avail());
+HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE);
 
 
 /* static */ size_t TranspositionTable::max_hash_size()
@@ -107,7 +107,7 @@ HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE, mem_avail());
     bool ok = true;
     try
     {
-        _table.resize(MB, mem_avail());
+        _table.resize(MB);
     }
     catch (...)
     {
