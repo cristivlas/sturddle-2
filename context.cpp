@@ -443,12 +443,6 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
         {
             _eval_raw *= SIGN[state().turn];
         }
-
-    #if DATAGEN
-        /* Make sure that insufficient material conditions are detected. */
-
-        _eval_raw = eval_insufficient_material(state(), _eval_raw, [this](){ return _eval_raw; });
-    #endif
     }
 
     return _eval_raw;

@@ -250,10 +250,6 @@ GROUP(Settings)
 
 DECLARE_CONST(  ASPIRATION_WINDOW,                    1,    0,       1)
 DECLARE_CONST(  DEBUG_CAPTURES,                       0,    0,       1)
-#if DATAGEN
-    DECLARE_CONST(  DATAGEN_SCORE_THRESHOLD,          0,    0,   30000)
-    DECLARE_CONST(  DATAGEN_MIN_DEPTH,               10, -100,     100)
-#endif
 #if EVAL_FUZZ_ENABLED
     DECLARE_PARAM(  EVAL_FUZZ,                        0,    0,     100)
 #endif

@@ -72,11 +72,6 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
  */
 #define COUNT_VALID_MOVES_AS_NODES          true
 
-/* Collect and generate moves data */
-#if !defined(DATAGEN)
-  #define DATAGEN                           false
-#endif
-
 /* Experimental in 2.03 */
 #define EVAL_PIECE_GRADING                  false /* TODO: tuneup */
 

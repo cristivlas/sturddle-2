@@ -901,10 +901,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     if constexpr(EXTRA_STATS)
         table.update_stats(ctxt);
 
-#if DATAGEN
-    data_collect_move(ctxt, ctxt._best_move);
-#endif /* DATAGEN */
-
     return ctxt._score;
 }
 
@@ -963,7 +959,7 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
         else
             lower = g;
 
-        ctxt.rewind(0, MTDF_REORDER_MOVES);
+        ctxt.rewind(0, MTDF_REORDER_MOVES && table._iteration < 10);
     }
 
     return (ctxt._score = g);

@@ -1698,12 +1698,6 @@ namespace search
 
         _need_sort = false;
     }
-
-    /*
-     * Collect eval data for training, implemented in uci_native.cpp
-     */
-    void data_collect_move(const Context& ctxt, const BaseMove& move);
-
 } /* namespace search */
 
 

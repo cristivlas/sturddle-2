@@ -283,110 +283,6 @@ namespace
             cython_wrapper::call(search::Context::_set_syzygy_path, std::string(value));
         }
     };
-
-
-#if DATAGEN
-    /* Collect data to use for training a neural net. */
-    /* Data is written to CSV files under the DB path (set via uci).
-     *
-     * KNOWN ISSUES
-     * ------------
-     * generate_unique_filename is not transactional, race conditions
-     * may occur between generating the name and using the file.
-     */
-    using MoveData = std::tuple<search::BaseMove, int, score_t>;
-    using EvalData = std::unordered_map<chess::State, MoveData, Hasher<chess::State>>;
-
-    static EvalData g_data;
-    static std::string g_data_dir;
-
-    static std::string generate_unique_filename(const fs::path& dir, const std::string& extension)
-    {
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
-        static std::uniform_int_distribution<> dis(0, 15);
-
-        std::string filename;
-        filename.reserve(16 + extension.length());
-
-        const char* chars = "0123456789abcdef";
-        for (int i = 0; i < 16; ++i)
-        {
-            filename += chars[dis(gen)];
-        }
-
-        filename += extension;
-
-        fs::path full_path = dir / filename;
-        if (fs::exists(full_path))
-        {
-            return generate_unique_filename(dir, extension);
-        }
-        return full_path;
-    }
-
-    struct OptionDB : public OptionBase
-    {
-        OptionDB(const std::string& path) : OptionBase("DB") { _set(path); }
-
-        void print(std::ostream& out) const override
-        {
-            OptionBase::print(out);
-            out << "type string default " << g_data_dir;
-        }
-
-        void set(std::string_view value) override { _set(std::string(value)); }
-
-    private:
-        void _set(const std::string& value)
-        {
-            try
-            {
-                fs::create_directories(value);
-                g_data_dir = value;
-            }
-            catch (const std::exception& e)
-            {
-                log_error(std::format("{}: {}", value, e.what()));
-            }
-        }
-    };
-
-
-    static void data_flush(const search::Context& ctxt, int threshold = DATAGEN_SCORE_THRESHOLD)
-    {
-        ASSERT_ALWAYS(ctxt.tid() == 0);
-
-        EvalData data;
-        data.swap(g_data);
-
-        if (!data.empty() && ctxt._score >= threshold)
-        {
-            const auto filename = generate_unique_filename(g_data_dir, ".csv");
-            log_info(std::format("Writing {} positions to: {}", data.size(), filename));
-
-            std::ofstream of(filename);
-            if (!of)
-            {
-                log_error("Could not open file.");
-            }
-            else
-            {
-                for (const auto& pos : data)
-                {
-                    of << search::Context::epd(pos.first) << "," << std::get<0>(pos.second)
-                    << "," << std::get<1>(pos.second) << "," << std::get<2>(pos.second)
-                    << std::endl;
-                }
-                of.flush();
-            }
-        }
-    }
-#else
-    static void data_flush(const search::Context&, int = 0)
-    {
-    }
-#endif /* DATAGEN */
 } /* namespace */
 
 class UCI
@@ -430,10 +326,6 @@ public:
     #if USE_ENDTABLES
         _options.emplace("syzygypath", std::make_shared<OptionSyzygy>());
     #endif /*USE_ENDTABLES */
-    #if DATAGEN
-        const auto db_path = fs::absolute(fs::path(params["dir"])) / "evals";
-        _options.emplace("db", std::make_shared<OptionDB>(db_path.string()));
-    #endif
     }
 
     static bool output_expected() { return _output_expected.load(std::memory_order_relaxed); }
@@ -449,7 +341,7 @@ private:
     void ponderhit();
     void position(const Arguments &args);
     void setoption(const Arguments &args);
-    void stop(bool flush = false);
+    void stop();
     void uci();
     void newgame();
 
@@ -793,7 +685,7 @@ void UCI::run()
         if (args.front() == "quit")
         {
             _output_expected = false;
-            stop(true);
+            stop();
             break;
         }
         dispatch(cmd, args);
@@ -847,7 +739,7 @@ INLINE void UCI::dispatch(std::string &cmd, const Arguments &args)
         }
         if (tok == "stop")
         {
-            stop(true);
+            stop();
             return;
         }
         break;
@@ -977,7 +869,6 @@ void UCI::go(const Arguments &args)
         _compute_pool->push_task([this]{
             search();
             output_best_move();
-            data_flush(context(), SCORE_MIN /* no threshold */);
         });
     }
     else
@@ -1041,7 +932,7 @@ INLINE void UCI::isready()
 
 void UCI::newgame()
 {
-    stop(true);
+    stop();
     search::TranspositionTable::clear_shared_hashtable();
 
     set_start_position();
@@ -1200,14 +1091,11 @@ void UCI::setoption(const Arguments &args)
         ensure_background_thread();
 }
 
-void UCI::stop(bool flush)
+void UCI::stop()
 {
     search::Context::set_time_limit_ms(0);
     _compute_pool->wait_for_tasks([] { search::Context::cancel(); });
     output_best_move();
-
-    if (flush)
-        data_flush(context());
 }
 
 void UCI::uci()
@@ -1257,36 +1145,6 @@ void uci_loop(Params params)
     }
     if (!err.empty())
         raise_runtime_error(err.c_str());
-}
-
-void search::data_collect_move(const search::Context& ctxt, const chess::BaseMove& move)
-{
-#if DATAGEN
-    if (ctxt.tid() == 0 && ctxt.depth() >= DATAGEN_MIN_DEPTH)
-    {
-    //#if WITH_NNUE
-    //    const auto eval = ctxt._eval_raw;
-    //#else
-        const auto eval = ctxt._score;
-    //#endif
-
-        if (!g_data_dir.empty() && is_valid(eval) && move)
-        {
-            LOG_DEBUG(std::format("{}: {}, {}/{} {}",
-                ctxt.epd(), move.uci(), ctxt.depth(), ctxt.iteration(), eval));
-
-            auto i = g_data.find(ctxt.state());
-            if (i == g_data.end())
-            {
-                g_data.emplace(ctxt.state(), std::make_tuple(move, ctxt.depth(), eval));
-            }
-            else if (std::get<1>(i->second) <= ctxt.depth())
-            {
-                i->second = std::make_tuple(move, ctxt.depth(), eval);
-            }
-        }
-    }
-#endif /* DATAGEN */
 }
 
 #else

@@ -68,6 +68,13 @@ def make_model(args, strategy):
         linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
         return tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
 
+    @tf.function
+    def outcome_loss(y_true_prob, y_pred_pawns):
+        # Convert pawns to centipawns, then apply sigmoid scaling
+        centipawns = y_pred_pawns * SCALE
+        win_prob = tf.sigmoid(centipawns / args.outcome_scale)
+        return tf.keras.losses.binary_crossentropy(y_true_prob, win_prob)
+
     class UnpackLayer(tf.keras.layers.Layer):
         def __init__(self, num_outputs, **kwargs):
             super(UnpackLayer, self).__init__(**kwargs)
@@ -212,10 +219,15 @@ def make_model(args, strategy):
         # if args.mixed_precision:
         #     optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer)
 
-        # Create loss dictionary
-        losses = {'out': clipped_loss}
+        # Create loss dictionary - choose between regression and outcome-based training
+        if args.outcome_training:
+            losses = {'out': outcome_loss}
+            metrics = {'out': ['accuracy']}
+        else:
+            losses = {'out': clipped_loss}
+            metrics = {'out': ['mae']}
+
         loss_weights = {'out': 1.0}
-        metrics = {'out': ['mae']}
 
         if args.predict_moves:
             @tf.function
@@ -390,13 +402,22 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             # Get input features (bitboards)
             x = self.data[start:end, :self.feature_count]
 
-            # Get position evaluation
-            y_eval = self.data[start:end, self.feature_count:self.feature_count+1]
-            y_eval = tf.cast(y_eval, tf.int64)  # Cast from unsigned to signed
-            y_eval = tf.cast(y_eval, tf.float32) / SCALE  # Convert to float, and scale
-
             white_to_move = tf.equal(x[:,-1:], 1)  # Training data is from side-to-move POV
-            y_eval = tf.where(white_to_move, y_eval, -y_eval)  # Convert to White's perspective
+
+            if args.outcome_training:
+                # Use game outcome for training
+                y_outcome = self.data[start:end, self.feature_count+1:self.feature_count+2]
+                y_outcome = tf.cast(y_outcome, tf.float32) - 1.0  # Convert 0,1,2 -> -1,0,1
+                # Convert from STM perspective to white's perspective
+                y_outcome = tf.where(white_to_move, y_outcome, -y_outcome)
+                # Convert to win probability: -1->0.0, 0->0.5, 1->1.0
+                y_eval = (y_outcome + 1.0) / 2.0
+            else:
+                # Use engine evaluation for training (original behavior)
+                y_eval = self.data[start:end, self.feature_count:self.feature_count+1]
+                y_eval = tf.cast(y_eval, tf.int64)  # Cast from unsigned to signed
+                y_eval = tf.cast(y_eval, tf.float32) / SCALE  # Convert to float, and scale
+                y_eval = tf.where(white_to_move, y_eval, -y_eval)  # Convert to White's perspective
 
             # Prepare outputs based on whether move prediction is enabled
             if args.predict_moves and self.data.shape[1] > self.feature_count + 1:
@@ -455,7 +476,14 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                         'learn rate': f'{self.model.optimizer.lr.read_value():.2e}',
                         'model': self.model.name,
                         'sampling ratio': args.sample,
+                        'training mode': 'outcome' if args.outcome_training else 'evaluation',
                     }
+
+                    # Add outcome training parameters if enabled
+                    if args.outcome_training:
+                        hyperparam.update({
+                            'outcome_scale': args.outcome_scale,
+                        })
 
                     # Add move prediction parameters if enabled
                     if args.predict_moves:
@@ -500,28 +528,28 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
         if args.filter:
             @tf.function
-            def filter(x, y):
+            def filter_data(x, y):
                 if args.predict_moves:
                     eval_y = y[0]
-                    bound = args.filter / SCALE
-                    lower_bound = tf.greater(eval_y, -bound)
-                    upper_bound = tf.less(eval_y, bound)
-                    condition = tf.logical_and(lower_bound, upper_bound)
-                    condition = tf.reshape(condition, [-1])  # Flatten to 1D
-
-                    # Apply mask to both input and all outputs
-                    filtered_x = tf.boolean_mask(x, condition)
-                    filtered_y = tuple(tf.boolean_mask(y_item, condition) for y_item in y)
-                    return filtered_x, filtered_y
                 else:
-                    bound = args.filter / SCALE
-                    lower_bound = tf.greater(y, -bound)
-                    upper_bound = tf.less(y, bound)
-                    condition = tf.logical_and(lower_bound, upper_bound)
-                    condition = tf.reshape(condition, [-1])  # Flatten to 1D
-                    return tf.boolean_mask(x, condition), tf.boolean_mask(y, condition)
+                    eval_y = y
 
-            dataset = dataset.map(filter, num_parallel_calls=tf.data.AUTOTUNE)
+                bound = args.filter / SCALE
+                lower_bound = tf.greater(eval_y, -bound)
+                upper_bound = tf.less(eval_y, bound)
+                condition = tf.logical_and(lower_bound, upper_bound)
+                condition = tf.reshape(condition, [-1])  # Flatten to 1D
+
+                # Apply mask to both input and all outputs
+                filtered_x = tf.boolean_mask(x, condition)
+                if args.predict_moves:
+                    filtered_y = tuple(tf.boolean_mask(y_item, condition) for y_item in y)
+                else:
+                    filtered_y = tf.boolean_mask(eval_y, condition)
+
+                return filtered_x, filtered_y
+
+            dataset = dataset.map(filter_data, num_parallel_calls=tf.data.AUTOTUNE)
 
         if args.gpu:
             dataset = dataset.apply(tf.data.experimental.copy_to_device("/gpu:0"))
@@ -540,6 +568,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 def load_model(path):
     custom_objects = {
         'clipped_loss': None,
+        'outcome_loss': None,
         'chess_move_loss': None,
         'scaled_sparse_categorical_crossentropy': None,
         'top': None,
@@ -687,6 +716,10 @@ if __name__ == '__main__':
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
         parser.add_argument('-q', '--quantize', action='store_true')
 
+        # Outcome-based training arguments
+        parser.add_argument('--outcome-training', action='store_true', help='train using game outcomes instead of engine evaluations')
+        parser.add_argument('--outcome-scale', type=float, default=128.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
+
         # Move prediction related arguments
         parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')
         parser.add_argument('--move-weight', type=float, default=0.3, help='blending weight for move prediction loss')
@@ -741,6 +774,11 @@ if __name__ == '__main__':
                 parser.error("--move-logit-clip must be positive")
             if args.move_loss_scale <= 0:
                 parser.error("--move-loss-scale must be positive")
+
+        # Validate outcome training parameters
+        if args.outcome_training:
+            if args.outcome_scale <= 0:
+                parser.error("--outcome-scale must be positive")
 
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout

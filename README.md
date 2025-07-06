@@ -19,34 +19,6 @@ Clang is recommended, the GNU C++ compiler may work but it is not supported.
 If built with the `NATIVE_UCI` flag, invoke `main.py` to run the UCI engine.
 Without the `NATIVE_UCI` flag, run `sturddle.py` instead.
 
-## Training the Neural Net
-I have trained the neural net on a large dataset that I generated and curated over a couple of years.
-
-To start from scratch:
-
-1) Start with games saved as PGN (downloaded from the Internet, or from engine tournaments).
-2) Generate sqlite3 database(s) of positions from PGN games, using: `tools/sqlite/mkposdb.py`.
-3) Analyse positions with `tools/sqlite/analyse.py` or `tools/sqlite/analyse_parallel.py`; both
-scripts require a UCI engine for analysis (such Sturddle 1.xx, Stockfish, etc.).
-
-Alternatively:
-- Download PGNs from https://database.lichess.org/ and extract
-evaluations using `tools/sqlite/pgntoevals.py`, or
-- Download binpack files, convert them to plain using a development version
-of Stockfish, then use `tools/sqlite/plaintodb.py`, or
-- Generate datasets with this engine, by compiling it with DATAGEN enabled (please refer to the source code for details).
-
-4) Generate HDF5 file(s) from database(s) produced by any of the methods above: use `tools/nnue/toh5.py`.
-
-5) Train the neural net by running `tools/nnue/train-v4.py` (requires Tensorflow and the CUDA toolkit).
-6) Generate `weights.h` by exporting model trained in step 5:
-<code>tools/nnue/train.py export -m <path-to-model> -o weights.h</code>
-7) Build engine (using `tools/build.py`, or by running <code>python3 setup.py build\_ext --inplace</code>).
-
-
-Note that the name NNUE used here only means that the neural net is updated efficiently (i.e. in an
-incremental fashion). The model is original and consists of a relatively small number of parameters (596113).
-
 # Neural Net Architecture
 ![plot](./model.png)
 
