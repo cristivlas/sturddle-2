@@ -419,6 +419,17 @@ namespace nnue
         static_assert(INPUTS % OUTPUTS == 0);
         static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
 
+#if __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+        /* No Vec8f, use two Vec4f-s */
+        Vec4f v1, v2;
+
+        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
+        {
+            v1.load_a(&in[i]);
+            v2.load_a(&in[i + 4]);
+            out[j] = (horizontal_add(v1) + horizontal_add(v2)) / POOL_STRIDE;
+        }
+#else
         Vec8f v;
 
         for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
@@ -426,6 +437,7 @@ namespace nnue
             v.load_a(&in[i]);
             out[j] = horizontal_add(v) / POOL_STRIDE;
         }
+#endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
     }
 
 
@@ -442,7 +454,7 @@ namespace nnue
             v.load_a(&in[i]);
             v = max(v, v8_zero);
 
-            out[j] = float(horizontal_add(extend(v))) / POOL_STRIDE / QSCALE;
+            out[j] = float(::horizontal_add(extend(v))) / POOL_STRIDE / QSCALE;
         }
     }
 

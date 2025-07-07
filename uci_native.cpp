@@ -579,7 +579,7 @@ static void INLINE output_info(std::ostream& out, const Info& info)
     }
     else
     {
-        constexpr auto MATE_DIST_MAX = PATH_MAX;
+        constexpr auto MATE_DIST_MAX = PV_PATH_MAX;
 
         auto score_unit = "cp";
         auto score = info.score;

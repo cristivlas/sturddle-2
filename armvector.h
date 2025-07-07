@@ -232,6 +232,8 @@ class Vec8s /* Emulate with SIMDE */
     __m128i xmm;
 
 public:
+    static constexpr size_t size() { return 8; }
+
     Vec8s() = default;
 
     Vec8s(__m128i x) : xmm(x) {}
@@ -257,6 +259,20 @@ INLINE Vec8s max(Vec8s a, Vec8s b)
 INLINE __m256i extend(Vec8s a)
 {
     return _mm256_cvtepi16_epi32(a);
+}
+
+
+INLINE int32_t horizontal_add (__m256i a)
+{
+    // Add upper and lower 128-bit lanes: [a7+a3, a6+a2, a5+a1, a4+a0]
+    __m128i sum1  = _mm_add_epi32(_mm256_extracti128_si256(a, 1), _mm256_castsi256_si128(a));
+
+    // Add with high 64-bit part: [(a7+a3)+(a5+a1), (a6+a2)+(a4+a0), (a5+a1), (a4+a0)]
+    __m128i sum2  = _mm_add_epi32(sum1,_mm_unpackhi_epi64(sum1, sum1));
+
+    // Add with shuffled version to get final sum in lowest 32 bits
+    __m128i sum3  = _mm_add_epi32(sum2,_mm_shuffle_epi32(sum2, 1));
+    return (int32_t)_mm_cvtsi128_si32(sum3);
 }
 
 
