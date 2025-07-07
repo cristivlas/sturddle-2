@@ -20,15 +20,19 @@ import numpy as np
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+ACCUMULATOR_SIZE = 1280
+ATTN_FAN_OUT = 32
+POOL_SIZE = 8
+
 Q_SCALE = 1024
 # Quantization range: use int16_t with Q_SCALE, prevent overflow
 # 64 squares + (16 + 16) occupancy + 1 side-to-move + 1 bias == 98
-Q_MAX_A = 32767 / Q_SCALE / 98
+Q_MAX_A = 32767 / Q_SCALE / 98 / POOL_SIZE
 Q_MIN_A = -Q_MAX_A
 
 # (8 pawns + 1 king) x 2 + 1 bias == 19
-# Q_MAX_B = 32767  / Q_SCALE / 19
-# Q_MIN_B = -Q_MAX_B
+Q_MAX_B = 32767  / Q_SCALE / 19
+Q_MIN_B = -Q_MAX_B
 
 SCALE = 100.0
 
@@ -62,18 +66,57 @@ def make_model(args, strategy):
         return (2 * tf.math.sigmoid(.5 * x) - 1) * clip_value + x * alpha
 
     @tf.function
-    def clipped_loss(y_true, y_pred, delta=2.0):
-        error = soft_clip(y_true - y_pred, args.clip)
+    def compute_huber_loss(eval_target, y_pred):
+        error = soft_clip(eval_target - y_pred, args.clip)
+        delta = tf.constant(args.huber_delta, dtype=tf.float32)
         squared_loss = 0.5 * tf.square(error)
-        linear_loss  = delta * tf.abs(error) - 0.5 * delta**2
+        linear_loss = delta * tf.abs(error) - 0.5 * delta**2
         return tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
 
     @tf.function
-    def outcome_loss(y_true_prob, y_pred_pawns):
-        # Convert pawns to centipawns, then apply sigmoid scaling
-        centipawns = y_pred_pawns * SCALE
-        win_prob = tf.sigmoid(centipawns / args.outcome_scale)
-        return tf.keras.losses.binary_crossentropy(y_true_prob, win_prob)
+    def compute_focal_loss(outcome_target, y_pred):
+        centipawns = y_pred * SCALE
+        scale = tf.constant(args.outcome_scale, dtype=tf.float32)
+        logits = centipawns / scale
+        return tf.keras.losses.binary_focal_crossentropy(
+            outcome_target, logits, alpha=0.45, gamma=2.0, from_logits=True
+        )
+
+    @tf.function
+    def combined_loss(y_true, y_pred):
+        """
+        Combined loss function that takes both eval and outcome as targets.
+        y_true: [eval_target, outcome_target] - shape (batch_size, 2)
+        y_pred: network output - shape (batch_size, 1)
+        """
+        eval_target = y_true[:, 0:1]
+        outcome_target = y_true[:, 1:2]
+
+        # Shortcuts for pure loss cases
+        if args.loss_weight == 0.0:
+            # Pure eval training - only Huber loss
+            return compute_huber_loss(eval_target, y_pred)
+        elif args.loss_weight == 1.0:
+            # Pure outcome training - only focal loss
+            return compute_focal_loss(outcome_target, y_pred)
+        else:
+            # Combined training - compute both
+            huber_loss = compute_huber_loss(eval_target, y_pred)
+            focal_loss = compute_focal_loss(outcome_target, y_pred)
+
+            eval_weight = tf.constant(1.0 - args.loss_weight, dtype=tf.float32)
+            outcome_weight = args.loss_weight
+            return eval_weight * huber_loss + outcome_weight * focal_loss
+
+    @tf.function
+    def adaptive_loss(y_true, y_pred):
+        eval_target = y_true[:, 0:1]
+        outcome_target = y_true[:, 1:2]
+        is_draw = tf.equal(outcome_target, 0.5)
+        huber_loss = compute_huber_loss(eval_target, y_pred)
+        focal_loss = compute_focal_loss(outcome_target, y_pred)
+        return tf.where(is_draw, huber_loss, focal_loss)
+
 
     class UnpackLayer(tf.keras.layers.Layer):
         def __init__(self, num_outputs, **kwargs):
@@ -112,64 +155,54 @@ def make_model(args, strategy):
         white_occupied = Lambda(white_occupied_mask, name='white')(unpack_layer)
 
         concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
-        constr_a = CustomConstraint(Q_MIN_A, Q_MAX_A)
-        pool_size = 4
-        hidden_1a_inputs = 640
 
-        hidden_1a_layer = Dense(
-            hidden_1a_inputs,
+        constr_a = CustomConstraint(Q_MIN_A, Q_MAX_A)
+        hidden_1a = Dense(
+            ACCUMULATOR_SIZE,
             activation=ACTIVATION,
             name='hidden_1a',
             kernel_initializer=K_INIT,
             kernel_constraint=constr_a,
             bias_constraint=constr_a,
-        )
+        )(concat)
 
         # constr_b = CustomConstraint(Q_MIN_B, Q_MAX_B)
-        constr_b = constr_a
-
+        constr_b = constr_a  # use same weight ranges as accumulator
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
         # hidden_1b_layer: selects the pawns and kings features.
         input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
-        hidden_1b_layer = Dense(
+        hidden_1b = Dense(
             64,
             activation=ACTIVATION,
             name='hidden_1b',
             kernel_initializer=K_INIT,
             kernel_constraint=constr_b,
             bias_constraint=constr_b,
-        )
+        )(input_1b)
 
-        # Compute dynamic weights based on hidden_1b (pawns & kings features).
-        attn_fan_out = int(args.dynw)
-        attention_layer = Dense(attn_fan_out, activation=None, name='dynamic_weights')
-
-        # Add 2nd hidden layer
-        hidden_2_layer = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_2')
-
-        # ... and 3rd
-        hidden_3_layer = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_3')
-
-        hidden_1a = hidden_1a_layer(concat)
-        hidden_1b = hidden_1b_layer(input_1b)
-
-        dynamic_weights = attention_layer(hidden_1b)  # computes dynamic weights
+        dynamic_weights = Dense(ATTN_FAN_OUT, activation=None, name='dynamic_weights')(hidden_1b)
 
         def custom_pooling(x):
-            reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // pool_size, pool_size))
+            reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
             # Take the mean over the last dimension
             return tf.reduce_mean(reshaped, axis=-1)
 
         pooled = Lambda(custom_pooling, name='pool')(hidden_1a)
 
         # The "reshaping" layer repeats or tiles the dynamic weights to match the output shape of pooled
-        attn_reshape_layer = Lambda(lambda x: tf.tile(x, tf.constant([1, hidden_1a_inputs // pool_size // attn_fan_out])))
+        attn_reshape_layer = Lambda(lambda x: tf.tile(x, tf.constant([1, ACCUMULATOR_SIZE // POOL_SIZE // ATTN_FAN_OUT])))
 
         # Apply weights to pooled (multiply pooled output with dynamic weights)
-        weighted = Multiply(name='weighted')([pooled, attn_reshape_layer(dynamic_weights)])
+        # weighted = Multiply(name='weighted')([pooled, attn_reshape_layer(dynamic_weights)])
 
-        hidden_2 = hidden_2_layer(weighted)
-        hidden_3 = hidden_3_layer(hidden_2)  # 3rd hidden layer
+        # Compute attention modulation
+        attention_modulation = Multiply(name='attention_mult')([pooled, attn_reshape_layer(dynamic_weights)])
+
+        # Add residual connection: pooled + pooled * attention_weights
+        weighted = Add(name='weighted')([pooled, attention_modulation])
+
+        hidden_2 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_2')(weighted)
+        hidden_3 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_3')(hidden_2)
 
         # Define the position evaluation output (original output)
         eval_output = Dense(1, name='out', dtype='float32')(hidden_3)
@@ -216,17 +249,26 @@ def make_model(args, strategy):
         else:
             assert False
 
-        # if args.mixed_precision:
-        #     optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer)
+        if args.mixed_precision:
+            optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer)
 
-        # Create loss dictionary - choose between regression and outcome-based training
-        if args.outcome_training:
-            losses = {'out': outcome_loss}
-            metrics = {'out': ['accuracy']}
-        else:
-            losses = {'out': clipped_loss}
-            metrics = {'out': ['mae']}
+        @tf.function
+        def accuracy(y_true, y_pred):
+            outcome_target = y_true[:, 1:2]  # Extract outcome component
+            centipawns = y_pred * SCALE
+            scale = tf.constant(args.outcome_scale, dtype=tf.float32)
+            logits = centipawns / scale
+            probs = tf.nn.sigmoid(logits)
+            predictions = tf.cast(probs > 0.5, tf.float32)
+            return tf.keras.metrics.binary_accuracy(outcome_target, predictions)
 
+        @tf.function
+        def mae(y_true, y_pred):
+            eval_target = y_true[:, 0:1]  # Extract eval component
+            return tf.keras.metrics.mean_absolute_error(eval_target, y_pred)
+
+        losses = {'out': adaptive_loss if args.adaptive else combined_loss}
+        metrics = {'out': [accuracy, mae]}
         loss_weights = {'out': 1.0}
 
         if args.predict_moves:
@@ -404,28 +446,27 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
             white_to_move = tf.equal(x[:,-1:], 1)  # Training data is from side-to-move POV
 
-            if args.outcome_training:
-                # Use game outcome for training
-                y_outcome = self.data[start:end, self.feature_count+1:self.feature_count+2]
-                y_outcome = tf.cast(y_outcome, tf.float32) - 1.0  # Convert 0,1,2 -> -1,0,1
-                # Convert from STM perspective to white's perspective
-                y_outcome = tf.where(white_to_move, y_outcome, -y_outcome)
-                # Convert to win probability: -1->0.0, 0->0.5, 1->1.0
-                y_eval = (y_outcome + 1.0) / 2.0
-            else:
-                # Use engine evaluation for training (original behavior)
-                y_eval = self.data[start:end, self.feature_count:self.feature_count+1]
-                y_eval = tf.cast(y_eval, tf.int64)  # Cast from unsigned to signed
-                y_eval = tf.cast(y_eval, tf.float32) / SCALE  # Convert to float, and scale
-                y_eval = tf.where(white_to_move, y_eval, -y_eval)  # Convert to White's perspective
+            # Get both evaluation and outcome data
+            y_eval = self.data[start:end, self.feature_count:self.feature_count+1]
+            y_eval = tf.cast(y_eval, tf.int64)  # Cast from unsigned to signed
+            y_eval = tf.cast(y_eval, tf.float32) / SCALE  # Convert to float, and scale
+            y_eval = tf.where(white_to_move, y_eval, -y_eval)  # Convert to White's perspective
+
+            y_outcome = self.data[start:end, self.feature_count+1:self.feature_count+2]
+            y_outcome = tf.cast(y_outcome, tf.float32) - 1.0  # Convert 0,1,2 -> -1,0,1
+            # Convert from STM perspective to white's perspective
+            y_outcome = tf.where(white_to_move, y_outcome, -y_outcome)
+            # Convert to win probability: -1->0.0, 0->0.5, 1->1.0
+            y_outcome = (y_outcome + 1.0) / 2.0
+
+            # Combine both targets into a single tensor
+            y_combined = tf.concat([y_eval, y_outcome], axis=1)  # Shape: (batch_size, 2)
 
             # Prepare outputs based on whether move prediction is enabled
             if args.predict_moves and self.data.shape[1] > self.feature_count + 1:
                 # Get move coordinates (from_square, to_square) as indices
                 from_square = self.data[start:end, self.feature_count+2]
                 to_square = self.data[start:end, self.feature_count+3]
-
-                # tf.print(self.feature_count, from_square, to_square)
 
                 # Convert from/to squares to move index (from_square * 64 + to_square)
                 move_indices = from_square * 64 + to_square
@@ -434,9 +475,9 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                 move_indices = tf.reshape(move_indices, (-1, 1))
 
                 # Return as tuple
-                return x, (y_eval, move_indices)
+                return x, (y_combined, move_indices)
             else:
-                return x, y_eval
+                return x, y_combined
 
         def rows(self):
             return self.data.shape[0]
@@ -474,16 +515,11 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                         'dataset size': f'{generator.rows():,}',
                         'filter': args.filter,
                         'learn rate': f'{self.model.optimizer.lr.read_value():.2e}',
+                        'loss_weight': args.loss_weight,
                         'model': self.model.name,
+                        'outcome_scale': args.outcome_scale,
                         'sampling ratio': args.sample,
-                        'training mode': 'outcome' if args.outcome_training else 'evaluation',
                     }
-
-                    # Add outcome training parameters if enabled
-                    if args.outcome_training:
-                        hyperparam.update({
-                            'outcome_scale': args.outcome_scale,
-                        })
 
                     # Add move prediction parameters if enabled
                     if args.predict_moves:
@@ -514,11 +550,11 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             )
             output_shapes = (
                 (None, packed_feature_count),
-                ((None, 1), (None, 1))
+                ((None, 2), (None, 1))
             )
         else:
             output_types = (np.uint64, np.float32)
-            output_shapes = ((None, packed_feature_count), (None, 1))
+            output_shapes = ((None, packed_feature_count), (None, 2))
 
         dataset = tf.data.Dataset.from_generator(
             generator,
@@ -530,9 +566,10 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             @tf.function
             def filter_data(x, y):
                 if args.predict_moves:
-                    eval_y = y[0]
+                    combined_y = y[0]
+                    eval_y = combined_y[:, 0:1]
                 else:
-                    eval_y = y
+                    eval_y = y[:, 0:1]
 
                 bound = args.filter / SCALE
                 lower_bound = tf.greater(eval_y, -bound)
@@ -545,7 +582,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                 if args.predict_moves:
                     filtered_y = tuple(tf.boolean_mask(y_item, condition) for y_item in y)
                 else:
-                    filtered_y = tf.boolean_mask(eval_y, condition)
+                    filtered_y = tf.boolean_mask(y, condition)
 
                 return filtered_x, filtered_y
 
@@ -567,8 +604,8 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
 def load_model(path):
     custom_objects = {
-        'clipped_loss': None,
-        'outcome_loss': None,
+        'adaptive_loss': None,
+        'combined_loss': None,
         'chess_move_loss': None,
         'scaled_sparse_categorical_crossentropy': None,
         'top': None,
@@ -701,6 +738,7 @@ if __name__ == '__main__':
 
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
+        parser.add_argument('-a', '--adaptive', action='store_true', help='use adaptive loss (otherwise use default: weighted loss)')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
         parser.add_argument('-c', '--clip', type=float, default=3.0, help='position eval gradient soft clip')
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
@@ -716,9 +754,9 @@ if __name__ == '__main__':
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
         parser.add_argument('-q', '--quantize', action='store_true')
 
-        # Outcome-based training arguments
-        parser.add_argument('--outcome-training', action='store_true', help='train using game outcomes instead of engine evaluations')
-        parser.add_argument('--outcome-scale', type=float, default=128.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
+        parser.add_argument('--huber-delta', type=float, default=2.0)
+        parser.add_argument('--loss-weight', type=float, default=1.0, help='weight for outcome loss vs eval loss (0=eval only, 1=outcome only)')
+        parser.add_argument('--outcome-scale', type=float, default=100.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
 
         # Move prediction related arguments
         parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')
@@ -731,7 +769,6 @@ if __name__ == '__main__':
         parser.add_argument('--clip-norm', type=float, default=1.0, help='gradient clipping norm')
 
         parser.add_argument('--alt-model', help='Path to another model to load weights from')
-        parser.add_argument('--dynw', choices=('16', '32'), default='32', help='dynamic weights layer size')
 
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
@@ -762,6 +799,10 @@ if __name__ == '__main__':
 
         args = parser.parse_args()
 
+        # Validate loss_weight
+        if args.loss_weight < 0 or args.loss_weight > 1:
+            parser.error("--loss-weight must be between 0 and 1 (inclusive)")
+
         # Validate move_weight
         if args.predict_moves and (args.move_weight <= 0 or args.move_weight >= 1):
             parser.error("--move-weight must be between 0 and 1 (exclusive)")
@@ -775,10 +816,9 @@ if __name__ == '__main__':
             if args.move_loss_scale <= 0:
                 parser.error("--move-loss-scale must be positive")
 
-        # Validate outcome training parameters
-        if args.outcome_training:
-            if args.outcome_scale <= 0:
-                parser.error("--outcome-scale must be positive")
+        # Validate outcome scale parameter
+        if args.outcome_scale <= 0:
+            parser.error("--outcome-scale must be positive")
 
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout

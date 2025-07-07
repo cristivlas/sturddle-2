@@ -54,7 +54,7 @@ namespace nnue
     using namespace chess;
     using input_t = int16_t;
 
-    constexpr auto POOL_STRIDE = 4;
+    constexpr auto POOL_STRIDE = Vec8s::size();
     constexpr int QSCALE = 1024;
 
     /* bit index of the side-to-move feature within one-hot encoding */
@@ -419,7 +419,7 @@ namespace nnue
         static_assert(INPUTS % OUTPUTS == 0);
         static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
 
-        Vec4f v;
+        Vec8f v;
 
         for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
         {
@@ -427,6 +427,25 @@ namespace nnue
             out[j] = horizontal_add(v) / POOL_STRIDE;
         }
     }
+
+
+    template <size_t INPUTS, size_t OUTPUTS>
+    INLINE void pool(const int16_t (&in)[INPUTS], float (&out)[OUTPUTS])
+    {
+        static_assert(INPUTS % OUTPUTS == 0);
+        static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
+
+        Vec8s v;
+
+        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
+        {
+            v.load_a(&in[i]);
+            v = max(v, v8_zero);
+
+            out[j] = float(horizontal_add(v)) / POOL_STRIDE / QSCALE;
+        }
+    }
+
 
 
     template <int M, int N, int O> struct Accumulator
@@ -694,38 +713,36 @@ namespace nnue
 
         ALIGN float attn_in[ATTN::INPUTS];
         ALIGN float attn_out[ATTN::OUTPUTS];
-        ALIGN float l1_out[A::OUTPUTS_A];
         ALIGN float l2_in[L2::INPUTS];
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
 
-        activation(a._output_a, l1_out); // process output of hidden_1a
-        activation(a._output_b, attn_in); // process output of hidden_1b
+    #if 0
+        ALIGN float l1_out[A::OUTPUTS_A];
 
+        activation(a._output_a, l1_out); // accumulator
         pool(l1_out, l2_in);
+    #else
+        pool(a._output_a, l2_in);
+    #endif
 
-        /*
-         * The "spatial attention" layer modulates L2 using tiled multiplication.
-         */
+        /* The "spatial attention" layer modulates L2 using tiled multiplication. */
+        activation(a._output_b, attn_in); // process output of hidden_1b
         attn.dot(attn_in, attn_out);
 
         static_assert(L2::INPUTS % Vector::size() == 0);
 
-    #if true /* vectorized */
         Vector v1, v2;
         for (int i = 0; i != L2::INPUTS; i += Vector::size())
         {
             v1.load_a(&l2_in[i]);
             v2.load_a(&attn_out[i % ATTN::OUTPUTS]);
-            (v1 * v2).store_a(&l2_in[i]);
+
+            // (v1 + v1 * v2).store_a(&l2_in[i]);
+            mul_add(v1, v2, v1).store_a(&l2_in[i]);
         }
-    #else
-        for (int i = 0; i < L2::INPUTS; ++i)
-        {
-            l2_in[i] *= attn_out[i % ATTN::OUTPUTS];
-        }
-    #endif /* !vectorized */
+        /* end of modulation */
 
         l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
         l3.dot(l2_out, l3_out, [](const Vector& v) { return max(v, v_zero); });
