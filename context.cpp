@@ -306,7 +306,7 @@ static struct
 {
     void init() {}
 
-    LAttnType L_ATTN{dynamic_weights_w, dynamic_weights_b};
+    LAttnType L_ATTN{spatial_attn_w, spatial_attn_b};
     L1AType L1A{hidden_1a_w, hidden_1a_b};
     L1BType L1B{hidden_1b_w, hidden_1b_b};
     L2Type L2{hidden_2_w, hidden_2_b};
@@ -393,7 +393,7 @@ static struct
     {
         WeightLoader loader;
 
-        INIT_LAYER(L_ATTN, HIDDEN_1B, 32, dynamic_weights);
+        INIT_LAYER(L_ATTN, HIDDEN_1B, 32, spatial_attn);
         INIT_LAYER(L1A, INPUTS_A, HIDDEN_1A, hidden_1a);
         INIT_LAYER(L1B, INPUTS_B, HIDDEN_1B, hidden_1b);
         INIT_LAYER(L2, HIDDEN_1A_POOLED, HIDDEN_2, hidden_2);

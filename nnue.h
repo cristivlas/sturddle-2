@@ -442,7 +442,7 @@ namespace nnue
             v.load_a(&in[i]);
             v = max(v, v8_zero);
 
-            out[j] = float(horizontal_add(v)) / POOL_STRIDE / QSCALE;
+            out[j] = float(horizontal_add(extend(v))) / POOL_STRIDE / QSCALE;
         }
     }
 
@@ -729,7 +729,7 @@ namespace nnue
 
         /* The "spatial attention" layer modulates L2 using tiled multiplication. */
         activation(a._output_b, attn_in); // process output of hidden_1b
-        attn.dot(attn_in, attn_out);
+        attn.dot(attn_in, attn_out, [](const Vector& v) { return max(v, v_zero); });
 
         static_assert(L2::INPUTS % Vector::size() == 0);
 

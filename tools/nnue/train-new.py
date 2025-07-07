@@ -27,12 +27,14 @@ POOL_SIZE = 8
 Q_SCALE = 1024
 # Quantization range: use int16_t with Q_SCALE, prevent overflow
 # 64 squares + (16 + 16) occupancy + 1 side-to-move + 1 bias == 98
-Q_MAX_A = 32767 / Q_SCALE / 98 / POOL_SIZE
+# Q_SCALE = 256
+# Q_MAX_A = 32767 / Q_SCALE / 98 / POOL_SIZE
+Q_MAX_A = 32767 / Q_SCALE / 98
 Q_MIN_A = -Q_MAX_A
 
 # (8 pawns + 1 king) x 2 + 1 bias == 19
-Q_MAX_B = 32767  / Q_SCALE / 19
-Q_MIN_B = -Q_MAX_B
+# Q_MAX_B = 32767  / Q_SCALE / 19
+# Q_MIN_B = -Q_MAX_B
 
 SCALE = 100.0
 
@@ -180,7 +182,8 @@ def make_model(args, strategy):
             bias_constraint=constr_b,
         )(input_1b)
 
-        dynamic_weights = Dense(ATTN_FAN_OUT, activation=None, name='dynamic_weights')(hidden_1b)
+        # spatial_attn = Dense(ATTN_FAN_OUT, activation=None, name='spatial_attn')(hidden_1b)
+        spatial_attn = Dense(ATTN_FAN_OUT, activation=ACTIVATION, name='spatial_attn')(hidden_1b)
 
         def custom_pooling(x):
             reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
@@ -192,14 +195,11 @@ def make_model(args, strategy):
         # The "reshaping" layer repeats or tiles the dynamic weights to match the output shape of pooled
         attn_reshape_layer = Lambda(lambda x: tf.tile(x, tf.constant([1, ACCUMULATOR_SIZE // POOL_SIZE // ATTN_FAN_OUT])))
 
-        # Apply weights to pooled (multiply pooled output with dynamic weights)
-        # weighted = Multiply(name='weighted')([pooled, attn_reshape_layer(dynamic_weights)])
-
-        # Compute attention modulation
-        attention_modulation = Multiply(name='attention_mult')([pooled, attn_reshape_layer(dynamic_weights)])
+        # Compute spatial attention modulation
+        modulation = Multiply(name='modulation')([pooled, attn_reshape_layer(spatial_attn)])
 
         # Add residual connection: pooled + pooled * attention_weights
-        weighted = Add(name='weighted')([pooled, attention_modulation])
+        weighted = Add(name='weighted')([pooled, modulation])
 
         hidden_2 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_2')(weighted)
         hidden_3 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_3')(hidden_2)
@@ -673,7 +673,7 @@ def main(args):
 
         if args.schedule:
             from keras.callbacks import ReduceLROnPlateau
-            lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=1, min_lr=1e-12)
+            lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=1, min_lr=1e-9)
             callbacks.append(lr)
 
         if args.model is not None:
