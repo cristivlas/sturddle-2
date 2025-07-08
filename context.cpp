@@ -292,11 +292,9 @@ using EVALType = nnue::Layer<HIDDEN_3, 1>;
 using LMOVEType = nnue::Layer<INPUTS_A, 4096>;
 /*
  * The accumulator takes the inputs and processes them into two outputs,
- * using (hidden) neural layers L1A and L1B. L1B processes only the 1st
- * 256 inputs, which correspond to kings and pawns. The output of L1B is
- * processed by the dynamic weights (spatial attention) layer. The outputs
- * of the dynamic weights (attention) layer are multiplied element-wise
- * with the result of the L1A layer.
+ * using layers L1A and L1B. L1B processes the 1st 256 inputs, which
+ * correspond to kings and pawns. The output of L1B is processed by the
+ * spatial attention layer, which moodulates the outputs of the L1A layer.
  */
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
 static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
