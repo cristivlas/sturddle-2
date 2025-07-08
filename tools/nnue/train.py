@@ -81,7 +81,7 @@ def make_model(args, strategy):
         scale = tf.constant(args.outcome_scale, dtype=tf.float32)
         logits = centipawns / scale
         return tf.keras.losses.binary_focal_crossentropy(
-            outcome_target, logits, alpha=0.45, gamma=2.0, from_logits=True
+            outcome_target, logits, alpha=0.5, gamma=2.5, from_logits=True
         )
 
     @tf.function
@@ -261,8 +261,10 @@ def make_model(args, strategy):
             scale = tf.constant(args.outcome_scale, dtype=tf.float32)
             logits = centipawns / scale
             probs = tf.nn.sigmoid(logits)
-            predictions = tf.cast(probs > 0.5, tf.float32)
-            return tf.keras.metrics.binary_accuracy(outcome_target, predictions)
+            # tf.print(tf.reshape(outcome_target, [-1]), tf.reshape(probs, [-1]))
+            mae = tf.reduce_mean(tf.abs(probs - outcome_target))
+            accuracy_score = 1.0 - mae  # Convert to accuracy (higher is better)
+            return accuracy_score
 
         @tf.function
         def mae(y_true, y_pred):
