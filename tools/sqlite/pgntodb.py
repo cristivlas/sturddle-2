@@ -11,13 +11,35 @@ from math import copysign
 from tqdm import tqdm
 
 
+def get_game_outcome(game):
+    '''
+    Extract game outcome from PGN headers
+    Returns outcome from side-to-move perspective: 1 for win, 0 for draw, -1 for loss
+    '''
+    result = game.headers.get('Result', '*')
+
+    if result == '1/2-1/2':
+        return 0, 0  # Draw
+    elif result == '1-0':
+        return 1, -1  # White wins, Black loses
+    elif result == '0-1':
+        return -1, 1  # White loses, Black wins
+    else:
+        return None, None  # Game in progress or unknown result
+
+
 def pgn_to_epd(game, mate_score):
     '''
     Extracts positions with evaluations and their corresponding next move (best response)
-    Returns a list of (epd, score, next_move_uci, next_move_san, next_move_from, next_move_to) tuples
+    Returns a list of (epd, score, next_move_uci, next_move_san, next_move_from, next_move_to, outcome) tuples
     '''
     board = game.board()
     epd_list = []
+
+    # Get game outcome
+    white_outcome, black_outcome = get_game_outcome(game)
+    if white_outcome is None:
+        return epd_list  # Skip games without clear outcomes
 
     # We need to look at pairs of nodes to connect an evaluated position with the next move
     nodes = list(game.mainline())
@@ -66,29 +88,30 @@ def pgn_to_epd(game, mate_score):
         if not side_to_move:  # False is black's turn
             score = -score
 
-        epd_list.append((epd, score, next_move_uci, next_move_san, next_move_from, next_move_to))
+        # Get outcome from side-to-move perspective
+        outcome = white_outcome if side_to_move else black_outcome
 
-    return epd_list
+        epd_list.append((epd, score, next_move_uci, next_move_san, next_move_from, next_move_to, outcome))
 
     return epd_list
 
 
 def main(args):
     with SQLConn(args.output) as sqlconn:
-        # Update the table schema to include move information
         sqlconn.exec('''CREATE TABLE IF NOT EXISTS position(
-                        epd text PRIMARY KEY,
+                        epd text,
                         depth integer,
                         score integer,
                         best_move_uci text,
                         best_move_san text,
                         best_move_from integer,
-                        best_move_to integer
+                        best_move_to integer,
+                        outcome integer
                         )''')
 
         # Estimate total number of games based on file size
         file_size = os.path.getsize(args.pgn_file)
-        avg_game_size = 2308  # bytes (adjust this value as needed)
+        avg_game_size = 2308  # bytes
         num_games = file_size // avg_game_size
 
         # Open PGN file
@@ -104,14 +127,14 @@ def main(args):
                 if not epd_list:
                     continue
 
-                for epd, cp_score, best_move_uci, best_move_san, best_move_from, best_move_to in epd_list:
-                    sqlconn.exec('''INSERT OR IGNORE INTO position(epd, depth, score, best_move_uci, best_move_san, best_move_from, best_move_to)
-                                    VALUES(?, ?, ?, ?, ?, ?, ?)''',
-                                    (epd, -2, int(cp_score), best_move_uci, best_move_san, best_move_from, best_move_to))
+                for epd, cp_score, best_move_uci, best_move_san, best_move_from, best_move_to, outcome in epd_list:
+                    sqlconn.exec('''INSERT OR IGNORE INTO position(epd, depth, score, best_move_uci, best_move_san, best_move_from, best_move_to, outcome)
+                                    VALUES(?, ?, ?, ?, ?, ?, ?, ?)''',
+                                    (epd, -2, int(cp_score), best_move_uci, best_move_san, best_move_from, best_move_to, outcome))
 
                 game_count += 1
-                # Commit every 100 games with evals
-                if game_count % 100 == 0:
+                # Commit every 10000 games with evals
+                if game_count % 10000 == 0:
                     sqlconn.commit()
 
             # Final commit for any remaining games

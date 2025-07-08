@@ -12,9 +12,10 @@ from tqdm import tqdm
 from queue import Queue
 from threading import Thread
 
-FEN_PATTERN = re.compile(rb'^fen (.+)$')
-SCORE_PATTERN = re.compile(rb'^score (-?\d+)$')
-MOVE_PATTERN = re.compile(rb'^move (.+)$')
+FEN_PATTERN = re.compile(rb'^fen (.+)\r?$')
+SCORE_PATTERN = re.compile(rb'^score (-?\d+)\r?$')
+MOVE_PATTERN = re.compile(rb'^move (.+)\r?$')
+RESULT_PATTERN = re.compile(rb'^result (-?\d+)\r?$')
 
 
 '''
@@ -110,12 +111,12 @@ def output_path(args):
 shutdown = []
 
 def parse_fen_to_packed(fen_str):
-   """Parse FEN directly to your packed format, skip python-chess."""
+   """Parse FEN directly to packed format, skip python-chess."""
    parts = fen_str.split()
    piece_placement = parts[0]
    turn = 1 if parts[1] == 'w' else 0
 
-   # Initialize piece bitboards to match your encode() order
+   # Initialize piece bitboards to match encode() order
    kings = 0
    pawns = 0
    knights = 0
@@ -161,7 +162,7 @@ def parse_fen_to_packed(fen_str):
 
            file += 1
 
-   # Build bitboards array to match your encode() format:
+   # Build bitboards array to match encode() format:
    # [[pcs & mask_black, pcs & mask_white] for pcs in (kings, pawns, knights, bishops, rooks, queens)]
    bitboards = [
        [kings & mask_black, kings & mask_white],
@@ -182,6 +183,7 @@ def parse_and_process(map_file, queue, batch_size, clip, test, progress_bar, rec
     fen = b''
     score = 0
     move = b''
+    result = 0
     line_count = 0
     record_count = 0
 
@@ -200,6 +202,8 @@ def parse_and_process(map_file, queue, batch_size, clip, test, progress_bar, rec
             score = int(match.group(1))
         elif (match := MOVE_PATTERN.match(line)):
             move = match.group(1)
+        elif (match := RESULT_PATTERN.match(line)):
+            result = int(match.group(1))
         elif line.startswith(b'e'):
             move_str = move.decode('utf-8')
             from_square, to_square = uci_to_square_indices(move_str)
@@ -222,6 +226,7 @@ def parse_and_process(map_file, queue, batch_size, clip, test, progress_bar, rec
                 queue.put((
                     encoded_board,
                     clipped_score,
+                    result,
                     from_square if from_square is not None else 0,
                     to_square if to_square is not None else 0
                 ))
@@ -236,9 +241,9 @@ def parse_and_process(map_file, queue, batch_size, clip, test, progress_bar, rec
 
 def write_to_h5(h5_file, queue, progress_bar, total_records, batch_size):
     dtype = np.uint64
-    dataset = h5_file.create_dataset('data', shape=(total_records, 16), dtype=dtype)
+    dataset = h5_file.create_dataset('data', shape=(total_records, 17), dtype=dtype)
 
-    batch_buffer = np.zeros((batch_size, 16), dtype=np.uint64)
+    batch_buffer = np.zeros((batch_size, 17), dtype=np.uint64)
     batch_idx = 0
     index = 0
 
@@ -251,11 +256,13 @@ def write_to_h5(h5_file, queue, progress_bar, total_records, batch_size):
             break
 
         # Fill batch buffer
-        encoded_board, score, from_square, to_square = record
+        encoded_board, score, result, from_square, to_square = record
         batch_buffer[batch_idx, :13] = encoded_board
         batch_buffer[batch_idx, 13] = score
-        batch_buffer[batch_idx, 14] = from_square
-        batch_buffer[batch_idx, 15] = to_square
+        assert result in [-1, 0, 1]
+        batch_buffer[batch_idx, 14] = result + 1
+        batch_buffer[batch_idx, 15] = from_square
+        batch_buffer[batch_idx, 16] = to_square
 
         batch_idx += 1
         progress_bar.update()
