@@ -237,7 +237,7 @@ namespace search
         using StatePool = std::vector<State>;
         using StateStack = std::array<StatePool, PLY_MAX>;
 
-        using Path = std::array<BaseMove, PATH_MAX>;
+        using Path = std::array<BaseMove, PV_PATH_MAX>;
         using TT_Result = search::HashTable::Result;
 
         friend class MoveMaker;
@@ -1023,7 +1023,7 @@ namespace search
             ctxt->_state = move->_state;
             ctxt->_leftmost = is_leftmost() && next_move_index() == 1;
 
-            if (_path_len < _ply + 1 || _ply + 1 >= PATH_MAX)
+            if (_path_len < _ply + 1 || _ply + 1 >= PV_PATH_MAX)
             {
                 ctxt->_path_len = _path_len;
             }

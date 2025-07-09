@@ -223,11 +223,11 @@ static INLINE size_t get_even(size_t n)
 
 INLINE uint64_t scramble64(uint64_t h)
 {
-    // h ^= h >> 33;
-    // h *= 0xff51afd7ed558ccd;
-    // h ^= h >> 33;
-    // h *= 0xc4ceb9fe1a85ec53;
-    // h ^= h >> 33;
+    h ^= h >> 33;
+    h *= 0xff51afd7ed558ccd;
+    h ^= h >> 33;
+    h *= 0xc4ceb9fe1a85ec53;
+    h ^= h >> 33;
 
     return h;
 }
@@ -402,7 +402,7 @@ namespace search
             ASSERT(!_data.empty());
             ASSERT(_data.size() % 2 == 0);
 
-            const auto idx = scramble64(hash) & (_data.size() - 1);
+            const auto idx = hash & (_data.size() - 1);
             ASSERT(idx >= 0 && idx < _data.size());
 
             return _data[idx];
@@ -467,45 +467,44 @@ namespace search
             int         _replacement_slot = -1;
         };
 
-
         template <typename S>
         INLINE Result probe(const S &s, int depth)
         {
             Result result;
 
-            const auto h = s.hash();
-            ASSERT(h);
+            const auto hash = s.hash();
+            auto h = hash;
 
-            auto& bucket = get_bucket(h);
-            shared_lock_t lock(bucket.mutex());
-
-            if (lock.is_valid())
+            for (int i = 0; i < 2 && result._replacement_slot < 0; ++i, h = scramble64(h))
             {
-                result._bucket = &bucket;
+                auto& bucket = get_bucket(h);
+                shared_lock_t lock(bucket.mutex());
 
-                if (bucket._clock != this->_clock)
+                if (lock.is_valid())
                 {
-                    result._replacement_slot = 0;
-                }
-                else
-                {
-                    for (size_t slot = 0; slot < bucket_t::size(); ++slot)
+                    result._bucket = &bucket;
+
+                    if (bucket._clock != this->_clock)
                     {
-                        auto& e = bucket._entries[slot];
-                        const int depth_threshold = (slot == 0) ? -4 : -1;
-
-                        if (e._hash == h)
+                        result._replacement_slot = 0;
+                    }
+                    else
+                    {
+                        for (size_t slot = 0; slot < bucket_t::size(); ++slot)
                         {
-                            result._entry = e;
-                            if (depth >= e._depth + depth_threshold)
+                            auto& e = bucket._entries[slot];
+                            const int depth_threshold = (slot == 0) ? -4 : -1;
+
+                            if (e._hash == hash)
                             {
-                                result._replacement_slot = slot;
+                                result._entry = e;
+                                if (depth >= e._depth + depth_threshold)
+                                {
+                                    result._replacement_slot = slot;
+                                }
+                                return result;
                             }
-                            break;
-                        }
 
-                        if (result._replacement_slot < 0)
-                        {
                             if (!e.is_valid())
                             {
                                 result._replacement_slot = slot;
