@@ -76,13 +76,17 @@ def make_model(args, strategy):
         return tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
 
     @tf.function
-    def compute_focal_loss(outcome_target, y_pred):
+    def compute_prob_loss(outcome_target, y_pred):
         centipawns = y_pred * SCALE
         scale = tf.constant(args.outcome_scale, dtype=tf.float32)
         logits = centipawns / scale
-        return tf.keras.losses.binary_focal_crossentropy(
-            outcome_target, logits, alpha=0.5, gamma=2.5, from_logits=True
+        focal_loss = tf.keras.losses.binary_focal_crossentropy(
+            outcome_target, logits, alpha=0.45, gamma=2.5, from_logits=True
         )
+        return focal_loss
+        #probs = tf.nn.sigmoid(logits)
+        #mse = tf.reduce_mean(tf.square(probs - outcome_target))
+        #return mse * 0.7 + focal_loss * 0.3
 
     @tf.function
     def combined_loss(y_true, y_pred):
@@ -100,15 +104,15 @@ def make_model(args, strategy):
             return compute_huber_loss(eval_target, y_pred)
         elif args.loss_weight == 1.0:
             # Pure outcome training - only focal loss
-            return compute_focal_loss(outcome_target, y_pred)
+            return compute_prob_loss(outcome_target, y_pred)
         else:
             # Combined training - compute both
             huber_loss = compute_huber_loss(eval_target, y_pred)
-            focal_loss = compute_focal_loss(outcome_target, y_pred)
+            prob_loss = compute_prob_loss(outcome_target, y_pred)
 
             eval_weight = tf.constant(1.0 - args.loss_weight, dtype=tf.float32)
             outcome_weight = args.loss_weight
-            return eval_weight * huber_loss + outcome_weight * focal_loss
+            return eval_weight * huber_loss + outcome_weight * prob_loss
 
 
     @tf.function
@@ -118,7 +122,7 @@ def make_model(args, strategy):
         outcome_target = y_true[:, 1:2]
         is_draw = tf.equal(outcome_target, 0.5)
         huber_loss = compute_huber_loss(eval_target, y_pred)
-        focal_loss = compute_focal_loss(outcome_target, y_pred)
+        focal_loss = compute_prob_loss(outcome_target, y_pred)
         return tf.where(is_draw, huber_loss, focal_loss)
 
 
@@ -170,8 +174,9 @@ def make_model(args, strategy):
             bias_constraint=constr_a,
         )(concat)
 
-        # constr_b = CustomConstraint(Q_MIN_B, Q_MAX_B)
-        constr_b = constr_a  # use same weight ranges as accumulator
+        constr_b = CustomConstraint(Q_MIN_B, Q_MAX_B)
+        # constr_b = constr_a  # use same weight ranges as accumulator
+
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
         # hidden_1b_layer: selects the pawns and kings features.
         input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
@@ -184,7 +189,6 @@ def make_model(args, strategy):
             bias_constraint=constr_b,
         )(input_1b)
 
-        # spatial_attn = Dense(ATTN_FAN_OUT, activation=None, name='spatial_attn')(hidden_1b)
         spatial_attn = Dense(ATTN_FAN_OUT, activation=ACTIVATION, name='spatial_attn')(hidden_1b)
 
         def custom_pooling(x):
@@ -462,6 +466,9 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             y_outcome = tf.where(white_to_move, y_outcome, -y_outcome)
             # Convert to win probability: -1->0.0, 0->0.5, 1->1.0
             y_outcome = (y_outcome + 1.0) / 2.0
+
+            smoothing = 0.05
+            y_outcome = y_outcome * (1 - smoothing) + 0.5 * smoothing
 
             # Combine both targets into a single tensor
             y_combined = tf.concat([y_eval, y_outcome], axis=1)  # Shape: (batch_size, 2)

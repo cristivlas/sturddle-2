@@ -504,16 +504,13 @@ namespace search
                             break;
                         }
 
-                        if (result._replacement_slot < 0)
+                        if (!e.is_valid())
                         {
-                            if (!e.is_valid())
-                            {
-                                result._replacement_slot = slot;
-                            }
-                            else if (depth >= e._depth + depth_threshold)
-                            {
-                                result._replacement_slot = slot;
-                            }
+                            result._replacement_slot = slot;
+                        }
+                        else if (depth >= e._depth + depth_threshold)
+                        {
+                            result._replacement_slot = slot;
                         }
                     }
                 }
