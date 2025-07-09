@@ -367,12 +367,15 @@ public:
     const T (&as_1d() const)[COLS] { return *reinterpret_cast<const T(*)[COLS]>(raw_ptr); }
 };
 
-#define INIT_LAYER(layer, w_rows, w_cols, name) \
-    do { \
-        WeightAdapter<float, w_rows, w_cols> w(loader, "get_" #name "_w"); \
-        WeightAdapter<float, 1, w_cols> b(loader, "get_" #name "_b"); \
-        layer.set_weights(w.as_2d(), b.as_1d()); \
-    } while(0)
+template <typename L>
+INLINE void init_layer(WeightLoader& loader, L& layer, const char* get_w, const char* get_b)
+{
+    WeightAdapter<float, L::ROWS, L::COLS> w(loader, get_w);
+    WeightAdapter<float, 1, L::COLS> b(loader, get_b);
+    layer.set_weights(w.as_2d(), b.as_1d());
+}
+
+#define INIT_LAYER(layer, name) init_layer(loader, layer, "get_" #name "_w", "get_" #name "_b")
 
 static struct
 {
@@ -391,12 +394,12 @@ static struct
     {
         WeightLoader loader;
 
-        INIT_LAYER(L_ATTN, HIDDEN_1B, 32, spatial_attn);
-        INIT_LAYER(L1A, INPUTS_A, HIDDEN_1A, hidden_1a);
-        INIT_LAYER(L1B, INPUTS_B, HIDDEN_1B, hidden_1b);
-        INIT_LAYER(L2, HIDDEN_1A_POOLED, HIDDEN_2, hidden_2);
-        INIT_LAYER(L3, HIDDEN_2, HIDDEN_3, hidden_3);
-        INIT_LAYER(EVAL, HIDDEN_3, 1, eval);
+        INIT_LAYER(L_ATTN, spatial_attn);
+        INIT_LAYER(L1A, hidden_1a);
+        INIT_LAYER(L1B, hidden_1b);
+        INIT_LAYER(L2, hidden_2);
+        INIT_LAYER(L3, hidden_3);
+        INIT_LAYER(EVAL, eval);
 
     #if USE_ROOT_MOVES
         INIT_LAYER(L_M, INPUTS_A, 4096, moves_out);

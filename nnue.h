@@ -248,6 +248,8 @@ namespace nnue
     template <int I, int O, typename T, int Scale>
     struct BaseLayer
     {
+        static constexpr int ROWS = I;
+        static constexpr int COLS = O;
         /* Round up to Vec16s::size() to deal with the 897 inputs. */
         static constexpr int INPUTS = round_up<16>(I);
         static constexpr int OUTPUTS = O;
@@ -261,6 +263,8 @@ namespace nnue
     template <int I, int O>
     struct BaseLayer<I, O, float, 1>
     {
+        static constexpr int ROWS = I;
+        static constexpr int COLS = O;
         static constexpr int INPUTS = round_up<16>(I);
         static constexpr int OUTPUTS = O;
 
@@ -414,34 +418,6 @@ namespace nnue
 
 
     template <size_t INPUTS, size_t OUTPUTS>
-    INLINE void pool(const float (&in)[INPUTS], float (&out)[OUTPUTS])
-    {
-        static_assert(INPUTS % OUTPUTS == 0);
-        static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
-
-#if __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC
-        /* No Vec8f, use two Vec4f-s */
-        Vec4f v1, v2;
-
-        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
-        {
-            v1.load_a(&in[i]);
-            v2.load_a(&in[i + 4]);
-            out[j] = (horizontal_add(v1) + horizontal_add(v2)) / POOL_STRIDE;
-        }
-#else
-        Vec8f v;
-
-        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
-        {
-            v.load_a(&in[i]);
-            out[j] = horizontal_add(v) / POOL_STRIDE;
-        }
-#endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
-    }
-
-
-    template <size_t INPUTS, size_t OUTPUTS>
     INLINE void pool(const int16_t (&in)[INPUTS], float (&out)[OUTPUTS])
     {
         static_assert(INPUTS % OUTPUTS == 0);
@@ -457,7 +433,6 @@ namespace nnue
             out[j] = float(::horizontal_add(extend(v))) / POOL_STRIDE / QSCALE;
         }
     }
-
 
 
     template <int M, int N, int O> struct Accumulator
@@ -730,16 +705,9 @@ namespace nnue
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
 
-    #if 0
-        ALIGN float l1_out[A::OUTPUTS_A];
-
-        activation(a._output_a, l1_out); // accumulator
-        pool(l1_out, l2_in);
-    #else
         pool(a._output_a, l2_in);
-    #endif
 
-        /* The "spatial attention" layer modulates L2 using tiled multiplication. */
+        /* The "spatial attention" layer modulates L2. */
         activation(a._output_b, attn_in); // process output of hidden_1b
         attn.dot(attn_in, attn_out, [](const Vector& v) { return max(v, v_zero); });
 
@@ -751,7 +719,6 @@ namespace nnue
             v1.load_a(&l2_in[i]);
             v2.load_a(&attn_out[i % ATTN::OUTPUTS]);
 
-            // (v1 + v1 * v2).store_a(&l2_in[i]);
             mul_add(v1, v2, v1).store_a(&l2_in[i]);
         }
         /* end of modulation */
