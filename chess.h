@@ -1028,6 +1028,8 @@ namespace chess
         PieceType capture_type = PieceType::NONE;
         int8_t pushed_pawns_score = 0; /* ranks past the middle of the board */
         bool is_castle = false;
+        bool has_tt_result = false;
+        alignas(std::max_align_t) unsigned char tt_result[40];
 
         /* material and PST from white's POV */
         static constexpr auto UNKNOWN_SCORE = std::numeric_limits<score_t>::max();
@@ -1406,6 +1408,7 @@ namespace chess
 
         _endgame = ENDGAME_UNKNOWN; /* recalculate lazily */
         _hash = 0; /* invalidate */
+        has_tt_result = false;
     }
 
 
@@ -1418,6 +1421,7 @@ namespace chess
         state._check = {-1, -1};
         state._hash = 0;
         state._endgame = ENDGAME_UNKNOWN;
+        state.has_tt_result = false;
     }
 
 

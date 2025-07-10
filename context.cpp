@@ -667,7 +667,6 @@ namespace search
         *ctxt->_state = this->state();
         ctxt->_move = _move;
         ctxt->_excluded = _excluded;
-        ctxt->_tt_probe = _tt_probe;
         ctxt->_counter_move = _counter_move;
         ctxt->_is_null_move = _is_null_move;
         ctxt->_double_ext = _double_ext;
@@ -1150,6 +1149,7 @@ namespace search
             _extension += _move.from_square() == _parent->_capture_square;
             _extension += is_recapture() * (is_pv_node() * (ONE_PLY - 1) + 1);
 
+        #if 0 /* This can hurt on fast hardware */
             /*
              * extend if move has historically high cutoff percentages and counts
              */
@@ -1158,7 +1158,7 @@ namespace search
                 * (abs(_parent->tt_entry()._value) < MATE_HIGH)
                 * (_parent->history_count(_move) > HISTORY_COUNT_HIGH)
                 * (_parent->history_score(_move) > HISTORY_HIGH);
-
+        #endif /* 0 */
             const auto double_extension_ok = (_double_ext <= DOUBLE_EXT_MAX);
             const auto extend = std::min(1 + double_extension_ok, _extension / ONE_PLY);
 

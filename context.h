@@ -259,10 +259,10 @@ namespace search
 
         Algorithm   _algorithm = Algorithm::NEGAMAX;
 
-        score_t     _alpha = SCORE_MIN;
-        score_t     _beta = SCORE_MAX;
-        score_t     _score = SCORE_MIN; /* dynamic eval score */
-        score_t     _retry_beta = SCORE_MAX; /* NEGASCOUT only */
+        int16_t     _alpha = SCORE_MIN;
+        int16_t     _beta = SCORE_MAX;
+        int16_t     _score = SCORE_MIN; /* dynamic eval score */
+        int16_t     _retry_beta = SCORE_MAX; /* NEGASCOUT only */
         mutable int _improvement = SCORE_MIN;
 
         Square      _capture_square = Square::UNDEFINED;
@@ -298,7 +298,6 @@ namespace search
 
         int         _path_len = 1;
         Path        _path;
-        TT_Result   _tt_probe;      /* probe result */
 
         void        cache_scores(bool force_write /* bypass eviction strategy */ = false);
 
@@ -415,8 +414,11 @@ namespace search
         static int  time_limit() { return _time_limit.load(std::memory_order_relaxed); }
         Color       turn() const { return state().turn; }
 
-        INLINE TT_Entry& tt_entry() { return _tt_probe._entry; }
-        INLINE const TT_Entry& tt_entry() const { return _tt_probe._entry; }
+        INLINE TT_Result& tt_result() { return StorageView<TT_Result>::get(_state->tt_result, _state->has_tt_result); }
+        INLINE const TT_Result& tt_result() const { return StorageView<TT_Result>::get(_state->tt_result, _state->has_tt_result); }
+
+        INLINE TT_Entry& tt_entry() { return tt_result()._entry; }
+        INLINE const TT_Entry& tt_entry() const { return tt_result()._entry; }
 
         INLINE const State& state() const { ASSERT(_state); return *_state; }
         INLINE TranspositionTable* get_tt() const { return _tt; }
@@ -1188,7 +1190,7 @@ namespace search
 
     INLINE bool Context::should_verify_null_move() const
     {
-    #if 1
+    #if 0
         return depth() >= NULL_MOVE_MIN_VERIFICATION_DEPTH;
     #else
         return depth() >= std::max(NULL_MOVE_MIN_VERIFICATION_DEPTH, _max_depth - 8);

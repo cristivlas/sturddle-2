@@ -349,7 +349,7 @@ namespace nnue
 
                     for (int k = 0; k != N; ++k)
                     {
-                        vw.load(&wt[j + k][i]);
+                        vw.load_a(&wt[j + k][i]);
                         sum[k] += in * vw;
                     }
                 }

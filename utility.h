@@ -160,38 +160,66 @@ namespace
             return key.hash();
         }
     };
-} /* namespace */
 
 
-#if 0 /* profiling */
-template <typename T, int PRINT_INTERVAL = 100000>
-struct ProfileScope
-{
-    static std::chrono::high_resolution_clock::duration total_time;
-    static int num_calls;
-
-    std::chrono::time_point<std::chrono::high_resolution_clock> _start;
-
-    INLINE void report()
+    template <typename T, int PRINT_INTERVAL = 100000>
+    struct ProfileScope
     {
-        const auto end = std::chrono::high_resolution_clock::now();
-        total_time += (end - _start);
-        if (num_calls % PRINT_INTERVAL == 0)
+        static std::chrono::high_resolution_clock::duration total_time;
+        static int num_calls;
+
+        std::chrono::time_point<std::chrono::high_resolution_clock> _start;
+
+        INLINE void report()
         {
-            const auto avg_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(total_time).count() / num_calls;
-            const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(total_time).count();
-            std::clog << &num_calls << " calls: " << num_calls << ", total: " << total_ms << " ms" << ", avg: " << avg_ns << " ns" << std::endl;
+            const auto end = std::chrono::high_resolution_clock::now();
+            total_time += (end - _start);
+            if (num_calls % PRINT_INTERVAL == 0)
+            {
+                const auto avg_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(total_time).count() / num_calls;
+                const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(total_time).count();
+                std::clog << &num_calls << " calls: " << num_calls << ", total: " << total_ms << " ms" << ", avg: " << avg_ns << " ns" << std::endl;
+            }
         }
-    }
 
-    ProfileScope() : _start(std::chrono::high_resolution_clock::now()) { ++num_calls; }
-    ~ProfileScope() { report(); }
-};
+        ProfileScope() : _start(std::chrono::high_resolution_clock::now()) { ++num_calls; }
+        ~ProfileScope() { report(); }
+    };
 
-template <typename T, int PRINT_INTERVAL>
-std::chrono::high_resolution_clock::duration ProfileScope<T, PRINT_INTERVAL>::total_time{};
+    template <typename T, int PRINT_INTERVAL>
+    std::chrono::high_resolution_clock::duration ProfileScope<T, PRINT_INTERVAL>::total_time{};
 
-template <typename T, int PRINT_INTERVAL>
-int ProfileScope<T, PRINT_INTERVAL>::num_calls = 0;
+    template <typename T, int PRINT_INTERVAL>
+    int ProfileScope<T, PRINT_INTERVAL>::num_calls = 0;
 
-#endif
+
+    template<typename T>
+    struct StorageView
+    {
+        static_assert(std::is_trivially_destructible<T>::value);
+
+        template <size_t N>
+        static T& get(unsigned char (&buf)[N], bool& valid)
+        {
+            static_assert(sizeof(T) <= N);
+            static_assert(alignof(T) <= alignof(std::max_align_t));
+
+            if (!valid)
+            {
+                new (buf) T();
+                valid = true;
+            }
+            return *reinterpret_cast<T*>(&buf[0]);
+        }
+
+        template<size_t N>
+        static void store(unsigned char (&buf)[N], bool& valid, const T& value)
+        {
+            static_assert(sizeof(T) <= N);
+            static_assert(alignof(T) <= alignof(std::max_align_t));
+
+            new (buf) T(value);
+            valid = true;
+        }
+    };
+} /* namespace */

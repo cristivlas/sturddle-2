@@ -29,13 +29,13 @@
 #include "utility.h"
 
 
-INLINE constexpr score_t checkmated(int ply)
+INLINE constexpr int16_t checkmated(int ply)
 {
     return -CHECKMATE + ply;
 }
 
 
-INLINE constexpr score_t checkmating(int ply)
+INLINE constexpr int16_t checkmating(int ply)
 {
     return CHECKMATE + ply;
 }
@@ -194,13 +194,19 @@ namespace search
                 }
                 else
                 {
-                    return &_value;
+                    ctxt._alpha = ctxt._beta = _value;
                 }
 
                 if (ctxt._alpha >= ctxt._beta)
                 {
-                    ASSERT(_value >= ctxt._beta);
-                    return &_value;
+                    if (is_upper())
+                    {
+                        return &ctxt._beta; // return the tightened beta
+                    }
+                    else
+                    {
+                        return &_value; // return TT value for lower/exact
+                    }
                 }
             }
 
@@ -427,7 +433,12 @@ namespace search
         /* expect repetitions to be dealt with before calling into this function */
         ASSERT(!ctxt.is_repeated());
 
-        ctxt._tt_probe = _table.probe(ctxt.state(), ctxt.depth());
+        if (!ctxt.tt_entry().is_valid() || ctxt.tt_entry()._depth < ctxt.depth())
+            StorageView<HashTable::Result>::store(ctxt._state->tt_result, ctxt._state->has_tt_result, _table.probe(ctxt.state(), ctxt.depth()));
+        else
+            ASSERT(ctxt.tt_entry()._hash == ctxt.state().hash());
+
+
         if (ctxt.tt_entry().is_valid())
         {
             ASSERT(ctxt.tt_entry().matches(ctxt.state()));
@@ -459,7 +470,7 @@ namespace search
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
 
-        if (ctxt._tt_probe._replacement_slot >= 0)
+        if (ctxt.tt_result()._replacement_slot >= 0)
         {
             auto type = T;
 
@@ -477,8 +488,8 @@ namespace search
                 }
             }
 
-            store(ctxt, ctxt._tt_probe._entry, type, depth);
-            _table.update(ctxt._tt_probe);
+            store(ctxt, ctxt.tt_entry(), type, depth);
+            _table.update(ctxt.tt_result());
         }
     }
 

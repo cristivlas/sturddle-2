@@ -696,7 +696,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                          */
                         ContextBuffer buf;
                         auto s_ctxt = ctxt.clone(buf, ctxt._ply + 2);
-                        s_ctxt->_tt_probe._replacement_slot = -1;
+                        s_ctxt->tt_result()._replacement_slot = -1; /* prevent TT writeback */
                         s_ctxt->set_tt(ctxt.get_tt());
                         s_ctxt->_excluded = next_ctxt->_move;
                         s_ctxt->_max_depth = s_ctxt->_ply + (ctxt.depth() - 1) / 2;
@@ -989,9 +989,10 @@ static score_t search_iteration(Context& ctxt, TranspositionTable& table, score_
     {
         ctxt._prev = ctxt._best_move; /* save for next iteration */
     }
-    else if (ctxt._prev)
+    else
+    {
         ctxt._best_move = ctxt._prev;
-
+    }
     return score;
 }
 
