@@ -900,7 +900,7 @@ namespace search
             if (next_state.is_check(state.turn))
                 continue; /* not a legal move */
 
-            if (size_t(ply + 1) >= PLY_MAX + EXCHANGES_MAX_DEPTH)
+            if (ply + 1 >= PLY_MAX + EXCHANGES_MAX_DEPTH)
             {
                 const auto their_best = estimate_static_exchanges(next_state, next_state.turn, move.to_square());
                 score = std::max(score, our_gain - their_best);

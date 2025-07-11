@@ -388,6 +388,8 @@ namespace chess
         const auto king_square = king(turn);
         const auto backrank = (turn == WHITE) ? BB_RANK_1 : BB_RANK_8;
 
+        ASSERT(king_square != Square::UNDEFINED);
+
         /* king not on the back rank? */
         if ((BB_SQUARES[king_square] & backrank & BB_FILE_E) == 0)
             return;

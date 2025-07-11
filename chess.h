@@ -386,7 +386,7 @@ namespace chess
 
     constexpr const char* PIECE_SYMBOL[] = { "", "p", "n", "b", "r", "q", "k" };
 
-    enum Color : int8_t
+    enum Color : uint8_t
     {
         BLACK = 0,
         WHITE = 1,
@@ -770,6 +770,7 @@ namespace chess
          */
         INLINE Bitboard attacker_pieces_mask(Color color, Square square, Bitboard occupied_mask) const
         {
+            ASSERT(square != Square::UNDEFINED);
             auto attackers = knights & BB_KNIGHT_ATTACKS[square];
 
     #if USE_MAGIC_BITS
@@ -845,12 +846,14 @@ namespace chess
 
         INLINE Bitboard& pieces(PieceType piece_type)
         {
+            ASSERT(piece_type);
             return _pieces[piece_type - 1];
         }
 
         INLINE Bitboard pieces(PieceType piece_type) const
         {
-            return _pieces[piece_type - 1];
+            ASSERT(piece_type);
+            return piece_type == NONE ? BB_EMPTY : _pieces[piece_type - 1];
         }
 
         INLINE Bitboard pieces_mask(PieceType piece_type, Color color) const
