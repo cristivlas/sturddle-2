@@ -67,14 +67,14 @@ static PyObject* get_eval_b(PyObject* self, PyObject* args)
 }
 
 #if USE_ROOT_MOVES
-static PyObject* get_moves_out_w(PyObject* self, PyObject* args)
+static PyObject* get_move_w(PyObject* self, PyObject* args)
 {
-    return PyCapsule_New((void*)moves_out_w, "moves_out_w", nullptr);
+    return PyCapsule_New((void*)move_w, "move_w", nullptr);
 }
 
-static PyObject* get_moves_out_b(PyObject* self, PyObject* args)
+static PyObject* get_move_b(PyObject* self, PyObject* args)
 {
-    return PyCapsule_New((void*)moves_out_b, "moves_out_b", nullptr);
+    return PyCapsule_New((void*)move_b, "move_b", nullptr);
 }
 #endif /* USE_ROOT_MOVES */
 
@@ -92,8 +92,8 @@ static PyMethodDef weights_methods[] = {
     {"get_eval_w", get_eval_w, METH_NOARGS, "Get eval weights"},
     {"get_eval_b", get_eval_b, METH_NOARGS, "Get eval biases"},
 #if USE_ROOT_MOVES
-    {"get_moves_out_w", get_moves_out_w, METH_NOARGS, "Get move weights"},
-    {"get_moves_out_b", get_moves_out_b, METH_NOARGS, "Get move biases"},
+    {"get_move_w", get_move_w, METH_NOARGS, "Get move weights"},
+    {"get_move_b", get_move_b, METH_NOARGS, "Get move biases"},
 #endif /* USE_ROOT_MOVES */
     {nullptr, nullptr, 0, nullptr}
 };

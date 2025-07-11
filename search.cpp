@@ -913,7 +913,7 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
     ASSERT_ALWAYS(ctxt._algorithm == Algorithm::MTDF);
     ASSERT_ALWAYS(ctxt.is_root());
 
-    bool first_iter = (first == 0 && table._iteration == 1);
+    const bool first_iter = (first == 0 && table._iteration == 1);
     if (first_iter)
         first = ctxt.evaluate<true>();
 
@@ -942,7 +942,7 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
         auto b = std::max(g, lower + 1);
 
 #endif /* MTDF_CSTAR_BISECT */
-        first_iter = false;
+
         ctxt._score = std::max<score_t>(SCORE_MIN, b - 1);
         ctxt._alpha = b - 1;
         ctxt._beta = b;

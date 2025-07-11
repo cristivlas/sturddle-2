@@ -23,9 +23,10 @@
  * Constants, compile-time configuration, misc. helpers.
  */
 #include <atomic>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
-
+#include "backtrace.h"
 
 #if defined(_MSC_VER) && !defined(__clang__)
   #pragma warning(disable:4244)
@@ -48,9 +49,6 @@
   #define INLINE __attribute__((noinline))
 #endif /* _MSC_VER */
 #endif /* _DEBUG */
-
-#include <cmath>
-#include "backtrace.h"
 
 using score_t = int;
 
@@ -217,15 +215,6 @@ namespace search
         ILLEGAL_MOVES = 17,
     };
 }
-
-
-enum class LogLevel : int
-{
-    DEBUG = 1,
-    INFO = 2,
-    WARN = 3,
-    ERROR = 4
-};
 
 
 // ---------------------------------------------------------------------

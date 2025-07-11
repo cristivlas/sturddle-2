@@ -300,8 +300,8 @@ DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     500)
 DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             33,    0,     150)
 
 #if USE_ROOT_MOVES
-DECLARE_VALUE(  ROOT_MAX_MOVES,                       3,    0,     256)
-DECLARE_VALUE(  ROOT_MIN_MOVE_SCORE,                950,  750,    1500)
+DECLARE_VALUE(  ROOT_MAX_MOVES,                       5,    0,     256)
+DECLARE_VALUE(  ROOT_MOVES_MIN_TIME,                  3,    0,      10)
 #endif /* USE_ROOT_MOVES */
 
 /* SEE */

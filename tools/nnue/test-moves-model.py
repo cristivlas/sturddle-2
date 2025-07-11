@@ -52,17 +52,18 @@ def encode(board):
 
 def load_model(args):
     path = args.input[0]
-    return tf.keras.models.load_model(
-        path,
-        custom_objects = {
-            'clipped_loss': None,
+    return tf.keras.models.load_model(path, custom_objects = {
+            'ACCUMULATOR_SIZE': 1280,
+            'ATTN_FAN_OUT': 32,
+            'POOL_SIZE': 8,
+            'adaptive_loss': None,
+            'combined_loss': None,
             'chess_move_loss': None,
             'scaled_sparse_categorical_crossentropy': None,
             'top': None,
             'top_3': None,
             'top_5': None,
-        }
-    )
+        })
 
 
 def get_top_moves(move_logits, board, num_moves=5):

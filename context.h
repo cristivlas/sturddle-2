@@ -48,6 +48,16 @@ extern std::map<std::string, Param> _get_param_info();
 extern void _set_param(const std::string&, int value, bool echo=false);
 extern std::map<std::string, int> _get_params();
 
+
+enum class LogLevel : int
+{
+    DEBUG = 1,
+    INFO = 2,
+    WARN = 3,
+    ERROR = 4
+};
+
+
 namespace search
 {
     using time = std::chrono::time_point<std::chrono::steady_clock>;
@@ -500,11 +510,12 @@ namespace search
 
     struct alignas(64) ContextBuffer
     {
-        std::array<uint8_t, sizeof(Context)> _mem = { 0 };
+        uint8_t _mem [sizeof(Context)] = {};
         State _state; /* for null-move and clone() */
+        bool _valid = false;
 
-        INLINE Context* as_context() { return reinterpret_cast<Context*>(&_mem[0]); }
-        INLINE const Context* as_context() const { return reinterpret_cast<const Context*>(&_mem[0]); }
+        INLINE Context* as_context(bool validate) { ASSERT(!validate || _valid); return reinterpret_cast<Context*>(&_mem[0]); }
+        INLINE const Context* as_context(bool validate) const { ASSERT(!validate || _valid); return reinterpret_cast<const Context*>(&_mem[0]); }
     };
 
 
@@ -1206,14 +1217,15 @@ namespace search
 
         if constexpr(Construct)
         {
-            auto ctxt = new (buffer.as_context()) Context;
-
+            auto ctxt = new (buffer.as_context(false)) Context;
+            buffer._valid = true;
             ctxt->_state = &buffer._state;
+
             return ctxt;
         }
         else
         {
-            return buffer.as_context();
+            return buffer.as_context(true);
         }
     }
 

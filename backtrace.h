@@ -10,7 +10,7 @@ template <int MAX_FRAMES = 256>
 void dump_backtrace(std::ostream &out)
 {
 #if !__ANDROID__ || __ANDROID_API__ >= 33
-    void *frames[MAX_FRAMES] = {0};
+    void *frames[MAX_FRAMES] = {};
 
     int num_frames = backtrace(frames, MAX_FRAMES);
     auto deleter = [](void *p)

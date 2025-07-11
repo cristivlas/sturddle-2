@@ -399,7 +399,7 @@ private:
         LOG_DEBUG(search::Context::epd(_buf._state));
     }
 
-    INLINE search::Context &context() { return *_buf.as_context(); }
+    INLINE search::Context &context() { return *_buf.as_context(true); }
 
     INLINE void output_best_move(bool request_ponder = false)
     {
@@ -845,7 +845,8 @@ void UCI::go(const Arguments &args)
         }
     }
     /* initialize search context */
-    auto ctxt = new (_buf.as_context()) search::Context();
+    auto ctxt = new (_buf.as_context(false)) search::Context();
+    _buf._valid = true;
     ctxt->_state = &_buf._state;
 
     if (!movetime)

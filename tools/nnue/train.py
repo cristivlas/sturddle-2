@@ -226,7 +226,7 @@ def make_model(args, strategy):
                 # Use smaller initialization to prevent gradient explosion
                 kernel_initializer=tf.keras.initializers.RandomNormal(0, 0.01),
                 bias_initializer=tf.keras.initializers.Zeros(),
-                name='moves_out',
+                name='move',
                 dtype='float32'
             )(stop_grad)
 
@@ -319,11 +319,11 @@ def make_model(args, strategy):
                 return top(y_true, y_pred, k=5)
 
             # Set up move prediction loss and metrics
-            loss_weights['moves_out'] = args.move_weight
+            loss_weights['move'] = args.move_weight
             loss_weights['out'] = 1 - args.move_weight
 
-            losses['moves_out'] = scaled_sparse_categorical_crossentropy
-            metrics['moves_out'] = [top, top_3, top_5]
+            losses['move'] = scaled_sparse_categorical_crossentropy
+            metrics['move'] = [top, top_3, top_5]
 
         model.compile(
             loss=losses,

@@ -28,7 +28,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -79,8 +79,7 @@ public:
     using const_iterator = const T*;
     using iterator = T*;
 
-    MaxSizeVector() : _current_size(0)
-    {}
+    MaxSizeVector() = default;
 
     MaxSizeVector(const MaxSizeVector& other)
         : _container(other._container)
@@ -175,7 +174,7 @@ private:
 private:
     std::array<T, max_size> _container;
 
-    size_t _current_size;
+    size_t _current_size = 0;
 };
 
 
@@ -748,7 +747,7 @@ namespace chess
                 Bitboard queens;
                 Bitboard kings;
             };
-            Bitboard _pieces[6] = { 0 };
+            Bitboard _pieces[6] = {};
         };
 
         /* Get the bitboard of squares attacked from a given square */
@@ -939,6 +938,9 @@ namespace chess
 
     INLINE Bitboard between(Square a, Square b)
     {
+        if (a == Square::UNDEFINED || b == Square::UNDEFINED)
+            return BB_EMPTY;
+
         const auto bb = BB_RAYS[a][b] & ((BB_ALL << a) ^ (BB_ALL << b));
         return bb & (bb - 1);
     }
@@ -1029,7 +1031,7 @@ namespace chess
         int8_t pushed_pawns_score = 0; /* ranks past the middle of the board */
         bool is_castle = false;
         bool has_tt_result = false;
-        alignas(std::max_align_t) unsigned char tt_result[40];
+        alignas(std::max_align_t) uint8_t tt_result[40] = {};
 
         /* material and PST from white's POV */
         static constexpr auto UNKNOWN_SCORE = std::numeric_limits<score_t>::max();
@@ -1558,7 +1560,10 @@ namespace chess
     INLINE score_t State::eval_simple() const
     {
         int score = 0;
+
+    #if USE_PIECE_SQUARE_TABLES
         const auto endgame = is_endgame();
+    #endif
 
         for (auto color: {BLACK, WHITE})
         {

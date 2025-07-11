@@ -166,7 +166,7 @@ namespace
  */
 struct LMR
 {
-    int _table[PLY_MAX][64] = { { 0 }, { 0 } };
+    int _table[PLY_MAX][64] = {};
 
     LMR()
     {
@@ -312,7 +312,7 @@ static struct
     EVALType EVAL{out_w, out_b};
 
 #if USE_ROOT_MOVES
-    LMOVEType L_M{moves_out_w, moves_out_b};
+    LMOVEType L_M{move_w, move_b};
 #endif /* USE_ROOT_MOVES */
 } model;
 
@@ -346,6 +346,8 @@ public:
     T* get_weights(const char* name)
     {
         PyObject* func = PyObject_GetAttrString(module, name);
+        ASSERT_MESSAGE(func, std::string(name));
+
         PyObject* capsule = PyObject_CallObject(func, nullptr);
 
         Py_DECREF(func);
@@ -402,12 +404,11 @@ static struct
         INIT_LAYER(EVAL, eval);
 
     #if USE_ROOT_MOVES
-        INIT_LAYER(L_M, INPUTS_A, 4096, moves_out);
+        INIT_LAYER(L_M, move);
     #endif /* USE_ROOT_MOVES */
     }
 } model;
 #endif /* SHARED_WEIGHTS */
-
 
 
 score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side_to_move_pov /* = true */)
@@ -476,18 +477,14 @@ void search::Context::eval_with_nnue()
 
         if (state().just_king(!turn()) || (depth() >= 0 && abs(eval) <= eval_margin(*this)))
         {
-            score_t eval_nn = SCORE_MIN;
-
         #if USE_ROOT_MOVES
             if (is_root() && iteration() == 1)
             {
                 _move_maker.ensure_moves(*this, true);
-                eval_nn = _eval_raw;
             }
         #endif /* USE_ROOT_MOVES */
 
-            if (!is_valid(eval_nn))
-                eval_nn = eval_nnue_raw();
+            const auto eval_nn = eval_nnue_raw();
 
         #if 0
             eval = eval_nn * (NNUE_EVAL_TERM + eval / 32) / 1024;
@@ -652,7 +649,8 @@ namespace search
      */
     Context* Context::clone(ContextBuffer& buffer, int ply) const
     {
-        Context* ctxt = new (buffer.as_context()) Context;
+        Context* ctxt = new (buffer.as_context(false)) Context;
+        buffer._valid = true;
 
         ctxt->_algorithm = _algorithm;
         ctxt->_alpha = _alpha;
@@ -1599,28 +1597,25 @@ namespace search
     #endif /* GROUP_QUIET_MOVES */
 
     #if USE_ROOT_MOVES
-        if (order_root_moves)
+        if (order_root_moves && ctxt._time_limit >= ROOT_MOVES_MIN_TIME)
         {
-            float input[nnue::round_up<16>(INPUTS_A)] = {0};
-            auto& acc = NNUE_data[ctxt.tid()][0];
-            acc.update(model.L1A, model.L1B, ctxt.state(), &input);
-            const auto eval = nnue::eval_with_moves(acc, input, model.L_ATTN, model.L2, model.L3, model.L_M, model.EVAL, moves_list);
-            ctxt._eval_raw = eval * SIGN[ctxt.turn()];
+            float input[nnue::round_up<16>(INPUTS_A)] = {};
+            nnue::one_hot_encode(ctxt.state(), input);
+            nnue::predict_moves(input, model.L_M, moves_list);
 
             bool all_valid = true;
-
             int count = 0;
+
             for (auto& move : moves_list)
             {
                 ASSERT(move._group == MoveOrder::UNORDERED_MOVES);
-
-                if (count >= ROOT_MAX_MOVES || move._score < (ROOT_MIN_MOVE_SCORE / 100.0))
+                if (count >= ROOT_MAX_MOVES)
                 {
                     move._score = 0;
                 }
                 else if (make_move<false>(ctxt, move, MoveOrder::ROOT_MOVES, move._score))
                 {
-                    // std::cout << move << ": " << move._score << std::endl;
+                    std::cout << "info string " << move << ": " << move._score << std::endl;
                     ++count;
                 }
                 else

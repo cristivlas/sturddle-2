@@ -442,36 +442,27 @@ namespace nnue
         static constexpr int OUTPUTS_B = O;
 
     #if DEBUG_INCREMENTAL
-        ALIGN input_t _input[INPUTS] = { 0 }; /* one-hot encoding */
+        ALIGN input_t _input[INPUTS] = { }; /* one-hot encoding */
     #endif
-        ALIGN int16_t _output_a[OUTPUTS_A] = { 0 };
-        ALIGN int16_t _output_b[OUTPUTS_B] = { 0 };
+        ALIGN int16_t _output_a[OUTPUTS_A] = { };
+        ALIGN int16_t _output_b[OUTPUTS_B] = { };
         uint64_t _hash = 0;
 
         /** Compute 1st layer output from scratch at root */
-        template <typename LA, typename LB, size_t IN_OUT = 1>
-        INLINE void update(const LA& layer_1a, const LB& layer_1b, const State& state, float (*in_out)[IN_OUT] = nullptr)
+        template <typename LA, typename LB>
+        INLINE void update(const LA& layer_1a, const LB& layer_1b, const State& state)
         {
-            if (in_out || needs_update(state))
+            if (needs_update(state))
             {
             #if DEBUG_INCREMENTAL
                 memset(&_input, 0, sizeof(_input));
             #else
-                ALIGN input_t _input[INPUTS] = { 0 };
+                ALIGN input_t _input[INPUTS] = { };
             #endif
                 one_hot_encode(state, _input);
 
-                if constexpr (IN_OUT > 1)
-                {
-                    if (in_out)
-                        std::copy_n(&_input[0], std::min(sizeof(*in_out), sizeof(_input)), &(*in_out)[0]);
-                }
-
-                if (needs_update(state))
-                {
-                    layer_1a.dot(_input, _output_a);
-                    layer_1b.dot(_input, _output_b);
-                }
+                layer_1a.dot(_input, _output_a);
+                layer_1b.dot(_input, _output_b);
 
                 _hash = state.hash();
             }
@@ -532,7 +523,7 @@ namespace nnue
 
                 _input[TURN_INDEX] ^= 1;
 
-                input_t temp[INPUTS] = { 0 };
+                input_t temp[INPUTS] = { };
                 one_hot_encode(state, temp);
 
                 for (int i = 0; i != INPUTS; ++i)
@@ -548,12 +539,12 @@ namespace nnue
                 recompute(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx);
 
             #if DEBUG_INCREMENTAL
-                int16_t output_a[OUTPUTS_A] = { 0 };
+                int16_t output_a[OUTPUTS_A] = { };
                 layer_a.dot(_input, output_a);
                 for (int i = 0; i != OUTPUTS_A; ++i)
                     ASSERT_ALWAYS(abs(output_a[i] - _output_a[i]) < 0.0001);
 
-                int16_t output_b[OUTPUTS_B] = { 0 };
+                int16_t output_b[OUTPUTS_B] = { };
                 layer_b.dot(_input, output_b);
                 for (int i = 0; i != OUTPUTS_B; ++i)
                     ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
@@ -746,25 +737,13 @@ namespace nnue
         std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) { return a._score > b._score; });
     }
 
-    template <typename A, typename I, typename ATTN, typename L2, typename L3, typename L_MOVE, typename OUT, typename T>
-    INLINE int
-    eval_with_moves(
-        const A& accumulator,
-        const I& input,
-        const ATTN& attn,       // spatial attention
-        const L2& l2,
-        const L3& l3,
-        const L_MOVE& moves,    // layer that computes moves logits
-        const OUT& out,         // layer that computes position eval
-        T& pseudo_legal_moves)
-    {
-        const auto score = eval(accumulator, attn, l2, l3, out);
 
-        ALIGN float logits[L_MOVE::OUTPUTS];
+    template <typename I, typename L, typename T>
+    INLINE void predict_moves(const I& input, const L& moves, T& pseudo_legal_moves)
+    {
+        ALIGN float logits[L::OUTPUTS];
 
         moves.dot(input, logits, [](const Vector& v) { return v; });
         sort_moves(pseudo_legal_moves, logits);
-
-        return score;
     }
 } /* namespace nnue */
