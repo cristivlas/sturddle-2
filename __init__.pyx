@@ -830,7 +830,7 @@ cdef extern from 'search.h' namespace 'search':
 
         bool _analysis
 
-        void    init() nogil
+        void    init(bool) nogil
         size_t  nodes() nogil const
 
         const   vector[BaseMove]& get_pv() nogil const
@@ -1035,7 +1035,7 @@ cdef class SearchAlgorithm:
         if board:
             self.context.create_from(board)
 
-        self._table.init()
+        self._table.init(False)
         self.set_context_callbacks()
         self.context._ctxt.set_tt(address(self._table))
         self.context._ctxt.reinitialize()

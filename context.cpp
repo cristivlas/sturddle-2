@@ -526,7 +526,7 @@ void search::Context::update_root_accumulators()
     }
 }
 
-
+/* Test */
 int nnue::eval_fen(const std::string& fen)
 {
     auto ctxt = search::Context();
@@ -537,7 +537,7 @@ int nnue::eval_fen(const std::string& fen)
     chess::parse_fen(fen, state);
 
     search::TranspositionTable tt;
-    tt.init();
+    tt.init(true);
     ctxt.set_tt(&tt);
 
     return ctxt.eval_nnue_raw(false, false);
@@ -1056,9 +1056,6 @@ namespace search
 
     score_t eval_captures(Context& ctxt, score_t score)
     {
-        if (is_valid(ctxt.tt_entry()._captures) && ctxt.tt_entry()._depth >= ctxt.depth())
-            return ctxt.tt_entry()._captures;
-
         if constexpr(DEBUG_CAPTURES)
             ctxt.log_message(LogLevel::DEBUG, "eval_captures");
 
@@ -1081,7 +1078,6 @@ namespace search
         if constexpr(DEBUG_CAPTURES)
             ctxt.log_message(LogLevel::DEBUG, "captures: " + std::to_string(result));
 
-        ctxt.tt_entry()._captures = result;
         return result;
     }
 
@@ -1232,12 +1228,7 @@ namespace search
 
     static INLINE int window_delta(int iteration, int depth, double score)
     {
-    #if 1
-        return WINDOW_HALF * pow2(iteration) + WINDOW_COEFF * depth * log(0.001 + abs(score) / WINDOW_DIV);
-    #else
-        /* Alternative: widen proportional with squared effective (selective) depth from prev. iter. */
-        return WINDOW_HALF * pow2(depth) + WINDOW_COEFF * iteration * log(0.001 + abs(score) / WINDOW_DIV);
-    #endif
+        return WINDOW_HALF * pow2(iteration) + WINDOW_COEFF * depth * log(1 + abs(score) / WINDOW_DIV);
     }
 
 
@@ -1274,29 +1265,15 @@ namespace search
             prev_score = score;
 
         #if 1
+            /* Widen in the OPPOSITE direction of the score trend, in case the raise/fall in
+             * the score is caused by too narrow a window and a refutation / tactic was missed.
+             */
             _alpha = std::max<score_t>(SCORE_MIN, score - std::max(WINDOW_HALF, delta));
             _beta = std::min<score_t>(SCORE_MAX, score + std::max(WINDOW_HALF, -delta));
         #else
-            /* Widen in the OPPOSITE direction of the score trend, in case the raise/fall in
-             * the score is caused by too narrow a window and a refutation / tactic was missed.
-             * Widen in the direction of large discrepancies between static eval and search score
-             * in case something tactical is brewing or static eval is way off (NN error?).
-             */
-            const score_t eval_diff = abs(score - _eval);
-
-            auto lower_delta = std::max(WINDOW_HALF, delta);
-            auto upper_delta = std::max(WINDOW_HALF, -delta);
-
-            if (eval_diff >= STABILITY_TACTICAL_THRESHOLD)
-            {
-                if (score > _eval)
-                    upper_delta += eval_diff / STABILITY_DIV;
-                else
-                    lower_delta += eval_diff / STABILITY_DIV;
-            }
-
-            _alpha = std::max<score_t>(SCORE_MIN, score - lower_delta);
-            _beta = std::min<score_t>(SCORE_MAX, score + upper_delta);
+            const score_t window_size = std::max(WINDOW_HALF, abs(delta));
+            _alpha = std::max<score_t>(SCORE_MIN, score - window_size);
+            _beta = std::min<score_t>(SCORE_MAX, score + window_size);
         #endif
         }
 
@@ -1851,6 +1828,7 @@ namespace search
 } /* namespace */
 
 
+/* Test */
 score_t eval(const std::string& fen, bool as_white, int depth, int millis)
 {
     auto ctxt = search::Context();
@@ -1866,7 +1844,7 @@ score_t eval(const std::string& fen, bool as_white, int depth, int millis)
     search::TranspositionTable::clear_shared_hashtable();
 
     search::TranspositionTable tt;
-    tt.init();
+    tt.init(true);
     ctxt.set_tt(&tt);
 
     return ctxt.eval(as_white, depth, millis);

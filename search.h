@@ -142,7 +142,7 @@ namespace search
     using KillerMovesTable = std::array<KillerMoves, PLY_MAX>;
 
 
-    enum class TT_Type : int8_t
+    enum class TT_Type : uint8_t
     {
         NONE = 0,
         UPPER,
@@ -151,30 +151,31 @@ namespace search
     };
 
 
-#pragma pack(push, 4)
+#pragma pack(push, 2)
 
     class TT_Entry
     {
     public:
         uint64_t    _hash = 0;
-        TT_Type     _type : 7;
+        TT_Type     _type : 2;
+        uint8_t     _generation : 5;
         bool        _pv : 1;
         int8_t      _depth = std::numeric_limits<int8_t>::min();
         BaseMove    _best_move;
         BaseMove    _hash_move;
         int16_t     _eval = SCORE_MIN; /* static eval */
         int16_t     _value = SCORE_MIN; /* search score */
-        int16_t     _captures = SCORE_MIN;
 
-        TT_Entry() : _type(TT_Type::NONE), _pv(false) {}
+        TT_Entry() : _type(TT_Type::NONE), _generation(0), _pv(false) {}
 
+        INLINE bool is_exact() const { return _type == TT_Type::EXACT; }
         INLINE bool is_lower() const { return _type == TT_Type::LOWER; }
         INLINE bool is_upper() const { return _type == TT_Type::UPPER; }
         INLINE bool is_valid() const { return _type != TT_Type::NONE; }
 
         INLINE bool matches(const State& state) const
         {
-            return is_valid() && _hash == state.hash();
+            return /* is_valid() && */ _hash == state.hash();
         }
 
         template<typename C>
@@ -246,10 +247,11 @@ namespace search
         TranspositionTable() = default;
         ~TranspositionTable() = default;
 
-               void clear();
-        static void clear_shared_hashtable(bool = false); /* call before new game */
+               void clear(); /* clear search stats, bump up generation */
+        static void clear_shared_hashtable(bool wipe = false); /* call before new game */
 
-        INLINE void init() { clear(); shift(); _eval_depth = 0; } /* call before new search */
+        /* Re-initialize before new search or new game*/
+        void init(bool new_game);
 
         int _tid = 0;
         int _iteration = 0;

@@ -128,6 +128,10 @@ HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE);
 }
 
 
+/* Prepare for new search. This clears MOST of the state.
+ * Before a new game, _plyHistory, _killer_moves and the
+ * thread-shared hash_table must be also cleared.
+ */
 void TranspositionTable::clear()
 {
     _iteration = 0;
@@ -158,6 +162,8 @@ void TranspositionTable::clear()
         _countermoves[color].clear();
         _hcounters[color].clear();
     }
+
+    _table.increment_generation();
 }
 
 
@@ -165,6 +171,26 @@ void TranspositionTable::clear()
 {
     _table.clear(wipe);
     Context::clear_moves_cache();
+}
+
+
+void TranspositionTable::init(bool new_game)
+{
+    clear();
+
+    if (new_game)
+    {
+        clear_shared_hashtable(new_game);
+
+        _killer_moves.fill({});
+        _plyHistory.fill({});
+    }
+    else
+    {
+        shift();
+    }
+
+    _eval_depth = 0; /* Reset selective depth */
 }
 
 
@@ -194,13 +220,13 @@ void TranspositionTable::store(Context& ctxt, TT_Entry& entry, TT_Type type, int
         entry._best_move = ctxt._best_move;
     }
     entry._type = type;
+    entry._generation = _table.generation();
     entry._pv = ctxt.is_pv_node();
     entry._eval = ctxt._eval; /* static eval */
     entry._value = ctxt._score;
     entry._hash_move = ctxt._best_move;
     entry._hash = ctxt.state().hash();
     entry._depth = depth;
-    entry._captures = ctxt.tt_entry()._captures;
 }
 
 
@@ -959,7 +985,7 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
         else
             lower = g;
 
-        ctxt.rewind(0, MTDF_REORDER_MOVES && table._iteration < 10);
+        ctxt.rewind(0, MTDF_REORDER_MOVES);
     }
 
     return (ctxt._score = g);

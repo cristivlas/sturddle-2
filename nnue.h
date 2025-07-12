@@ -30,12 +30,10 @@
 #endif
 
 #if INSTRSET >= 9 /* AVX 512 */
-    #define ALIGN alignas(64)
     #ifndef ARCH
         #define ARCH "AVX512"
     #endif
 #else
-    #define ALIGN alignas(32)
     #ifndef ARCH
         #if INSTRSET >= 8
             #define ARCH "AVX2"
@@ -45,6 +43,7 @@
     #endif /* ARCH */
 #endif /* INSTRSET >= 9 */
 
+#define ALIGN alignas(64)
 
 #define DEBUG_INCREMENTAL false
 
@@ -423,6 +422,7 @@ namespace nnue
         static_assert(INPUTS % OUTPUTS == 0);
         static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
 
+    #if INSTRSET < 8
         Vec8s v;
 
         for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
@@ -432,6 +432,19 @@ namespace nnue
 
             out[j] = float(::horizontal_add(extend(v))) / POOL_STRIDE / QSCALE;
         }
+    #else
+        /* AVX2 (or better) */
+        static_assert(INPUTS % (2 * POOL_STRIDE) == 0);
+        Vec16s v;
+
+        for (size_t i = 0, j = 0; i + 2 * POOL_STRIDE <= INPUTS; i += 2 * POOL_STRIDE, j += 2)
+        {
+            v.load_a(&in[i]);
+
+            out[j] = float(::horizontal_add(extend(max(v.get_low(), v8_zero)))) / POOL_STRIDE / QSCALE;
+            out[j + 1] = float(::horizontal_add(extend(max(v.get_high(), v8_zero)))) / POOL_STRIDE / QSCALE;
+        }
+    #endif /* INSTRSET < 8 */
     }
 
 

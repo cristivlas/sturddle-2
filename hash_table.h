@@ -345,7 +345,7 @@ namespace search
     };
 
 
-    template <typename T, size_t BUCKET_SIZE = 3>
+    template <typename T, size_t BUCKET_SIZE = 14>
     class hash_table
     {
         using clock_t = uint16_t;
@@ -384,14 +384,14 @@ namespace search
 
         clock_t _clock = 0;
         count_t _used = 0;
+        uint8_t _generation = 0;
         data_t _data; /* table entries */
 
     private:
         static INLINE size_t get_num_buckets(size_t megabytes)
         {
-            static_assert(sizeof(T) == 20);
-            static_assert(bucket_t::size() == 3);
-            static_assert(bucket_size() == 64);
+            static_assert(sizeof(T) == 18);
+            static_assert(bucket_size() == 256);
 
             auto buckets = megabytes * ONE_MEGABYTE / bucket_size();
             return get_even(buckets);
@@ -432,10 +432,14 @@ namespace search
             if (wipe && _data.size() <= 1024 * ONE_MEGABYTE)
                 std::fill_n(&_data[0], _data.size(), bucket_t());
 
-            ++_clock; // O(1) -- buckets are lazily erased on next use
+            ++_clock; // O(1) -- buckets are lazily erased on write
             _used = 0;
+
+            _generation = 0;
         }
 
+        INLINE uint8_t generation() const { return _generation; }
+        INLINE void increment_generation() { _generation = (_generation + 1) & 31; }
 
         INLINE void increment_usage(bucket_t& bucket)
         {
@@ -463,8 +467,8 @@ namespace search
         struct Result
         {
             entry_t     _entry;
+            int16_t     _replacement_slot = -1;
             bucket_t*   _bucket = nullptr;
-            int         _replacement_slot = -1;
         };
 
 
@@ -489,27 +493,31 @@ namespace search
                 }
                 else
                 {
+                    int replacement_score = depth + 1;
+
                     for (size_t slot = 0; slot < bucket_t::size(); ++slot)
                     {
                         auto& e = bucket._entries[slot];
-                        const int depth_threshold = (slot == 0) ? -4 : -1;
 
                         if (e._hash == h)
                         {
                             result._entry = e;
-                            if (depth >= e._depth + depth_threshold)
-                            {
-                                result._replacement_slot = slot;
-                            }
+                            result._replacement_slot = slot;
                             break;
                         }
 
                         if (!e.is_valid())
                         {
                             result._replacement_slot = slot;
+                            break;
                         }
-                        else if (depth >= e._depth + depth_threshold)
+
+                        const int age = (32 + generation() - e._generation) & 31;
+                        const int score = e._depth - 2 * age + e.is_exact();
+
+                        if (replacement_score > score)
                         {
+                            replacement_score = score;
                             result._replacement_slot = slot;
                         }
                     }

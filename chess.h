@@ -1034,7 +1034,7 @@ namespace chess
         int8_t pushed_pawns_score = 0; /* ranks past the middle of the board */
         bool is_castle = false;
         bool has_tt_result = false;
-        alignas(std::max_align_t) uint8_t tt_result[40] = {};
+        alignas(std::max_align_t) uint8_t tt_result[32] = {};
 
         /* material and PST from white's POV */
         static constexpr auto UNKNOWN_SCORE = std::numeric_limits<score_t>::max();

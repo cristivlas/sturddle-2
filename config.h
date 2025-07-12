@@ -48,7 +48,7 @@ constexpr int PLY_MAX = 100;
 
 constexpr int PLY_HISTORY_MAX = 20;
 
-constexpr int PV_PATH_MAX = 20;
+constexpr int PV_PATH_MAX = 30;
 
 constexpr score_t SCORE_MIN = -30000;
 constexpr score_t SCORE_MAX =  30000;
@@ -320,11 +320,6 @@ DECLARE_VALUE(  SINGULAR_MARGIN_TT_PV,              136,   80,     200)
 
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                7,    3,      10)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    1,      10)
-
-#if 0
-DECLARE_VALUE(  STABILITY_DIV,                       10,    1,     100)
-DECLARE_VALUE(  STABILITY_TACTICAL_THRESHOLD,       180,  125,     250)
-#endif
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 DECLARE_VALUE(  STANDPAT_MARGIN,                     85,    0,     350)

@@ -306,6 +306,7 @@ public:
         search::Context::_history = std::make_unique<search::History>();
 
         log_debug(std::format("Context size: {}", sizeof(search::Context)));
+        log_debug(std::format("ContextBuffer size: {}", sizeof(search::ContextBuffer)));
         log_debug(std::format("State size: {}", sizeof(chess::State)));
         log_debug(std::format("TT_Entry size: {}", sizeof(search::TT_Entry)));
 
@@ -524,7 +525,6 @@ private:
     EngineOptions _options;
     static std::atomic_bool _output_expected;
     bool _ponder = false;
-    bool _new_game = true;
     bool _use_opening_book = false;
     bool _best_book_move = true;
     chess::BaseMove _last_move;
@@ -923,22 +923,17 @@ void UCI::go(const Arguments &args)
  */
 INLINE void UCI::isready()
 {
-    if (_new_game)
-    {
-        _new_game = false;
-        search::TranspositionTable::clear_shared_hashtable(true);
-    }
     output("readyok");
 }
 
 void UCI::newgame()
 {
     stop();
-    search::TranspositionTable::clear_shared_hashtable();
+
+    _tt.init(/* new_game = */ true);
 
     set_start_position();
     _book_depth = max_depth;
-    _new_game = true;
 
 #if PST_TUNING_ENABLED
     chess::init_piece_square_tables();
@@ -1044,7 +1039,7 @@ INLINE score_t UCI::search(F set_time_limit)
     if (!search::Context::_history)
         search::Context::_history = std::make_unique<search::History>();
 
-    _tt.init();
+    _tt.init(/* new_game = */ false);
 
     auto& ctxt = context();
     ctxt.set_tt(&_tt);

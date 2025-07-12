@@ -114,17 +114,18 @@ namespace
         }
     }
 
+
     template<typename  I> INLINE void shift_left_2(I first, I last)
     {
-    #if __cplusplus >= 202002L
-        /* C++20 */
-        std::shift_left(first, last, 2);
-    #else
         using V = typename std::iterator_traits<I>::value_type;
 
+    #if __cplusplus >= 202002L
+        /* C++20 */
+        auto i = std::shift_left(first, last, 2);
+    #else
         auto i = std::rotate(first, first + 2, last);
-        *i++ = V(); *i = V();
     #endif
+        *i++ = V(); *i = V();
     }
 
 
