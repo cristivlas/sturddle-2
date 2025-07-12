@@ -315,8 +315,6 @@ namespace search
         size_t nps() const { return _nps; }
         void set_nps(size_t nps) { _nps = nps; }
 
-        void shift();
-
         void history_update_cutoffs(const Move&);
         void history_update_non_cutoffs(const Move&);
 

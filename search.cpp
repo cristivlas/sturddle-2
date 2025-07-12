@@ -187,7 +187,8 @@ void TranspositionTable::init(bool new_game)
     }
     else
     {
-        shift();
+        shift_left_2(_killer_moves.begin(), _killer_moves.end());
+        shift_left_2(_plyHistory.begin(), _plyHistory.end());
     }
 
     _eval_depth = 0; /* Reset selective depth */
@@ -256,48 +257,6 @@ void TranspositionTable::store_killer_move(const Context& ctxt)
         killers[0]._state = nullptr; /* prevent accidental use */
     }
 #endif /* KILLER_MOVE_HEURISTIC */
-}
-
-
-inline void log_invalid_pv(
-    const std::string& func,
-    const PV& pv,
-    const Context& start,
-    const State& pos,
-    const BaseMove& move)
-{
-    std::ostringstream out;
-    out << func << ": invalid: " << move << " pv: ";
-    for (const auto& m : pv)
-        out << m << " ";
-
-    out << " root: " << start.epd() << " current: " << Context::epd(pos);
-    Context::log_message(LogLevel::WARN, out.str());
-}
-
-
-
-template<bool Debug>
-static bool is_valid_pv_move(
-    const std::string& func,
-    const PV& pv,
-    const Context& start,
-    const State& pos,
-    const BaseMove& move)
-{
-    if constexpr(Debug)
-    {
-        if (   (pos.piece_type_at(move.from_square()) == PieceType::NONE)
-            || (pos.occupied_co(pos.turn) & chess::BB_SQUARES[move.to_square()])
-            || (pos.kings & chess::BB_SQUARES[move.to_square()])
-            || start.repeated_count(pos) > 2
-        )
-        {
-            log_invalid_pv(func, pv, start, pos, move);
-            return false;
-        }
-    }
-    return true;
 }
 
 
@@ -1236,15 +1195,4 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
     }
 
     return score;
-}
-
-
-/*
- * Shift ply history and killer moves tables by two.
- * Should be called at the beginning of each new search.
- */
-void TranspositionTable::shift()
-{
-    shift_left_2(_killer_moves.begin(), _killer_moves.end());
-    shift_left_2(_plyHistory.begin(), _plyHistory.end());
 }
