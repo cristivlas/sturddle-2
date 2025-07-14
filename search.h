@@ -225,30 +225,30 @@ namespace search
      */
     class TranspositionTable
     {
+        using HistoryRatio = std::pair<uint32_t, uint32_t>;
     #if USE_BUTTERFLY_TABLES
-        using HistoryCounters = MoveTable<std::pair<int, int>>;
+        using HistoryCounters = MoveTable<HistoryRatio>;
         using IndexedMoves = MoveTable<BaseMove>;
     #else
-        using HistoryCounters = PieceMoveTable<std::pair<int, int>>;
+        using HistoryCounters = PieceMoveTable<HistoryRatio>;
         using IndexedMoves = PieceMoveTable<BaseMove>;
     #endif /* USE_BUTTERFLY_TABLES */
 
-        using PlyHistoryCounters = std::array<MoveTable<std::pair<int, int>>, 2>;
-        using PlyHistory = std::array<PlyHistoryCounters, PLY_HISTORY_MAX>;
+        using CutoffRatios = std::array<HistoryRatio, PLY_MAX>;
 
         /* https://www.chessprogramming.org/Countermove_Heuristic */
         IndexedMoves        _countermoves[2];
 
-        KillerMovesTable    _killer_moves; /* killer moves at each ply */
-        HistoryCounters     _hcounters[2]; /* History heuristic counters. */
-        static HashTable    _table;        /* shared hashtable */
+        KillerMovesTable    _killer_moves;  /* killer moves at each ply */
+        HistoryCounters     _hcounters[2];  /* History heuristic counters. */
+        CutoffRatios        _hratios;       /* cutoff success per depth */
+        static HashTable    _table;         /* shared hashtable */
 
     public:
         TranspositionTable() = default;
         ~TranspositionTable() = default;
 
-               void clear(); /* clear search stats, bump up generation */
-        static void clear_shared_hashtable(bool wipe = false); /* call before new game */
+        void clear(); /* clear search stats, bump up generation */
 
         /* Re-initialize before new search or new game*/
         void init(bool new_game);
@@ -256,7 +256,6 @@ namespace search
         int _tid = 0;
         int _iteration = 0;
         int _eval_depth = 0;
-        PlyHistory _plyHistory;
 
         /* search window bounds */
         score_t _w_alpha = SCORE_MIN;
@@ -302,8 +301,9 @@ namespace search
         template<typename C> void store_countermove(C& ctxt);
         void store_killer_move(const Context&);
 
-        const std::pair<int, int>& historical_counters(const State&, Color, const Move&) const;
-        float history_score(int ply, const State&, Color, const Move&) const;
+        const HistoryRatio& history_counters(const State&, Color, const Move&) const;
+        float history_ratio(int depth) const; /* Expected cutoff ration at given depth */
+        std::tuple<int, int, float> history_stats(int depth, const State&, Color, const Move&) const;
 
         size_t hits() const { return _hits; }
         size_t nodes() const { return _nodes; }
@@ -315,8 +315,8 @@ namespace search
         size_t nps() const { return _nps; }
         void set_nps(size_t nps) { _nps = nps; }
 
-        void history_update_cutoffs(const Move&);
-        void history_update_non_cutoffs(const Move&);
+        template<typename C> void history_update_cutoffs(const C* next_ctxt);
+        template<typename C> void history_update_non_cutoffs(const C* next_ctxt);
 
         void update_stats(const Context&);
 
@@ -334,11 +334,8 @@ namespace search
      * https://www.chessprogramming.org/History_Heuristic
      * https://www.chessprogramming.org/Relative_History_Heuristic
      */
-    INLINE const std::pair<int, int>&
-    TranspositionTable::historical_counters(
-        const State& state,
-        Color turn,
-        const Move& move) const
+    INLINE const TranspositionTable::HistoryRatio&
+    TranspositionTable::history_counters(const State& state, Color turn, const Move& move) const
     {
         ASSERT(move);
 
@@ -351,30 +348,32 @@ namespace search
     }
 
 
-    INLINE float
-    TranspositionTable::history_score(
-        int ply,
-        const State& state,
-        Color turn,
-        const Move& move) const
+    INLINE float TranspositionTable::history_ratio(int depth) const
     {
-        float score = 0;
-        if (ply < PLY_HISTORY_MAX)
-        {
-            const auto& h = _plyHistory[ply][turn].lookup(move);
-            if (h.second)
-                score = h.first / double(h.second * HISTORY_SCORE_DIV);
-        }
-        const auto& counters = historical_counters(state, turn, move);
-        ASSERT(counters.first <= counters.second);
-
-        return score + (counters.second < 1 ? 0 : (double(HISTORY_SCORE_MUL) * counters.first) / counters.second);
+        depth = std::clamp(depth, 0, PLY_MAX - 1);
+        return float(_hratios[depth].first) / std::max(1U, _hratios[depth].second);
     }
 
 
-    INLINE void TranspositionTable::history_update_non_cutoffs(const Move& move)
+    INLINE std::tuple<int, int, float>
+    TranspositionTable::history_stats(int depth, const State& state, Color turn, const Move& move) const
     {
-        if (move)
+        ASSERT(depth >= 0);
+
+        const auto& counters = history_counters(state, turn, move);
+        ASSERT(counters.first <= counters.second);
+
+        const auto score = counters.second < 1 ? 0.0 : float(counters.first) / counters.second;
+
+        // return std::make_tuple(counters.first, _hratios[depth].first, score / (0.1f + history_ratio(depth)));
+        return std::make_tuple(counters.first, _hratios[depth].first, score);
+    }
+
+
+    template<typename C>
+    INLINE void TranspositionTable::history_update_non_cutoffs(const C* ctxt)
+    {
+        if (auto move = ctxt->_move)
         {
             ASSERT(move._state);
             ASSERT(!move._state->is_capture());
@@ -387,28 +386,42 @@ namespace search
             auto& counters = _hcounters[turn].lookup(pt, move);
         #endif /* USE_BUTTERFLY_TABLES */
 
+            ASSERT(ctxt->depth() >= 0);
+            ASSERT(ctxt->depth() < PLY_MAX);
+
+            ++_hratios[ctxt->depth()].second;
             ++counters.second;
         }
     }
 
 
-    INLINE void TranspositionTable::history_update_cutoffs(const Move& move)
+    template<typename C>
+    INLINE void TranspositionTable::history_update_cutoffs(const C* ctxt)
     {
-        ASSERT(move);
-        ASSERT(move._state);
-        ASSERT(!move._state->is_capture());
+        if (auto move = ctxt->_move)
+        {
+            ASSERT(move._state);
+            ASSERT(!move._state->is_capture());
 
-        const auto turn = !move._state->turn; /* side that moved */
+            const auto turn = !move._state->turn; /* side that moved */
 
-    #if USE_BUTTERFLY_TABLES
-        auto& counts = _hcounters[turn][move];
-    #else
-        const auto pt = move._state->piece_type_at(move.to_square());
-        ASSERT(pt != chess::PieceType::NONE);
-        auto& counts = _hcounters[turn].lookup(pt, move);
-    #endif /* USE_BUTTERFLY_TABLES */
-        ++counts.first;
-        ++counts.second;
+        #if USE_BUTTERFLY_TABLES
+            auto& counts = _hcounters[turn][move];
+        #else
+            const auto pt = move._state->piece_type_at(move.to_square());
+            ASSERT(pt != chess::PieceType::NONE);
+            auto& counts = _hcounters[turn].lookup(pt, move);
+        #endif /* USE_BUTTERFLY_TABLES */
+
+            ASSERT(ctxt->depth() >= 0);
+            ASSERT(ctxt->depth() < PLY_MAX);
+
+            ++_hratios[ctxt->depth()].first;
+            ++_hratios[ctxt->depth()].second;
+
+            ++counts.first;
+            ++counts.second;
+        }
     }
 
 

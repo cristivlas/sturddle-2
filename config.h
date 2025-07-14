@@ -46,8 +46,6 @@
 constexpr int ONE_PLY = 16; /* fractional extensions */
 constexpr int PLY_MAX = 100;
 
-constexpr int PLY_HISTORY_MAX = 20;
-
 constexpr int PV_PATH_MAX = 30;
 
 constexpr score_t SCORE_MIN = -30000;
@@ -333,18 +331,14 @@ DECLARE_VALUE(  WINDOW_HALF,                         25,    5,     100)
 DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              36,   20,     100)
 
 GROUP(MoveOrdering)
-DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 223,    0,     500)
 DECLARE_VALUE(  COUNTER_MOVE_MIN_DEPTH,               3,    0,      20)
-DECLARE_VALUE(  HISTORY_COUNT_HIGH,               88415,    1,  100000)
-DECLARE_VALUE(  HISTORY_SCORE_DIV,                   86,    1,     200)
-DECLARE_VALUE(  HISTORY_SCORE_MUL,                  259,    0,    1000)
-DECLARE_VALUE(  HISTORY_HIGH,                        92,    0,     100)
+
+DECLARE_VALUE(  HISTORY_HIGH,                        92,   65,     100)
 DECLARE_VALUE(  HISTORY_LOW,                         65,    0, HISTORY_HIGH)
-DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,     100)
+DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    0,    0,     100)
 DECLARE_VALUE(  HISTORY_PRUNE,                       67,    0,     100)
 
 GROUP(Eval)
-
 /****************************************************************************/
 #if !WITH_NNUE /* HCE tunable parameters */
 

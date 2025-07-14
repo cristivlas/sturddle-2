@@ -1143,16 +1143,6 @@ namespace search
             _extension += _move.from_square() == _parent->_capture_square;
             _extension += is_recapture() * (is_pv_node() * (ONE_PLY - 1) + 1);
 
-        #if 0 /* This can hurt on fast hardware */
-            /*
-             * extend if move has historically high cutoff percentages and counts
-             */
-            _extension += ONE_PLY
-                * (_move == _parent->tt_entry()._hash_move)
-                * (abs(_parent->tt_entry()._value) < MATE_HIGH)
-                * (_parent->history_count(_move) > HISTORY_COUNT_HIGH)
-                * (_parent->history_score(_move) > HISTORY_HIGH);
-        #endif /* 0 */
             const auto double_extension_ok = (_double_ext <= DOUBLE_EXT_MAX);
             const auto extend = std::min(1 + double_extension_ok, _extension / ONE_PLY);
 
@@ -1314,7 +1304,6 @@ namespace search
 
             if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= 13)
                 ++reduction;
-            reduction -= _parent->history_count(_move) / HISTORY_COUNT_HIGH;
         }
 
         if (is_capture() || (_move.from_square() == _parent->_capture_square))
@@ -1720,10 +1709,9 @@ namespace search
                     }
                 }
             }
-            /* Top historical scores, including counter-move bonus. */
             else if constexpr (Phase == 3)
             {
-                const auto hist_score = ctxt.history_score(move);
+                const auto hist_score = ctxt.history_percent(move);
 
                 if (hist_score > hist_high)
                 {
@@ -1760,7 +1748,7 @@ namespace search
                     incremental_update(move, ctxt);
                     const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
                     move._group = MoveOrder::LATE_MOVES;
-                    move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
+                    move._score = ctxt.history_percent(move) / (1 + HISTORY_LOW) + eval;
                 }
             }
         }
@@ -1840,8 +1828,6 @@ score_t eval(const std::string& fen, bool as_white, int depth, int millis)
 
     chess::parse_fen(fen, state);
     ASSERT(state.piece_count() == chess::popcount(state.occupied()));
-
-    search::TranspositionTable::clear_shared_hashtable();
 
     search::TranspositionTable tt;
     tt.init(true);

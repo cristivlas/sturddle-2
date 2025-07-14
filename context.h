@@ -362,8 +362,9 @@ namespace search
         INLINE bool has_improved() const { return improvement() > 0; }
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
 
-        int         history_count(const Move&) const;
-        float       history_score(const Move&) const;
+        float       history_percent(const Move&) const;
+    //  float       history_ratio() const { ASSERT(depth() > 0); return _tt->history_ratio(depth() - 1); }
+        std::tuple<int, int, float> history_stats(const Move&) const;
 
         score_t     improvement() const;
         static void init();
@@ -811,20 +812,16 @@ namespace search
     }
 
 
-    INLINE int Context::history_count(const Move& move) const
+    INLINE std::tuple<int, int, float> Context::history_stats(const Move& move) const
     {
-        return _tt->historical_counters(state(), turn(), move).first;
+        return _tt->history_stats(depth() - 1, state(), turn(), move);
     }
 
 
-    INLINE float Context::history_score(const Move& move) const
+    /* Convert adjusted ratio to percent. */
+    INLINE float Context::history_percent(const Move& move) const
     {
-        ASSERT(_tt);
-        ASSERT(move);
-        ASSERT(move != _move);
-
-        const auto score = _tt->history_score(_ply, state(), turn(), move);
-        return score + COUNTER_MOVE_BONUS * is_counter_move(move);
+        return depth() > HISTORY_MIN_DEPTH ? std::get<2>(history_stats(move)) * 100 : 0;
     }
 
 
@@ -1561,12 +1558,13 @@ namespace search
 
         move._state->apply_move(move);
 
-        if constexpr(LateMovePrune)
+        /* History-based pruning. */
+        if (LateMovePrune && ctxt.depth() > HISTORY_MIN_DEPTH)
         {
-            /* History-based pruning. */
-            if (ctxt.depth() > 0
-                && ctxt.history_count(move) >= HISTORY_PRUNE * pow2(ctxt.depth())
-                && ctxt.history_score(move) < HISTORY_LOW
+            auto [count, depth_count, score] = ctxt.history_stats(move);
+
+            if (count > HISTORY_PRUNE * depth_count * ctxt.depth()
+                && score * 100 < HISTORY_LOW
                 && ctxt.can_prune_move(move))
             {
                 mark_as_pruned(ctxt, move);

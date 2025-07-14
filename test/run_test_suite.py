@@ -103,11 +103,10 @@ def search(algo_class, name, board, expected, depths, **kwargs):
 
     # Construct a search algorithm instance
     algo = algo_class(board, threads_report=partial(collect_stats, task_stats), **kwargs)
+    algo.init()
 
     info = f'{algo_class.__name__[:-2][:10]:10s}| {name[:34]:34s}'
     print (info, end=' | ', flush=True)
-
-    clear_hashtable()
 
     with Timer() as timer:
         move, score = algo.search()

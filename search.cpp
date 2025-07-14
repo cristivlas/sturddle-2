@@ -162,15 +162,8 @@ void TranspositionTable::clear()
         _countermoves[color].clear();
         _hcounters[color].clear();
     }
-
+    _hratios.fill({});
     _table.increment_generation();
-}
-
-
-/* static */ void TranspositionTable::clear_shared_hashtable(bool wipe)
-{
-    _table.clear(wipe);
-    Context::clear_moves_cache();
 }
 
 
@@ -180,15 +173,16 @@ void TranspositionTable::init(bool new_game)
 
     if (new_game)
     {
-        clear_shared_hashtable(new_game);
+        _table.clear(true); /* Clear the hash_table shared by all threads */
 
         _killer_moves.fill({});
-        _plyHistory.fill({});
+        _hratios.fill({});
+
+        Context::clear_moves_cache();
     }
     else
     {
         shift_left_2(_killer_moves.begin(), _killer_moves.end());
-        shift_left_2(_plyHistory.begin(), _plyHistory.end());
     }
 
     _eval_depth = 0; /* Reset selective depth */
@@ -795,13 +789,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     /* zero-score moves may mean draw (path-dependent) */
                     if (move_score && ctxt.depth() > 0)
                     {
-                        if (ctxt._ply < PLY_HISTORY_MAX && abs(move_score) < MATE_HIGH)
-                        {
-                            auto& h = table._plyHistory[ctxt._ply][ctxt.turn()][next_ctxt->_move];
-                            h.first += next_ctxt->improvement() / ctxt.depth();
-                            ++h.second;
-                        }
-
                         if (ctxt.depth() >= COUNTER_MOVE_MIN_DEPTH)
                             table.store_countermove(ctxt);
 
@@ -809,7 +796,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                             table.store_killer_move(ctxt);
 
                         if (next_ctxt->depth() >= HISTORY_MIN_DEPTH)
-                            table.history_update_cutoffs(next_ctxt->_move);
+                            table.history_update_cutoffs(next_ctxt);
                     }
                 }
                 if constexpr(EXTRA_STATS)
@@ -823,7 +810,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             }
             else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_capture())
             {
-                table.history_update_non_cutoffs(next_ctxt->_move);
+                table.history_update_non_cutoffs(next_ctxt);
             }
 
             /*

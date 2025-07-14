@@ -139,6 +139,7 @@ class UCI:
             on_move=self.report_current_move,
         )
         logging.debug(f'algorithm set to: {self.algorithm}')
+        self.algorithm.init()
 
 
     def init_opening_book(self):
@@ -405,7 +406,6 @@ class UCI:
 
 
     def _ucinewgame(self, *_):
-        engine.clear_hashtable()
         self.init_algo()
         return self._position(['position', chess.STARTING_FEN])
 

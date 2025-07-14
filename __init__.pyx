@@ -836,9 +836,6 @@ cdef extern from 'search.h' namespace 'search':
         const   vector[BaseMove]& get_pv() nogil const
 
         @staticmethod
-        void    clear_shared_hashtable() nogil
-
-        @staticmethod
         double  usage() nogil const
 
         @staticmethod
@@ -879,10 +876,6 @@ cdef task_stats(const TranspositionTable& table):
 # Search API
 # ---------------------------------------------------------------------
 
-def clear_hashtable():
-    TranspositionTable.clear_shared_hashtable()
-
-
 cdef class SearchAlgorithm:
     cdef TranspositionTable _table
     cdef score_t score, delta
@@ -899,6 +892,11 @@ cdef class SearchAlgorithm:
         self.context = NodeContext(board)
         self.node_cb = kwargs.get('callback', None)
         self.report_cb = kwargs.get('threads_report', None)
+
+
+    def init(self):
+        self._table.init(True)
+        logging.debug('Initialized global tables')
 
 
     cdef void set_context_callbacks(self):
