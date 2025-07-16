@@ -1619,17 +1619,6 @@ namespace search
     }
 
 
-    template<std::size_t... I>
-    static constexpr std::array<double, sizeof ... (I)> thresholds(std::index_sequence<I...>)
-    {
-        auto logistic = [](int i) { return HISTORY_HIGH / (1 + exp(6 - i)); };
-        return { logistic(I) ... };
-    }
-
-    /* Phase 3 */
-    static const auto hist_thresholds = thresholds(std::make_index_sequence<PLY_MAX>{});
-
-
     template<int Phase>
     INLINE void MoveMaker::order_moves_phase(
             Context&    ctxt,
@@ -1640,9 +1629,6 @@ namespace search
     {
         const KillerMoves* const killer_moves = (Phase == 2 && ctxt.depth() > 0)
             ? ctxt._tt->get_killer_moves(ctxt._ply) : nullptr;
-
-        /* Confidence bar for historical scores */
-        const double hist_high = (Phase == 3) ? hist_thresholds[ctxt.iteration()] : 0;
 
         /********************************************************************/
         /* Iterate over pseudo-legal moves                                  */
@@ -1711,9 +1697,10 @@ namespace search
             }
             else if constexpr (Phase == 3)
             {
-                const auto hist_score = ctxt.history_percent(move);
+                const auto& hist_stat = ctxt.history_stats(move);
+                const auto hist_score = hist_stat.valid() ? hist_stat.ratio() : 0;
 
-                if (hist_score > hist_high)
+                if (hist_stat.valid() && ctxt.get_tt()->history_score_is_high(hist_stat))
                 {
                     make_move<true>(ctxt, move, MoveOrder::HISTORY_COUNTERS, hist_score);
                 }
@@ -1728,7 +1715,8 @@ namespace search
                     if (make_move<true>(ctxt, move, MoveOrder::TACTICAL_MOVES, hist_score))
                         ASSERT(move._score == hist_score);
                 }
-                else if (move._score >= HISTORY_LOW
+                else if (hist_stat.valid()
+                    && !ctxt.get_tt()->history_score_is_low(hist_stat)
                     && make_move<true>(ctxt, move, futility)
                     && (move._state->has_fork(!move._state->turn) || is_direct_check(move)))
                 {
@@ -1748,7 +1736,7 @@ namespace search
                     incremental_update(move, ctxt);
                     const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
                     move._group = MoveOrder::LATE_MOVES;
-                    move._score = ctxt.history_percent(move) / (1 + HISTORY_LOW) + eval;
+                    move._score = eval;
                 }
             }
         }

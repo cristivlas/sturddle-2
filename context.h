@@ -248,7 +248,7 @@ namespace search
         using StateStack = std::array<StatePool, PLY_MAX>;
 
         using Path = std::array<BaseMove, PV_PATH_MAX>;
-        using TT_Result = search::HashTable::Result;
+        using TT_Result = HashTable::Result;
 
         friend class MoveMaker;
 
@@ -362,9 +362,8 @@ namespace search
         INLINE bool has_improved() const { return improvement() > 0; }
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
 
-        float       history_percent(const Move&) const;
-    //  float       history_ratio() const { ASSERT(depth() > 0); return _tt->history_ratio(depth() - 1); }
-        std::tuple<int, int, float> history_stats(const Move&) const;
+        const HistoryStats& history_stats(const Move&) const;
+        bool        has_low_history_score(const Move&) const;
 
         score_t     improvement() const;
         static void init();
@@ -812,16 +811,16 @@ namespace search
     }
 
 
-    INLINE std::tuple<int, int, float> Context::history_stats(const Move& move) const
+    INLINE const HistoryStats& Context::history_stats(const Move& move) const
     {
-        return _tt->history_stats(depth() - 1, state(), turn(), move);
+        return _tt->history_stats(state(), turn(), move);
     }
 
 
-    /* Convert adjusted ratio to percent. */
-    INLINE float Context::history_percent(const Move& move) const
+    INLINE bool Context::has_low_history_score(const Move& move) const
     {
-        return depth() > HISTORY_MIN_DEPTH ? std::get<2>(history_stats(move)) * 100 : 0;
+        const auto& stats = history_stats(move);
+        return stats.valid() && _tt->history_score_is_low(stats);
     }
 
 
@@ -1561,11 +1560,7 @@ namespace search
         /* History-based pruning. */
         if (LateMovePrune && ctxt.depth() > HISTORY_MIN_DEPTH)
         {
-            auto [count, depth_count, score] = ctxt.history_stats(move);
-
-            if (count > HISTORY_PRUNE * depth_count * ctxt.depth()
-                && score * 100 < HISTORY_LOW
-                && ctxt.can_prune_move(move))
+            if (ctxt.has_low_history_score(move) && ctxt.can_prune_move<true>(move))
             {
                 mark_as_pruned(ctxt, move);
                 return false;

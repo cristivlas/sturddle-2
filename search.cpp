@@ -162,7 +162,12 @@ void TranspositionTable::clear()
         _countermoves[color].clear();
         _hcounters[color].clear();
     }
-    _hratios.fill({});
+    _history_count = 0;
+    _history_reservoir_count = 0;
+    _history_dirty = false;
+    _history_low_percentile = 0.0;
+    _history_high_percentile = 0.0;
+
     _table.increment_generation();
 }
 
@@ -174,9 +179,7 @@ void TranspositionTable::init(bool new_game)
     if (new_game)
     {
         _table.clear(true); /* Clear the hash_table shared by all threads */
-
         _killer_moves.fill({});
-        _hratios.fill({});
 
         Context::clear_moves_cache();
     }
@@ -795,8 +798,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         if (ctxt._alpha + KILLER_MOVES_DEPTH_MARGIN / ctxt.depth() + KILLER_MOVES_MARGIN >= ctxt._beta)
                             table.store_killer_move(ctxt);
 
-                        if (next_ctxt->depth() >= HISTORY_MIN_DEPTH)
-                            table.history_update_cutoffs(next_ctxt);
+                        if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_check())
+                            table.template history_update<true>(next_ctxt);
                     }
                 }
                 if constexpr(EXTRA_STATS)
@@ -808,9 +811,9 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             {
                 continue;
             }
-            else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_capture())
+            else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_capture() && !next_ctxt->is_check())
             {
-                table.history_update_non_cutoffs(next_ctxt);
+                table.template history_update<false>(next_ctxt);
             }
 
             /*

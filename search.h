@@ -219,40 +219,63 @@ namespace search
 
     using HashTable = hash_table<TT_Entry>;
 
+
+    /*
+     * https://www.chessprogramming.org/History_Heuristic
+     * https://www.chessprogramming.org/Relative_History_Heuristic
+     */
+    class HistoryStats
+    {
+        uint32_t _cutoffs = 0;
+        uint32_t _total = 0;
+
+    public:
+        INLINE bool valid() const { return _total > 0; }
+        INLINE float ratio() const { ASSERT(valid()); return float(_cutoffs) / _total; }
+
+        template<bool IsCutoff> void update()
+        {
+            ++_total;
+            if constexpr(IsCutoff)
+                ++_cutoffs;
+        }
+    };
+
+
     /*
      * Hash table, counter moves, historical counts.
      * Under SMP the hash table is shared between threads.
      */
     class TranspositionTable
     {
-        using HistoryRatio = std::pair<uint32_t, uint32_t>;
     #if USE_BUTTERFLY_TABLES
-        using HistoryCounters = MoveTable<HistoryRatio>;
+        using HistoryCounters = MoveTable<HistoryStats>;
         using IndexedMoves = MoveTable<BaseMove>;
     #else
-        using HistoryCounters = PieceMoveTable<HistoryRatio>;
+        using HistoryCounters = PieceMoveTable<HistoryStats>;
         using IndexedMoves = PieceMoveTable<BaseMove>;
     #endif /* USE_BUTTERFLY_TABLES */
 
-        using CutoffRatios = std::array<HistoryRatio, PLY_MAX>;
+        float history_percentile(size_t perc) const;
+        void history_update_percentiles(float ratio);
+
+        static constexpr size_t RESERVOIR_SIZE = 2000;
+
+        mutable float _history_reservoir[RESERVOIR_SIZE] = {};
+        size_t _history_count = 0;
+        size_t _history_reservoir_count = 0;
+        mutable bool _history_dirty = false;
+        mutable float _history_low_percentile = 0.0;
+        mutable float _history_high_percentile = 0.0;
 
         /* https://www.chessprogramming.org/Countermove_Heuristic */
         IndexedMoves        _countermoves[2];
 
         KillerMovesTable    _killer_moves;  /* killer moves at each ply */
         HistoryCounters     _hcounters[2];  /* History heuristic counters. */
-        CutoffRatios        _hratios;       /* cutoff success per depth */
         static HashTable    _table;         /* shared hashtable */
 
     public:
-        TranspositionTable() = default;
-        ~TranspositionTable() = default;
-
-        void clear(); /* clear search stats, bump up generation */
-
-        /* Re-initialize before new search or new game*/
-        void init(bool new_game);
-
         int _tid = 0;
         int _iteration = 0;
         int _eval_depth = 0;
@@ -282,6 +305,17 @@ namespace search
         size_t _reductions = 0;
         size_t _retry_reductions = 0;
 
+        TranspositionTable() = default;
+        ~TranspositionTable() = default;
+
+        void clear(); /* clear search stats, bump up generation */
+
+        /* Re-initialize before new search or new game*/
+        void init(bool new_game);
+
+        bool history_score_is_high(const HistoryStats& stats) const;
+        bool history_score_is_low(const HistoryStats& stats) const;
+
         template<typename C>
         BaseMove lookup_countermove(const C& ctxt) const;
 
@@ -301,9 +335,7 @@ namespace search
         template<typename C> void store_countermove(C& ctxt);
         void store_killer_move(const Context&);
 
-        const HistoryRatio& history_counters(const State&, Color, const Move&) const;
-        float history_ratio(int depth) const; /* Expected cutoff ration at given depth */
-        std::tuple<int, int, float> history_stats(int depth, const State&, Color, const Move&) const;
+        const HistoryStats& history_stats(const State&, Color, const Move&) const;
 
         size_t hits() const { return _hits; }
         size_t nodes() const { return _nodes; }
@@ -315,8 +347,7 @@ namespace search
         size_t nps() const { return _nps; }
         void set_nps(size_t nps) { _nps = nps; }
 
-        template<typename C> void history_update_cutoffs(const C* next_ctxt);
-        template<typename C> void history_update_non_cutoffs(const C* next_ctxt);
+        template<bool IsCutoff, typename C> void history_update(const C* next_ctxt);
 
         void update_stats(const Context&);
 
@@ -334,8 +365,8 @@ namespace search
      * https://www.chessprogramming.org/History_Heuristic
      * https://www.chessprogramming.org/Relative_History_Heuristic
      */
-    INLINE const TranspositionTable::HistoryRatio&
-    TranspositionTable::history_counters(const State& state, Color turn, const Move& move) const
+    INLINE const HistoryStats&
+    TranspositionTable::history_stats(const State& state, Color turn, const Move& move) const
     {
         ASSERT(move);
 
@@ -348,55 +379,22 @@ namespace search
     }
 
 
-    INLINE float TranspositionTable::history_ratio(int depth) const
+    INLINE bool TranspositionTable::history_score_is_high(const HistoryStats& stats) const
     {
-        depth = std::clamp(depth, 0, PLY_MAX - 1);
-        return float(_hratios[depth].first) / std::max(1U, _hratios[depth].second);
+        ASSERT(stats.valid());
+        return _history_reservoir_count ? stats.ratio() > history_percentile(HISTORY_HIGH) : false;
     }
 
 
-    INLINE std::tuple<int, int, float>
-    TranspositionTable::history_stats(int depth, const State& state, Color turn, const Move& move) const
+    INLINE bool TranspositionTable::history_score_is_low(const HistoryStats& stats) const
     {
-        ASSERT(depth >= 0);
-
-        const auto& counters = history_counters(state, turn, move);
-        ASSERT(counters.first <= counters.second);
-
-        const auto score = counters.second < 1 ? 0.0 : float(counters.first) / counters.second;
-
-        // return std::make_tuple(counters.first, _hratios[depth].first, score / (0.1f + history_ratio(depth)));
-        return std::make_tuple(counters.first, _hratios[depth].first, score);
+        ASSERT(stats.valid());
+        return _history_reservoir_count ? stats.ratio() <= history_percentile(HISTORY_LOW) : false;
     }
 
 
-    template<typename C>
-    INLINE void TranspositionTable::history_update_non_cutoffs(const C* ctxt)
-    {
-        if (auto move = ctxt->_move)
-        {
-            ASSERT(move._state);
-            ASSERT(!move._state->is_capture());
-
-            const auto turn = !move._state->turn; /* side that moved */
-        #if USE_BUTTERFLY_TABLES
-            auto& counters = _hcounters[turn][move];
-        #else
-            const auto pt = move._state->piece_type_at(move.to_square());
-            auto& counters = _hcounters[turn].lookup(pt, move);
-        #endif /* USE_BUTTERFLY_TABLES */
-
-            ASSERT(ctxt->depth() >= 0);
-            ASSERT(ctxt->depth() < PLY_MAX);
-
-            ++_hratios[ctxt->depth()].second;
-            ++counters.second;
-        }
-    }
-
-
-    template<typename C>
-    INLINE void TranspositionTable::history_update_cutoffs(const C* ctxt)
+    template<bool IsCutoff, typename C>
+    INLINE void TranspositionTable::history_update(const C* ctxt)
     {
         if (auto move = ctxt->_move)
         {
@@ -406,22 +404,66 @@ namespace search
             const auto turn = !move._state->turn; /* side that moved */
 
         #if USE_BUTTERFLY_TABLES
-            auto& counts = _hcounters[turn][move];
+            auto& stats = _hcounters[turn][move];
         #else
             const auto pt = move._state->piece_type_at(move.to_square());
             ASSERT(pt != chess::PieceType::NONE);
-            auto& counts = _hcounters[turn].lookup(pt, move);
+            auto& stats = _hcounters[turn].lookup(pt, move);
         #endif /* USE_BUTTERFLY_TABLES */
 
-            ASSERT(ctxt->depth() >= 0);
-            ASSERT(ctxt->depth() < PLY_MAX);
-
-            ++_hratios[ctxt->depth()].first;
-            ++_hratios[ctxt->depth()].second;
-
-            ++counts.first;
-            ++counts.second;
+            stats.template update<IsCutoff>();
+            history_update_percentiles(stats.ratio());
         }
+    }
+
+
+    INLINE void TranspositionTable::history_update_percentiles(float ratio)
+    {
+        ++_history_count;
+
+        if (_history_reservoir_count < RESERVOIR_SIZE)
+        {
+            _history_reservoir[_history_reservoir_count++] = ratio;
+            _history_dirty = true;
+        }
+        else
+        {
+            const size_t j = rand() % _history_count;
+            if (j < RESERVOIR_SIZE)
+            {
+                _history_reservoir[j] = ratio;
+                _history_dirty = true;
+            }
+        }
+    }
+
+
+    INLINE float TranspositionTable::history_percentile(size_t perc) const
+    {
+        ASSERT(perc == HISTORY_LOW || perc == HISTORY_HIGH);
+        ASSERT(_history_reservoir_count > 0);
+
+        if (_history_dirty)
+        {
+            const float low_p = HISTORY_LOW / 100.0;
+            const float high_p = HISTORY_HIGH / 100.0;
+
+            const size_t low_index = size_t(low_p * (_history_reservoir_count - 1));
+            const size_t high_index = size_t(high_p * (_history_reservoir_count - 1));
+
+            std::nth_element(_history_reservoir, _history_reservoir + low_index, _history_reservoir + _history_reservoir_count);
+            _history_low_percentile = _history_reservoir[low_index];
+
+            std::nth_element(_history_reservoir + low_index, _history_reservoir + high_index, _history_reservoir + _history_reservoir_count);
+            _history_high_percentile = _history_reservoir[high_index];
+
+            _history_dirty = false;
+        }
+
+        if (perc == HISTORY_LOW)
+            return _history_low_percentile;
+        else
+            return _history_high_percentile;
     }
 
 

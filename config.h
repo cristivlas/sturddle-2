@@ -308,7 +308,7 @@ DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
 DECLARE_VALUE(  SEE_PRUNING_MARGIN,                -115, -200,       0)
 
 // #undef DECLARE_VALUE
-// #define DECLARE_VALUE DECLARE_NORMAL // Tune --------------------------
+// #define DECLARE_VALUE DECLARE_NORMAL // Tune ---------------------------
 DECLARE_VALUE(  SINGULAR_DEPTH_SCALE,                57,   30,     100)
 DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,         277,  150,     350)
 DECLARE_VALUE(  SINGULAR_MARGIN_NORMAL,              58,   30,     100)
@@ -333,10 +333,9 @@ DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              36,   20,     100)
 GROUP(MoveOrdering)
 DECLARE_VALUE(  COUNTER_MOVE_MIN_DEPTH,               3,    0,      20)
 
-DECLARE_VALUE(  HISTORY_HIGH,                        92,   65,     100)
-DECLARE_VALUE(  HISTORY_LOW,                         65,    0, HISTORY_HIGH)
+DECLARE_VALUE(  HISTORY_HIGH,                        80,   65,     100)
+DECLARE_VALUE(  HISTORY_LOW,                         30,    0, HISTORY_HIGH)
 DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    0,    0,     100)
-DECLARE_VALUE(  HISTORY_PRUNE,                       67,    0,     100)
 
 GROUP(Eval)
 /****************************************************************************/

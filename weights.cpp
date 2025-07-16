@@ -103,7 +103,11 @@ static struct PyModuleDef weights_module = {
     "weights",
     nullptr,
     -1,
-    weights_methods
+    weights_methods,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
 };
 
 PyMODINIT_FUNC PyInit_weights(void)
