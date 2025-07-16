@@ -362,7 +362,9 @@ namespace search
         INLINE bool has_improved() const { return improvement() > 0; }
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
 
-        const HistoryStats& history_stats(const Move&) const;
+        const HistoryStats history_stats(const Move&) const;
+        bool        has_high_score(HistoryStats) const;
+        bool        has_low_score(HistoryStats) const;
         bool        has_low_history_score(const Move&) const;
 
         score_t     improvement() const;
@@ -811,16 +813,27 @@ namespace search
     }
 
 
-    INLINE const HistoryStats& Context::history_stats(const Move& move) const
+    INLINE const HistoryStats Context::history_stats(const Move& move) const
     {
         return _tt->history_stats(state(), turn(), move);
     }
 
 
+    INLINE bool Context::has_high_score(HistoryStats stat) const
+    {
+        return stat.valid() ? get_tt()->history_score_is_high(stat) : false;
+    }
+
+
+    INLINE bool Context::has_low_score(HistoryStats stat) const
+    {
+        return stat.valid() ? get_tt()->history_score_is_low(stat) : false;
+    }
+
+
     INLINE bool Context::has_low_history_score(const Move& move) const
     {
-        const auto& stats = history_stats(move);
-        return stats.valid() && _tt->history_score_is_low(stats);
+        return has_low_score(history_stats(move));
     }
 
 

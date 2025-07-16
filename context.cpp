@@ -1697,10 +1697,10 @@ namespace search
             }
             else if constexpr (Phase == 3)
             {
-                const auto& hist_stat = ctxt.history_stats(move);
-                const auto hist_score = hist_stat.valid() ? hist_stat.ratio() : 0;
+                const auto hist_stats = ctxt.history_stats(move);
+                const auto hist_score = hist_stats.valid() ? hist_stats.ratio() : 0;
 
-                if (hist_stat.valid() && ctxt.get_tt()->history_score_is_high(hist_stat))
+                if (ctxt.has_high_score(hist_stats))
                 {
                     make_move<true>(ctxt, move, MoveOrder::HISTORY_COUNTERS, hist_score);
                 }
@@ -1715,8 +1715,8 @@ namespace search
                     if (make_move<true>(ctxt, move, MoveOrder::TACTICAL_MOVES, hist_score))
                         ASSERT(move._score == hist_score);
                 }
-                else if (hist_stat.valid()
-                    && !ctxt.get_tt()->history_score_is_low(hist_stat)
+                else if (hist_stats.valid()
+                    && !ctxt.get_tt()->history_score_is_low(hist_stats)
                     && make_move<true>(ctxt, move, futility)
                     && (move._state->has_fork(!move._state->turn) || is_direct_check(move)))
                 {

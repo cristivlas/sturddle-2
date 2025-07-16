@@ -334,7 +334,7 @@ GROUP(MoveOrdering)
 DECLARE_VALUE(  COUNTER_MOVE_MIN_DEPTH,               3,    0,      20)
 
 DECLARE_VALUE(  HISTORY_HIGH,                        80,   65,     100)
-DECLARE_VALUE(  HISTORY_LOW,                         30,    0, HISTORY_HIGH)
+DECLARE_VALUE(  HISTORY_LOW,                         10,    0,      50)
 DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    0,    0,     100)
 
 GROUP(Eval)

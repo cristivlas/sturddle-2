@@ -256,14 +256,15 @@ namespace search
         using IndexedMoves = PieceMoveTable<BaseMove>;
     #endif /* USE_BUTTERFLY_TABLES */
 
+        void clear(); /* clear search stats, bump up generation */
+        void history_clear_reservoir();
         float history_percentile(size_t perc) const;
-        void history_update_percentiles(float ratio);
+        void history_update_percentiles(float ratio, uint64_t hash);
 
-        static constexpr size_t RESERVOIR_SIZE = 2000;
-
-        mutable float _history_reservoir[RESERVOIR_SIZE] = {};
+        static constexpr size_t RESERVOIR_SIZE = 8192;
+        alignas(64) mutable float _hist_rsvr[RESERVOIR_SIZE] = {};
         size_t _history_count = 0;
-        size_t _history_reservoir_count = 0;
+        size_t _hist_rsvr_sz = 0;
         mutable bool _history_dirty = false;
         mutable float _history_low_percentile = 0.0;
         mutable float _history_high_percentile = 0.0;
@@ -308,13 +309,11 @@ namespace search
         TranspositionTable() = default;
         ~TranspositionTable() = default;
 
-        void clear(); /* clear search stats, bump up generation */
-
         /* Re-initialize before new search or new game*/
         void init(bool new_game);
 
-        bool history_score_is_high(const HistoryStats& stats) const;
-        bool history_score_is_low(const HistoryStats& stats) const;
+        bool history_score_is_high(HistoryStats stats) const;
+        bool history_score_is_low(HistoryStats stats) const;
 
         template<typename C>
         BaseMove lookup_countermove(const C& ctxt) const;
@@ -335,7 +334,7 @@ namespace search
         template<typename C> void store_countermove(C& ctxt);
         void store_killer_move(const Context&);
 
-        const HistoryStats& history_stats(const State&, Color, const Move&) const;
+        HistoryStats history_stats(const State&, Color, const Move&) const;
 
         size_t hits() const { return _hits; }
         size_t nodes() const { return _nodes; }
@@ -361,11 +360,17 @@ namespace search
     };
 
 
-    /*
-     * https://www.chessprogramming.org/History_Heuristic
-     * https://www.chessprogramming.org/Relative_History_Heuristic
-     */
-    INLINE const HistoryStats&
+    INLINE void TranspositionTable::history_clear_reservoir()
+    {
+        _history_count = 0;
+        _hist_rsvr_sz = 0;
+        _history_dirty = false;
+        _history_low_percentile = 0.0;
+        _history_high_percentile = 0.0;
+    }
+
+
+    INLINE HistoryStats
     TranspositionTable::history_stats(const State& state, Color turn, const Move& move) const
     {
         ASSERT(move);
@@ -379,17 +384,17 @@ namespace search
     }
 
 
-    INLINE bool TranspositionTable::history_score_is_high(const HistoryStats& stats) const
+    INLINE bool TranspositionTable::history_score_is_high(HistoryStats stats) const
     {
         ASSERT(stats.valid());
-        return _history_reservoir_count ? stats.ratio() > history_percentile(HISTORY_HIGH) : false;
+        return _hist_rsvr_sz ? stats.ratio() > history_percentile(HISTORY_HIGH) : false;
     }
 
 
-    INLINE bool TranspositionTable::history_score_is_low(const HistoryStats& stats) const
+    INLINE bool TranspositionTable::history_score_is_low(HistoryStats stats) const
     {
         ASSERT(stats.valid());
-        return _history_reservoir_count ? stats.ratio() <= history_percentile(HISTORY_LOW) : false;
+        return _hist_rsvr_sz ? stats.ratio() <= history_percentile(HISTORY_LOW) : false;
     }
 
 
@@ -412,58 +417,8 @@ namespace search
         #endif /* USE_BUTTERFLY_TABLES */
 
             stats.template update<IsCutoff>();
-            history_update_percentiles(stats.ratio());
+            history_update_percentiles(stats.ratio(), move._state->hash());
         }
-    }
-
-
-    INLINE void TranspositionTable::history_update_percentiles(float ratio)
-    {
-        ++_history_count;
-
-        if (_history_reservoir_count < RESERVOIR_SIZE)
-        {
-            _history_reservoir[_history_reservoir_count++] = ratio;
-            _history_dirty = true;
-        }
-        else
-        {
-            const size_t j = rand() % _history_count;
-            if (j < RESERVOIR_SIZE)
-            {
-                _history_reservoir[j] = ratio;
-                _history_dirty = true;
-            }
-        }
-    }
-
-
-    INLINE float TranspositionTable::history_percentile(size_t perc) const
-    {
-        ASSERT(perc == HISTORY_LOW || perc == HISTORY_HIGH);
-        ASSERT(_history_reservoir_count > 0);
-
-        if (_history_dirty)
-        {
-            const float low_p = HISTORY_LOW / 100.0;
-            const float high_p = HISTORY_HIGH / 100.0;
-
-            const size_t low_index = size_t(low_p * (_history_reservoir_count - 1));
-            const size_t high_index = size_t(high_p * (_history_reservoir_count - 1));
-
-            std::nth_element(_history_reservoir, _history_reservoir + low_index, _history_reservoir + _history_reservoir_count);
-            _history_low_percentile = _history_reservoir[low_index];
-
-            std::nth_element(_history_reservoir + low_index, _history_reservoir + high_index, _history_reservoir + _history_reservoir_count);
-            _history_high_percentile = _history_reservoir[high_index];
-
-            _history_dirty = false;
-        }
-
-        if (perc == HISTORY_LOW)
-            return _history_low_percentile;
-        else
-            return _history_high_percentile;
     }
 
 
