@@ -821,18 +821,19 @@ namespace search
 
     INLINE bool Context::has_high_score(HistoryStats stat) const
     {
-        return stat.valid() ? get_tt()->history_score_is_high(stat) : false;
+        return stat.valid() ? get_tt()->history_score_is_high(stat, turn()) : false;
     }
 
 
     INLINE bool Context::has_low_score(HistoryStats stat) const
     {
-        return stat.valid() ? get_tt()->history_score_is_low(stat) : false;
+        return stat.valid() ? get_tt()->history_score_is_low(stat, turn()) : false;
     }
 
 
     INLINE bool Context::has_low_history_score(const Move& move) const
     {
+        ASSERT(move._state && move._state->turn != turn());
         return has_low_score(history_stats(move));
     }
 
@@ -1571,7 +1572,9 @@ namespace search
         move._state->apply_move(move);
 
         /* History-based pruning. */
-        if (LateMovePrune && ctxt.depth() > HISTORY_MIN_DEPTH)
+        if (LateMovePrune
+            && ctxt.depth() > HISTORY_MIN_PRUNE_DEPTH
+            && ctxt.depth() <= HISTORY_MIN_PRUNE_DEPTH)
         {
             if (ctxt.has_low_history_score(move) && ctxt.can_prune_move<true>(move))
             {

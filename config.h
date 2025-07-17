@@ -332,10 +332,11 @@ DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              36,   20,     100)
 
 GROUP(MoveOrdering)
 DECLARE_VALUE(  COUNTER_MOVE_MIN_DEPTH,               3,    0,      20)
-
-DECLARE_VALUE(  HISTORY_HIGH,                        80,   65,     100)
-DECLARE_VALUE(  HISTORY_LOW,                         10,    0,      50)
-DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    0,    0,     100)
+DECLARE_VALUE(  HISTORY_HIGH_Z,                     165,  100,     300)
+DECLARE_VALUE(  HISTORY_LOW_Z,                     -150, -300,     300)
+DECLARE_VALUE(  HISTORY_MAX_PRUNE_DEPTH,             12,    0,      20)
+DECLARE_VALUE(  HISTORY_MIN_PRUNE_DEPTH,              3,    0,       7)
+DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    0,    0,      10)
 
 GROUP(Eval)
 /****************************************************************************/

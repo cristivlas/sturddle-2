@@ -161,6 +161,10 @@ void TranspositionTable::clear()
     {
         _countermoves[color].clear();
         _hcounters[color].clear();
+
+        _history_cutoffs[color] = 0;
+        _history_total[color] = 0;
+        _history_stddev[color] = std::numeric_limits<float>::quiet_NaN();
     }
 
     _table.increment_generation();
@@ -176,8 +180,6 @@ void TranspositionTable::init(bool new_game)
         _table.clear(true); /* Clear the hash_table shared by all threads */
         _killer_moves.fill({});
 
-        history_clear_reservoir();
-
         Context::clear_moves_cache();
     }
     else
@@ -186,56 +188,6 @@ void TranspositionTable::init(bool new_game)
     }
 
     _eval_depth = 0; /* Reset selective depth */
-}
-
-
-void TranspositionTable::history_update_percentiles(float ratio, uint64_t hash)
-{
-    ++_history_count;
-
-    if (_hist_rsvr_sz < RESERVOIR_SIZE)
-    {
-        _hist_rsvr[_hist_rsvr_sz++] = ratio;
-        _history_dirty = true;
-    }
-    else
-    {
-        const size_t j = hash % _history_count;
-        if (j < RESERVOIR_SIZE)
-        {
-            _hist_rsvr[j] = ratio;
-            _history_dirty = true;
-        }
-    }
-}
-
-
-float TranspositionTable::history_percentile(size_t perc) const
-{
-    ASSERT(perc == HISTORY_LOW || perc == HISTORY_HIGH);
-    ASSERT(_hist_rsvr_sz > 0);
-
-    if (_history_dirty)
-    {
-        const float low_p = HISTORY_LOW / 100.0;
-        const float high_p = HISTORY_HIGH / 100.0;
-
-        const size_t low_index = size_t(low_p * (_hist_rsvr_sz - 1));
-        const size_t high_index = size_t(high_p * (_hist_rsvr_sz - 1));
-
-        std::nth_element(_hist_rsvr, _hist_rsvr + low_index, _hist_rsvr + _hist_rsvr_sz);
-        _history_low_percentile = _hist_rsvr[low_index];
-
-        std::nth_element(_hist_rsvr + low_index, _hist_rsvr + high_index, _hist_rsvr + _hist_rsvr_sz);
-        _history_high_percentile = _hist_rsvr[high_index];
-
-        _history_dirty = false;
-    }
-
-    if (perc == HISTORY_LOW)
-        return _history_low_percentile;
-    else
-        return _history_high_percentile;
 }
 
 

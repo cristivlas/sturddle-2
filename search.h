@@ -257,23 +257,23 @@ namespace search
     #endif /* USE_BUTTERFLY_TABLES */
 
         void clear(); /* clear search stats, bump up generation */
-        void history_clear_reservoir();
-        float history_percentile(size_t perc) const;
-        void history_update_percentiles(float ratio, uint64_t hash);
 
-        static constexpr size_t RESERVOIR_SIZE = 8192;
-        alignas(64) mutable float _hist_rsvr[RESERVOIR_SIZE] = {};
-        size_t _history_count = 0;
-        size_t _hist_rsvr_sz = 0;
-        mutable bool _history_dirty = false;
-        mutable float _history_low_percentile = 0.0;
-        mutable float _history_high_percentile = 0.0;
+        float history_stddev(Color turn) const;
 
         /* https://www.chessprogramming.org/Countermove_Heuristic */
         IndexedMoves        _countermoves[2];
 
         KillerMovesTable    _killer_moves;  /* killer moves at each ply */
         HistoryCounters     _hcounters[2];  /* History heuristic counters. */
+
+        size_t _history_cutoffs[2] = {0, 0};
+        size_t _history_total[2] = {0, 0};
+
+        mutable float _history_stddev[2] = {
+            std::numeric_limits<float>::quiet_NaN(),
+            std::numeric_limits<float>::quiet_NaN()
+        };
+
         static HashTable    _table;         /* shared hashtable */
 
     public:
@@ -312,8 +312,8 @@ namespace search
         /* Re-initialize before new search or new game*/
         void init(bool new_game);
 
-        bool history_score_is_high(HistoryStats stats) const;
-        bool history_score_is_low(HistoryStats stats) const;
+        bool history_score_is_high(HistoryStats stats, Color turn) const;
+        bool history_score_is_low(HistoryStats stats, Color turn) const;
 
         template<typename C>
         BaseMove lookup_countermove(const C& ctxt) const;
@@ -360,16 +360,6 @@ namespace search
     };
 
 
-    INLINE void TranspositionTable::history_clear_reservoir()
-    {
-        _history_count = 0;
-        _hist_rsvr_sz = 0;
-        _history_dirty = false;
-        _history_low_percentile = 0.0;
-        _history_high_percentile = 0.0;
-    }
-
-
     INLINE HistoryStats
     TranspositionTable::history_stats(const State& state, Color turn, const Move& move) const
     {
@@ -384,17 +374,37 @@ namespace search
     }
 
 
-    INLINE bool TranspositionTable::history_score_is_high(HistoryStats stats) const
+    INLINE bool TranspositionTable::history_score_is_high(HistoryStats stats, Color turn) const
     {
         ASSERT(stats.valid());
-        return _hist_rsvr_sz ? stats.ratio() > history_percentile(HISTORY_HIGH) : false;
+
+        const auto stddev = history_stddev(turn);
+        if (std::isnan(stddev))
+            return false;
+
+        ASSERT(_history_total[turn]);
+
+        const auto overall_rate = float(_history_cutoffs[turn]) / _history_total[turn];
+        const auto z_score = (stats.ratio() - overall_rate) / stddev;
+
+        return z_score >= HISTORY_HIGH_Z / 100.0;
     }
 
 
-    INLINE bool TranspositionTable::history_score_is_low(HistoryStats stats) const
+    INLINE bool TranspositionTable::history_score_is_low(HistoryStats stats, Color turn) const
     {
         ASSERT(stats.valid());
-        return _hist_rsvr_sz ? stats.ratio() <= history_percentile(HISTORY_LOW) : false;
+
+        const auto stddev = history_stddev(turn);
+        if (std::isnan(stddev))
+            return false;
+
+        ASSERT(_history_total[turn]);
+
+        const auto overall_rate = float(_history_cutoffs[turn]) / _history_total[turn];
+        const auto z_score = (stats.ratio() - overall_rate) / stddev;
+
+        return z_score <= HISTORY_LOW_Z / 100.0;
     }
 
 
@@ -417,8 +427,49 @@ namespace search
         #endif /* USE_BUTTERFLY_TABLES */
 
             stats.template update<IsCutoff>();
-            history_update_percentiles(stats.ratio(), move._state->hash());
+
+            /* invalidate stddev-like cached value */
+            _history_stddev[turn] = std::numeric_limits<float>::quiet_NaN();
+
+            ++_history_total[turn];
+
+            if constexpr (IsCutoff)
+                ++_history_cutoffs[turn];
         }
+    }
+
+
+    /*
+     * Compute standard-dev-like. Instead of mean use the average success (cutoff) rate.
+     */
+    INLINE float search::TranspositionTable::history_stddev(Color turn) const
+    {
+        // ProfileScope<class STDDEV> profile;
+
+        if (std::isnan(_history_stddev[turn]) && _history_total[turn])
+        {
+            float v = 0;
+            const auto avg = float(_history_cutoffs[turn]) / _history_total[turn];
+
+            size_t n = 0;
+            for (const auto& stats : _hcounters[turn]._table)
+            {
+                for (const auto& stat : stats)
+                {
+                    if (!stat.valid()) continue;
+
+                    const auto diff = stat.ratio() - avg;
+                    v += diff * diff;
+
+                    ++n;
+                }
+            }
+
+            if (n)
+                _history_stddev[turn] = std::sqrt(v / n);
+        }
+
+        return _history_stddev[turn];
     }
 
 

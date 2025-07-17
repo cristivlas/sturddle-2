@@ -1716,7 +1716,7 @@ namespace search
                         ASSERT(move._score == hist_score);
                 }
                 else if (hist_stats.valid()
-                    && !ctxt.get_tt()->history_score_is_low(hist_stats)
+                    && !ctxt.get_tt()->history_score_is_low(hist_stats, ctxt.turn())
                     && make_move<true>(ctxt, move, futility)
                     && (move._state->has_fork(!move._state->turn) || is_direct_check(move)))
                 {
