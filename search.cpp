@@ -129,7 +129,7 @@ HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE);
 
 
 /* Prepare for new search. This clears MOST of the state.
- * Before a new game, _plyHistory, _killer_moves and the
+ * Before a new game, _ply_history, _killer_moves and the
  * thread-shared hash_table must be also cleared.
  */
 void TranspositionTable::clear()
@@ -167,28 +167,25 @@ void TranspositionTable::clear()
 }
 
 
-/* static */ void TranspositionTable::clear_shared_hashtable(bool wipe)
-{
-    _table.clear(wipe);
-    Context::clear_moves_cache();
-}
-
-
 void TranspositionTable::init(bool new_game)
 {
     clear();
 
     if (new_game)
     {
-        clear_shared_hashtable(new_game);
+        search::Context::log_message(LogLevel::DEBUG, "init: game");
+        _table.clear(true);
+
+        Context::clear_caches_and_stacks();
 
         _killer_moves.fill({});
-        _plyHistory.fill({});
+        _ply_history.fill({});
     }
     else
     {
+        search::Context::log_message(LogLevel::DEBUG, "init: search");
         shift_left_2(_killer_moves.begin(), _killer_moves.end());
-        shift_left_2(_plyHistory.begin(), _plyHistory.end());
+        shift_left_2(_ply_history.begin(), _ply_history.end());
     }
 
     _eval_depth = 0; /* Reset selective depth */
@@ -797,7 +794,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     {
                         if (ctxt._ply < PLY_HISTORY_MAX && abs(move_score) < MATE_HIGH)
                         {
-                            auto& h = table._plyHistory[ctxt._ply][ctxt.turn()][next_ctxt->_move];
+                            auto& h = table._ply_history[ctxt._ply][ctxt.turn()][next_ctxt->_move];
                             h.first += next_ctxt->improvement() / ctxt.depth();
                             ++h.second;
                         }
@@ -808,7 +805,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         if (ctxt._alpha + KILLER_MOVES_DEPTH_MARGIN / ctxt.depth() + KILLER_MOVES_MARGIN >= ctxt._beta)
                             table.store_killer_move(ctxt);
 
-                        if (next_ctxt->depth() >= HISTORY_MIN_DEPTH)
+                        if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_check())
                             table.history_update_cutoffs(next_ctxt->_move);
                     }
                 }
@@ -821,7 +818,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             {
                 continue;
             }
-            else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_capture())
+            else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_capture() && !next_ctxt->is_check())
             {
                 table.history_update_non_cutoffs(next_ctxt->_move);
             }

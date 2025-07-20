@@ -324,7 +324,7 @@ namespace search
 
         int64_t     check_time_and_update_nps(); /* return elapsed milliseconds */
 
-        static void clear_moves_cache();
+        static void clear_caches_and_stacks();
 
         Context*    clone(ContextBuffer&, int ply = 0) const;
 
@@ -782,7 +782,11 @@ namespace search
     template<std::size_t... I>
     static constexpr std::array<int, sizeof ... (I)> margins(std::index_sequence<I...>)
     {
+    #if 0
+        return { static_cast<int>(75 * I + pow(I, 1.99)) ... };
+    #else
         return { static_cast<int>(std::min(75.0 * I + pow(I, 1.99), 1289.0 + 200.0 * log(I))) ... };
+    #endif
     }
 
 
@@ -1306,6 +1310,7 @@ namespace search
         ASSERT(_phase > 1);
 
         return ctxt.depth() > 1 /* do not LMP leaf nodes */
+            && ctxt.depth() < LMP_MAX_DEPTH
             && _current >= LMP[ctxt.depth() - 1]
             && ctxt.can_forward_prune();
     }
@@ -1561,18 +1566,21 @@ namespace search
 
         move._state->apply_move(move);
 
+    #if 0
         if constexpr(LateMovePrune)
         {
             /* History-based pruning. */
-            if (ctxt.depth() > 0
-                && ctxt.history_count(move) >= HISTORY_PRUNE * pow2(ctxt.depth())
+            if (   ctxt.depth() > HISTORY_MIN_PRUNE_DEPTH
+                && ctxt.depth() < HISTORY_MAX_PRUNE_DEPTH
+                && ctxt.history_count(move) > 0
                 && ctxt.history_score(move) < HISTORY_LOW
-                && ctxt.can_prune_move(move))
+                && ctxt.can_prune_move<true>(move))
             {
                 mark_as_pruned(ctxt, move);
                 return false;
             }
         }
+    #endif
 
     #if GROUP_QUIET_MOVES
         if (_group_quiet_moves && is_quiet(move))

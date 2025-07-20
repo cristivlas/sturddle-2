@@ -243,12 +243,11 @@ namespace search
         HistoryCounters     _hcounters[2]; /* History heuristic counters. */
         static HashTable    _table;        /* shared hashtable */
 
+        void clear(); /* clear search stats, bump up generation */
+
     public:
         TranspositionTable() = default;
         ~TranspositionTable() = default;
-
-               void clear(); /* clear search stats, bump up generation */
-        static void clear_shared_hashtable(bool wipe = false); /* call before new game */
 
         /* Re-initialize before new search or new game*/
         void init(bool new_game);
@@ -256,7 +255,7 @@ namespace search
         int _tid = 0;
         int _iteration = 0;
         int _eval_depth = 0;
-        PlyHistory _plyHistory;
+        PlyHistory _ply_history;
 
         /* search window bounds */
         score_t _w_alpha = SCORE_MIN;
@@ -361,13 +360,14 @@ namespace search
         float score = 0;
         if (ply < PLY_HISTORY_MAX)
         {
-            const auto& h = _plyHistory[ply][turn].lookup(move);
+            const auto& h = _ply_history[ply][turn].lookup(move);
             if (h.second)
                 score = h.first / double(h.second * HISTORY_SCORE_DIV);
         }
         const auto& counters = historical_counters(state, turn, move);
         ASSERT(counters.first <= counters.second);
 
+        /* blend scores */
         return score + (counters.second < 1 ? 0 : (double(HISTORY_SCORE_MUL) * counters.first) / counters.second);
     }
 

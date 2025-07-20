@@ -264,6 +264,7 @@ DECLARE_CONST(  DOUBLE_EXT_MAX,                       2,    0,       5)
 DECLARE_VALUE(  EXCHANGES_MAX_DEPTH,                  4,    2,      32)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_THRESHOLD,        4,    0,      10)
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
+
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                 25,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_DEPTH_MARGIN,          261,   10,     300)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
@@ -332,16 +333,24 @@ DECLARE_VALUE(  WINDOW_HALF,                         25,    5,     100)
 /* Time management */
 DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              36,   20,     100)
 
+// #undef DECLARE_VALUE
+// #define DECLARE_VALUE DECLARE_NORMAL // Tune --------------------------
 GROUP(MoveOrdering)
-DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 223,    0,     500)
-DECLARE_VALUE(  COUNTER_MOVE_MIN_DEPTH,               3,    0,      20)
-DECLARE_VALUE(  HISTORY_COUNT_HIGH,               88415,    1,  100000)
-DECLARE_VALUE(  HISTORY_SCORE_DIV,                   86,    1,     200)
-DECLARE_VALUE(  HISTORY_SCORE_MUL,                  259,    0,    1000)
-DECLARE_VALUE(  HISTORY_HIGH,                        92,    0,     100)
-DECLARE_VALUE(  HISTORY_LOW,                         65,    0, HISTORY_HIGH)
+DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 218,   50,     250)
+DECLARE_VALUE(  COUNTER_MOVE_MIN_DEPTH,               2,    0,       5)
+
+DECLARE_VALUE(  HISTORY_SCORE_DIV,                   85,   50,     100)
+DECLARE_VALUE(  HISTORY_SCORE_MUL,                  258,  200,     280)
+DECLARE_VALUE(  HISTORY_HIGH,                        91,   50,     150)
+DECLARE_VALUE(  HISTORY_LOW,                         12,    0,      70)
 DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,     100)
-DECLARE_VALUE(  HISTORY_PRUNE,                       67,    0,     100)
+//DECLARE_VALUE(  HISTORY_MAX_PRUNE_DEPTH,              7,    0,      20)
+//DECLARE_VALUE(  HISTORY_MIN_PRUNE_DEPTH,              3,    0,       7)
+
+DECLARE_VALUE(  LMP_MAX_DEPTH,                        7,    0,      20)
+
+// #undef DECLARE_VALUE
+// #define DECLARE_VALUE DECLARE_CONST // ---------------------------------
 
 GROUP(Eval)
 

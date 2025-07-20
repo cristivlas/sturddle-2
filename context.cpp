@@ -297,7 +297,9 @@ using LMOVEType = nnue::Layer<INPUTS_A, 4096>;
  * spatial attention layer, which moodulates the outputs of the L1A layer.
  */
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
-static std::vector<std::array<Accumulator, PLY_MAX>> NNUE_data(SMP_CORES);
+using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
+
+static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
 
 #if !SHARED_WEIGHTS
 static struct
@@ -615,11 +617,23 @@ namespace search
     }
 
 
-    /* static */ void Context::clear_moves_cache()
+    /* static */ void Context::clear_caches_and_stacks()
     {
         for (auto& cache : _moves_cache)
         {
             cache.clear();
+        }
+
+        for (auto& stack : _move_stacks)
+        {
+            for (auto& moves : stack)
+                moves.clear();
+        }
+
+        for (auto& stack : _state_stacks)
+        {
+            for (auto& pool : stack)
+                pool.clear();
         }
     }
 
@@ -1143,16 +1157,6 @@ namespace search
             _extension += _move.from_square() == _parent->_capture_square;
             _extension += is_recapture() * (is_pv_node() * (ONE_PLY - 1) + 1);
 
-        #if 0 /* This can hurt on fast hardware */
-            /*
-             * extend if move has historically high cutoff percentages and counts
-             */
-            _extension += ONE_PLY
-                * (_move == _parent->tt_entry()._hash_move)
-                * (abs(_parent->tt_entry()._value) < MATE_HIGH)
-                * (_parent->history_count(_move) > HISTORY_COUNT_HIGH)
-                * (_parent->history_score(_move) > HISTORY_HIGH);
-        #endif /* 0 */
             const auto double_extension_ok = (_double_ext <= DOUBLE_EXT_MAX);
             const auto extend = std::min(1 + double_extension_ok, _extension / ONE_PLY);
 
@@ -1314,11 +1318,14 @@ namespace search
 
             if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= 13)
                 ++reduction;
-            reduction -= _parent->history_count(_move) / HISTORY_COUNT_HIGH;
         }
 
         if (is_capture() || (_move.from_square() == _parent->_capture_square))
             --reduction;
+
+        const auto hist_score = _parent->history_score(_move);
+        if (hist_score > 0 && hist_score < HISTORY_LOW)
+            ++reduction;
 
         reduction = std::max(1, reduction);
         if (reduction > depth && can_prune())
@@ -1740,6 +1747,7 @@ namespace search
                     if (make_move<true>(ctxt, move, MoveOrder::TACTICAL_MOVES, hist_score))
                         ASSERT(move._score == hist_score);
                 }
+            #if 0
                 else if (move._score >= HISTORY_LOW
                     && make_move<true>(ctxt, move, futility)
                     && (move._state->has_fork(!move._state->turn) || is_direct_check(move)))
@@ -1747,6 +1755,7 @@ namespace search
                     move._group = MoveOrder::TACTICAL_MOVES;
                     move._score = hist_score;
                 }
+            #endif
             }
             else /* Phase == 4 */
             {
@@ -1840,8 +1849,6 @@ score_t eval(const std::string& fen, bool as_white, int depth, int millis)
 
     chess::parse_fen(fen, state);
     ASSERT(state.piece_count() == chess::popcount(state.occupied()));
-
-    search::TranspositionTable::clear_shared_hashtable();
 
     search::TranspositionTable tt;
     tt.init(true);

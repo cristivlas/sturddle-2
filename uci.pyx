@@ -405,7 +405,6 @@ class UCI:
 
 
     def _ucinewgame(self, *_):
-        engine.clear_hashtable()
         self.init_algo()
         return self._position(['position', chess.STARTING_FEN])
 
