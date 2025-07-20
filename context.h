@@ -1288,7 +1288,6 @@ namespace search
             }
             else
             {
-                // moves = std::max(AVERAGE_MOVES_PER_GAME / (2 + int(bonus > 0)), estimated_moves_left);
                 moves = std::max(AVERAGE_MOVES_PER_GAME / (2 + 2 * int(bonus > 0)), estimated_moves_left);
             }
         }
