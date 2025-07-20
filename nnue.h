@@ -214,7 +214,7 @@ namespace nnue
     INLINE Vec16s relu<Vec16s>(Vec16s v) { return max(v, v16_zero); }
 
     template <int N>
-    INLINE void activation(const int16_t (&input)[N], float (&output)[N])
+    INLINE void activate(const int16_t (&input)[N], float (&output)[N])
     {
         constexpr float QSCALE_RECIP = 1.0f / QSCALE;
 
@@ -712,7 +712,7 @@ namespace nnue
         pool(a._output_a, l2_in);
 
         /* The "spatial attention" layer modulates L2. */
-        activation(a._output_b, attn_in); // process output of hidden_1b
+        activate(a._output_b, attn_in); // process output of hidden_1b
         attn.dot(attn_in, attn_out, [](const Vector& v) { return max(v, v_zero); });
 
         static_assert(L2::INPUTS % Vector::size() == 0);
@@ -736,7 +736,7 @@ namespace nnue
 
 
     template <typename T>
-    INLINE void sort_moves(T& moves, const float(& logits)[4096])
+    INLINE void sort_moves(T& moves, const int16_t(& logits)[4096])
     {
         for (auto& move : moves)
         {
@@ -754,9 +754,9 @@ namespace nnue
     template <typename I, typename L, typename T>
     INLINE void predict_moves(const I& input, const L& moves, T& pseudo_legal_moves)
     {
-        ALIGN float logits[L::OUTPUTS];
+        ALIGN int16_t logits[L::OUTPUTS];
+        moves.dot(input, logits);
 
-        moves.dot(input, logits, [](const Vector& v) { return v; });
         sort_moves(pseudo_legal_moves, logits);
     }
 } /* namespace nnue */

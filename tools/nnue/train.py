@@ -209,6 +209,8 @@ def make_model(args, strategy):
 
         hidden_2 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_2')(weighted)
         hidden_3 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_3')(hidden_2)
+        #hidden_2 = Dense(16, activation='swish', kernel_initializer=K_INIT, name='hidden_2')(weighted)
+        #hidden_3 = Dense(16, activation='swish', kernel_initializer=K_INIT, name='hidden_3')(hidden_2)
 
         # Define the position evaluation output (original output)
         eval_output = Dense(1, name='out', dtype='float32')(hidden_3)
@@ -226,6 +228,8 @@ def make_model(args, strategy):
                 # Use smaller initialization to prevent gradient explosion
                 kernel_initializer=tf.keras.initializers.RandomNormal(0, 0.01),
                 bias_initializer=tf.keras.initializers.Zeros(),
+                kernel_constraint=constr_a,
+                bias_constraint=constr_a,
                 name='move',
                 dtype='float32'
             )(stop_grad)

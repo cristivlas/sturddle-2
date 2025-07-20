@@ -344,8 +344,6 @@ DECLARE_VALUE(  HISTORY_SCORE_MUL,                  258,  200,     280)
 DECLARE_VALUE(  HISTORY_HIGH,                        91,   50,     150)
 DECLARE_VALUE(  HISTORY_LOW,                         12,    0,      70)
 DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,     100)
-//DECLARE_VALUE(  HISTORY_MAX_PRUNE_DEPTH,              7,    0,      20)
-//DECLARE_VALUE(  HISTORY_MIN_PRUNE_DEPTH,              3,    0,       7)
 
 DECLARE_VALUE(  LMP_MAX_DEPTH,                        7,    0,      20)
 

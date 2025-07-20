@@ -1566,22 +1566,6 @@ namespace search
 
         move._state->apply_move(move);
 
-    #if 0
-        if constexpr(LateMovePrune)
-        {
-            /* History-based pruning. */
-            if (   ctxt.depth() > HISTORY_MIN_PRUNE_DEPTH
-                && ctxt.depth() < HISTORY_MAX_PRUNE_DEPTH
-                && ctxt.history_count(move) > 0
-                && ctxt.history_score(move) < HISTORY_LOW
-                && ctxt.can_prune_move<true>(move))
-            {
-                mark_as_pruned(ctxt, move);
-                return false;
-            }
-        }
-    #endif
-
     #if GROUP_QUIET_MOVES
         if (_group_quiet_moves && is_quiet(move))
         {

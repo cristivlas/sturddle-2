@@ -289,7 +289,7 @@ using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE>;
 using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2>;
 using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
 using EVALType = nnue::Layer<HIDDEN_3, 1>;
-using LMOVEType = nnue::Layer<INPUTS_A, 4096>;
+using LMOVEType = nnue::Layer<INPUTS_A, 4096, int16_t, nnue::QSCALE>;
 /*
  * The accumulator takes the inputs and processes them into two outputs,
  * using layers L1A and L1B. L1B processes the 1st 256 inputs, which
@@ -1583,7 +1583,7 @@ namespace search
     #if USE_ROOT_MOVES
         if (order_root_moves && ctxt._time_limit >= ROOT_MOVES_MIN_TIME)
         {
-            float input[nnue::round_up<16>(INPUTS_A)] = {};
+            int16_t input[nnue::round_up<16>(INPUTS_A)] = {};
             nnue::one_hot_encode(ctxt.state(), input);
             nnue::predict_moves(input, model.L_M, moves_list);
 
@@ -1599,7 +1599,7 @@ namespace search
                 }
                 else if (make_move<false>(ctxt, move, MoveOrder::ROOT_MOVES, move._score))
                 {
-                    std::cout << "info string " << move << ": " << move._score << std::endl;
+                    // std::cout << "info string " << move << ": " << move._score / nnue::QSCALE << std::endl;
                     ++count;
                 }
                 else
@@ -1747,15 +1747,6 @@ namespace search
                     if (make_move<true>(ctxt, move, MoveOrder::TACTICAL_MOVES, hist_score))
                         ASSERT(move._score == hist_score);
                 }
-            #if 0
-                else if (move._score >= HISTORY_LOW
-                    && make_move<true>(ctxt, move, futility)
-                    && (move._state->has_fork(!move._state->turn) || is_direct_check(move)))
-                {
-                    move._group = MoveOrder::TACTICAL_MOVES;
-                    move._score = hist_score;
-                }
-            #endif
             }
             else /* Phase == 4 */
             {
