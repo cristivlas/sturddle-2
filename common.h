@@ -161,11 +161,9 @@ constexpr size_t DEFAULT_HASH_TABLE_SIZE =  32;
 /*
  * Use this magic_bits implementation instead of attacks.h:
  * https://github.com/goutham/magic-bits
- *
- * Turn ON if compilation is too slow (some compilers don't like huge static tables).
  */
 #if !defined(USE_MAGIC_BITS)
-  #define USE_MAGIC_BITS                    false
+  #define USE_MAGIC_BITS                    true
 #endif
 
 /*
