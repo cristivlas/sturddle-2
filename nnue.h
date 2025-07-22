@@ -53,7 +53,6 @@ namespace nnue
     using namespace chess;
     using input_t = int16_t;
 
-    constexpr auto POOL_STRIDE = Vec8s::size();
     constexpr int QSCALE = 1024;
 
     /* bit index of the side-to-move feature within one-hot encoding */
@@ -93,10 +92,6 @@ namespace nnue
 #else
     static const std::string instrset = ARCH;
 #endif /* __FMA__ */
-
-    static const Vector v_zero(0.0);
-    static const Vec8s  v8_zero(0);
-    static const Vec16s v16_zero(0);
 
 
     INLINE Vec16s horizontal_add(const Vec16s (&v)[16])
@@ -201,48 +196,18 @@ namespace nnue
         return (color ? 833 : 769) + 63 - square;
     }
 
-    /** Rectified Linear Unit (reLU) activation */
-    template <typename V> INLINE V relu(V v) { return max(v, 0); }
 
+    // Alpha = 1.0 / 64
+    template <typename V> INLINE V leaky_relu(V v) { return max(v, v * 0.015625); }
+
+#if __ARM__
     template <>
-    INLINE Vector relu<Vector>(Vector v) { return max(v, v_zero); }
-
-    template <>
-    INLINE Vec8s relu<Vec8s>(Vec8s v) { return max(v, v8_zero); }
-
-    template <>
-    INLINE Vec16s relu<Vec16s>(Vec16s v) { return max(v, v16_zero); }
-
-    template <int N>
-    INLINE void activate(const int16_t (&input)[N], float (&output)[N])
-    {
-        constexpr float QSCALE_RECIP = 1.0f / QSCALE;
-
-#if __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC
-        /* Vec8f supported only on FP16 (half-precision) Neon */
-        #pragma clang loop vectorize(enable)
-        for (int i = 0; i != N; ++i)
-            output[i] = std::max<float>(0, float(input[i]) * QSCALE_RECIP);
+    INLINE Vec16s leaky_relu<Vec16s>(Vec16s v) { return max(v, shift_right<6>(v)); }
 #else
-    #if INSTRSET < 9
-        using VF = Vec8f;
-        using VS = Vec8s;
-    #else
-        using VF = Vec16f;
-        using VS = Vec16s;
-    #endif /* AVX512 */
+    template <>
+    INLINE Vec16s leaky_relu<Vec16s>(Vec16s v) { return max(v, v >> 6); }
+#endif
 
-        static_assert(N % VF::size() == 0);
-
-        const VF v_scale(QSCALE_RECIP);
-
-        for (size_t i = 0; i < N; i += VF::size())
-        {
-            VF v = to_float(extend(relu(VS().load_a(&input[i]))));
-            (v * v_scale).store_a(&output[i]);
-        }
-#endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
-    }
 
     template <int I, int O, typename T, int Scale>
     struct BaseLayer
@@ -415,37 +380,6 @@ namespace nnue
         }
     };
 
-
-    template <size_t INPUTS, size_t OUTPUTS>
-    INLINE void pool(const int16_t (&in)[INPUTS], float (&out)[OUTPUTS])
-    {
-        static_assert(INPUTS % OUTPUTS == 0);
-        static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
-
-    #if INSTRSET < 8
-        Vec8s v;
-
-        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
-        {
-            v.load_a(&in[i]);
-            v = max(v, v8_zero);
-
-            out[j] = float(::horizontal_add(extend(v))) / POOL_STRIDE / QSCALE;
-        }
-    #else
-        /* AVX2 (or better) */
-        static_assert(INPUTS % (2 * POOL_STRIDE) == 0);
-        Vec16s v;
-
-        for (size_t i = 0, j = 0; i + 2 * POOL_STRIDE <= INPUTS; i += 2 * POOL_STRIDE, j += 2)
-        {
-            v.load_a(&in[i]);
-
-            out[j] = float(::horizontal_add(extend(max(v.get_low(), v8_zero)))) / POOL_STRIDE / QSCALE;
-            out[j + 1] = float(::horizontal_add(extend(max(v.get_high(), v8_zero)))) / POOL_STRIDE / QSCALE;
-        }
-    #endif /* INSTRSET < 8 */
-    }
 
 
     template <int M, int N, int O> struct Accumulator
@@ -696,39 +630,95 @@ namespace nnue
     };
 
 
-    template <typename A, typename ATTN, typename L2, typename L3, typename OUT>
-    INLINE int eval(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out)
-    {
-        static_assert(A::OUTPUTS_A == L2::INPUTS * POOL_STRIDE);
-        static_assert(A::OUTPUTS_B == ATTN::INPUTS);
+    static const Vector SCALE(1.0 / QSCALE);
 
-        ALIGN float attn_in[ATTN::INPUTS];
-        ALIGN float attn_out[ATTN::OUTPUTS];
+
+    template <typename A, typename L2, typename L3, typename OUT>
+    INLINE int eval(const A& a, const L2& l2, const L3& l3, const OUT& out)
+    {
+        ALIGN float a_out[A::OUTPUTS_A] = {};
         ALIGN float l2_in[L2::INPUTS];
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
 
-        pool(a._output_a, l2_in);
+        /* Multiply/add output_a by output_b (tiled) */
+        static_assert(A::OUTPUTS_A == 16 * A::OUTPUTS_B);
 
-        /* The "spatial attention" layer modulates L2. */
-        activate(a._output_b, attn_in); // process output of hidden_1b
-        attn.dot(attn_in, attn_out, [](const Vector& v) { return max(v, v_zero); });
+        Vec16s v1s, v2s;
 
-        static_assert(L2::INPUTS % Vector::size() == 0);
-
-        Vector v1, v2;
-        for (int i = 0; i != L2::INPUTS; i += Vector::size())
+    #if __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+        for (int i = 0; i != A::OUTPUTS_A; i += 16)
         {
-            v1.load_a(&l2_in[i]);
-            v2.load_a(&attn_out[i % ATTN::OUTPUTS]);
+            v1s.load_a(&a._output_a[i]);
+            v2s.load_a(&a._output_b[i % A::OUTPUTS_B]);
+            v1s = leaky_relu(v1s);
+            v2s = leaky_relu(v2s);
 
-            mul_add(v1, v2, v1).store_a(&l2_in[i]);
+            // Process low 8 elements (split into two Vec4f)
+            Vec8s v1s_low = v1s.get_low();
+            Vec8s v2s_low = v2s.get_low();
+
+            // First 4 elements
+            Vec4f v1_0 = to_float(extend_low(v1s_low)) * SCALE;
+            Vec4f v2_0 = to_float(extend_low(v2s_low)) * SCALE;
+            mul_add(v1_0, v2_0, v1_0).store_a(&a_out[i]);
+
+            // Next 4 elements
+            Vec4f v1_1 = to_float(extend_high(v1s_low)) * SCALE;
+            Vec4f v2_1 = to_float(extend_high(v2s_low)) * SCALE;
+            mul_add(v1_1, v2_1, v1_1).store_a(&a_out[i + 4]);
+
+            // Process high 8 elements (split into two Vec4f)
+            Vec8s v1s_high = v1s.get_high();
+            Vec8s v2s_high = v2s.get_high();
+
+            // Elements 8-11
+            Vec4f v1_2 = to_float(extend_low(v1s_high)) * SCALE;
+            Vec4f v2_2 = to_float(extend_low(v2s_high)) * SCALE;
+            mul_add(v1_2, v2_2, v1_2).store_a(&a_out[i + 8]);
+
+            // Elements 12-15
+            Vec4f v1_3 = to_float(extend_high(v1s_high)) * SCALE;
+            Vec4f v2_3 = to_float(extend_high(v2s_high)) * SCALE;
+            mul_add(v1_3, v2_3, v1_3).store_a(&a_out[i + 12]);
         }
-        /* end of modulation */
+    #else
+        for (int i = 0; i != A::OUTPUTS_A; i += 16)
+        {
+            v1s.load_a(&a._output_a[i]);
+            v2s.load_a(&a._output_b[i % A::OUTPUTS_B]);
 
-        l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
-        l3.dot(l2_out, l3_out, [](const Vector& v) { return max(v, v_zero); });
+            v1s = leaky_relu(v1s);
+            v2s = leaky_relu(v2s);
+
+            Vec8f v1 = to_float(extend(v1s.get_low())) * SCALE;
+            Vec8f v2 = to_float(extend(v2s.get_low())) * SCALE;
+            mul_add(v1, v2, v1).store_a(&a_out[i]);
+
+            v1 = to_float(extend(v1s.get_high())) * SCALE;
+            v2 = to_float(extend(v2s.get_high())) * SCALE;
+
+            mul_add(v1, v2, v1).store_a(&a_out[i + 8]);
+        }
+    #endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
+
+        for (int i = 0, j = 0; i != A::OUTPUTS_A; i += 8, ++j)
+        {
+        #if INSTRSET >= 8
+            Vec8f v;
+            v.load_a(&a_out[i]);
+            l2_in[j] = horizontal_add(v) / 8;
+        #else
+            Vec4f v1, v2;
+            v1.load_a(&a_out[i]);
+            v2.load_a(&a_out[i + 4]);
+            l2_in[j] = (horizontal_add(v1) + horizontal_add(v2)) / 8;
+        #endif
+        }
+
+        l2.dot(l2_in, l2_out, leaky_relu<Vector>);
+        l3.dot(l2_out, l3_out, leaky_relu<Vector>);
 
         out.dot(l3_out, output);
         return 100 * output[0];

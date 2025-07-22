@@ -18,7 +18,8 @@
     #define ARCH "ARM"
 #endif
 
-#if SIMD_EMULATION /* emulate with SIMDE */
+
+#if 1 || SIMD_EMULATION /* emulate with SIMDE */
 
 class Vec4f
 {
@@ -262,6 +263,28 @@ INLINE __m256i extend(Vec8s a)
 }
 
 
+// Extend the low 4 elements to 32 bits with sign extension
+INLINE __m128i extend_low(Vec8s a)
+{
+    __m128i sign = _mm_srai_epi16(a, 15);   // sign bit
+    return _mm_unpacklo_epi16(a, sign);     // interleave with sign extensions
+}
+
+
+// Extend the high 4 elements to 32 bits with sign extension
+INLINE __m128i extend_high(Vec8s a)
+{
+    __m128i sign = _mm_srai_epi16(a, 15);   // sign bit
+    return _mm_unpackhi_epi16(a, sign);     // interleave with sign extensions
+}
+
+
+INLINE Vec4f to_float(__m128i a)
+{
+    return _mm_cvtepi32_ps(a);
+}
+
+
 INLINE int32_t horizontal_add (__m256i a)
 {
     // Add upper and lower 128-bit lanes: [a7+a3, a6+a2, a5+a1, a4+a0]
@@ -425,11 +448,21 @@ INLINE Vec16s operator * (const Vec16s& a, const Vec16s& b)
     return result;
 }
 
+
 INLINE Vec16s max(const Vec16s& a, const Vec16s& b)
 {
     int16x8x2_t result;
     result.val[0] = vmaxq_s16(a.get_low(), b.get_low());
     result.val[1] = vmaxq_s16(a.get_high(),b.get_high());
+    return result;
+}
+
+template <size_t N>
+INLINE Vec16s shift_right(const Vec16s& a)
+{
+    int16x8x2_t result;
+    result.val[0] = vshrq_n_s16(a.get_low(), N);
+    result.val[1] = vshrq_n_s16(a.get_high(), N);
     return result;
 }
 

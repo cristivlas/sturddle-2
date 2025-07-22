@@ -277,13 +277,12 @@ std::map<std::string, int> _get_params()
 
 constexpr int INPUTS_A = 897;
 constexpr int INPUTS_B = 256;
-constexpr int HIDDEN_1A = 1280;
-constexpr int HIDDEN_1A_POOLED = HIDDEN_1A / nnue::POOL_STRIDE;
+constexpr int HIDDEN_1A = 1024;
+constexpr int HIDDEN_1A_POOLED = 128;
 constexpr int HIDDEN_1B = 64;
 constexpr int HIDDEN_2 = 16;
 constexpr int HIDDEN_3 = 16;
 
-using LAttnType = nnue::Layer<HIDDEN_1B, 32>;
 using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE>;
 using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE>;
 using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2>;
@@ -306,7 +305,6 @@ static struct
 {
     void init() {}
 
-    LAttnType L_ATTN{spatial_attn_w, spatial_attn_b};
     L1AType L1A{hidden_1a_w, hidden_1a_b};
     L1BType L1B{hidden_1b_w, hidden_1b_b};
     L2Type L2{hidden_2_w, hidden_2_b};
@@ -383,7 +381,6 @@ INLINE void init_layer(WeightLoader& loader, L& layer, const char* get_w, const 
 
 static struct
 {
-    LAttnType L_ATTN;
     L1AType L1A;
     L1BType L1B;
     L2Type L2;
@@ -398,7 +395,6 @@ static struct
     {
         WeightLoader loader;
 
-        INIT_LAYER(L_ATTN, spatial_attn);
         INIT_LAYER(L1A, hidden_1a);
         INIT_LAYER(L1B, hidden_1b);
         INIT_LAYER(L2, hidden_2);
@@ -441,7 +437,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
     }
     else
     {
-        _eval_raw = nnue::eval(acc, model.L_ATTN, model.L2, model.L3, model.EVAL);
+        _eval_raw = nnue::eval(acc, model.L2, model.L3, model.EVAL);
 
         if (side_to_move_pov)
         {

@@ -20,8 +20,7 @@ import numpy as np
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-ACCUMULATOR_SIZE = 1280
-ATTN_FAN_OUT = 32
+ACCUMULATOR_SIZE = 1024
 POOL_SIZE = 8
 
 Q_SCALE = 1024
@@ -138,7 +137,9 @@ def make_model(args, strategy):
             return tf.cast(f, tf.float32)
 
     with strategy.scope():
-        ACTIVATION = tf.keras.activations.relu
+        #ACTIVATION = tf.keras.activations.relu
+        ACTIVATION = tf.keras.layers.LeakyReLU(alpha=0.015625)
+
         K_INIT = tf.keras.initializers.HeNormal
 
         # Define the input layer
@@ -189,28 +190,22 @@ def make_model(args, strategy):
             bias_constraint=constr_b,
         )(input_1b)
 
-        spatial_attn = Dense(ATTN_FAN_OUT, activation=ACTIVATION, name='spatial_attn')(hidden_1b)
-
         def custom_pooling(x):
             reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
             # Take the mean over the last dimension
             return tf.reduce_mean(reshaped, axis=-1)
 
-        pooled = Lambda(custom_pooling, name='pool')(hidden_1a)
-
-        # The "reshaping" layer repeats or tiles the dynamic weights to match the output shape of pooled
-        attn_reshape_layer = Lambda(lambda x: tf.tile(x, tf.constant([1, ACCUMULATOR_SIZE // POOL_SIZE // ATTN_FAN_OUT])))
+        attn_reshape_layer = Lambda(lambda x: tf.tile(x, tf.constant([1, 16])))
 
         # Compute spatial attention modulation
-        modulation = Multiply(name='modulation')([pooled, attn_reshape_layer(spatial_attn)])
+        modulation = Multiply(name='modulation')([hidden_1a, attn_reshape_layer(hidden_1b)])
 
-        # Add residual connection: pooled + pooled * attention_weights
-        weighted = Add(name='weighted')([pooled, modulation])
+        # Add residual connection
+        residual = Add(name='residual')([hidden_1a, modulation])
+        pooled = Lambda(custom_pooling, name='pool')(residual)
 
-        hidden_2 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_2')(weighted)
+        hidden_2 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_2')(pooled)
         hidden_3 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_3')(hidden_2)
-        #hidden_2 = Dense(16, activation='swish', kernel_initializer=K_INIT, name='hidden_2')(weighted)
-        #hidden_3 = Dense(16, activation='swish', kernel_initializer=K_INIT, name='hidden_3')(hidden_2)
 
         # Define the position evaluation output (original output)
         eval_output = Dense(1, name='out', dtype='float32')(hidden_3)
@@ -760,7 +755,7 @@ if __name__ == '__main__':
 
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
-        parser.add_argument('-a', '--adaptive', action='store_true', help='use adaptive loss (otherwise use default: weighted loss)')
+        parser.add_argument('-a', '--adaptive', action='store_true', help='use adaptive loss (otherwise use default: residual loss)')
         parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
         parser.add_argument('-c', '--clip', type=float, default=3.0, help='position eval gradient soft clip')
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
