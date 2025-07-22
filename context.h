@@ -645,7 +645,8 @@ namespace search
     {
         ASSERT(move && move._state && move != _move);
 
-        return (move != tt_entry()._best_move)
+        return (move != _prev)
+            && (move != tt_entry()._best_move)
             && (move != tt_entry()._hash_move)
             && (PruneCaptures || !move._state->is_capture())
             && (move.promotion() == chess::PieceType::NONE)
@@ -662,7 +663,8 @@ namespace search
         return !is_leftmost()
             && !is_retry()
             && (state().pushed_pawns_score <= 1)
-            && !is_extended()
+         // && !is_extended()
+            && _double_ext == 0
             && (_move.from_square() != _parent->_capture_square)
             && !is_recapture()
             && !is_check();

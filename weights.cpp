@@ -6,16 +6,6 @@ extern "C" {
 }
 
 // Export as PyCapsules for cross-platform access
-static PyObject* get_spatial_attn_w(PyObject* self, PyObject* args)
-{
-    return PyCapsule_New((void*)spatial_attn_w, "spatial_attn_w", nullptr);
-}
-
-static PyObject* get_spatial_attn_b(PyObject* self, PyObject* args)
-{
-    return PyCapsule_New((void*)spatial_attn_b, "spatial_attn_b", nullptr);
-}
-
 static PyObject* get_hidden_1a_w(PyObject* self, PyObject* args)
 {
     return PyCapsule_New((void*)hidden_1a_w, "hidden_1a_w", nullptr);
@@ -79,8 +69,6 @@ static PyObject* get_move_b(PyObject* self, PyObject* args)
 #endif /* USE_ROOT_MOVES */
 
 static PyMethodDef weights_methods[] = {
-    {"get_spatial_attn_w", get_spatial_attn_w, METH_NOARGS, "Get dynamic weights"},
-    {"get_spatial_attn_b", get_spatial_attn_b, METH_NOARGS, "Get dynamic biases"},
     {"get_hidden_1a_w", get_hidden_1a_w, METH_NOARGS, "Get hidden_1a weights"},
     {"get_hidden_1a_b", get_hidden_1a_b, METH_NOARGS, "Get hidden_1a biases"},
     {"get_hidden_1b_w", get_hidden_1b_w, METH_NOARGS, "Get hidden_1b weights"},

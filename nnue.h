@@ -647,7 +647,38 @@ namespace nnue
 
         Vec16s v1s, v2s;
 
-    #if __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+    #if INSTRSET >= 9 /* AVX512 */
+        for (int i = 0; i != A::OUTPUTS_A; i += 16)
+        {
+            v1s.load_a(&a._output_a[i]);
+            v2s.load_a(&a._output_b[i % A::OUTPUTS_B]);
+
+            v1s = leaky_relu(v1s);
+            v2s = leaky_relu(v2s);
+
+            Vec16f v1 = to_float(extend(v1s)) * SCALE;
+            Vec16f v2 = to_float(extend(v2s)) * SCALE;
+            mul_add(v1, v2, v1).store_a(&a_out[i]);
+        }
+    #elif INSTRSET >= 8 /* AVX2 or NEON with FP16 */
+        for (int i = 0; i != A::OUTPUTS_A; i += 16)
+        {
+            v1s.load_a(&a._output_a[i]);
+            v2s.load_a(&a._output_b[i % A::OUTPUTS_B]);
+
+            v1s = leaky_relu(v1s);
+            v2s = leaky_relu(v2s);
+
+            Vec8f v1 = to_float(extend(v1s.get_low())) * SCALE;
+            Vec8f v2 = to_float(extend(v2s.get_low())) * SCALE;
+            mul_add(v1, v2, v1).store_a(&a_out[i]);
+
+            v1 = to_float(extend(v1s.get_high())) * SCALE;
+            v2 = to_float(extend(v2s.get_high())) * SCALE;
+
+            mul_add(v1, v2, v1).store_a(&a_out[i + 8]);
+        }
+    #else
         for (int i = 0; i != A::OUTPUTS_A; i += 16)
         {
             v1s.load_a(&a._output_a[i]);
@@ -683,26 +714,18 @@ namespace nnue
             Vec4f v2_3 = to_float(extend_high(v2s_high)) * SCALE;
             mul_add(v1_3, v2_3, v1_3).store_a(&a_out[i + 12]);
         }
-    #else
-        for (int i = 0; i != A::OUTPUTS_A; i += 16)
+    #endif /* INSTRSET */
+
+        /* Pool */
+    #if INSTRSET >= 9
+        for (int i = 0, j = 0; i != A::OUTPUTS_A; i += 16, j += 2)
         {
-            v1s.load_a(&a._output_a[i]);
-            v2s.load_a(&a._output_b[i % A::OUTPUTS_B]);
-
-            v1s = leaky_relu(v1s);
-            v2s = leaky_relu(v2s);
-
-            Vec8f v1 = to_float(extend(v1s.get_low())) * SCALE;
-            Vec8f v2 = to_float(extend(v2s.get_low())) * SCALE;
-            mul_add(v1, v2, v1).store_a(&a_out[i]);
-
-            v1 = to_float(extend(v1s.get_high())) * SCALE;
-            v2 = to_float(extend(v2s.get_high())) * SCALE;
-
-            mul_add(v1, v2, v1).store_a(&a_out[i + 8]);
+            Vec16f v;
+            v.load_a(&a_out[i]);
+            l2_in[j] = horizontal_add(v.get_low()) / 8;
+            l2_in[j + 1] = horizontal_add(v.get_high()) / 8;
         }
-    #endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
-
+    #else
         for (int i = 0, j = 0; i != A::OUTPUTS_A; i += 8, ++j)
         {
         #if INSTRSET >= 8
@@ -716,6 +739,7 @@ namespace nnue
             l2_in[j] = (horizontal_add(v1) + horizontal_add(v2)) / 8;
         #endif
         }
+    #endif /* INSTRSET >= 9 */
 
         l2.dot(l2_in, l2_out, leaky_relu<Vector>);
         l3.dot(l2_out, l3_out, leaky_relu<Vector>);
