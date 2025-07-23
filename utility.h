@@ -162,6 +162,20 @@ namespace
         }
     };
 
+    namespace profile
+    {
+        struct Overhead
+        {
+            std::chrono::high_resolution_clock::duration value;
+            Overhead()
+            {
+                const auto start = std::chrono::high_resolution_clock::now();
+                const auto end = std::chrono::high_resolution_clock::now();
+                value = end - start;
+            }
+        };
+        const static Overhead overhead;
+    }
 
     template <typename T, int PRINT_INTERVAL = 100000>
     struct ProfileScope
@@ -171,10 +185,10 @@ namespace
 
         std::chrono::time_point<std::chrono::high_resolution_clock> _start;
 
-        INLINE void report()
+        INLINE void tally()
         {
             const auto end = std::chrono::high_resolution_clock::now();
-            total_time += (end - _start);
+            total_time += (end - _start - profile::overhead.value);
             if (num_calls % PRINT_INTERVAL == 0)
             {
                 const auto avg_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(total_time).count() / num_calls;
@@ -184,7 +198,7 @@ namespace
         }
 
         ProfileScope() : _start(std::chrono::high_resolution_clock::now()) { ++num_calls; }
-        ~ProfileScope() { report(); }
+        ~ProfileScope() { tally(); }
     };
 
     template <typename T, int PRINT_INTERVAL>
