@@ -239,20 +239,20 @@ namespace search
     class BaseLock
     {
     protected:
-        std::atomic<T> *_mutex;
-        bool _locked;
+        std::atomic<T> *_mutex = nullptr;
+        bool _locked = false;
 
     public:
-        BaseLock() : _mutex(nullptr), _locked(false) {}
-        BaseLock(BaseLock &&other) : _mutex(other._mutex), _locked(other._locked)
+        BaseLock() = default;
+        INLINE BaseLock(BaseLock &&other) : _mutex(other._mutex), _locked(other._locked)
         {
             other._locked = false;
         }
-        explicit BaseLock(std::atomic<T> &mutex) : _mutex(&mutex), _locked(false)
+        explicit INLINE BaseLock(std::atomic<T> &mutex) : _mutex(&mutex), _locked(false)
         {
         }
 
-        BaseLock &operator=(const BaseLock &) = delete;
+        INLINE BaseLock &operator=(const BaseLock &) = delete;
 
         INLINE bool is_valid() const { return _locked; }
     };
@@ -269,7 +269,7 @@ namespace search
         UniqueLock() = default;
         UniqueLock(UniqueLock &&other) = default;
 
-        explicit UniqueLock(std::atomic<T> &mutex) : BaseLock<T>(mutex)
+        explicit INLINE UniqueLock(std::atomic<T> &mutex) : BaseLock<T>(mutex)
         {
 #if SMP
             int i = 0;
@@ -286,7 +286,7 @@ namespace search
             this->_locked = true;
         }
 
-        ~UniqueLock()
+        INLINE ~UniqueLock()
         {
 #if SMP
             if (this->_locked)
@@ -306,7 +306,7 @@ namespace search
         SharedLock() = default;
         SharedLock(SharedLock &&other) = default;
 
-        explicit SharedLock(std::atomic<T> &mutex) : BaseLock<T>(mutex)
+        explicit INLINE SharedLock(std::atomic<T> &mutex) : BaseLock<T>(mutex)
         {
 #if SMP
             while (true)
@@ -330,7 +330,7 @@ namespace search
 #endif /* SMP */
         }
 
-        ~SharedLock()
+        INLINE ~SharedLock()
         {
 #if SMP
             if (this->_locked)
@@ -360,7 +360,7 @@ namespace search
             clock_t             _clock = 0;
             std::array<T, SIZE> _entries;
 
-            std::atomic<lock_state_t> &mutex()
+            INLINE std::atomic<lock_state_t> &mutex()
             {
                 static_assert(sizeof(std::atomic<lock_state_t>) == sizeof(_lock_state));
                 return *reinterpret_cast<std::atomic<lock_state_t> *>(&_lock_state);
