@@ -141,9 +141,7 @@ if platform.startswith('win'):
             '-Wno-unused-variable',
             '-Wno-nan-infinity-disabled',
         ]
-        link += ['/STACK:8388608']  # 8MB stack
-    else:
-        link += ['/LTCG:OFF']
+    link += ['/LTCG:OFF', '/STACK:8388608']  # 8MB stack
 else:
     # Linux, Mac
     STDCPP=20 if NATIVE_UCI else 17
