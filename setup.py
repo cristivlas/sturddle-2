@@ -127,22 +127,25 @@ if platform.startswith('win'):
         '/DCALLBACK_PERIOD=8192',
         '/DCYTHON_WITHOUT_ASSERTIONS',
     ]
+
+    if environ.get('BUILD_DEBUG', None):
+        # Enable stack checks in debug build
+        args += [ '/guard:cf', '/RTCc', '/RTCs', '/RTCu' ]
+    else:
+        args += [ '/D_FORTIFY_SOURCE=0', '/GS-' ]
+
     if NATIVE_UCI:
         args.append('/DNATIVE_UCI=true')
 
+    # clang specific
     if cl_exe.lower().endswith('clang-cl.exe'):
         args += [
-            '-Ofast',
             '-Wno-unused-command-line-argument',
             '-Wno-unused-variable',
             '-Wno-nan-infinity-disabled',
         ]
-        # clang-cl.exe on Windows, non-DEBUG
         if not environ.get('BUILD_DEBUG', None):
-            args += [
-                '-D_FORTIFY_SOURCE=0',  # Avoid the overhead.
-                '-fno-stack-protector',
-            ]
+            args += [ '-Ofast ']
 
     # MSFT linker args
     link += ['/LTCG:OFF', '/STACK:8388608']  # 8MB stack
