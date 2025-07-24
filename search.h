@@ -125,14 +125,24 @@ namespace search
 
         INLINE T& lookup(chess::PieceType piece_type, const Move& move)
         {
-            ASSERT(piece_type != chess::PieceType::NONE);
-            ASSERT(move);
-            return _table[piece_type][move.to_square()];
+            return lookup_impl(piece_type, move);
         }
 
         INLINE const T& lookup(chess::PieceType piece_type, const Move& move) const
         {
-            return const_cast<PieceMoveTable*>(this)->lookup(piece_type, move);
+            return const_cast<PieceMoveTable*>(this)->lookup_impl(piece_type, move);
+        }
+
+    private:
+        INLINE T& lookup_impl(chess::PieceType piece_type, const Move& move)
+        {
+            ASSERT(piece_type != chess::PieceType::NONE);
+            ASSERT(move);
+
+            if (piece_type == chess::PieceType::NONE || move.is_none())
+                return _table[0][0];
+
+            return _table[piece_type][move.to_square()];
         }
 
         T _table[7][64] = {};
@@ -253,8 +263,8 @@ namespace search
         void init(bool new_game);
 
         int _tid = 0;
-        int _iteration = 0;
-        int _eval_depth = 0;
+        int16_t _iteration = 0;
+        int16_t _eval_depth = 0;
         PlyHistory _ply_history;
 
         /* search window bounds */

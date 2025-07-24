@@ -1140,7 +1140,10 @@ void uci_loop(Params params)
         err = "unknown exception";
     }
     if (!err.empty())
+    {
+        search::Context::log_message(LogLevel::ERROR, err);
         raise_runtime_error(err.c_str());
+    }
 }
 
 #else

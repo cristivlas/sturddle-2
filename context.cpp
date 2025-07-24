@@ -604,7 +604,6 @@ namespace search
             eval = state.simple_score;
         }
 
-
     #if EVAL_PIECE_GRADING
 
         /* eval_piece_grading applies adjustments from white's perspective */
@@ -636,6 +635,7 @@ namespace search
                 pool.clear();
         }
     }
+
 
     /* static */ void Context::init()
     {
@@ -684,8 +684,7 @@ namespace search
         ctxt->_double_ext = _double_ext;
         ctxt->_extension = _extension;
 
-        std::copy_n(_path.begin(), _path_len, ctxt->_path.begin());
-        ctxt->_path_len = _path_len;
+        copy_search_path(*this, *ctxt);
 
         return ctxt;
     }
@@ -810,8 +809,7 @@ namespace search
 
                 _best_move = next_ctxt->_move;
 
-                _path_len = next_ctxt->_path_len;
-                std::copy_n(next_ctxt->_path.begin(), _path_len, _path.begin());
+                copy_search_path(*next_ctxt, *this);
             }
         }
 
@@ -1232,7 +1230,11 @@ namespace search
 
     static INLINE int window_delta(int iteration, int depth, double score)
     {
+    #if 0
         return WINDOW_HALF * pow2(iteration) + WINDOW_COEFF * depth * log(1 + abs(score) / WINDOW_DIV);
+    #else
+        return WINDOW_HALF * iteration + WINDOW_COEFF * depth * log(1 + abs(score) / WINDOW_DIV);
+    #endif
     }
 
 
@@ -1256,11 +1258,11 @@ namespace search
         else if (score <= _tt->_w_alpha)
         {
             _alpha = std::max<score_t>(SCORE_MIN, score - window_delta(iteration(), _tt->_eval_depth, score));
-            _beta = _tt->_w_beta;
+            _beta = std::min<score_t>(SCORE_MAX, score + WINDOW_HALF);
         }
         else if (score >= _tt->_w_beta)
         {
-            _alpha = _tt->_w_alpha;
+            _alpha = std::max<score_t>(SCORE_MIN, score - WINDOW_HALF);
             _beta = std::min<score_t>(SCORE_MAX, score + window_delta(iteration(), _tt->_eval_depth, score));
         }
         else
@@ -1280,6 +1282,9 @@ namespace search
             _beta = std::min<score_t>(SCORE_MAX, score + window_size);
         #endif
         }
+
+        // log_message(LogLevel::INFO, std::format("{}: {}, [{}:{}]", iteration(), score, _alpha, _beta));
+        ASSERT(_alpha < _beta);
 
         /* save iteration bounds */
         _tt->_w_alpha = _alpha;
@@ -1599,7 +1604,7 @@ namespace search
                 }
                 else if (make_move<false>(ctxt, move, MoveOrder::ROOT_MOVES, move._score))
                 {
-                    // std::cout << "info string " << move << ": " << move._score / nnue::QSCALE << std::endl;
+                    // std::cout << "info string " << move << ": " << move._score / float(nnue::QSCALE) << std::endl;
                     ++count;
                 }
                 else
@@ -1745,7 +1750,7 @@ namespace search
                     || is_pawn_push(ctxt, move))
                 {
                     if (make_move<true>(ctxt, move, MoveOrder::TACTICAL_MOVES, hist_score))
-                        ASSERT(move._score == hist_score);
+                        ASSERT(move._score == decltype(move._score)(hist_score));
                 }
             }
             else /* Phase == 4 */

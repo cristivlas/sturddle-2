@@ -73,7 +73,7 @@ namespace search
     using atomic_time = std::atomic<time>; /* sic */
 
 
-    enum Algorithm : int
+    enum Algorithm : uint8_t
     {
         NEGAMAX,
         NEGASCOUT,
@@ -264,16 +264,18 @@ namespace search
 
         /* parent move in the graph */
         Context*    _parent = nullptr;
-        int         _ply = 0;
-        int         _max_depth = 0;
-
-        Algorithm   _algorithm = Algorithm::NEGAMAX;
-
+        int16_t     _ply = 0;
+        int16_t     _max_depth = 0;
         int16_t     _alpha = SCORE_MIN;
         int16_t     _beta = SCORE_MAX;
         int16_t     _score = SCORE_MIN; /* dynamic eval score */
         int16_t     _retry_beta = SCORE_MAX; /* NEGASCOUT only */
         mutable int _improvement = SCORE_MIN;
+
+        Algorithm   _algorithm = Algorithm::MTDF;
+
+        mutable int8_t _can_forward_prune = -1;
+        mutable int8_t _repetitions = -1;
 
         Square      _capture_square = Square::UNDEFINED;
         bool        _futility_pruning = true;
@@ -282,13 +284,17 @@ namespace search
         bool        _is_pv = false;
         bool        _is_retry = false;
         bool        _is_singleton = false;
+        bool        _leftmost = false;
         bool        _multicut_allowed = MULTICUT;
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
         bool        _retry_next = false;
         int8_t      _nnue_prev_offs = 1; /* NNUE */
 
-        int         _double_ext = 0;
+        uint8_t     _double_ext = 0;
+        uint8_t     _path_len = 1;
+        Path        _path;
+
         score_t     _eval = SCORE_MIN; /* static eval */
         score_t     _eval_raw = SCORE_MIN; /* unscaled _eval */
 
@@ -300,14 +306,12 @@ namespace search
 
         Move        _move;          /* from parent to current state */
         BaseMove    _best_move;
+        BaseMove    _counter_move;
         BaseMove    _cutoff_move;   /* from current state to the next */
         BaseMove    _prev;          /* best move from previous iteration */
         BaseMove    _excluded;      /* singular extension search */
 
         State*      _state = nullptr;
-
-        int         _path_len = 1;
-        Path        _path;
 
         void        cache_scores(bool force_write /* bypass eviction strategy */ = false);
 
@@ -439,8 +443,10 @@ namespace search
         INLINE const PV& get_pv() const
         {
             auto& pv = _pvs[tid()];
-            pv.resize(_path_len);
-            std::copy_n(_path.begin(), _path_len, pv.begin());
+            const auto size = std::min<size_t>(_path_len, _path.size());
+            pv.resize(size);
+            // off-by-one because PV[0] = root context move
+            std::copy_if(_path.begin() + 1, _path.begin() + size, pv.begin() + 1, [](Move move) {return bool(move);});
             return pv;
         }
 
@@ -478,11 +484,6 @@ namespace search
         const Move* get_next_move(score_t);
         bool has_cycle(const State&) const;
 
-        BaseMove            _counter_move;
-        mutable int8_t      _can_forward_prune = -1;
-
-        mutable int8_t      _repetitions = -1;
-        bool                _leftmost = false;
         MoveMaker           _move_maker;
 
         TranspositionTable* _tt = nullptr;
@@ -604,6 +605,14 @@ namespace search
             && !move._state->is_capture()
             && move._state->pushed_pawns_score <= 1
             && !move._state->is_check();
+    }
+
+
+    INLINE void copy_search_path(const Context& from_ctxt, Context& to_ctxt)
+    {
+        const auto size = std::min<size_t>(from_ctxt._path_len, PV_PATH_MAX);
+        std::copy_n(from_ctxt._path.begin(), size, to_ctxt._path.begin());
+        to_ctxt._path_len = from_ctxt._path_len;
     }
 
 
@@ -1029,7 +1038,7 @@ namespace search
 
         auto ctxt = next_ply<true>(); /* Construct new context */
 
-        std::copy_n(_path.begin(), _path_len, ctxt->_path.begin());
+        copy_search_path(*this, *ctxt);
 
         if (move)
         {
@@ -1040,12 +1049,9 @@ namespace search
             ctxt->_state = move->_state;
             ctxt->_leftmost = is_leftmost() && next_move_index() == 1;
 
-            if (_path_len < _ply + 1 || _ply + 1 >= PV_PATH_MAX)
+            if (_path_len >= _ply + 1 && _ply + 1 < PV_PATH_MAX)
             {
-                ctxt->_path_len = _path_len;
-            }
-            else
-            {
+                /* Add move to search path */
                 ctxt->_path[_ply + 1] = *move;
                 ctxt->_path_len = _ply + 2;
             }
@@ -1071,8 +1077,6 @@ namespace search
             ctxt->_state->_check = { 0, 0 };
             flip(ctxt->_state->turn);
             ctxt->_is_null_move = true;
-
-            ctxt->_path_len = std::min(_path_len, _ply + 1);
         }
 
         ctxt->_algorithm = _algorithm;

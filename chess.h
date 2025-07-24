@@ -165,10 +165,8 @@ private:
 
     static INLINE void check_range(const char* prefix, const char* func, size_t v, size_t vmax)
     {
-    #if !defined(NO_ASSERT)
         if (v >= vmax)
             out_of_range(std::string(prefix), func, v, vmax);
-    #endif /* NO_ASSERT */
     }
 
 private:
@@ -665,8 +663,13 @@ namespace chess
         /* group id, for move ordering */
         int8_t  _group = ::search::MoveOrder::UNORDERED_MOVES;
         int8_t  _old_group = ::search::MoveOrder::UNDEFINED;
+    #if 0
         float   _score = 0;         /* sort score, for move ordering */
         float   _old_score = 0;
+    #else
+        int16_t _score = 0;
+        int16_t _old_score = 0;
+    #endif
         State*  _state = nullptr;   /* state of the board after the move */
     };
 

@@ -141,6 +141,7 @@ if platform.startswith('win'):
             '-Wno-unused-variable',
             '-Wno-nan-infinity-disabled',
         ]
+        link += ['/STACK:8388608']  # 8MB stack
     else:
         link += ['/LTCG:OFF']
 else:

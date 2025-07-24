@@ -278,7 +278,7 @@ bool verify_null_move(Context& ctxt, Context& null_move_ctxt)
 
     /* Ensure minimum verification depth */
     null_move_ctxt._max_depth =
-       std::max(null_move_ctxt._ply + NULL_MOVE_MIN_DRAUGHT, null_move_ctxt._max_depth);
+       std::max<int>(null_move_ctxt._ply + NULL_MOVE_MIN_DRAUGHT, null_move_ctxt._max_depth);
     ASSERT(null_move_ctxt.depth() >= NULL_MOVE_MIN_DRAUGHT);
 
     const auto score = negamax(null_move_ctxt, *null_move_ctxt.get_tt());
@@ -499,7 +499,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     }
 
     /* prevent overflow */
-    ctxt._max_depth = std::min(ctxt._max_depth, PLY_MAX-1);
+    ctxt._max_depth = std::min<int>(ctxt._max_depth, PLY_MAX - 1);
 
     if (ctxt._alpha + 1 < ctxt._beta)
     {
@@ -904,10 +904,20 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
 
     auto g = first;
 
-    ASSERT(ctxt.get_tt() == &table);
+    const int max_depth = ctxt._max_depth;
 
     while (lower < upper)
     {
+        const int window_size = upper - lower;
+
+        if (window_size > 2 * WINDOW_HALF && !ctxt.is_pv_node() && max_depth > 15)
+        {
+            ctxt._max_depth = std::max(8, max_depth / std::max(1, window_size / (2 * WINDOW_HALF)));
+
+            // search::Context::log_message(
+            //     LogLevel::INFO, std::format("{}: [{}:{}], orig_depth: {}, depth: {}",
+            //     table._iteration, lower, upper, max_depth, ctxt._max_depth));
+        }
 #if MTDF_CSTAR_BISECT
         /*
             https://people.csail.mit.edu/plaat/mtdf.html
@@ -943,7 +953,7 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
 
         ctxt.rewind(0, MTDF_REORDER_MOVES);
     }
-
+    ctxt._max_depth = max_depth;
     return (ctxt._score = g);
 }
 
