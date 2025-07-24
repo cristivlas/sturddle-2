@@ -239,7 +239,7 @@ namespace impl
 } /* namespace impl */
 
 
-#if !TUNING_ENABLED && !TUNING_PARTIAL
+#if NO_ASSERT && !TUNING_ENABLED && !TUNING_PARTIAL
     #define interpolate(pc, from, to) impl::Interpolate<from, to>::value(pc)
 #else
     #define interpolate(pc, from, to) impl::_interpolate(pc, from, to)

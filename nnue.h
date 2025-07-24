@@ -441,6 +441,9 @@ namespace nnue
         {
             v.load_a(&in[i]);
 
+            ASSERT(j < OUTPUTS);
+            ASSERT(j + 1< OUTPUTS);
+
             out[j] = float(::horizontal_add(extend(max(v.get_low(), v8_zero)))) / POOL_STRIDE / QSCALE;
             out[j + 1] = float(::horizontal_add(extend(max(v.get_high(), v8_zero)))) / POOL_STRIDE / QSCALE;
         }

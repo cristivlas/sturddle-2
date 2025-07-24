@@ -90,10 +90,6 @@ link = []
 # Release build
 args = ['-DNO_ASSERT']
 
-# Assert-enabled build
-if environ.get('BUILD_ASSERT', None):
-    args = ['-DTUNING_ENABLED=true']
-
 platform = sysconfig.get_platform()
 
 NATIVE_UCI = environ.get('NATIVE_UCI', '').lower() in ['1', 'true', 'yes']
@@ -102,10 +98,10 @@ SHARED_WEIGHTS = environ.get('SHARED_WEIGHTS', '').lower() in ['1', 'true', 'yes
 # Debug build
 if environ.get('BUILD_DEBUG', None):
     if platform.startswith('win'):
-        args = [ '/Od', '/Zi', '/DTUNING_ENABLED' ]
+        args = [ '/Od', '/Zi' ]
         link = [ '/DEBUG' ]
     else:
-        args = [ '-O0', '-D_DEBUG', '-DTUNING_ENABLED' ]
+        args = [ '-O0', '-D_DEBUG' ]
 
 
 if SHARED_WEIGHTS:

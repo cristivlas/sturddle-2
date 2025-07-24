@@ -44,7 +44,7 @@
 #endif /* _MSC_VER */
 #else
 #if _MSC_VER
-  #define INLINE
+  #define INLINE inline
 #elif __GNUC__
   #define INLINE __attribute__((noinline))
 #endif /* _MSC_VER */

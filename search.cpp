@@ -910,13 +910,15 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
     {
         const int window_size = upper - lower;
 
-        if (window_size > 2 * WINDOW_HALF && !ctxt.is_pv_node() && max_depth > 15)
+        if (window_size > WINDOW_HALF && !ctxt.is_pv_node() && max_depth > 15)
         {
-            ctxt._max_depth = std::max(8, max_depth / std::max(1, window_size / (2 * WINDOW_HALF)));
+            ctxt._max_depth = std::max(8, max_depth / std::max(1, window_size / WINDOW_HALF));
 
-            // search::Context::log_message(
-            //     LogLevel::INFO, std::format("{}: [{}:{}], orig_depth: {}, depth: {}",
-            //     table._iteration, lower, upper, max_depth, ctxt._max_depth));
+        #if !NO_ASSERT /*DEBUG */
+            search::Context::log_message(
+                LogLevel::INFO, std::format("{}: [{}:{}], orig_depth: {}, depth: {}",
+                table._iteration, lower, upper, max_depth, ctxt._max_depth));
+        #endif
         }
 #if MTDF_CSTAR_BISECT
         /*
