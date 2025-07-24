@@ -131,8 +131,10 @@ if platform.startswith('win'):
     if environ.get('BUILD_DEBUG', None):
         # Enable stack checks in debug build
         args += [ '/guard:cf', '/RTCc', '/RTCs', '/RTCu' ]
+        link += [ '/GUARD:CF' ]
     else:
         args += [ '/D_FORTIFY_SOURCE=0', '/GS-' ]
+        link += [ '/GUARD:NO' ]
 
     if NATIVE_UCI:
         args.append('/DNATIVE_UCI=true')

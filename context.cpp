@@ -413,6 +413,12 @@ static struct
 #endif /* SHARED_WEIGHTS */
 
 
+static int nnue_eval(const Accumulator& acc)
+{
+    return nnue::eval(acc, model.L_ATTN, model.L2, model.L3, model.EVAL);
+}
+
+
 score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side_to_move_pov /* = true */)
 {
     ASSERT(!is_valid(_eval_raw));
@@ -426,12 +432,17 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
     }
     else
     {
+        // try updating incrementally
         auto& prev = NNUE_data[t][_ply - _nnue_prev_offs];
 
         if (prev.needs_update(_parent->state()))
         {
-            _parent->eval_nnue_raw(true);
+            if (_ply <= 3)
+                _parent->eval_nnue_raw(true);
+            else
+                prev.update(model.L1A, model.L1B, _parent->state());
         }
+        ASSERT(!prev.needs_update(_parent->state()));
         acc.update(model.L1A, model.L1B, _parent->state(), state(), _move, prev);
     }
 
@@ -441,7 +452,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
     }
     else
     {
-        _eval_raw = nnue::eval(acc, model.L_ATTN, model.L2, model.L3, model.EVAL);
+        _eval_raw = nnue_eval(acc);
 
         if (side_to_move_pov)
         {
@@ -862,8 +873,7 @@ namespace search
 
         ASSERT(state.simple_score != State::UNKNOWN_SCORE); /* incremental update */
 
-        if (size_t(ply) >= Context::MAX_MOVE)
-            return 0;
+        ASSERT(ply < Context::MAX_MOVE);
 
         auto& moves = Context::moves(tid, ply);
         state.generate_pseudo_legal_moves(moves, mask);

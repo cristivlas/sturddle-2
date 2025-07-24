@@ -241,8 +241,8 @@ namespace search
     {
         using ContextStack = std::array<struct ContextBuffer, PLY_MAX>;
 
-        /* Note: half of the moves stack are reserved for do_exchanges. */
-        static constexpr size_t MAX_MOVE = 2 * PLY_MAX;
+        /* Note: stack beyond PLY_MAX is reserved for do_exchanges. */
+        static constexpr size_t MAX_MOVE = PLY_MAX + 32;
         using MoveStack = std::array<MovesList, MAX_MOVE>;
         using StatePool = std::vector<State>;
         using StateStack = std::array<StatePool, PLY_MAX>;
