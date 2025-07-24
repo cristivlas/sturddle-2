@@ -130,13 +130,21 @@ if platform.startswith('win'):
     if NATIVE_UCI:
         args.append('/DNATIVE_UCI=true')
 
-    if cl_exe.endswith('clang-cl.exe'):
+    if cl_exe.lower().endswith('clang-cl.exe'):
         args += [
             '-Ofast',
             '-Wno-unused-command-line-argument',
             '-Wno-unused-variable',
             '-Wno-nan-infinity-disabled',
         ]
+        # clang-cl.exe on Windows, non-DEBUG
+        if not environ.get('BUILD_DEBUG', None):
+            args += [
+                '-D_FORTIFY_SOURCE=0',  # Avoid the overhead.
+                '-fno-stack-protector',
+            ]
+
+    # MSFT linker args
     link += ['/LTCG:OFF', '/STACK:8388608']  # 8MB stack
 else:
     # Linux, Mac
