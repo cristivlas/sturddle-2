@@ -37,13 +37,16 @@
   #include "context.h"
 #undef CONFIG_IMPL
 
+#if !defined(WITH_NNUE)
+  #define WITH_NNUE true
+#endif
+
 #if WITH_NNUE
   #include "nnue.h"
   #if !(SHARED_WEIGHTS)
     #include "weights.h"
   #endif
 #endif
-
 
 #include "eval.h"
 
@@ -77,7 +80,6 @@ static void setup_crash_handler()
     }
 }
 #else
-
 static void setup_crash_handler()
 {
 }
@@ -409,51 +411,62 @@ static struct
 #endif /* SHARED_WEIGHTS */
 
 
-static int nnue_eval(const Accumulator& acc)
+void search::Context::update_accumulators()
 {
-    return nnue::eval(acc, model.L2, model.L3, model.EVAL);
+    const auto t = tid();
+
+    Context* update_chain[PLY_MAX];
+    size_t chain_length = 0;
+
+    // Collect contexts that need updates
+    for (auto ctxt = this; ctxt; ctxt = ctxt->_parent)
+    {
+        auto& accumulator = NNUE_data[t][ctxt->_ply];
+        if (!accumulator.needs_update(ctxt->state()))
+            break;
+
+        ASSERT(chain_length < PLY_MAX);
+        update_chain[chain_length++] = ctxt;
+    }
+
+    // Update in reverse order
+    for (auto i = chain_length; i > 0; --i)
+    {
+        auto* ctxt = update_chain[i - 1];
+        auto& accumulator = NNUE_data[t][ctxt->_ply];
+
+        if (ctxt->is_root())
+        {
+            ASSERT(ctxt->_parent == nullptr);
+            accumulator.update(model.L1A, model.L1B, ctxt->state());
+        }
+        else
+        {
+            auto& prev_acc = NNUE_data[t][ctxt->_ply - ctxt->_nnue_prev_offs];
+            ASSERT(!prev_acc.needs_update(ctxt->_parent->state()));
+
+            accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
+        }
+
+        ctxt->_eval_raw = SCORE_MIN;
+    }
 }
 
 
-score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side_to_move_pov /* = true */)
+score_t search::Context::eval_nnue_raw(bool stm_perspective)
 {
     ASSERT(!is_valid(_eval_raw));
-    const auto t = tid();
 
-    auto& acc = NNUE_data[t][_ply];
+    update_accumulators();
 
-    if (is_root())
+    auto& acc = NNUE_data[tid()][_ply];
+    ASSERT(!acc.needs_update(state()));
+
+    _eval_raw = nnue::eval(acc, model.L2, model.L3, model.EVAL);
+
+    if (stm_perspective)
     {
-        acc.update(model.L1A, model.L1B, state());
-    }
-    else
-    {
-        // try updating incrementally
-        auto& prev = NNUE_data[t][_ply - _nnue_prev_offs];
-
-        if (prev.needs_update(_parent->state()))
-        {
-            if (_ply <= 3)
-                _parent->eval_nnue_raw(true);
-            else
-                prev.update(model.L1A, model.L1B, _parent->state());
-        }
-        ASSERT(!prev.needs_update(_parent->state()));
-        acc.update(model.L1A, model.L1B, _parent->state(), state(), _move, prev);
-    }
-
-    if (update_only)
-    {
-        _eval_raw = SCORE_MIN;
-    }
-    else
-    {
-        _eval_raw = nnue_eval(acc);
-
-        if (side_to_move_pov)
-        {
-            _eval_raw *= SIGN[state().turn];
-        }
+        _eval_raw *= SIGN[state().turn];
     }
 
     return _eval_raw;
@@ -493,7 +506,7 @@ void search::Context::eval_with_nnue()
             }
         #endif /* USE_ROOT_MOVES */
 
-            const auto eval_nn = eval_nnue_raw();
+            const auto eval_nn = eval_nnue_raw(true);
 
         #if 0
             eval = eval_nn * (NNUE_EVAL_TERM + eval / 32) / 1024;
@@ -549,7 +562,7 @@ int nnue::eval_fen(const std::string& fen)
     tt.init(true);
     ctxt.set_tt(&tt);
 
-    return ctxt.eval_nnue_raw(false, false);
+    return ctxt.eval_nnue_raw(false);
 }
 #endif /* WITH_NNUE */
 

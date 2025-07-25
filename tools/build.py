@@ -9,10 +9,36 @@ import glob
 import os
 import platform
 import shutil
-import string
 import sys
 
 BOOK = 'book.bin'
+
+
+def find_editbin():
+    """Find editbin using distutils MSVC detection"""
+    try:
+        from setuptools._distutils._msvccompiler import MSVCCompiler
+    except:
+        # setuptools >= 80
+        from setuptools._distutils._msvccompiler import MSVCCompiler
+
+    # Create MSVC compiler instance to get environment
+    compiler = MSVCCompiler()
+    compiler.initialize()
+
+    # Get the compiler executable path
+    if hasattr(compiler, 'cc') and compiler.cc:
+        cl_exe = compiler.cc
+        # print(f"Found compiler: {cl_exe}")
+
+        # editbin should be in the same directory as cl.exe
+        compiler_dir = os.path.dirname(cl_exe)
+        editbin_path = os.path.join(compiler_dir, 'editbin.exe')
+
+        if os.path.exists(editbin_path):
+            return editbin_path
+
+    raise RuntimeError('Could not locate editbin')
 
 def delete_file_or_dir(path):
     paths = glob.glob(path)
@@ -46,6 +72,7 @@ if __name__ == '__main__':
         os.environ['NATIVE_UCI'] = '1'
 
     mods = '*.pyd' if is_windows() else '*.so'
+    editbin = find_editbin() if is_windows() else None
 
     # cleanup
     delete(['*.spec', 'build', mods])
@@ -131,6 +158,10 @@ if __name__ == '__main__':
     if is_windows():
         MAIN += '.exe'
         NAME += '.exe'
+        # Configure 32M stack
+        if run_cmd(f'"{editbin}" /STACK:33554432 {MAIN}'):
+            print('failed to set stack size')
+            sys.exit(-2)
     else:
         NAME += f'-{platform.system()}-{platform.machine()}'
 
