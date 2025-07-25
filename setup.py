@@ -131,8 +131,9 @@ if platform.startswith('win'):
     ]
 
     if environ.get('BUILD_DEBUG', None):
-        # Enable stack checks in debug build
-        args += [ '/guard:cf', '/RTCc', '/RTCs', '/RTCu' ]
+        # Enable runtime checks in debug build
+        # args += [ '/RTCc', '-D_ALLOW_RTCc_IN_STL' ]
+        args += [ '/guard:cf', '/RTCs', '/RTCu' ]
         link += [ '/GUARD:CF' ]
     else:
         args += [ '/D_FORTIFY_SOURCE=0', '/GS-' ]
@@ -151,8 +152,7 @@ if platform.startswith('win'):
         if not environ.get('BUILD_DEBUG', None):
             args += [ '-Ofast ']
 
-    # MSFT linker args
-    link += ['/LTCG:OFF', '/STACK:8388608']  # 8MB stack
+    link += ['/LTCG:OFF']  # MSFT linker args
 else:
     # Linux, Mac
     STDCPP=20 if NATIVE_UCI else 17
