@@ -484,7 +484,7 @@ namespace search
         const Move* get_next_move(score_t);
         bool has_cycle(const State&) const;
 
-        void update_nnue();
+        void update_accumulators();
 
         MoveMaker           _move_maker;
 

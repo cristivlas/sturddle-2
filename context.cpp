@@ -415,13 +415,7 @@ static struct
 #endif /* SHARED_WEIGHTS */
 
 
-static int nnue_eval(const Accumulator& acc)
-{
-    return nnue::eval(acc, model.L_ATTN, model.L2, model.L3, model.EVAL);
-}
-
-
-void search::Context::update_nnue()
+void search::Context::update_accumulators()
 {
     const auto t = tid();
 
@@ -429,14 +423,14 @@ void search::Context::update_nnue()
     size_t chain_length = 0;
 
     // Collect contexts that need updates
-    for (auto ctxt = this; ctxt->_parent; ctxt = ctxt->_parent)
+    for (auto ctxt = this; ctxt; ctxt = ctxt->_parent)
     {
-        auto& prev = NNUE_data[t][ctxt->_ply - ctxt->_nnue_prev_offs];
-        if (!prev.needs_update(ctxt->_parent->state()))
+        auto& accumulator = NNUE_data[t][ctxt->_ply];
+        if (!accumulator.needs_update(ctxt->state()))
             break;
 
         ASSERT(chain_length < PLY_MAX);
-        update_chain[chain_length++] = ctxt->_parent;
+        update_chain[chain_length++] = ctxt;
     }
 
     // Update in reverse order
@@ -466,20 +460,13 @@ void search::Context::update_nnue()
 score_t search::Context::eval_nnue_raw(bool stm_perspective)
 {
     ASSERT(!is_valid(_eval_raw));
-    const auto t = tid();
 
-    auto& acc = NNUE_data[t][_ply];
+    update_accumulators();
 
-    if (is_root())
-    {
-        acc.update(model.L1A, model.L1B, state());
-    }
-    else
-    {
-        update_nnue();
-    }
+    auto& acc = NNUE_data[tid()][_ply];
+    ASSERT(!acc.needs_update(state()));
 
-    _eval_raw = nnue_eval(acc);
+    _eval_raw = nnue::eval(acc, model.L_ATTN, model.L2, model.L3, model.EVAL);
 
     if (stm_perspective)
     {
