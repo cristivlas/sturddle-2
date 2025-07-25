@@ -908,6 +908,7 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
 
     while (lower < upper)
     {
+#if 0
         const int window_size = upper - lower;
 
         if (window_size > WINDOW_HALF && !ctxt.is_pv_node() && max_depth > 15)
@@ -920,6 +921,8 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
                 table._iteration, lower, upper, max_depth, ctxt._max_depth));
         #endif
         }
+#endif
+
 #if MTDF_CSTAR_BISECT
         /*
             https://people.csail.mit.edu/plaat/mtdf.html
