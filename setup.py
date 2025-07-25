@@ -87,8 +87,10 @@ inc_dirs = [
 
 link = []
 
-# Release build
-args = ['-DNO_ASSERT']
+if environ.get('BUILD_ASSERT', None):
+    args = []
+else:
+    args = ['-DNO_ASSERT']  # Release build
 
 platform = sysconfig.get_platform()
 

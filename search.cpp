@@ -912,7 +912,7 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
 
         if (window_size > WINDOW_HALF && !ctxt.is_pv_node() && max_depth > 15)
         {
-            ctxt._max_depth = std::max(8, max_depth / std::max(1, window_size / WINDOW_HALF));
+            ctxt._max_depth = std::max(8, max_depth * WINDOW_HALF / window_size);
 
         #if !NO_ASSERT /*DEBUG */
             search::Context::log_message(
