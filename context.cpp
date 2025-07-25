@@ -409,6 +409,12 @@ static struct
 #endif /* SHARED_WEIGHTS */
 
 
+static int nnue_eval(const Accumulator& acc)
+{
+    return nnue::eval(acc, model.L2, model.L3, model.EVAL);
+}
+
+
 score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side_to_move_pov /* = true */)
 {
     ASSERT(!is_valid(_eval_raw));
@@ -422,12 +428,17 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
     }
     else
     {
+        // try updating incrementally
         auto& prev = NNUE_data[t][_ply - _nnue_prev_offs];
 
         if (prev.needs_update(_parent->state()))
         {
-            _parent->eval_nnue_raw(true);
+            if (_ply <= 3)
+                _parent->eval_nnue_raw(true);
+            else
+                prev.update(model.L1A, model.L1B, _parent->state());
         }
+        ASSERT(!prev.needs_update(_parent->state()));
         acc.update(model.L1A, model.L1B, _parent->state(), state(), _move, prev);
     }
 
@@ -437,7 +448,7 @@ score_t search::Context::eval_nnue_raw(bool update_only /* = false */, bool side
     }
     else
     {
-        _eval_raw = nnue::eval(acc, model.L2, model.L3, model.EVAL);
+        _eval_raw = nnue_eval(acc);
 
         if (side_to_move_pov)
         {
@@ -600,7 +611,6 @@ namespace search
             eval = state.simple_score;
         }
 
-
     #if EVAL_PIECE_GRADING
 
         /* eval_piece_grading applies adjustments from white's perspective */
@@ -632,6 +642,7 @@ namespace search
                 pool.clear();
         }
     }
+
 
     /* static */ void Context::init()
     {
@@ -680,8 +691,7 @@ namespace search
         ctxt->_double_ext = _double_ext;
         ctxt->_extension = _extension;
 
-        std::copy_n(_path.begin(), _path_len, ctxt->_path.begin());
-        ctxt->_path_len = _path_len;
+        copy_search_path(*this, *ctxt);
 
         return ctxt;
     }
@@ -806,8 +816,7 @@ namespace search
 
                 _best_move = next_ctxt->_move;
 
-                _path_len = next_ctxt->_path_len;
-                std::copy_n(next_ctxt->_path.begin(), _path_len, _path.begin());
+                copy_search_path(*next_ctxt, *this);
             }
         }
 
@@ -860,8 +869,7 @@ namespace search
 
         ASSERT(state.simple_score != State::UNKNOWN_SCORE); /* incremental update */
 
-        if (size_t(ply) >= Context::MAX_MOVE)
-            return 0;
+        ASSERT(ply < Context::MAX_MOVE);
 
         auto& moves = Context::moves(tid, ply);
         state.generate_pseudo_legal_moves(moves, mask);
@@ -1228,7 +1236,11 @@ namespace search
 
     static INLINE int window_delta(int iteration, int depth, double score)
     {
+    #if 0
         return WINDOW_HALF * pow2(iteration) + WINDOW_COEFF * depth * log(1 + abs(score) / WINDOW_DIV);
+    #else
+        return WINDOW_HALF * iteration + WINDOW_COEFF * depth * log(1 + abs(score) / WINDOW_DIV);
+    #endif
     }
 
 
@@ -1252,11 +1264,11 @@ namespace search
         else if (score <= _tt->_w_alpha)
         {
             _alpha = std::max<score_t>(SCORE_MIN, score - window_delta(iteration(), _tt->_eval_depth, score));
-            _beta = _tt->_w_beta;
+            _beta = std::min<score_t>(SCORE_MAX, score + WINDOW_HALF);
         }
         else if (score >= _tt->_w_beta)
         {
-            _alpha = _tt->_w_alpha;
+            _alpha = std::max<score_t>(SCORE_MIN, score - WINDOW_HALF);
             _beta = std::min<score_t>(SCORE_MAX, score + window_delta(iteration(), _tt->_eval_depth, score));
         }
         else
@@ -1276,6 +1288,9 @@ namespace search
             _beta = std::min<score_t>(SCORE_MAX, score + window_size);
         #endif
         }
+
+        // log_message(LogLevel::INFO, std::format("{}: {}, [{}:{}]", iteration(), score, _alpha, _beta));
+        ASSERT(_alpha < _beta);
 
         /* save iteration bounds */
         _tt->_w_alpha = _alpha;
@@ -1595,7 +1610,7 @@ namespace search
                 }
                 else if (make_move<false>(ctxt, move, MoveOrder::ROOT_MOVES, move._score))
                 {
-                    // std::cout << "info string " << move << ": " << move._score / nnue::QSCALE << std::endl;
+                    // std::cout << "info string " << move << ": " << move._score / float(nnue::QSCALE) << std::endl;
                     ++count;
                 }
                 else
@@ -1741,7 +1756,7 @@ namespace search
                     || is_pawn_push(ctxt, move))
                 {
                     if (make_move<true>(ctxt, move, MoveOrder::TACTICAL_MOVES, hist_score))
-                        ASSERT(move._score == hist_score);
+                        ASSERT(move._score == decltype(move._score)(hist_score));
                 }
             }
             else /* Phase == 4 */

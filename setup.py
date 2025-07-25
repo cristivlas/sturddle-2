@@ -87,12 +87,10 @@ inc_dirs = [
 
 link = []
 
-# Release build
-args = ['-DNO_ASSERT']
-
-# Assert-enabled build
 if environ.get('BUILD_ASSERT', None):
-    args = ['-DTUNING_ENABLED=true']
+    args = []
+else:
+    args = ['-DNO_ASSERT']  # Release build
 
 platform = sysconfig.get_platform()
 
@@ -102,10 +100,10 @@ SHARED_WEIGHTS = environ.get('SHARED_WEIGHTS', '').lower() in ['1', 'true', 'yes
 # Debug build
 if environ.get('BUILD_DEBUG', None):
     if platform.startswith('win'):
-        args = [ '/Od', '/Zi', '/DTUNING_ENABLED' ]
+        args = [ '/Od', '/Zi' ]
         link = [ '/DEBUG' ]
     else:
-        args = [ '-O0', '-D_DEBUG', '-DTUNING_ENABLED' ]
+        args = [ '-O0', '-D_DEBUG' ]
 
 
 if SHARED_WEIGHTS:
@@ -131,18 +129,30 @@ if platform.startswith('win'):
         '/DCALLBACK_PERIOD=8192',
         '/DCYTHON_WITHOUT_ASSERTIONS',
     ]
+
+    if environ.get('BUILD_DEBUG', None):
+        # Enable stack checks in debug build
+        args += [ '/guard:cf', '/RTCc', '/RTCs', '/RTCu' ]
+        link += [ '/GUARD:CF' ]
+    else:
+        args += [ '/D_FORTIFY_SOURCE=0', '/GS-' ]
+        link += [ '/GUARD:NO' ]
+
     if NATIVE_UCI:
         args.append('/DNATIVE_UCI=true')
 
-    if cl_exe.endswith('clang-cl.exe'):
+    # clang specific
+    if cl_exe.lower().endswith('clang-cl.exe'):
         args += [
-            '-Ofast',
             '-Wno-unused-command-line-argument',
             '-Wno-unused-variable',
             '-Wno-nan-infinity-disabled',
         ]
-    else:
-        link += ['/LTCG:OFF']
+        if not environ.get('BUILD_DEBUG', None):
+            args += [ '-Ofast ']
+
+    # MSFT linker args
+    link += ['/LTCG:OFF', '/STACK:8388608']  # 8MB stack
 else:
     # Linux, Mac
     STDCPP=20 if NATIVE_UCI else 17

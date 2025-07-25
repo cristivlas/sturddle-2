@@ -117,6 +117,8 @@ namespace
 
     template<typename  I> INLINE void shift_left_2(I first, I last)
     {
+        ASSERT(std::distance(first, last) >= 2);
+
         using V = typename std::iterator_traits<I>::value_type;
 
     #if __cplusplus >= 202002L
