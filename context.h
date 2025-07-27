@@ -21,7 +21,6 @@
 #pragma once
 
 #include <atomic>
-#include <chrono>
 #include <map>
 #include <memory>
 #include <string>
@@ -412,7 +411,7 @@ namespace search
         bool        on_next();
         INLINE int  piece_count() const { return state().piece_count(); }
 
-        void        reinitialize();
+        void        reset(bool force_reorder_moves = true, bool clear_best_move = true);
         int         repeated_count(const State&) const;
 
         int         rewind(int where = 0, bool reorder = false);
@@ -1315,7 +1314,6 @@ namespace search
         ASSERT(_phase > 1);
 
         return ctxt.depth() > 1 /* do not LMP leaf nodes */
-            && ctxt.depth() < LMP_MAX_DEPTH
             && _current >= LMP[ctxt.depth() - 1]
             && ctxt.can_forward_prune();
     }

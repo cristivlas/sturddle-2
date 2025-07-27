@@ -25,7 +25,6 @@
  */
 #include <bitset>
 #include <cerrno>
-#include <chrono>
 #include <iomanip>
 #include <iterator>
 #include <map>
@@ -176,10 +175,7 @@ struct LMR
         {
             for (int moves = 1; moves < 64; ++moves)
             {
-                const auto v = 0.5 + log(depth) * log(moves) / 2;
-                const auto e = (100 + depth) / 100.0;
-
-                _table[depth][moves] = int(pow(v, e));
+                _table[depth][moves] = 0.5 + log(depth) * log(moves) / 2;
             }
         }
     }
@@ -1214,50 +1210,55 @@ namespace search
     /*
      * Reinitialize top context at the start of a new iteration.
      */
-    void Context::reinitialize()
+    void Context::reset(bool force_reorder_moves, bool clear_best_move)
     {
         ASSERT(is_root());
         ASSERT(!_is_null_move);
+        ASSERT(!_is_retry);
+        ASSERT(!_is_singleton);
         ASSERT(_tt->_w_alpha <= _alpha);
         ASSERT(_retry_above_alpha == RETRY::None);
+        ASSERT(_pruned_count == 0); // not pruning at root
         ASSERT(_prune_reason == PruneReason::PRUNE_NONE);
+        ASSERT(_futility_pruning);
+        ASSERT(_capture_square == Square::UNDEFINED); // no null-move at root
 
-        _best_move = BaseMove();
+        ASSERT(_double_ext == 0); // no extensions at root
+        ASSERT(_extension == 0);
+        ASSERT(_excluded.is_none());
+
+        // Expect default values for these flags as
+        // they should never be modified at root
+        ASSERT(_multicut_allowed == MULTICUT);
+        ASSERT(_null_move_allowed[WHITE] == true);
+        ASSERT(_null_move_allowed[BLACK] == true);
+
+        if (clear_best_move)
+            _best_move = BaseMove();
         _cancel = false;
         _can_forward_prune = -1;
 
-        _capture_square = Square::UNDEFINED;
+        _counter_move = Move();
         _cutoff_move = Move();
-
-        _extension = 0;
         _has_singleton = false;
 
         _max_depth = iteration();
 
         _mate_detected = 0;
-        _multicut_allowed = MULTICUT;
 
-        _null_move_allowed[WHITE] = true;
-        _null_move_allowed[BLACK] = true;
-
-        _prune_reason = PruneReason::PRUNE_NONE;
-
+        _path_len = 1;
         _repetitions = -1;
 
         _retry_next = false;
         _retry_beta = SCORE_MAX;
 
-        rewind(0, true);
+        rewind(0, force_reorder_moves);
     }
 
 
     static INLINE int window_delta(int iteration, int depth, double score)
     {
-    #if 0
-        return WINDOW_HALF * pow2(iteration) + WINDOW_COEFF * depth * log(1 + abs(score) / WINDOW_DIV);
-    #else
-        return WINDOW_HALF * iteration + WINDOW_COEFF * depth * log(1 + abs(score) / WINDOW_DIV);
-    #endif
+        return WINDOW_HALF * std::log(1 + iteration) + WINDOW_COEFF * depth * std::log(1 + abs(score) / WINDOW_DIV);
     }
 
 

@@ -137,10 +137,12 @@ void TranspositionTable::clear()
     _iteration = 0;
     _eval_depth = 0;
 
+    /* Clear aspiration window */
     _w_alpha = SCORE_MIN;
     _w_beta = SCORE_MAX;
     _reset_window = false;
 
+    /* Clear metrics */
     _check_nodes = 0;
     _eval_count = 0;
     _endgame_nodes = 0;
@@ -157,6 +159,12 @@ void TranspositionTable::clear()
     _reductions = 0;
     _retry_reductions = 0;
 
+    clear_history();
+}
+
+
+void TranspositionTable::clear_history()
+{
     for (auto color : { BLACK, WHITE })
     {
         _countermoves[color].clear();
@@ -895,8 +903,7 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
     ASSERT_ALWAYS(ctxt._algorithm == Algorithm::MTDF);
     ASSERT_ALWAYS(ctxt.is_root());
 
-    const bool first_iter = (first == 0 && table._iteration == 1);
-    if (first_iter)
+    if (first == 0 && table._iteration == 1)
         first = ctxt.evaluate<true>();
 
     auto lower = ctxt._alpha;
@@ -904,22 +911,8 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
 
     auto g = first;
 
-    const int max_depth = ctxt._max_depth;
-
     while (lower < upper)
     {
-        const int window_size = upper - lower;
-
-        if (window_size > WINDOW_HALF && !ctxt.is_pv_node() && max_depth > 15)
-        {
-            ctxt._max_depth = std::max(8, max_depth * WINDOW_HALF / window_size);
-
-        #if !NO_ASSERT /*DEBUG */
-            search::Context::log_message(
-                LogLevel::INFO, std::format("{}: [{}:{}], orig_depth: {}, depth: {}",
-                table._iteration, lower, upper, max_depth, ctxt._max_depth));
-        #endif
-        }
 #if MTDF_CSTAR_BISECT
         /*
             https://people.csail.mit.edu/plaat/mtdf.html
@@ -953,9 +946,10 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
         else
             lower = g;
 
-        ctxt.rewind(0, MTDF_REORDER_MOVES);
+        ctxt.reset(MTDF_REORDER_MOVES, false);
+        table._reset_window = false;
     }
-    ctxt._max_depth = max_depth;
+
     return (ctxt._score = g);
 }
 
@@ -1150,7 +1144,7 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
         ctxt.set_search_window(score, prev_score);
 
-        ctxt.reinitialize();
+        ctxt.reset();
 
         {   /* SMP scope start */
             SMPTasks tasks(ctxt, table, score);

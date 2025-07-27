@@ -20,6 +20,7 @@
  */
 #pragma once
 
+#include <chrono>
 #include <random>
 #include <stdexcept>
 #include "Python.h"

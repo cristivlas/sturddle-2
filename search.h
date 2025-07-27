@@ -259,9 +259,6 @@ namespace search
         TranspositionTable() = default;
         ~TranspositionTable() = default;
 
-        /* Re-initialize before new search or new game*/
-        void init(bool new_game);
-
         int _tid = 0;
         int16_t _iteration = 0;
         int16_t _eval_depth = 0;
@@ -291,6 +288,11 @@ namespace search
         size_t _null_move_not_ok = 0;
         size_t _reductions = 0;
         size_t _retry_reductions = 0;
+
+        void clear_history();
+
+        /* Re-initialize before new search or new game*/
+        void init(bool new_game);
 
         template<typename C>
         BaseMove lookup_countermove(const C& ctxt) const;
