@@ -710,6 +710,7 @@ namespace search
     }
 
 
+#if 0
     /* Populate prev move from the Principal Variation, if missing. */
     void Context::ensure_prev_move()
     {
@@ -724,6 +725,7 @@ namespace search
             }
         }
     }
+#endif
 
 
     /* static */ void Context::ensure_stacks()
@@ -1246,7 +1248,6 @@ namespace search
 
         _mate_detected = 0;
 
-        _path_len = 1;
         _repetitions = -1;
 
         _retry_next = false;
@@ -1324,6 +1325,7 @@ namespace search
      */
     LMRAction Context::late_move_reduce(int count)
     {
+        ASSERT(count > 0);
         ASSERT(!is_null_move());
         ASSERT(_parent);
 
