@@ -1323,9 +1323,10 @@ namespace search
      * Late move reduction and pruning.
      * https://www.chessprogramming.org/Late_Move_Reductions
      */
-    LMRAction Context::late_move_reduce(int count)
+    LMRAction Context::late_move_reduce(int count, int64_t time_left)
     {
         ASSERT(count > 0);
+        ASSERT(time_left > 0);
         ASSERT(!is_null_move());
         ASSERT(_parent);
 
@@ -1341,6 +1342,10 @@ namespace search
 
         /* Lookup reduction in the Late Move Reduction table. */
         auto reduction = LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)];
+
+        /* Adjust for time -- main thread only */
+        if (time_left)
+            reduction += LATE_MOVE_TIME_COEFF * reduction / (1 + time_left * _tt->_nps / (LATE_MOVE_TIME_DIV * 1e+6f));
 
         if (_move._group != MoveOrder::TACTICAL_MOVES)
         {
@@ -1441,7 +1446,7 @@ namespace search
     }
 
 
-    int64_t Context::check_time_and_update_nps()
+    int64_t Context::check_time_and_update_nps(int64_t* time_left)
     {
         const auto millisec = elapsed_milliseconds();
 
@@ -1453,12 +1458,17 @@ namespace search
         else
             _tt->set_nps(_tt->nodes());
 
-        if (_time_limit >= 0 && millisec >= _time_limit)
+        const auto t = time_limit();
+        if (t >= 0 && millisec >= t)
         {
             cancel();
             return -1;
         }
 
+        if (time_left)
+        {
+            *time_left = std::max<int64_t>(0, t - millisec);
+        }
         return millisec;
     }
 

@@ -623,9 +623,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         int move_count = 0, futility = -1;
 
         score_t a = SCORE_MIN, b = SCORE_MAX, s = SCORE_MIN;
+        int64_t time_left = 0;
 
         /* iterate over moves */
-        while (auto next_ctxt = ctxt.next(null_move, futility, move_count))
+        while (auto next_ctxt = ctxt.next(null_move, futility, move_count, &time_left))
         {
             if (next_ctxt->is_null_move())
             {
@@ -736,7 +737,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 }
 
                 /* Late-move reduction and pruning */
-                if (move_count && next_ctxt->late_move_reduce(move_count) == LMRAction::Prune)
+                if (move_count && next_ctxt->late_move_reduce(move_count, time_left) == LMRAction::Prune)
                 {
                     next_ctxt->_prune_reason = PruneReason::PRUNE_LMP;
                     update_pruned(ctxt, *next_ctxt, table._late_move_prune_count);

@@ -325,7 +325,7 @@ namespace search
 
         bool        can_reuse_moves() const;
 
-        int64_t     check_time_and_update_nps(); /* return elapsed milliseconds */
+        int64_t     check_time_and_update_nps(int64_t* = nullptr); /* return elapsed milliseconds */
 
         static void clear_caches_and_stacks();
 
@@ -395,20 +395,20 @@ namespace search
 
         INLINE int  iteration() const { ASSERT(_tt); return _tt->_iteration; }
 
-        LMRAction   late_move_reduce(int move_count);
+        LMRAction   late_move_reduce(int move_count, int64_t time_left);
 
         static void log_message(LogLevel, const std::string&, bool force = false);
 
         int         move_count() const { return _move_maker.count(); }
         int64_t     nanosleep(int nanosec);
 
-        Context*    next(bool null_move, score_t, int& move_count);
+        Context*    next(bool null_move, score_t, int& move_count, int64_t* time_left = nullptr);
 
         template<bool Construct = false> Context* next_ply() const;
 
         INLINE int  next_move_index() { return _move_maker.current(*this); }
 
-        bool        on_next();
+        bool        on_next(int64_t*);
         INLINE int  piece_count() const { return state().piece_count(); }
 
         void        reset(bool force_reorder_moves = true, bool clear_best_move = true);
@@ -995,7 +995,7 @@ namespace search
     /*
      * Get the next move and wrap it into a Context object.
      */
-    INLINE Context* Context::next(bool make_null_move, score_t futility, int& move_count)
+    INLINE Context* Context::next(bool make_null_move, score_t futility, int& move_count, int64_t* time_left)
     {
         ASSERT(_alpha < _beta);
 
@@ -1007,7 +1007,7 @@ namespace search
         }
         _retry_next = false;
 
-        if (!_excluded && !on_next() && move_count > 0)
+        if (!_excluded && !on_next(time_left) && move_count > 0)
             return nullptr;
 
         /* null move must be tried before actual moves */
@@ -1184,12 +1184,12 @@ namespace search
     /*
      * Check how much time is left, update NPS, call optional Python callback.
      */
-    INLINE bool Context::on_next()
+    INLINE bool Context::on_next(int64_t* time_left)
     {
         if (tid() == 0 && ++_callback_count >= CALLBACK_PERIOD)
         {
             _callback_count = 0; /* reset */
-            const auto millisec = check_time_and_update_nps();
+            const auto millisec = check_time_and_update_nps(time_left);
 
             if (millisec < 0) /* time is up? */
                 return false;

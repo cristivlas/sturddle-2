@@ -263,6 +263,14 @@ DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
 DECLARE_CONST(  DOUBLE_EXT_MAX,                       2,    0,       5)
 DECLARE_VALUE(  EXCHANGES_MAX_DEPTH,                  4,    2,      32)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_THRESHOLD,        4,    0,      10)
+
+DECLARE_VALUE(  LATE_MOVE_TIME_COEFF,                 2,    2,       5)
+// #undef DECLARE_VALUE
+// #define DECLARE_VALUE DECLARE_PARAM // Tune ----------------------------
+DECLARE_VALUE(  LATE_MOVE_TIME_DIV,                4085, 1500,    4100)
+// #undef DECLARE_VALUE
+// #define DECLARE_VALUE DECLARE_CONST // ---------------------------------
+
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
 
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                 25,    0,     100)
@@ -310,15 +318,10 @@ DECLARE_VALUE(  SEE_PRUNING,                          1,    0,       1)
 DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
 DECLARE_VALUE(  SEE_PRUNING_MARGIN,                -115, -200,       0)
 
-// #undef DECLARE_VALUE
-// #define DECLARE_VALUE DECLARE_NORMAL // Tune --------------------------
 DECLARE_VALUE(  SINGULAR_DEPTH_SCALE,                57,   30,     100)
 DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,         277,  150,     350)
 DECLARE_VALUE(  SINGULAR_MARGIN_NORMAL,              58,   30,     100)
 DECLARE_VALUE(  SINGULAR_MARGIN_TT_PV,              136,   80,     200)
-// #undef DECLARE_VALUE
-// #define DECLARE_VALUE DECLARE_CONST // ---------------------------------
-
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                7,    3,      10)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    1,      10)
 
@@ -333,8 +336,6 @@ DECLARE_VALUE(  WINDOW_HALF,                         25,    5,     100)
 /* Time management */
 DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              36,   20,     100)
 
-// #undef DECLARE_VALUE
-// #define DECLARE_VALUE DECLARE_NORMAL // Tune --------------------------
 GROUP(MoveOrdering)
 DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 218,   50,     250)
 DECLARE_VALUE(  COUNTER_MOVE_MIN_DEPTH,               2,    0,       5)
@@ -344,8 +345,6 @@ DECLARE_VALUE(  HISTORY_SCORE_MUL,                  258,  200,     280)
 DECLARE_VALUE(  HISTORY_HIGH,                        91,   50,     150)
 DECLARE_VALUE(  HISTORY_LOW,                         12,    0,      70)
 DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,     100)
-// #undef DECLARE_VALUE
-// #define DECLARE_VALUE DECLARE_CONST // ---------------------------------
 
 GROUP(Eval)
 
