@@ -1345,7 +1345,10 @@ namespace search
 
         /* Adjust for time -- main thread only */
         if (time_left)
-            reduction += LATE_MOVE_TIME_COEFF * reduction / (1 + time_left * _tt->_nps / (LATE_MOVE_TIME_DIV * 1e+6f));
+        {
+            const auto target = LATE_MOVE_TIME_DIV * 1e+3f * pow(depth, count);
+            reduction += LATE_MOVE_TIME_COEFF * reduction / (1 + time_left * _tt->_nps / target);
+        }
 
         if (_move._group != MoveOrder::TACTICAL_MOVES)
         {
