@@ -1319,6 +1319,19 @@ namespace search
     }
 
 
+    INLINE float fast_log2(float x)
+    {
+        union { float f; uint32_t i; } u = { x };
+        int exp = (u.i >> 23) - 127;
+        u.i = (u.i & 0x007FFFFF) | 0x3F800000;
+        float mantissa = u.f;
+        float frac = -1.0f + mantissa * (2.0f - mantissa * 0.33333f);
+        return exp + frac;
+    }
+
+    static const float inverse_log2_branching = 1.0f / fast_log2(16.0f);
+
+
     /*
      * Late move reduction and pruning.
      * https://www.chessprogramming.org/Late_Move_Reductions
@@ -1326,7 +1339,6 @@ namespace search
     LMRAction Context::late_move_reduce(int count, int64_t time_left)
     {
         ASSERT(count > 0);
-        ASSERT(time_left > 0);
         ASSERT(!is_null_move());
         ASSERT(_parent);
 
@@ -1346,8 +1358,9 @@ namespace search
         /* Adjust for time -- main thread only */
         if (time_left)
         {
-            const auto target = LATE_MOVE_TIME_DIV * 1e+3f * pow(depth, count);
-            reduction += LATE_MOVE_TIME_COEFF * reduction / (1 + time_left * _tt->_nps / target);
+            auto node_count = time_left * _tt->_nps * 0.001f;
+            auto affordable_depth = fast_log2(1 + node_count) * inverse_log2_branching;
+            reduction = std::max(reduction, std::max<int>(0, depth - affordable_depth));
         }
 
         if (_move._group != MoveOrder::TACTICAL_MOVES)

@@ -264,13 +264,6 @@ DECLARE_CONST(  DOUBLE_EXT_MAX,                       2,    0,       5)
 DECLARE_VALUE(  EXCHANGES_MAX_DEPTH,                  4,    2,      32)
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_THRESHOLD,        4,    0,      10)
 
-// #undef DECLARE_VALUE
-// #define DECLARE_VALUE DECLARE_PARAM // Tune ----------------------------
-DECLARE_VALUE(  LATE_MOVE_TIME_COEFF,                 2,    1,      10)
-DECLARE_VALUE(  LATE_MOVE_TIME_DIV,                   2,    1,      10)
-// #undef DECLARE_VALUE
-// #define DECLARE_VALUE DECLARE_CONST // ---------------------------------
-
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
 
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                 25,    0,     100)
