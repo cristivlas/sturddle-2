@@ -175,7 +175,7 @@ struct LMR
         {
             for (int moves = 1; moves < 64; ++moves)
             {
-                _table[depth][moves] = 0.5 + log(depth) * log(moves) / 2;
+                _table[depth][moves] = 0.5 + log(depth) * log(moves) / M_E;
             }
         }
     }
@@ -1319,7 +1319,7 @@ namespace search
     }
 
 
-    INLINE float fast_log2(float x)
+    static INLINE float fast_log2(float x)
     {
         union { float f; uint32_t i; } u = { x };
         int exp = (u.i >> 23) - 127;
@@ -1329,7 +1329,7 @@ namespace search
         return exp + frac;
     }
 
-    static const float inverse_log2_branching = 1.0f / fast_log2(16.0f);
+    static const float inverse_log2_branching = 1.0f / fast_log2(12.0f);
 
 
     /*
