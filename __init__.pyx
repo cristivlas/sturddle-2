@@ -590,6 +590,8 @@ cdef size_t vmem_avail():
 
 # ---------------------------------------------------------------------
 # Polyglot opening book.
+# NOTE: Starting with version 2.3 there is a C++ implementation in
+# book.h, selected by defining NATIVE_BOOK at compile time (default).
 # ---------------------------------------------------------------------
 _book = [None]
 
@@ -1251,6 +1253,8 @@ def board_from_fen(fen: str):
 
 # ---------------------------------------------------------------------
 # syzygy tablebases
+# Starting with 2.3, USE_ENDTABLES needs to be defined at compile time
+# to enable tablebases (default is OFF).
 # ---------------------------------------------------------------------
 _tb = chess.syzygy.Tablebase()
 _tb_paths = []
