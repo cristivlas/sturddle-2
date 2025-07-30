@@ -393,6 +393,12 @@ INLINE int16_t horizontal_add(const Vec16s& a)
     return vget_lane_s16(sum3, 0) + vget_lane_s16(sum3, 1);
 }
 
+// TODO: implement correctly. Fake it for now.
+INLINE int16_t horizontal_add_x(const Vec16s& a)
+{
+    return horizontal_add(a);
+}
+
 INLINE bool horizontal_or(const Vec16s& a)
 {
     int16x8_t or1 = vorrq_s16(a.get_low(), a.get_high());

@@ -27,8 +27,7 @@ POOL_SIZE = 8
 Q_SCALE = 1024
 # Quantization range: use int16_t with Q_SCALE, prevent overflow
 # 64 squares + (16 + 16) occupancy + 1 side-to-move + 1 bias == 98
-# Q_SCALE = 256
-# Q_MAX_A = 32767 / Q_SCALE / 98 / POOL_SIZE
+
 Q_MAX_A = 32767 / Q_SCALE / 98
 Q_MIN_A = -Q_MAX_A
 
@@ -84,9 +83,6 @@ def make_model(args, strategy):
             outcome_target, logits, alpha=0.45, gamma=2.5, from_logits=True
         )
         return focal_loss
-        #probs = tf.nn.sigmoid(logits)
-        #mse = tf.reduce_mean(tf.square(probs - outcome_target))
-        #return mse * 0.7 + focal_loss * 0.3
 
     @tf.function
     def combined_loss(y_true, y_pred):
