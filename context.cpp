@@ -1322,14 +1322,13 @@ namespace search
     static INLINE float fast_log2(float x)
     {
         union { float f; uint32_t i; } u = { x };
-        int exp = (u.i >> 23) - 127;
+        // Extract exponent directly from IEEE 754 representation
+        const int exp = ((u.i >> 23) & 0xFF) - 127;
         u.i = (u.i & 0x007FFFFF) | 0x3F800000;
-        float mantissa = u.f;
-        float frac = -1.0f + mantissa * (2.0f - mantissa * 0.33333f);
-        return exp + frac;
+        const float m = u.f;
+        const float t = m - 1.0f;
+        return exp + t * (1.442695041f + t * (-0.721347520f + t * 0.240449173f));
     }
-
-    static const float inverse_log2_branching = 1.0f / fast_log2(12.0f);
 
 
     /*
@@ -1359,7 +1358,8 @@ namespace search
         if (time_left)
         {
             auto node_count = time_left * _tt->_nps * 0.001f;
-            auto affordable_depth = fast_log2(1 + node_count) * inverse_log2_branching;
+            auto recip_log_branch = std::min(16u, _tt->_pass) * 0.1 / 16 + 0.5 * piece_count() / 32;
+            auto affordable_depth = fast_log2(1 + node_count) * recip_log_branch;
             reduction = std::max(reduction, std::max<int>(0, depth - affordable_depth));
         }
 

@@ -289,6 +289,8 @@ namespace search
         size_t _reductions = 0;
         size_t _retry_reductions = 0;
 
+        unsigned _pass = 0; /* MTD(f) pass */
+
         void clear_history();
 
         /* Re-initialize before new search or new game*/

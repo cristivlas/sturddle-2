@@ -914,6 +914,8 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
 
     auto g = first;
 
+    table._pass = 0;
+
     while (lower < upper)
     {
 #if MTDF_CSTAR_BISECT
@@ -950,6 +952,8 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
             lower = g;
 
         ctxt.reset(MTDF_REORDER_MOVES, false);
+
+        table._pass++;
         table._reset_window = false;
     }
 

@@ -479,7 +479,6 @@ cdef extern from 'context.h' namespace 'search':
         @staticmethod
         void            cancel() nogil
 
-        int64_t         check_time_and_update_nps()
         const Move*     first_valid_move() nogil
 
         @staticmethod
@@ -834,8 +833,6 @@ cdef extern from 'search.h' namespace 'search':
 
         void    init(bool) nogil
         size_t  nodes() nogil const
-
-        const   vector[BaseMove]& get_pv() nogil const
 
         @staticmethod
         double  usage() nogil const
