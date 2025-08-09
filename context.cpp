@@ -547,6 +547,7 @@ void search::Context::update_root_accumulators()
     }
 }
 
+
 /* Test */
 int nnue::eval_fen(const std::string& fen)
 {

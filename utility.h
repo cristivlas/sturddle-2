@@ -191,7 +191,7 @@ namespace
         INLINE void tally()
         {
             const auto end = std::chrono::high_resolution_clock::now();
-            total_time += std::max<decltype(total_time)>(0, end - _start - profile::overhead.value);
+            total_time += end - _start - profile::overhead.value;
             if (num_calls % PRINT_INTERVAL == 0)
             {
                 const auto avg_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(total_time).count() / num_calls;

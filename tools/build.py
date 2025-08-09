@@ -83,7 +83,9 @@ if __name__ == '__main__':
 
     if args.native_uci:
         if platform.machine() in ['x86_64', 'AMD64']:
-            ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', '']
+            # TODO: Re-evaluate VNNI support in next release
+            # ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', '']
+            ARCHS = ['AVX512', 'AVX2', '']
         elif platform.machine() == 'aarch64':
             ARCHS = ['ARMv8_2', '']
 

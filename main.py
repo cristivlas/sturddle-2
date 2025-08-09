@@ -49,7 +49,6 @@ elif armcpu.is_apple_silicon():
 else:
     # Select AVX2 or AVX512 on x86/AMD64
     import cpufeature
-    import cpuid
 
     def _is_avx512_supported():
         for f in cpufeature.extension.CPUFeature:
@@ -64,6 +63,7 @@ else:
         if not _is_avx2_supported():
             return False
         try:
+            import cpuid
             eax = cpuid.cpuid_count(7, 1)[0]
             return bool((eax >> 4) & 1)  # AVX-VNNI in CPUID(7,1) EAX bit 4
         except:
@@ -71,7 +71,7 @@ else:
 
     flavors = {
         'chess_engine_avx512': _is_avx512_supported,
-        'chess_engine_avx2_vnni': _is_avx2_vnni_supported,
+        #'chess_engine_avx2_vnni': _is_avx2_vnni_supported,
         'chess_engine_avx2': _is_avx2_supported,
         'chess_engine': lambda *_: True,
     }
