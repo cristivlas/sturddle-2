@@ -23,7 +23,6 @@
  * Move ordering, board state evaluation, and other stuff
  * pertaining to the Context of the node being searched.
  */
-#include <bitset>
 #include <cerrno>
 #include <iomanip>
 #include <iterator>
