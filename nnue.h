@@ -29,6 +29,12 @@
     #include "armvector.h"
 #endif
 
+#if __AVXVNNI__
+    #define ARCH_VNNI "/VNNI"
+#else
+    #define ARCH_VNNI
+#endif /* __AVXVNNI__ */
+
 #if INSTRSET >= 9 /* AVX 512 */
     #ifndef ARCH
         #define ARCH "AVX512"
@@ -89,9 +95,9 @@ namespace nnue
     #endif /* INSTRSET */
 
 #ifdef __FMA__  /* support fused multiply+add? */
-    static const std::string instrset = ARCH "/FMA";
+    static const std::string instrset = ARCH "/FMA" ARCH_VNNI;
 #else
-    static const std::string instrset = ARCH;
+    static const std::string instrset = ARCH ARCH_VNNI;
 #endif /* __FMA__ */
 
     static const Vector v_zero(0.0);
@@ -99,7 +105,8 @@ namespace nnue
     static const Vec16s v16_zero(0);
 
 
-    INLINE Vec16s horizontal_add(const Vec16s (&v)[16])
+    template <typename V>
+    INLINE Vec16s horizontal_add(const V (&v)[16])
     {
         return Vec16s(
             horizontal_add_x(v[0]), horizontal_add_x(v[1]), horizontal_add_x(v[2]), horizontal_add_x(v[3]),
@@ -332,13 +339,19 @@ namespace nnue
             constexpr auto R = round_down<N>(INPUTS);
             static_assert(R == INPUTS); /* expect padded inputs */
 
-            Vec16s in, vw, sum[N];
+            Vec16s in, vw;
+        #if __AVXVNNI__
+            using VSum = Vec8i;
+        #else
+            using VSum = Vec16s;
+        #endif /* __AVXVNNI__ */
+            VSum sum[N]; /* accumulate partial sums */
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
                 #pragma unroll N
                 for (int k = 0; k != N; ++k)
-                    sum[k] = Vec16s(0);
+                    sum[k] = VSum(0);
 
                 for (int i = 0; i != R; i += N)
                 {
@@ -349,7 +362,11 @@ namespace nnue
                     for (int k = 0; k != N; ++k)
                     {
                         vw.load_a(&wt[j + k][i]);
+                    #if __AVXVNNI__
+                        sum[k] = _mm256_dpwssd_epi32(sum[k], in, vw);
+                    #else
                         sum[k] += in * vw;
+                    #endif /* __AVXVNNI__ */
                     }
                 }
 

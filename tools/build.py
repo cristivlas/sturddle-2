@@ -2,7 +2,7 @@
 Build all-in-one executable using pyinstaller.
 
 Part of Sturddle Chess 2.0
-Copyright (c) 2023 Cristian Vlasceanu.
+Copyright (c) 2023 - 2025 Cristian Vlasceanu.
 '''
 import argparse
 import glob
@@ -73,9 +73,9 @@ if __name__ == '__main__':
 
     mods = '*.pyd' if is_windows() else '*.so'
     editbin = find_editbin() if is_windows() else None
+    cl_exe = os.environ.get('CL_EXE', '')
 
-    # cleanup
-    delete(['*.spec', 'build', mods])
+    delete(['*.spec', 'build', mods]) # cleanup
 
     exe = f'"{sys.executable}"' # the Python interpreter
 
@@ -83,7 +83,7 @@ if __name__ == '__main__':
 
     if args.native_uci:
         if platform.machine() in ['x86_64', 'AMD64']:
-            ARCHS = ['AVX512', 'AVX2', '']
+            ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', '']
         elif platform.machine() == 'aarch64':
             ARCHS = ['ARMv8_2', '']
 
@@ -94,14 +94,18 @@ if __name__ == '__main__':
         print('*********************************************************')
 
         arch_flags = ''
-        if is_windows():
+        if is_windows() and not cl_exe.lower().startswith('clang-cl'):
             if arch:
+                if arch.endswith('_VNNI'):
+                    continue
                 arch_flags = f'/arch:{arch}'
         # otherwise assume Clang or GCC on POSIX
         elif arch == 'AVX2':
-            arch_flags = '-march=core-avx2 -mtune=core-avx2' # '-DUSE_AVX2'
+            arch_flags = '-march=core-avx2 -mtune=core-avx2'
+        elif arch == 'AVX2_VNNI':
+            arch_flags = '-march=core-avx2 -mtune=core-avx2 -mavxvnni'
         elif arch == 'AVX512':
-            arch_flags = '-march=skylake-avx512 -mtune=skylake-avx512' # '-DUSE_AVX512'
+            arch_flags = '-march=skylake-avx512 -mtune=skylake-avx512'
         elif arch == 'ARMv8_2':
             arch_flags = '-march=armv8.2-a+fp16'
 
