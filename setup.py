@@ -60,7 +60,8 @@ def get_compiler_major_version(compiler=None):
         raise ValueError('Could not parse ' + compiler + ' version from string: ' + version_string)
 
 
-build_stamp = datetime.now().strftime('%m%d%y.%H%M')
+# build_stamp = datetime.now().strftime('%m%d%y.%H%M')
+build_stamp = datetime.now().strftime('%m%d%y')
 
 sourcefiles = [
     '__init__.pyx',

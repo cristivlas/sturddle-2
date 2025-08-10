@@ -30,7 +30,7 @@
 #endif
 
 #if __AVXVNNI__
-    #define ARCH_VNNI "+VNNI"
+    #define ARCH_VNNI "/VNNI"
 #else
     #define ARCH_VNNI
 #endif /* __AVXVNNI__ */
@@ -95,7 +95,7 @@ namespace nnue
     #endif /* INSTRSET */
 
 #ifdef __FMA__  /* support fused multiply+add? */
-    static const std::string instrset = ARCH "+FMA" ARCH_VNNI;
+    static const std::string instrset = ARCH "/FMA" ARCH_VNNI;
 #else
     static const std::string instrset = ARCH ARCH_VNNI;
 #endif /* __FMA__ */
