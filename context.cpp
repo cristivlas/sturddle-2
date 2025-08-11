@@ -1351,6 +1351,8 @@ namespace search
         if (depth < 3 || count < LATE_MOVE_REDUCTION_THRESHOLD || !can_reduce())
             return LMRAction::None;
 
+        count += _tt->_pass / 4;
+
         /* Lookup reduction in the Late Move Reduction table. */
         auto reduction = LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)];
 
