@@ -82,11 +82,8 @@ def print_board(board, use_unicode=False):
 cdef extern from 'common.h':
     score_t SCORE_MAX
     score_t SCORE_MIN
-    const bool MOBILITY_TUNING_ENABLED
     string timestamp() nogil
 
-
-MOBILITY_TUNING = MOBILITY_TUNING_ENABLED
 
 
 # ---------------------------------------------------------------------
@@ -149,13 +146,12 @@ cdef extern from 'chess.h' namespace 'chess':
 
     cdef cppclass Position:
         Bitboard black, white, pawns, knights, bishops, rooks, queens, kings
-        PieceType _piece_types[64]
 
         Bitboard occupied() const
         Bitboard pin_mask(int color, int square) const
 
         score_t eval_simple() const
-        score_t eval_mobility() const
+
         PieceType _piece_type_at(Square) const
         PieceType piece_type_at(Square) const
 
@@ -170,9 +166,6 @@ cdef extern from 'chess.h' namespace 'chess':
         Square      en_passant_square
         Color       turn
         score_t     simple_score
-
-        const int capture_value
-        const PieceType promotion
 
         void    apply_move(const BaseMove&)
 
@@ -279,8 +272,6 @@ cdef class BoardState:
             self._state.en_passant_square = b.ep_square
 
         self._state.turn = b.turn
-        for square in range(0, 64):
-            self._state._piece_types[square] = self._state._piece_type_at(chess.Square(square))
 
         self._state.rehash()
         self._state.simple_score = self._state.eval_simple()
@@ -291,14 +282,6 @@ cdef class BoardState:
         cdef State prev = self._state
         self._state.apply_move(m)
         zobrist_update(prev, m, self._state)
-
-
-    cpdef capture_value(self):
-        return self._state.capture_value
-
-
-    cpdef PieceType promotion(self):
-        return self._state.promotion
 
 
     cpdef copy_to_board(self, b: chess.Board):
@@ -361,10 +344,6 @@ cdef class BoardState:
         return self._state.longest_pawn_sequence(mask)
 
 
-    cpdef int mobility(self):
-        return self._state.eval_mobility()
-
-
     cpdef Bitboard pin_mask(self, Color color, Square square):
         return self._state.pin_mask(color, square)
 
@@ -405,11 +384,14 @@ cdef extern from 'context.h' nogil:
         int min_val
         int max_val
         string group
+        bool normal
 
     void _set_param(string, int, bool) except+
 
     map[string, int] _get_params() except+
     map[string, Param] _get_param_info() except+
+
+    score_t cpp_eval "eval"(const string&, bool, int, int) nogil
 
 
 cdef extern from 'context.h' namespace 'search':
@@ -421,7 +403,11 @@ cdef extern from 'context.h' namespace 'search':
         int delta
 
 
-cdef extern from 'nnue.h' namespace 'nnue':
+def eval(fen, as_white=False, depth=0, millis=-1):
+    return cpp_eval(fen.encode(), as_white, depth, millis)
+
+
+cdef extern from 'context.h' namespace 'nnue':
     int eval_fen(const string&) nogil
 
 
@@ -493,7 +479,6 @@ cdef extern from 'context.h' namespace 'search':
         @staticmethod
         void            cancel() nogil
 
-        int64_t         check_time_and_update_nps()
         const Move*     first_valid_move() nogil
 
         @staticmethod
@@ -501,7 +486,7 @@ cdef extern from 'context.h' namespace 'search':
         bool            is_repeated() const
         int             iteration() const
         int             rewind(int where, bool reorder)
-        void            reinitialize()
+        void            reset(bool, bool)
 
         @staticmethod
         void set_time_limit_ms(int millisec) nogil
@@ -604,6 +589,8 @@ cdef size_t vmem_avail():
 
 # ---------------------------------------------------------------------
 # Polyglot opening book.
+# NOTE: Starting with version 2.3 there is a C++ implementation in
+# book.h, selected by defining NATIVE_BOOK at compile time (default).
 # ---------------------------------------------------------------------
 _book = [None]
 
@@ -644,7 +631,7 @@ cdef bool book_init(const string& filepath) except* with gil:
     return opening_book_init(filepath.decode())
 
 
-cdef BaseMove book_lookup(const State& state, bool best_move) except* with gil:
+cdef BaseMove book_lookup(const State& state, bool best_move) except*:
     board = board_from_cxx_state(state)
     entry = opening_book_lookup(board, best_move)
     if entry and entry.move:
@@ -844,13 +831,8 @@ cdef extern from 'search.h' namespace 'search':
 
         bool _analysis
 
-        void    init() nogil
+        void    init(bool) nogil
         size_t  nodes() nogil const
-
-        const   vector[BaseMove]& get_pv() nogil const
-
-        @staticmethod
-        void    clear_shared_hashtable() nogil
 
         @staticmethod
         double  usage() nogil const
@@ -892,11 +874,6 @@ cdef task_stats(const TranspositionTable& table):
 # ---------------------------------------------------------------------
 # Search API
 # ---------------------------------------------------------------------
-
-def clear_hashtable():
-    TranspositionTable.clear_shared_hashtable()
-
-
 cdef class SearchAlgorithm:
     cdef TranspositionTable _table
     cdef score_t score, delta
@@ -913,6 +890,7 @@ cdef class SearchAlgorithm:
         self.context = NodeContext(board)
         self.node_cb = kwargs.get('callback', None)
         self.report_cb = kwargs.get('threads_report', None)
+        self._table.init(True)
 
 
     cdef void set_context_callbacks(self):
@@ -1049,10 +1027,10 @@ cdef class SearchAlgorithm:
         if board:
             self.context.create_from(board)
 
-        self._table.init()
+        self._table.init(False)
         self.set_context_callbacks()
         self.context._ctxt.set_tt(address(self._table))
-        self.context._ctxt.reinitialize()
+        self.context._ctxt.reset(True, True)
         self.context._ctxt._max_depth = self.depth
         self.context._ctxt._prev = BaseMove()
 
@@ -1178,7 +1156,8 @@ def get_param_info():
             elem.second.val,
             elem.second.min_val,
             elem.second.max_val,
-            elem.second.group.decode()
+            elem.second.group.decode(),
+            elem.second.normal
         )
     return params
 
@@ -1271,6 +1250,8 @@ def board_from_fen(fen: str):
 
 # ---------------------------------------------------------------------
 # syzygy tablebases
+# Starting with 2.3, USE_ENDTABLES needs to be defined at compile time
+# to enable tablebases (default is OFF).
 # ---------------------------------------------------------------------
 _tb = chess.syzygy.Tablebase()
 _tb_paths = []
@@ -1338,7 +1319,7 @@ NodeContext(chess.Board()) # dummy context initializes static cpython methods
 _tb_init()
 
 __major__   = 2
-__minor__   = 2
+__minor__   = 3
 __build__   = [str(__major__), f'{int(__minor__):02d}', timestamp().decode()]
 
 
@@ -1351,9 +1332,14 @@ def version():
 # ---------------------------------------------------------------------
 def uci(name: str, debug: bool=False):
     cdef unordered_map[string, string] c_param
-    param = {'name': name, 'version': version()}
+    param = {
+        'dir': os.path.dirname(__file__),
+        'name': name,
+        'version': version(),
+    }
     if debug:
         param['debug'] = 'true'
+
     for k,v in param.items():
         c_param[k.encode()] = v.encode()
 

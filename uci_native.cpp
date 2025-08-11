@@ -31,6 +31,7 @@ static void raise_runtime_error(const char* err)
 #include <string>
 #include <sstream>
 #include <vector>
+#include "book.h"
 #include "thread_pool.hpp" /* pondering, go infinite */
 
 #if 0
@@ -39,15 +40,10 @@ static void raise_runtime_error(const char* err)
 #else
   #define LOG_DEBUG(x)
 #endif
-#define OUTPUT_POOL false
 
 using ThreadPool = thread_pool<>;
 
-#if OUTPUT_POOL || BACKGROUND_SEARCH
-static constexpr size_t initial_thread_count = 1;
-#else
 static constexpr size_t initial_thread_count = 0;
-#endif /* OUTPUT_POOL || BACKGROUND_SEARCH */
 
 static auto _compute_pool(std::make_unique<ThreadPool>(initial_thread_count));
 
@@ -239,12 +235,34 @@ namespace
         {
             OptionBase::print(out);
             if (_p.min_val == 0 && _p.max_val == 1)
+            {
                 out << "type check default " << std::boolalpha << bool(_p.val);
+            }
+            else if (_p.normal)
+            {
+                const auto scaled_val = 2.0 * (_p.val - _p.min_val) / (_p.max_val - _p.min_val) - 1;
+                out << "type string default " << scaled_val;
+            }
             else
+            {
                 out << "type spin default " << _p.val << " min " << _p.min_val << " max " << _p.max_val;
+            }
         }
 
-        void set(std::string_view value) override { _set_param(_name, to_int(value), true); }
+        void set(std::string_view value) override
+        {
+            if (_p.normal)
+            {
+                const double v = std::stod(std::string(value));
+
+                const auto val = std::round(((v + 1) / 2) * (_p.max_val - _p.min_val) + _p.min_val);
+                _set_param(_name, int(val), true);
+            }
+            else
+            {
+                _set_param(_name, to_int(value), true);
+            }
+        }
     };
 
     struct OptionSyzygy : public OptionBase
@@ -265,128 +283,6 @@ namespace
             cython_wrapper::call(search::Context::_set_syzygy_path, std::string(value));
         }
     };
-
-
-    struct OptionNNUEModel : public OptionBase
-    {
-        std::string _json_file_path;
-
-        OptionNNUEModel() : OptionBase("NNUEModel") {}
-
-        void print(std::ostream& out) const override
-        {
-            OptionBase::print(out);
-            out << "type string default " << _json_file_path;
-        }
-        void set(std::string_view value) override
-        {
-            search::Context::load_nnue_model(std::string(value));
-            _json_file_path = value;
-        }
-    };
-
-#if DATAGEN
-    /* Collect data to use for training a neural net. */
-    /* Data is written to CSV files under the DB path (set via uci).
-     *
-     * KNOWN ISSUES
-     * ------------
-     * generate_unique_filename is not transactional, race conditions
-     * may occur between generating the name and using the file.
-     */
-    using MoveData = std::tuple<search::BaseMove, int, score_t>;
-    using EvalData = std::unordered_map<chess::State, MoveData, Hasher<chess::State>>;
-
-    static EvalData g_data;
-    static std::string g_data_dir;
-
-    static std::string generate_unique_filename(const fs::path& dir, const std::string& extension)
-    {
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
-        static std::uniform_int_distribution<> dis(0, 15);
-
-        std::string filename;
-        filename.reserve(16 + extension.length());
-
-        const char* chars = "0123456789abcdef";
-        for (int i = 0; i < 16; ++i)
-        {
-            filename += chars[dis(gen)];
-        }
-
-        filename += extension;
-
-        fs::path full_path = dir / filename;
-        if (fs::exists(full_path))
-        {
-            return generate_unique_filename(dir, extension);
-        }
-        return full_path;
-    }
-
-    struct OptionDB : public OptionBase
-    {
-        OptionDB(const std::string& path) : OptionBase("DB") { _set(path); }
-
-        void print(std::ostream& out) const override
-        {
-            OptionBase::print(out);
-            out << "type string default " << g_data_dir;
-        }
-
-        void set(std::string_view value) override { _set(std::string(value)); }
-
-    private:
-        void _set(const std::string& value)
-        {
-            try
-            {
-                fs::create_directories(value);
-                g_data_dir = value;
-            }
-            catch (const std::exception& e)
-            {
-                log_error(std::format("{}: {}", value, e.what()));
-            }
-        }
-    };
-
-
-    static void data_flush(const search::Context& ctxt, int threshold = DATAGEN_SCORE_THRESHOLD)
-    {
-        ASSERT_ALWAYS(ctxt.tid() == 0);
-
-        EvalData data;
-        data.swap(g_data);
-
-        if (!data.empty() && ctxt._score >= threshold)
-        {
-            const auto filename = generate_unique_filename(g_data_dir, ".csv");
-            log_info(std::format("Writing {} positions to: {}", data.size(), filename));
-
-            std::ofstream of(filename);
-            if (!of)
-            {
-                log_error("Could not open file.");
-            }
-            else
-            {
-                for (const auto& pos : data)
-                {
-                    of << search::Context::epd(pos.first) << "," << std::get<0>(pos.second)
-                    << "," << std::get<1>(pos.second) << "," << std::get<2>(pos.second)
-                    << std::endl;
-                }
-                of.flush();
-            }
-        }
-    }
-#else
-    static void data_flush(const search::Context&, int = 0)
-    {
-    }
-#endif /* DATAGEN */
 } /* namespace */
 
 class UCI
@@ -400,9 +296,18 @@ public:
     UCI(const std::string &name, const std::string &version, Params& params)
         : _name(name)
         , _version(version)
+    #if NATIVE_BOOK
+        , _book((fs::absolute(fs::path(params["dir"])) / "book.bin").string())
+        , _use_opening_book(true)
+    #else
         , _use_opening_book(search::Context::_book_init(_book))
+    #endif
     {
         search::Context::_history = std::make_unique<search::History>();
+
+        log_debug(std::format("Context size: {}", sizeof(search::Context)));
+        log_debug(std::format("ContextBuffer size: {}", sizeof(search::ContextBuffer)));
+        log_debug(std::format("State size: {}", sizeof(chess::State)));
         log_debug(std::format("TT_Entry size: {}", sizeof(search::TT_Entry)));
 
         set_start_position();
@@ -417,16 +322,11 @@ public:
         _options.emplace("algorithm", std::make_shared<OptionAlgo>(_algorithm));
         _options.emplace("best opening", std::make_shared<OptionBool>("Best Opening", _best_book_move));
         _options.emplace("debug", std::make_shared<OptionBool>("Debug", _debug));
-    #if WITH_NNUE
-        _options.emplace("nnuemodel", std::make_shared<OptionNNUEModel>());
-    #endif
         _options.emplace("ownbook", std::make_shared<OptionBool>("OwnBook", _use_opening_book));
         _options.emplace("ponder", std::make_shared<OptionBool>("Ponder", _ponder));
+    #if USE_ENDTABLES
         _options.emplace("syzygypath", std::make_shared<OptionSyzygy>());
-    #if DATAGEN
-        const auto db_path = fs::absolute(fs::path(params["prog"]).parent_path()) / "evals";
-        _options.emplace("db", std::make_shared<OptionDB>(db_path.string()));
-    #endif
+    #endif /*USE_ENDTABLES */
     }
 
     static bool output_expected() { return _output_expected.load(std::memory_order_relaxed); }
@@ -442,7 +342,7 @@ private:
     void ponderhit();
     void position(const Arguments &args);
     void setoption(const Arguments &args);
-    void stop(bool flush = false);
+    void stop();
     void uci();
     void newgame();
 
@@ -478,13 +378,14 @@ private:
                     const auto promo = m.size() > 4 ? chess::piece_type(m[4]) : chess::PieceType::NONE;
                     const auto move = chess::BaseMove(from, to, promo);
                     const auto prev = _buf._state;
+                    ASSERT(prev._hash == chess::zobrist_hash(prev));
                     _buf._state.apply_move(move);
                     chess::zobrist_update(prev, move, _buf._state);
                     ASSERT(_buf._state._hash == chess::zobrist_hash(_buf._state));
                     /* keep track of played moves, to detect repetitions */
                     search::Context::_history->emplace(_buf._state);
                     /* update the halfmove clock */
-                    if (_buf._state.capture_value || prev.piece_type_at(from) == chess::PieceType::PAWN)
+                    if (_buf._state.is_capture() || prev.piece_type_at(from) == chess::PieceType::PAWN)
                         search::Context::_history->_fifty = 0;
                     else
                         ++search::Context::_history->_fifty;
@@ -495,11 +396,12 @@ private:
         if (moves.empty())
             _buf._state.hash();
         ASSERT(_buf._state._hash);
+
+        LOG_DEBUG(search::Context::epd(_buf._state));
     }
 
-    INLINE search::Context &context() { return *_buf.as_context(); }
+    INLINE search::Context &context() { return *_buf.as_context(true); }
 
-    template <bool synchronous=false>
     INLINE void output_best_move(bool request_ponder = false)
     {
         if (output_expected())
@@ -509,16 +411,7 @@ private:
             if (!move)
                 if (auto first = ctxt.first_valid_move())
                     move = *first;
-            if constexpr(synchronous)
-                output_best_move(move, request_ponder);
-            else
-                #if OUTPUT_POOL
-                    _output_pool->push_task([this, move, request_ponder] {
-                        output_best_move(move, request_ponder);
-                    });
-                #else
-                    output_best_move(move, request_ponder);
-                #endif /* OUTPUT_POOL */
+            output_best_move(move, request_ponder);
         }
     }
 
@@ -536,7 +429,7 @@ private:
             g_out.clear();
             if (request_ponder && _ponder)
             {
-                const auto &pv = _tt.get_pv();
+                const auto &pv = context().get_pv();
                 if (pv.size() > 2 && pv[1] == move)
                 {
                     std::format_to(std::back_inserter(g_out), "bestmove {} ponder {}", move.uci(), pv[2].uci());
@@ -547,6 +440,50 @@ private:
             std::format_to(std::back_inserter(g_out), "bestmove {}", move.uci());
             output(g_out);
         }
+    }
+
+    INLINE chess::BaseMove search_book(bool validate = true)
+    {
+    #if NATIVE_BOOK
+        if (!_opening_book.is_open())
+        {
+            log_debug(std::format("Opening: {}", _book));
+            if (!_opening_book.open(_book))
+            {
+                _use_opening_book = false;
+                log_error(std::format("Failed opening: {}", _book));
+                return chess::BaseMove();
+            }
+        }
+
+        const auto mode = _best_book_move ? PolyglotBook::BEST_WEIGHT : PolyglotBook::WEIGHTED_CHOICE;
+        if (const auto raw_move = _opening_book.lookup_move(_buf._state.hash(), mode))
+        {
+            const auto move = chess::BaseMove(raw_move);
+
+            if (!validate || _buf._state.is_valid(move))
+            {
+                LOG_DEBUG(std::format("Book move: {} in [{}]", move.uci(), search::Context::epd(_buf._state)));
+                return move;
+            }
+            else
+            {
+                log_warning(std::format("Invalid book move: {} in [{}]", move.uci(), search::Context::epd(_buf._state)));
+            }
+        }
+    #else
+        /* Deprecated. Call into Python to look up Polyglot opening book. */
+        if (const auto move = search::Context::_book_lookup(_buf._state, _best_book_move))
+        {
+            return move;
+        }
+    #endif /* !_NATIVE_BOOK */
+        else
+        {
+            _book_depth = std::min(_book_depth, _ply_count);
+        }
+
+        return chess::BaseMove();
     }
 
     INLINE void set_start_position()
@@ -573,6 +510,8 @@ private:
     /** iterative deepening search */
     template<typename F = void(*)()> score_t search(F f = []{});
 
+    const std::string _name;
+    const std::string _version; /* engine version */
     search::Algorithm _algorithm = search::Algorithm::MTDF;
     search::ContextBuffer _buf;
     search::TranspositionTable _tt;
@@ -584,21 +523,16 @@ private:
     score_t _score = 0;
     score_t _score_delta = 0;
     EngineOptions _options;
-    const std::string _name;
-    const std::string _version; /* engine version */
-#if OUTPUT_POOL
-    static std::unique_ptr<ThreadPool> _output_pool;
-#endif /* OUTPUT_POOL */
     static std::atomic_bool _output_expected;
     bool _ponder = false;
     bool _use_opening_book = false;
-    bool _best_book_move = false;
+    bool _best_book_move = true;
     chess::BaseMove _last_move;
+#if NATIVE_BOOK
+    PolyglotBook _opening_book = {};
+#endif
 };
 
-#if OUTPUT_POOL
-std::unique_ptr<ThreadPool> UCI::_output_pool(std::make_unique<ThreadPool>(1));
-#endif /* OUTPUT_POOL */
 std::atomic_bool UCI::_output_expected(false);
 
 /** Estimate number of moves (not plies!) until mate. */
@@ -614,32 +548,26 @@ struct Info : public search::IterationInfo
     const int eval_depth;
     const int hashfull;
     const int iteration;
-    search::PV* const pv;
-    static std::array<search::PV, PLY_MAX> pvs;
+    const search::PV* pv;
+    static search::PV no_pv;
 
     Info(const search::Context& ctxt, const IterationInfo& info)
         : IterationInfo(info)
         , eval_depth(ctxt.get_tt()->_eval_depth)
         , hashfull(search::TranspositionTable::usage() * 10)
         , iteration(ctxt.iteration())
-        , pv(&pvs[std::min<size_t>(pvs.size() - 1, iteration)])
+        , pv(&no_pv)
     {
-        constexpr auto TIME_LOW = 25; /* millisec */
-        const auto time_limit = search::Context::time_limit();
+        constexpr auto TIME_LOW = 1; /* millisec */
 
-        brief = (time_limit >= 0 && time_limit <= milliseconds + TIME_LOW) || !ctxt._best_move;
+        brief = milliseconds < TIME_LOW || !ctxt._best_move;
 
         if (!brief)
-        {
-            const auto& ctxt_pv = ctxt.get_pv();
-            if (!ctxt_pv.empty())
-                pv->assign(ctxt_pv.begin() + 1, ctxt_pv.end());
-        }
+            pv = &ctxt.get_pv();
     }
 };
 
-/* Hold PVs for pending output tasks */
-std::array<search::PV, PLY_MAX> Info::pvs;
+search::PV Info::no_pv;
 
 static void INLINE output_info(std::ostream& out, const Info& info)
 {
@@ -651,7 +579,7 @@ static void INLINE output_info(std::ostream& out, const Info& info)
     }
     else
     {
-        constexpr auto MATE_DIST_MAX = 10;
+        constexpr auto MATE_DIST_MAX = PV_PATH_MAX;
 
         auto score_unit = "cp";
         auto score = info.score;
@@ -674,8 +602,11 @@ static void INLINE output_info(std::ostream& out, const Info& info)
         output(out, g_out);
 
         /* output PV */
-        for (const auto &m : *info.pv)
+        for (size_t i = 1; i < info.pv->size(); ++i)
         {
+            auto& m = (*info.pv)[i];
+            if (!m)
+                break;
             const auto uci = m.uci();
             out.write(uci.data(), uci.size());
             out.write(" ", 1);
@@ -702,14 +633,7 @@ void UCI::on_iteration(PyObject *, search::Context *ctxt, const search::Iteratio
 {
     if (ctxt && iter_info)
     {
-    #if OUTPUT_POOL
-        const Info info(*ctxt, *iter_info);
-        _output_pool->push_task([info] {
-            output_info(info);
-        });
-    #else
         output_info(Info(*ctxt, *iter_info));
-    #endif /* OUTPUT_POOL */
     }
 }
 
@@ -761,7 +685,7 @@ void UCI::run()
         if (args.front() == "quit")
         {
             _output_expected = false;
-            stop(true);
+            stop();
             break;
         }
         dispatch(cmd, args);
@@ -815,7 +739,7 @@ INLINE void UCI::dispatch(std::string &cmd, const Arguments &args)
         }
         if (tok == "stop")
         {
-            stop(true);
+            stop();
             return;
         }
         break;
@@ -869,7 +793,7 @@ void UCI::go(const Arguments &args)
     stop();
 
     bool explicit_movetime = false, do_analysis = false, do_ponder = false;
-    int movestogo = 40, movetime = 0;
+    int movestogo = 0, movetime = 0;
     double time_remaining[] = {0, 0};
     int time_increments[] = {0, 0};
 
@@ -921,7 +845,8 @@ void UCI::go(const Arguments &args)
         }
     }
     /* initialize search context */
-    auto ctxt = new (_buf.as_context()) search::Context();
+    auto ctxt = new (_buf.as_context(false)) search::Context();
+    _buf._valid = true;
     ctxt->_state = &_buf._state;
 
     if (!movetime)
@@ -945,7 +870,6 @@ void UCI::go(const Arguments &args)
         _compute_pool->push_task([this]{
             search();
             output_best_move();
-            data_flush(context(), SCORE_MIN /* no threshold */);
         });
     }
     else
@@ -953,14 +877,14 @@ void UCI::go(const Arguments &args)
         if (_use_opening_book && _ply_count < _book_depth && !do_analysis)
         {
             LOG_DEBUG(std::format("lookup book_depth={}, ply_count={}", _book_depth, _ply_count));
-            if (auto move = search::Context::_book_lookup(_buf._state, _best_book_move))
+
+            if (const auto move = search_book())
             {
                 output_best_move(move);
                 return;
             }
-            else
-                _book_depth = std::min(_book_depth, _ply_count);
         }
+
         ASSERT(!do_analysis);
         ASSERT(!do_ponder);
 
@@ -985,19 +909,10 @@ void UCI::go(const Arguments &args)
                 ctxt->set_time_ctrl(ctrl);
             }
         };
-    #if BACKGROUND_SEARCH
-        /* search asynchronously on the background thread */
-        _compute_pool->push_task([this, movetime] {
-            _score = search(set_time_limt);
-            /* Do not request to ponder below 100 ms per move. */
-            output_best_move(movetime >= 100);
-        });
-    #else
         /* search synchronously */
         _score = search(set_time_limit);
         /* Do not request to ponder below 100 ms per move. */
         output_best_move(movetime >= 100);
-    #endif /* !BACKGROUND_SEARCH */
     }
 }
 
@@ -1013,10 +928,17 @@ INLINE void UCI::isready()
 
 void UCI::newgame()
 {
-    stop(true);
-    search::TranspositionTable::clear_shared_hashtable();
+    stop();
+
+    _tt.init(/* new_game = */ true);
+
     set_start_position();
     _book_depth = max_depth;
+
+#if PST_TUNING_ENABLED
+    chess::init_piece_square_tables();
+    std::cout << "info string PST_init\n";
+#endif
 }
 
 /**
@@ -1093,6 +1015,8 @@ void UCI::position(const Arguments &args)
     if (fen.size() >= 4)
     {
         _buf._state = chess::State();
+        ASSERT(_buf._state._hash == 0);
+
         if (   !chess::epd::parse_pos(fen[0], _buf._state)
             || !chess::epd::parse_side_to_move(fen[1], _buf._state)
             || !chess::epd::parse_castling(fen[2], _buf._state)
@@ -1104,6 +1028,7 @@ void UCI::position(const Arguments &args)
     {
         raise_value_error("invalid token count {}, expected 4", fen.size());
     }
+    _buf._state.rehash();
     apply_moves(moves);
     LOG_DEBUG(search::Context::epd(_buf._state));
 }
@@ -1114,7 +1039,7 @@ INLINE score_t UCI::search(F set_time_limit)
     if (!search::Context::_history)
         search::Context::_history = std::make_unique<search::History>();
 
-    _tt.init();
+    _tt.init(/* new_game = */ false);
 
     auto& ctxt = context();
     ctxt.set_tt(&_tt);
@@ -1124,13 +1049,16 @@ INLINE score_t UCI::search(F set_time_limit)
     ctxt._move = _last_move;
 
     set_time_limit();
+
+#if NATIVE_BOOK && USE_BOOK_HINT
+    if (_ply_count < 12)
+        ctxt._prev = search_book(false /* do not validate */);
+#endif /* USE_BOOK_HINT */
+
     const auto score = search::iterative(ctxt, _tt, _depth + 1);
 
     _score_delta = score - _score;
-#if 0
-    if (_score_delta < -50)
-        search::Context::log_message(LogLevel::INFO, std::format("score drop from {} to {}", _score, score));
-#endif
+
     return score;
 }
 
@@ -1159,17 +1087,11 @@ void UCI::setoption(const Arguments &args)
         ensure_background_thread();
 }
 
-void UCI::stop(bool flush)
+void UCI::stop()
 {
     search::Context::set_time_limit_ms(0);
     _compute_pool->wait_for_tasks([] { search::Context::cancel(); });
-#if OUTPUT_POOL
-    _output_pool->wait_for_tasks();
-#endif /* OUTOUT_POOL */
-    output_best_move<true>();
-
-    if (flush)
-        data_flush(context());
+    output_best_move();
 }
 
 void UCI::uci()
@@ -1218,37 +1140,10 @@ void uci_loop(Params params)
         err = "unknown exception";
     }
     if (!err.empty())
-        raise_runtime_error(err.c_str());
-}
-
-void search::data_collect_move(const search::Context& ctxt, const chess::BaseMove& move)
-{
-#if DATAGEN
-    if (ctxt.tid() == 0 && ctxt.depth() >= DATAGEN_MIN_DEPTH)
     {
-    //#if WITH_NNUE
-    //    const auto eval = ctxt._eval_raw;
-    //#else
-        const auto eval = ctxt._score;
-    //#endif
-
-        if (!g_data_dir.empty() && is_valid(eval) && move)
-        {
-            LOG_DEBUG(std::format("{}: {}, {}/{} {}",
-                ctxt.epd(), move.uci(), ctxt.depth(), ctxt.iteration(), eval));
-
-            auto i = g_data.find(ctxt.state());
-            if (i == g_data.end())
-            {
-                g_data.emplace(ctxt.state(), std::make_tuple(move, ctxt.depth(), eval));
-            }
-            else if (std::get<1>(i->second) <= ctxt.depth())
-            {
-                i->second = std::make_tuple(move, ctxt.depth(), eval);
-            }
-        }
+        search::Context::log_message(LogLevel::ERROR, err);
+        raise_runtime_error(err.c_str());
     }
-#endif /* DATAGEN */
 }
 
 #else

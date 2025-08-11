@@ -35,39 +35,22 @@
 #elif __APPLE__
 #include <mach/mach.h>
 #elif _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#undef ERROR
-#undef max
-#undef min
+#include "ms_windows.h"
 #endif /* _WIN32 */
 
 
 using namespace chess;
 using namespace search;
 
-constexpr size_t ONE_MEGABYTE = 1024 * 1024;
-
-
-template<bool Debug = false>
-static void log_pv(const TranspositionTable& tt, const Context* ctxt, const char* info)
-{
-    if constexpr(Debug)
-    {
-        std::ostringstream out;
-
-        out << info << ": ";
-        for (const auto& move : tt._pv)
-            out << move << " ";
-        if (ctxt)
-            out << " pos=" << ctxt->epd();
-        Context::log_message(LogLevel::INFO, out.str());
-    }
-}
-
 
 static size_t mem_avail()
 {
+#if USE_MMAP_HASH_TABLE
+    if (sizeof(void*) == 8)
+        return 32 * 1024 * ONE_MEGABYTE;
+    else
+        return 1024 * ONE_MEGABYTE;
+#else
 #if __linux__
     struct sysinfo info = {};
     if (sysinfo(&info) == 0)
@@ -96,10 +79,12 @@ static size_t mem_avail()
 #endif
     /* failover to psutil via Cython */
     return static_cast<size_t>(cython_wrapper::call(search::Context::_vmem_avail));
+
+#endif /* USE_MMAP_HASH_TABLE */
 }
 
 
-TranspositionTable::HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE, mem_avail());
+HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE);
 
 
 /* static */ size_t TranspositionTable::max_hash_size()
@@ -122,7 +107,7 @@ TranspositionTable::HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE
     bool ok = true;
     try
     {
-        _table.resize(MB, mem_avail());
+        _table.resize(MB);
     }
     catch (...)
     {
@@ -143,15 +128,21 @@ TranspositionTable::HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE
 }
 
 
+/* Prepare for new search. This clears MOST of the state.
+ * Before a new game, _ply_history, _killer_moves and the
+ * thread-shared hash_table must be also cleared.
+ */
 void TranspositionTable::clear()
 {
     _iteration = 0;
     _eval_depth = 0;
 
+    /* Clear aspiration window */
     _w_alpha = SCORE_MIN;
     _w_beta = SCORE_MAX;
     _reset_window = false;
 
+    /* Clear metrics */
     _check_nodes = 0;
     _eval_count = 0;
     _endgame_nodes = 0;
@@ -168,26 +159,44 @@ void TranspositionTable::clear()
     _reductions = 0;
     _retry_reductions = 0;
 
+    clear_history();
+}
+
+
+void TranspositionTable::clear_history()
+{
     for (auto color : { BLACK, WHITE })
     {
         _countermoves[color].clear();
         _hcounters[color].clear();
     }
+
+    _table.increment_generation();
 }
 
 
-/* static */ void TranspositionTable::clear_shared_hashtable()
+void TranspositionTable::init(bool new_game)
 {
-    assert_param_ref();
+    clear();
 
-    _table.clear();
-    Context::clear_moves_cache();
-}
+    if (new_game)
+    {
+        search::Context::log_message(LogLevel::DEBUG, "init: game");
+        _table.clear(true);
 
+        Context::clear_caches_and_stacks();
 
-/* static */ void TranspositionTable::increment_clock()
-{
-    _table.increment_clock();
+        _killer_moves.fill({});
+        _ply_history.fill({});
+    }
+    else
+    {
+        search::Context::log_message(LogLevel::DEBUG, "init: search");
+        shift_left_2(_killer_moves.begin(), _killer_moves.end());
+        shift_left_2(_ply_history.begin(), _ply_history.end());
+    }
+
+    _eval_depth = 0; /* Reset selective depth */
 }
 
 
@@ -207,32 +216,23 @@ void TranspositionTable::update_stats(const Context& ctxt)
 }
 
 
-void TranspositionTable::store(Context& ctxt, TT_Entry& entry, int depth)
+void TranspositionTable::store(Context& ctxt, TT_Entry& entry, TT_Type type, int depth)
 {
     ASSERT(ctxt._score > SCORE_MIN);
     ASSERT(ctxt._score < SCORE_MAX);
 
-    entry._eval = ctxt._eval;
-    entry._value = ctxt._score;
-
-    if (entry._value >= ctxt._beta)
+    if (type == TT_Type::LOWER || (type == TT_Type::EXACT && !entry._best_move))
     {
-        entry._type = TT_Type::LOWER;
         entry._best_move = ctxt._best_move;
     }
-    else if (entry._value <= ctxt._alpha)
-    {
-        entry._type = TT_Type::UPPER;
-    }
-    else
-    {
-        entry._type = TT_Type::EXACT;
-    }
+    entry._type = type;
+    entry._generation = _table.generation();
+    entry._pv = ctxt.is_pv_node();
+    entry._eval = ctxt._eval; /* static eval */
+    entry._value = ctxt._score;
     entry._hash_move = ctxt._best_move;
     entry._hash = ctxt.state().hash();
     entry._depth = depth;
-    entry._age = _table.clock();
-    entry._captures = ctxt._tt_entry._captures;
 }
 
 
@@ -265,132 +265,6 @@ void TranspositionTable::store_killer_move(const Context& ctxt)
 }
 
 
-inline void log_invalid_pv(
-    const std::string& func,
-    const PV& pv,
-    const Context& start,
-    const State& pos,
-    const BaseMove& move)
-{
-    std::ostringstream out;
-    out << func << ": invalid: " << move << " pv: ";
-    for (const auto& m : pv)
-        out << m << " ";
-
-    out << " root: " << start.epd() << " current: " << Context::epd(pos);
-    Context::log_message(LogLevel::WARN, out.str());
-}
-
-
-
-template<bool Debug>
-static bool is_valid_pv_move(
-    const std::string& func,
-    const PV& pv,
-    const Context& start,
-    const State& pos,
-    const BaseMove& move)
-{
-    if constexpr(Debug)
-    {
-        if (   (pos.piece_type_at(move.from_square()) == PieceType::NONE)
-            || (pos.occupied_co(pos.turn) & chess::BB_SQUARES[move.to_square()])
-            || (pos.kings & chess::BB_SQUARES[move.to_square()])
-        )
-        {
-            log_invalid_pv(func, pv, start, pos, move);
-            return false;
-        }
-    }
-    return true;
-}
-
-
-template<bool Debug>
-void TranspositionTable::get_pv_from_table(Context& root, const Context& ctxt, PV& pv)
-{
-    auto state = ctxt.state().clone();
-
-    ASSERT(Context::epd(state) == ctxt.epd());
-    ASSERT(state.hash() == ctxt.state().hash());
-
-    /* keep track of state hashes, to detect cycles */
-    std::unordered_set<size_t> visited;
-
-    auto move = ctxt._best_move;
-
-    while (move)
-    {
-        if (!is_valid_pv_move<Debug>(__func__, pv, root, state, move))
-            break;
-
-        state.apply_move(move);
-
-        /* Guard against infinite loops. */
-        if (!visited.insert(state.hash()).second)
-            break;
-
-        if constexpr(Debug)
-        {
-            if (state.is_check(!state.turn))
-            {
-                log_invalid_pv(__func__, pv, root, state, move);
-                return;
-            }
-        }
-
-        /* Add the move to the principal variation. */
-        pv.emplace_back(move);
-
-        auto p = _table.lookup_read(state);
-        if (!p)
-            break;
-
-        ASSERT(p->matches(state));
-
-        move = p->_hash_move;
-    }
-
-    if (abs(root._score) < MATE_HIGH && state.is_checkmate())
-    {
-        /* The parity of the PV length tells which side is winning. */
-        /* Subtract one for the move that lead to the root position */
-        root._mate_detected = int(pv.size()) - 1;
-    }
-}
-
-
-template<bool Debug> void TranspositionTable::store_pv(Context& root)
-{
-    ASSERT(root._best_move);
-
-    _pvBuilder.clear();
-
-    for (auto ctxt = &root; true; )
-    {
-        _pvBuilder.emplace_back(ctxt->_move);
-        auto next = ctxt->next_ply();
-
-        if (next->is_null_move())
-            break;
-
-        if ((next->_move == ctxt->_best_move)
-            && is_valid_pv_move<Debug>(__func__, _pvBuilder, root, ctxt->state(), next->_move))
-        {
-            ASSERT(next->_parent == ctxt);
-            ctxt = next;
-            continue;
-        }
-
-        get_pv_from_table<Debug>(root, *ctxt, _pvBuilder);
-        break;
-    }
-
-    _pv.swap(_pvBuilder);
-    log_pv<Debug>(*this, &root, "store_pv");
-}
-
-
 /*
  * https://www.stmintz.com/ccc/index.php?id=76542
  */
@@ -409,6 +283,11 @@ bool verify_null_move(Context& ctxt, Context& null_move_ctxt)
     null_move_ctxt._score = SCORE_MIN;
     null_move_ctxt._alpha = ctxt._beta - 1;
     null_move_ctxt._beta  = ctxt._beta;
+
+    /* Ensure minimum verification depth */
+    null_move_ctxt._max_depth =
+       std::max<int>(null_move_ctxt._ply + NULL_MOVE_MIN_DRAUGHT, null_move_ctxt._max_depth);
+    ASSERT(null_move_ctxt.depth() >= NULL_MOVE_MIN_DRAUGHT);
 
     const auto score = negamax(null_move_ctxt, *null_move_ctxt.get_tt());
 
@@ -480,10 +359,8 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
      * regardless, but lower the count of cutoffs required to "succeed" if the position has
      * produced cutoffs before.
      */
-    const auto min_cutoffs = MULTICUT_C - (
-        /* ctxt.depth() > 5 && */ ctxt._tt_entry.is_lower()
-        && ctxt._tt_entry._value + MULTICUT_MARGIN >= ctxt._beta
-    );
+    const auto min_cutoffs = MULTICUT_C
+       - (ctxt.tt_entry().is_lower() && ctxt.tt_entry()._value + MULTICUT_MARGIN >= ctxt._beta);
 
     while (auto next_ctxt = ctxt.next(false, 0, move_count))
     {
@@ -528,6 +405,7 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
 }
 
 
+#if USE_ENDTABLES
 /*
  * Syzygy endgame tablebase probing (https://www.chessprogramming.org/Syzygy_Bases).
  * This implementation simply calls back into the python-chess library.
@@ -553,7 +431,7 @@ static INLINE bool probe_endtables(Context& ctxt)
     }
     return false;
 }
-
+#endif /* USE_ENDTABLES */
 
 static INLINE void update_pruned(Context& ctxt, const Context& next, size_t& count)
 {
@@ -571,11 +449,11 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     ASSERT(ctxt._score <= ctxt._alpha);
     ASSERT(ctxt._alpha < ctxt._beta);
     ASSERT(ctxt.is_root() || !ctxt._move || ctxt._move._group < MoveOrder::UNORDERED_MOVES);
-
     ASSERT(ctxt.get_tt() == &table);
 
     if (ctxt.is_root())
     {
+    #if USE_ENDTABLES
         /* Do not probe end tables if the number of pieces at root
          * position has dropped below the end tables cardinality
          * (the root of the search may already be in the tables).
@@ -584,6 +462,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             table._iteration > 3
             && Context::tb_cardinality() > 0
             && popcount(ctxt.state().occupied()) > Context::tb_cardinality();
+    #endif /* USE_ENDTABLES */
     }
     else
     {
@@ -628,7 +507,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     }
 
     /* prevent overflow */
-    ctxt._max_depth = std::min(ctxt._max_depth, PLY_MAX-1);
+    ctxt._max_depth = std::min<int>(ctxt._max_depth, PLY_MAX - 1);
 
     if (ctxt._alpha + 1 < ctxt._beta)
     {
@@ -647,11 +526,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         return *p;
     }
 
-    if (!ctxt.is_pv_node() && /* !ctxt.is_retry() && */ ctxt._eval > ctxt._alpha && ctxt.depth() < 7)
-    {
-        ++ctxt._max_depth;
-    }
-
     if (ctxt.is_leaf())
     {
         ctxt._score = ctxt.evaluate();
@@ -659,6 +533,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
     }
+#if USE_ENDTABLES
     else if (table._probe_endtables && probe_endtables(ctxt))
     {
         table.store<TT_Type::EXACT>(ctxt, ctxt.depth() + 2 * ctxt.tb_cardinality());
@@ -666,16 +541,23 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         ctxt._prune_reason = PruneReason::PRUNE_END_TABLES;
         return ctxt._score;
     }
+#endif /* USE_ENDTABLES */
     else
     {
         ASSERT(ctxt._alpha < ctxt._beta);
-
+        auto eval = ctxt.tt_entry()._eval;
     #if WITH_NNUE
-        ctxt.eval_nnue();
-        const auto eval = ctxt._eval;
-    #else
-        const auto eval = ctxt._tt_entry._value;
-    #endif
+        if (is_valid(eval))
+        {
+            ASSERT(!ctxt.is_root());
+            ctxt._eval = eval;
+        }
+        else
+        {
+            ctxt.eval_with_nnue();
+            eval = ctxt._eval;
+        }
+    #endif /* WITH_NNUE */
 
     #if REVERSE_FUTILITY_PRUNING
         /*
@@ -712,7 +594,9 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         }
     #endif /* RAZORING */
 
+    #if 0
         ctxt.ensure_prev_move();
+    #endif
 
         if (multicut(ctxt, table))
         {
@@ -725,7 +609,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         if (ctxt._ply
             && ctxt.is_pv_node()
             && ctxt.depth() >= 6
-            && !ctxt._tt_entry.is_valid()
+            && !ctxt.tt_entry().is_valid()
             && ctxt.can_reduce()
            )
             ctxt._max_depth -= 2;
@@ -739,9 +623,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         int move_count = 0, futility = -1;
 
         score_t a = SCORE_MIN, b = SCORE_MAX, s = SCORE_MIN;
+        int64_t time_left = 0;
 
         /* iterate over moves */
-        while (auto next_ctxt = ctxt.next(null_move, futility, move_count))
+        while (auto next_ctxt = ctxt.next(null_move, futility, move_count, &time_left))
         {
             if (next_ctxt->is_null_move())
             {
@@ -785,16 +670,18 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     * does not beat beta, it means the move is singular (the only cutoff
                     * in the current position).
                     */
-                    if (ctxt.depth() >= (ctxt.is_pv_node() ? 7 : 5)
-                        && ctxt._tt_entry.is_lower()
-                        && next_ctxt->_move._group == MoveOrder::BEST_MOVES
-                        && abs(ctxt._tt_entry._value) < MATE_HIGH
+                    if (ctxt.depth() >= (ctxt.is_pv_node() ? SINGULAR_MIN_DEPTH_PV : SINGULAR_MIN_DEPTH_NON_PV)
+                        && ctxt.tt_entry().is_lower()
+                        && next_ctxt->_move == ctxt.tt_entry()._best_move
+                        && abs(ctxt.tt_entry()._value) < MATE_HIGH
                         && !ctxt._excluded
-                        && ctxt._tt_entry._depth >= ctxt.depth() - 3
-                        && abs(ctxt._eval - ctxt._tt_entry._value) <= SINGULAR_ACCURACY_MARGIN
+                        && ctxt.tt_entry()._depth >= ctxt.depth() - 3
                        )
                     {
-                        const auto s_beta = std::max(int(ctxt._tt_entry._value) - ctxt.singular_margin(), MATE_LOW);
+                        ASSERT(is_valid(ctxt.tt_entry()._value));
+
+                        const auto margin = ctxt.tt_entry()._pv && !ctxt.is_pv_node() ? SINGULAR_MARGIN_TT_PV : SINGULAR_MARGIN_NORMAL;
+                        const auto s_beta = std::max(score_t(ctxt.tt_entry()._value) - margin * ctxt.depth() / SINGULAR_DEPTH_SCALE, MATE_LOW);
 
                         /*
                          * Hack: use ply + 2 for the singular search to avoid clobbering
@@ -802,39 +689,44 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                          */
                         ContextBuffer buf;
                         auto s_ctxt = ctxt.clone(buf, ctxt._ply + 2);
-
+                        s_ctxt->tt_result()._replacement_slot = -1; /* prevent TT writeback */
                         s_ctxt->set_tt(ctxt.get_tt());
                         s_ctxt->_excluded = next_ctxt->_move;
                         s_ctxt->_max_depth = s_ctxt->_ply + (ctxt.depth() - 1) / 2;
+                        ASSERT(s_ctxt->depth() == (ctxt.depth() - 1) / 2);
                         s_ctxt->_alpha = s_beta - 1;
                         s_ctxt->_beta = s_beta;
                         s_ctxt->_score = SCORE_MIN;
-                        s_ctxt->_non_incremental_update = true;
+                        s_ctxt->_multicut_allowed = ctxt._multicut_allowed;
+                        s_ctxt->_null_move_allowed[0] = ctxt._null_move_allowed[0];
+                        s_ctxt->_null_move_allowed[1] = ctxt._null_move_allowed[1];
+
+                        s_ctxt->_nnue_prev_offs = 3; /* skip 2 plies */
 
                         const auto eval = negamax(*s_ctxt, table);
 
                         if (eval < s_beta)
                         {
-                            const auto ext = (SINGULAR_ACCURACY_MARGIN - abs(ctxt._eval - ctxt._tt_entry._value))
-                                * ONE_PLY / SINGULAR_ACCURACY_MARGIN;
-                            ASSERT(ext >= 0);
+                            ++next_ctxt->_max_depth; /* extend once */
 
-                            next_ctxt->_extension += ext; /* extend once */
-                            if (!ctxt.is_pv_node() && eval + DOUBLE_EXT_MARGIN < s_beta)
+                            if (!ctxt.is_pv_node()
+                                && eval + SINGULAR_DOUBLE_EXT_MARGIN < s_beta
+                                && next_ctxt->_double_ext <= DOUBLE_EXT_MAX)
                             {
-                                next_ctxt->_extension += ext; /* extend more */
+                                ++next_ctxt->_max_depth; /* extend more */
+                                ++next_ctxt->_double_ext;
                             }
                         }
+                        else if (s_beta >= ctxt._beta)
+                        {
                         /*
                          * Got another fail-high from the (reduced) search that skipped the known
                          * cutoff move, so there must be multiple cutoffs, do 2nd multicut pruning.
                          */
-                        else if (s_beta >= ctxt._beta)
-                        {
                             ctxt._prune_reason = PruneReason::PRUNE_SINGULAR;
                             return s_beta;
                         }
-                        else if (ctxt._tt_entry._value >= ctxt._beta && next_ctxt->can_reduce())
+                        else if (ctxt.tt_entry()._value >= ctxt._beta && next_ctxt->can_reduce())
                         {
                             next_ctxt->_max_depth -= 2;
                         }
@@ -845,7 +737,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 }
 
                 /* Late-move reduction and pruning */
-                if (move_count && next_ctxt->late_move_reduce(move_count) == LMRAction::Prune)
+                if (move_count && next_ctxt->late_move_reduce(move_count, time_left) == LMRAction::Prune)
                 {
                     next_ctxt->_prune_reason = PruneReason::PRUNE_LMP;
                     update_pruned(ctxt, *next_ctxt, table._late_move_prune_count);
@@ -913,7 +805,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     {
                         if (ctxt._ply < PLY_HISTORY_MAX && abs(move_score) < MATE_HIGH)
                         {
-                            auto& h = table._plyHistory[ctxt._ply][ctxt.turn()][next_ctxt->_move];
+                            auto& h = table._ply_history[ctxt._ply][ctxt.turn()][next_ctxt->_move];
                             h.first += next_ctxt->improvement() / ctxt.depth();
                             ++h.second;
                         }
@@ -921,10 +813,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         if (ctxt.depth() >= COUNTER_MOVE_MIN_DEPTH)
                             table.store_countermove(ctxt);
 
-                        if (ctxt._alpha + KILLER_MOVES_MARGIN / ctxt.depth() >= ctxt._beta)
+                        if (ctxt._alpha + KILLER_MOVES_DEPTH_MARGIN / ctxt.depth() + KILLER_MOVES_MARGIN >= ctxt._beta)
                             table.store_killer_move(ctxt);
 
-                        if (next_ctxt->depth() >= HISTORY_MIN_DEPTH)
+                        if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_check())
                             table.history_update_cutoffs(next_ctxt->_move);
                     }
                 }
@@ -937,7 +829,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             {
                 continue;
             }
-            else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_capture())
+            else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_capture() && !next_ctxt->is_check())
             {
                 table.history_update_non_cutoffs(next_ctxt->_move);
             }
@@ -1002,10 +894,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     if constexpr(EXTRA_STATS)
         table.update_stats(ctxt);
 
-#if DATAGEN
-    data_collect_move(ctxt, ctxt._best_move);
-#endif /* DATAGEN */
-
     return ctxt._score;
 }
 
@@ -1018,12 +906,15 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
     ASSERT_ALWAYS(ctxt._algorithm == Algorithm::MTDF);
     ASSERT_ALWAYS(ctxt.is_root());
 
+    if (first == 0 && table._iteration == 1)
+        first = ctxt.evaluate<true>();
+
     auto lower = ctxt._alpha;
     auto upper = ctxt._beta;
 
     auto g = first;
 
-    ASSERT(ctxt.get_tt() == &table);
+    table._pass = 0;
 
     while (lower < upper)
     {
@@ -1060,7 +951,10 @@ score_t search::mtdf(Context& ctxt, score_t first, TranspositionTable& table)
         else
             lower = g;
 
-        ctxt.rewind(0, MTDF_REORDER_MOVES);
+        ctxt.reset(MTDF_REORDER_MOVES, false);
+
+        table._pass++;
+        table._reset_window = false;
     }
 
     return (ctxt._score = g);
@@ -1089,13 +983,11 @@ static score_t search_iteration(Context& ctxt, TranspositionTable& table, score_
     if (ctxt._best_move)
     {
         ctxt._prev = ctxt._best_move; /* save for next iteration */
-        table.store_pv(ctxt);
     }
-    else if (ctxt._prev)
-        ctxt._best_move = ctxt._prev;
     else
-        table._pv.clear();
-
+    {
+        ctxt._best_move = ctxt._prev;
+    }
     return score;
 }
 
@@ -1165,10 +1057,6 @@ public:
         for (size_t i = 0; i < thread_count; ++i)
         {
             _tables[i]._tt._iteration = table._iteration;
-
-            /* copy principal variation from main thread */
-            if (_tables[i]._tt._pv.empty())
-                _tables[i]._tt._pv = table._pv;
 
             _tables[i]._ctxt = _root.clone(_tables[i]._raw_mem);
             _tables[i]._tt._w_alpha = _tables[i]._ctxt->_alpha;
@@ -1254,8 +1142,6 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
     score_t score = 0, prev_score = 0;
 
-    table.increment_clock();
-
     max_iter_count = std::min(PLY_MAX, max_iter_count);
 
     for (int i = 1; i != max_iter_count;)
@@ -1265,7 +1151,7 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
         ctxt.set_search_window(score, prev_score);
 
-        ctxt.reinitialize();
+        ctxt.reset();
 
         {   /* SMP scope start */
             SMPTasks tasks(ctxt, table, score);
@@ -1319,17 +1205,4 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
     }
 
     return score;
-}
-
-
-/*
- * Shift ply history and killer moves tables by two.
- * Should be called at the beginning of each new search.
- */
-void TranspositionTable::shift()
-{
-    _pv.clear();
-
-    shift_left_2(_killer_moves.begin(), _killer_moves.end());
-    shift_left_2(_plyHistory.begin(), _plyHistory.end());
 }

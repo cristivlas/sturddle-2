@@ -18,7 +18,12 @@ Monkey-patch MSVCCompiler to use clang-cl.exe on Windows.
 '''
 cl_exe = environ.get('CL_EXE', '')
 if cl_exe:
-    from setuptools._distutils._msvccompiler import MSVCCompiler, _find_exe
+    try:
+        from setuptools._distutils._msvccompiler import MSVCCompiler, _find_exe
+    except:
+        # setuptools >= 80
+        from setuptools._distutils._msvccompiler import MSVCCompiler
+        from setuptools._distutils.compilers.C.msvc import _find_exe
 
     _initialize = MSVCCompiler.initialize
 
@@ -38,7 +43,7 @@ else:
 
 
 def get_compiler_major_version(compiler=None):
-    # Get the compiler from the CC environment variable
+
     if compiler is None:
         compiler = environ.get('CC', 'gcc')
 
@@ -55,11 +60,11 @@ def get_compiler_major_version(compiler=None):
         raise ValueError('Could not parse ' + compiler + ' version from string: ' + version_string)
 
 
-build_stamp = datetime.now().strftime('%m%d%y.%H%M')
+# build_stamp = datetime.now().strftime('%m%d%y.%H%M')
+build_stamp = datetime.now().strftime('%m%d%y')
 
 sourcefiles = [
     '__init__.pyx',
-    'captures.cpp',
     'chess.cpp',
     'context.cpp',
     'search.cpp',
@@ -67,11 +72,15 @@ sourcefiles = [
 ]
 
 
+cxx = environ.get('CXX')
+if cxx and cxx.startswith('clang++') and 'CC' not in environ:
+    cc = cxx.replace('clang++', 'clang')
+    environ['CC'] = cc
+
 """
 Compiler args.
 """
 inc_dirs = [
-    '-I./json/include',
     '-I./libpopcnt',
     '-I./magic-bits/include',
     '-I./version2',
@@ -79,26 +88,27 @@ inc_dirs = [
 
 link = []
 
-# Release build
-args = ['-DNO_ASSERT']
-
-# Assert-enabled build
 if environ.get('BUILD_ASSERT', None):
-    args = ['-DTUNING_ENABLED=true']
+    args = []
+else:
+    args = ['-DNO_ASSERT']  # Release build
 
 platform = sysconfig.get_platform()
 
-# Experimental
 NATIVE_UCI = environ.get('NATIVE_UCI', '').lower() in ['1', 'true', 'yes']
+SHARED_WEIGHTS = environ.get('SHARED_WEIGHTS', '').lower() in ['1', 'true', 'yes']
 
 # Debug build
 if environ.get('BUILD_DEBUG', None):
     if platform.startswith('win'):
-        args = [ '/Od', '/Zi', '/DTUNING_ENABLED' ]
+        args = [ '/Od', '/Zi' ]
         link = [ '/DEBUG' ]
     else:
-        args = [ '-O0', '-D_DEBUG', '-DTUNING_ENABLED' ]
+        args = [ '-O0', '-D_DEBUG' ]
 
+
+if SHARED_WEIGHTS:
+    args.append('-DSHARED_WEIGHTS')
 
 args.append('-DBUILD_STAMP=' + build_stamp)
 args += environ.get("CXXFLAGS", '').split()
@@ -120,18 +130,30 @@ if platform.startswith('win'):
         '/DCALLBACK_PERIOD=8192',
         '/DCYTHON_WITHOUT_ASSERTIONS',
     ]
+
+    if environ.get('BUILD_DEBUG', None):
+        # Enable runtime checks in debug build
+        # args += [ '/RTCc', '-D_ALLOW_RTCc_IN_STL' ]
+        args += [ '/guard:cf', '/RTCs', '/RTCu' ]
+        link += [ '/GUARD:CF' ]
+    else:
+        args += [ '/D_FORTIFY_SOURCE=0', '/GS-' ]
+        link += [ '/GUARD:NO' ]
+
     if NATIVE_UCI:
         args.append('/DNATIVE_UCI=true')
 
-    if cl_exe.endswith('clang-cl.exe'):
+    # clang specific
+    if cl_exe.lower().endswith('clang-cl.exe'):
         args += [
-            '-Ofast',
             '-Wno-unused-command-line-argument',
             '-Wno-unused-variable',
             '-Wno-nan-infinity-disabled',
         ]
-    else:
-        link += ['/LTCG:OFF']
+        if not environ.get('BUILD_DEBUG', None):
+            args += [ '-Ofast ']
+
+    link += ['/LTCG:OFF']  # MSFT linker args
 else:
     # Linux, Mac
     STDCPP=20 if NATIVE_UCI else 17
@@ -156,7 +178,7 @@ else:
 
     # Silence off Py_DEPRECATED warnings for clang;
     # clang is the default compiler on macosx.
-    cc = 'clang' if platform.startswith('macos') else environ.get('CC', None)
+    cc = 'clang' if platform.startswith('macos') else environ.get('CC')
     if cc and cc.startswith('clang'):
         args += [
             '-Wno-macro-redefined',
@@ -184,13 +206,19 @@ else:
                     '-lc++',
                     '-lc++experimental',
                 ]
+        else:
+            args.append('-DNATIVE_UCI=false')
+
     else:
+        # Not Clang
         if NATIVE_UCI:
             if get_compiler_major_version() < MIN_GCC_VER:
                 raise RuntimeError(f'NATIVE_UCI uses C++20 and requires GCC {MIN_GCC_VER} or later')
-            args += [
-                '-DNATIVE_UCI=true',
-            ]
+
+            args.append('-DNATIVE_UCI=true')
+        else:
+            args.append('-DNATIVE_UCI=false')
+
         args.append('-DUSE_MAGIC_BITS')
 
 """
@@ -203,7 +231,8 @@ extensions = [
         sources=sourcefiles,
         extra_compile_args=args + inc_dirs,
         extra_link_args=link
-    )]
+    )
+]
 if not NATIVE_UCI:
     extensions.append(Extension(
         name='uci',
@@ -212,5 +241,15 @@ if not NATIVE_UCI:
         extra_link_args=link
     ))
 
+ext_modules = cythonize(extensions)
 
-setup(ext_modules=cythonize(extensions), cmdclass={'build_ext': BuildExt})
+if SHARED_WEIGHTS:
+    weights = Extension(
+        name='weights',
+        sources=['weights.cpp'],
+        extra_compile_args=args + inc_dirs,
+        extra_link_args=link
+    )
+    ext_modules.append(weights)
+
+setup(ext_modules=ext_modules, cmdclass={'build_ext': BuildExt})

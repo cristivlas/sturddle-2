@@ -164,7 +164,7 @@ class UCI:
         self.depth = 100
         explicit_movetime = False
         analysis = False
-        movestogo = 40
+        movestogo = 0
         movetime = 0
         ponder = False
         time_remaining = [0, 0]
@@ -391,7 +391,7 @@ class UCI:
         else:
             whitelist = ['Hash', 'SEE', 'Threads']
 
-        for name, (val, val_min, val_max, _) in engine.get_param_info().items():
+        for name, (val, val_min, val_max, _, _) in engine.get_param_info().items():
             if name not in whitelist or name.startswith('DEBUG_'):
                 continue
             if val_min == 0 and val_max == 1:
@@ -405,7 +405,6 @@ class UCI:
 
 
     def _ucinewgame(self, *_):
-        engine.clear_hashtable()
         self.init_algo()
         return self._position(['position', chess.STARTING_FEN])
 

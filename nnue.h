@@ -1,6 +1,6 @@
 #pragma once
 /*
- * Sturddle Chess Engine (C) 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2023 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,16 +25,21 @@
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
 #elif (__arm__) || (__arm64__) || (__aarch64__)
+    #define __ARM__ true
     #include "armvector.h"
 #endif
 
+#if __AVXVNNI__
+    #define ARCH_VNNI "/VNNI"
+#else
+    #define ARCH_VNNI
+#endif /* __AVXVNNI__ */
+
 #if INSTRSET >= 9 /* AVX 512 */
-    #define ALIGN alignas(64)
     #ifndef ARCH
         #define ARCH "AVX512"
     #endif
 #else
-    #define ALIGN alignas(32)
     #ifndef ARCH
         #if INSTRSET >= 8
             #define ARCH "AVX2"
@@ -44,6 +49,7 @@
     #endif /* ARCH */
 #endif /* INSTRSET >= 9 */
 
+#define ALIGN alignas(64)
 
 #define DEBUG_INCREMENTAL false
 
@@ -53,6 +59,7 @@ namespace nnue
     using namespace chess;
     using input_t = int16_t;
 
+    constexpr auto POOL_STRIDE = Vec8s::size();
     constexpr int QSCALE = 1024;
 
     /* bit index of the side-to-move feature within one-hot encoding */
@@ -88,20 +95,24 @@ namespace nnue
     #endif /* INSTRSET */
 
 #ifdef __FMA__  /* support fused multiply+add? */
-    static const std::string instrset = ARCH "/FMA";
+    static const std::string instrset = ARCH "/FMA" ARCH_VNNI;
 #else
-    static const std::string instrset = ARCH;
+    static const std::string instrset = ARCH ARCH_VNNI;
 #endif /* __FMA__ */
 
     static const Vector v_zero(0.0);
+    static const Vec8s  v8_zero(0);
+    static const Vec16s v16_zero(0);
 
-    INLINE Vec16s horizontal_add(const Vec16s (&v)[16])
+
+    template <typename V>
+    INLINE Vec16s horizontal_add(const V (&v)[16])
     {
         return Vec16s(
-            horizontal_add(v[0]), horizontal_add(v[1]), horizontal_add(v[2]), horizontal_add(v[3]),
-            horizontal_add(v[4]), horizontal_add(v[5]), horizontal_add(v[6]), horizontal_add(v[7]),
-            horizontal_add(v[8]), horizontal_add(v[9]), horizontal_add(v[10]),horizontal_add(v[11]),
-            horizontal_add(v[12]),horizontal_add(v[13]),horizontal_add(v[14]),horizontal_add(v[15]));
+            horizontal_add_x(v[0]), horizontal_add_x(v[1]), horizontal_add_x(v[2]), horizontal_add_x(v[3]),
+            horizontal_add_x(v[4]), horizontal_add_x(v[5]), horizontal_add_x(v[6]), horizontal_add_x(v[7]),
+            horizontal_add_x(v[8]), horizontal_add_x(v[9]), horizontal_add_x(v[10]),horizontal_add_x(v[11]),
+            horizontal_add_x(v[12]),horizontal_add_x(v[13]),horizontal_add_x(v[14]),horizontal_add_x(v[15]));
     }
 
     INLINE Vector horizontal_add(const Vector (&v)[1])
@@ -109,7 +120,8 @@ namespace nnue
         return horizontal_add(v[0]);
     }
 
-    INLINE bool all_zero(const Vec16s& v)
+    template <typename V>
+    INLINE bool all_zero(V&& v)
     {
         return !horizontal_or(v);
     }
@@ -197,27 +209,86 @@ namespace nnue
     }
 
     /** Rectified Linear Unit (reLU) activation */
+    template <typename V> INLINE V relu(V v) { return max(v, 0); }
+
+    template <>
+    INLINE Vector relu<Vector>(Vector v) { return max(v, v_zero); }
+
+    template <>
+    INLINE Vec8s relu<Vec8s>(Vec8s v) { return max(v, v8_zero); }
+
+    template <>
+    INLINE Vec16s relu<Vec16s>(Vec16s v) { return max(v, v16_zero); }
+
     template <int N>
-    INLINE void activation(const int16_t (&input)[N], float (&output)[N])
+    INLINE void activate(const int16_t (&input)[N], float (&output)[N])
     {
         constexpr float QSCALE_RECIP = 1.0f / QSCALE;
 
+#if __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+        /* Vec8f supported only on FP16 (half-precision) Neon */
         #pragma clang loop vectorize(enable)
         for (int i = 0; i != N; ++i)
             output[i] = std::max<float>(0, float(input[i]) * QSCALE_RECIP);
+#else
+    #if INSTRSET < 9
+        using VF = Vec8f;
+        using VS = Vec8s;
+    #else
+        using VF = Vec16f;
+        using VS = Vec16s;
+    #endif /* AVX512 */
+
+        static_assert(N % VF::size() == 0);
+
+        const VF v_scale(QSCALE_RECIP);
+
+        for (size_t i = 0; i < N; i += VF::size())
+        {
+            VF v = to_float(extend(relu(VS().load_a(&input[i]))));
+            (v * v_scale).store_a(&output[i]);
+        }
+#endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
     }
 
-
-    template <int I, int O, typename T=float, int Scale=1>
-    struct Layer
+    template <int I, int O, typename T, int Scale>
+    struct BaseLayer
     {
+        static constexpr int ROWS = I;
+        static constexpr int COLS = O;
         /* Round up to Vec16s::size() to deal with the 897 inputs. */
         static constexpr int INPUTS = round_up<16>(I);
         static constexpr int OUTPUTS = O;
 
         ALIGN T _b[OUTPUTS]; /* biases */
-        ALIGN T _w[INPUTS][OUTPUTS]; /* weights */
         ALIGN T _wt[OUTPUTS][INPUTS]; /* weights transposed */
+        ALIGN T _w[INPUTS][OUTPUTS]; /* weights - only in accumulator layers */
+    };
+
+
+    template <int I, int O>
+    struct BaseLayer<I, O, float, 1>
+    {
+        static constexpr int ROWS = I;
+        static constexpr int COLS = O;
+        static constexpr int INPUTS = round_up<16>(I);
+        static constexpr int OUTPUTS = O;
+
+        ALIGN float _b[OUTPUTS]; /* biases */
+        ALIGN float _wt[OUTPUTS][INPUTS]; /* weights transposed */
+    };
+
+
+    template <int I, int O, typename T=float, int Scale=1>
+    struct Layer : BaseLayer<I, O, T, Scale>
+    {
+        using Base = BaseLayer<I, O, T, Scale>;
+        using Base::INPUTS;
+        using Base::OUTPUTS;
+        using Base::_b;
+        using Base::_wt;
+
+        Layer() = default;
 
         Layer(const float(&w)[I][OUTPUTS], const float(&b)[OUTPUTS])
         {
@@ -232,67 +303,55 @@ namespace nnue
             for (int i = 0; i != I; ++i)
             {
                 for (int j = 0; j != OUTPUTS; ++j)
-                    _w[i][j] = _wt[j][i] = w[i][j] * Scale;
+                {
+                    _wt[j][i] = w[i][j] * Scale;
+                    if constexpr (Scale != 1)
+                        this->_w[i][j] = _wt[j][i];
+                }
             }
             /* padding, if needed */
             for (int i = I; i != INPUTS; ++i)
+            {
                 for (int j = 0; j != OUTPUTS; ++j)
-                    _w[i][j] = _wt[j][i] = 0;
-        }
-
-        void set_weights(const std::vector<std::vector<float>>& w, const std::vector<float>& b)
-        {
-            if (w.size() != I || w[0].size() != OUTPUTS || b.size() != OUTPUTS)
-                throw std::invalid_argument("Input dimensions do not match layer dimensions");
-
-            float weights[I][OUTPUTS];
-            float biases[OUTPUTS];
-
-            for (int i = 0; i < I; ++i)
-                for (int j = 0; j < OUTPUTS; ++j)
-                    weights[i][j] = w[i][j];
-
-            for (int j = 0; j < OUTPUTS; ++j)
-                biases[j] = b[j];
-
-            set_weights(weights, biases);
+                {
+                    if constexpr (Scale != 1)
+                        this->_w[i][j] = 0;
+                    _wt[j][i] = 0;
+                }
+            }
         }
 
         /* input */
-        template <size_t S, typename F>
+        template <size_t S, typename NO_ACTIVATION>
         static INLINE void dot(
             const input_t (&input)[S],
             int16_t (&output)[OUTPUTS],
             const int16_t(&b)[OUTPUTS],
-            const int16_t(&w)[INPUTS][OUTPUTS],
             const int16_t(&wt)[OUTPUTS][INPUTS],
-            F /* activation applied separately */
+            NO_ACTIVATION /* activation applied separately */
         )
         {
             static_assert(S >= INPUTS);
 
-        #if 0 /* testing */
-            for (int j = 0; j != OUTPUTS; ++j)
-            {
-                output[j] = b[j];
-                #pragma clang loop vectorize(enable)
-                for (int i = 0; i != INPUTS; ++i)
-                    output[j] += input[i] * wt[j][i];
-            }
-        #else
             constexpr auto N = Vec16s::size();
             static_assert(OUTPUTS % N == 0);
 
             constexpr auto R = round_down<N>(INPUTS);
             static_assert(R == INPUTS); /* expect padded inputs */
 
-            Vec16s in, vw, sum[N];
+            Vec16s in, vw;
+        #if __AVXVNNI__
+            using VSum = Vec8i;
+        #else
+            using VSum = Vec16s;
+        #endif /* __AVXVNNI__ */
+            VSum sum[N]; /* accumulate partial sums */
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
                 #pragma unroll N
                 for (int k = 0; k != N; ++k)
-                    sum[k] = Vec16s(0);
+                    sum[k] = VSum(0);
 
                 for (int i = 0; i != R; i += N)
                 {
@@ -302,35 +361,29 @@ namespace nnue
 
                     for (int k = 0; k != N; ++k)
                     {
-                        vw.load(&wt[j + k][i]);
+                        vw.load_a(&wt[j + k][i]);
+                    #if __AVXVNNI__
+                        sum[k] = _mm256_dpwssd_epi32(sum[k], in, vw);
+                    #else
                         sum[k] += in * vw;
+                    #endif /* __AVXVNNI__ */
                     }
                 }
 
                 auto sums = horizontal_add(sum);
-
-            #if 0 /* not needed when padding up the inputs */
-                for (int i = R; i != INPUTS; ++i)
-                {
-                    vw.load_a(&w[i][j]);
-                    sums += input[i] * vw;
-                }
-            #endif
                 vw.load_a(&b[j]);
                 (vw + sums).store_a(&output[j]);
             }
-        #endif
         }
 
         /* hidden, output */
-        template <typename F>
+        template <typename ACTIVATION>
         static INLINE void dot(
             const float (&input)[INPUTS],
             float (&output)[OUTPUTS],
             const float(&b)[OUTPUTS],
-            const float(&)[INPUTS][OUTPUTS],
             const float(&wt)[OUTPUTS][INPUTS],
-            F activate
+            ACTIVATION activate
         )
         {
             constexpr int N = Vector::size();
@@ -369,32 +422,49 @@ namespace nnue
         template <size_t N, typename U, typename V>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS]) const
         {
-            dot(input, output, _b, _w, _wt, [](const Vector& v) { return v; });
+            dot(input, output, _b, _wt, [](const Vector& v) { return v; });
         }
 
-        template <size_t N, typename U, typename V, typename F>
-        INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], F activate) const
+        template <size_t N, typename U, typename V, typename ACTIVATION>
+        INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], ACTIVATION activate) const
         {
-            dot(input, output, _b, _w, _wt, activate);
+            dot(input, output, _b, _wt, activate);
         }
     };
 
 
     template <size_t INPUTS, size_t OUTPUTS>
-    INLINE void pool(const float (&in)[INPUTS], float (&out)[OUTPUTS])
+    INLINE void pool(const int16_t (&in)[INPUTS], float (&out)[OUTPUTS])
     {
-        constexpr size_t stride = INPUTS / OUTPUTS;
-
         static_assert(INPUTS % OUTPUTS == 0);
-        static_assert(stride == 4);
+        static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
 
-        Vec4f v;
+    #if INSTRSET < 8
+        Vec8s v;
 
-        for (size_t i = 0, j = 0; i + stride <= INPUTS; i += stride, ++j)
+        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
         {
             v.load_a(&in[i]);
-            out[j] = horizontal_add(v) / Vec4f::size();
+            v = max(v, v8_zero);
+
+            out[j] = float(::horizontal_add(extend(v))) / POOL_STRIDE / QSCALE;
         }
+    #else
+        /* AVX2 (or better) */
+        static_assert(INPUTS % (2 * POOL_STRIDE) == 0);
+        Vec16s v;
+
+        for (size_t i = 0, j = 0; i + 2 * POOL_STRIDE <= INPUTS; i += 2 * POOL_STRIDE, j += 2)
+        {
+            v.load_a(&in[i]);
+
+            ASSERT(j < OUTPUTS);
+            ASSERT(j + 1< OUTPUTS);
+
+            out[j] = float(::horizontal_add(extend(max(v.get_low(), v8_zero)))) / POOL_STRIDE / QSCALE;
+            out[j + 1] = float(::horizontal_add(extend(max(v.get_high(), v8_zero)))) / POOL_STRIDE / QSCALE;
+        }
+    #endif /* INSTRSET < 8 */
     }
 
 
@@ -405,10 +475,10 @@ namespace nnue
         static constexpr int OUTPUTS_B = O;
 
     #if DEBUG_INCREMENTAL
-        ALIGN input_t _input[INPUTS] = { 0 }; /* one-hot encoding */
+        ALIGN input_t _input[INPUTS] = { }; /* one-hot encoding */
     #endif
-        ALIGN int16_t _output_a[OUTPUTS_A] = { 0 };
-        ALIGN int16_t _output_b[OUTPUTS_B] = { 0 };
+        ALIGN int16_t _output_a[OUTPUTS_A] = { };
+        ALIGN int16_t _output_b[OUTPUTS_B] = { };
         uint64_t _hash = 0;
 
         /** Compute 1st layer output from scratch at root */
@@ -417,17 +487,17 @@ namespace nnue
         {
             if (needs_update(state))
             {
-                _hash = state.hash();
-
             #if DEBUG_INCREMENTAL
                 memset(&_input, 0, sizeof(_input));
             #else
-                ALIGN input_t _input[INPUTS] = { 0 };
+                ALIGN input_t _input[INPUTS] = { };
             #endif
                 one_hot_encode(state, _input);
 
                 layer_1a.dot(_input, _output_a);
                 layer_1b.dot(_input, _output_b);
+
+                _hash = state.hash();
             }
         }
 
@@ -486,7 +556,7 @@ namespace nnue
 
                 _input[TURN_INDEX] ^= 1;
 
-                input_t temp[INPUTS] = { 0 };
+                input_t temp[INPUTS] = { };
                 one_hot_encode(state, temp);
 
                 for (int i = 0; i != INPUTS; ++i)
@@ -502,12 +572,12 @@ namespace nnue
                 recompute(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx);
 
             #if DEBUG_INCREMENTAL
-                int16_t output_a[OUTPUTS_A] = { 0 };
+                int16_t output_a[OUTPUTS_A] = { };
                 layer_a.dot(_input, output_a);
                 for (int i = 0; i != OUTPUTS_A; ++i)
                     ASSERT_ALWAYS(abs(output_a[i] - _output_a[i]) < 0.0001);
 
-                int16_t output_b[OUTPUTS_B] = { 0 };
+                int16_t output_b[OUTPUTS_B] = { };
                 layer_b.dot(_input, output_b);
                 for (int i = 0; i != OUTPUTS_B; ++i)
                     ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
@@ -525,18 +595,22 @@ namespace nnue
             const int r_idx,
             const int a_idx)
         {
+        #if __ARM__
+            using VecShort = Vec16s;
+        #else
+            using VecShort = Vec32s;
+        #endif /* __ARM__ */
+
             static_assert(LA::OUTPUTS == OUTPUTS_A);
             static_assert(LB::OUTPUTS == OUTPUTS_B);
-            static_assert(LA::OUTPUTS % Vec16s::size() == 0);
-            static_assert(LB::OUTPUTS % Vec16s::size() == 0);
+            static_assert(LA::OUTPUTS % VecShort::size() == 0);
+            static_assert(LB::OUTPUTS % VecShort::size() == 0);
 
             int update_layer_b = 0;
             for (int i = 0; i < r_idx && !update_layer_b; ++i)
                 update_layer_b += remove_inputs[i] < LB::INPUTS;
             for (int i = 0; i < a_idx && !update_layer_b; ++i)
                 update_layer_b += add_inputs[i] < LB::INPUTS;
-
-            using VecShort = Vec16s;
 
             VecShort vo, vw;
 
@@ -603,11 +677,10 @@ namespace nnue
             int& r_idx,
             int& a_idx)
         {
-            if (to_pos.promotion)
+            if (const auto promo = move.promotion())
             {
                 // add the promoted-to piece
-                ASSERT(move.promotion() == to_pos.promotion);
-                delta(add, a_idx, to_pos.promotion, color, move.to_square());
+                delta(add, a_idx, promo, color, move.to_square());
 
                 // remove the pawn
                 delta(remove, r_idx, PieceType::PAWN, color, move.from_square());
@@ -630,7 +703,7 @@ namespace nnue
                 }
             }
 
-            if (to_pos.capture_value)
+            if (to_pos.is_capture())
             {
                 const auto capture_square = from_pos.is_en_passant(move)
                     ? Square(from_pos.en_passant_square - 8 * SIGN[color])
@@ -646,47 +719,33 @@ namespace nnue
     template <typename A, typename ATTN, typename L2, typename L3, typename OUT>
     INLINE int eval(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out)
     {
-        constexpr size_t POOL_STRIDE = 4;
-
         static_assert(A::OUTPUTS_A == L2::INPUTS * POOL_STRIDE);
         static_assert(A::OUTPUTS_B == ATTN::INPUTS);
 
         ALIGN float attn_in[ATTN::INPUTS];
         ALIGN float attn_out[ATTN::OUTPUTS];
-        ALIGN float l1_out[A::OUTPUTS_A];
         ALIGN float l2_in[L2::INPUTS];
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float l3_out[L3::OUTPUTS];
-        ALIGN float output[1];
+        ALIGN float output[1]; // eval
 
-        activation(a._output_a, l1_out); // process output of hidden_1a
-        activation(a._output_b, attn_in); // process output of hidden_1b
+        pool(a._output_a, l2_in);
 
-        pool(l1_out, l2_in);
-
-        /*
-         * The dynamic weights computed by the "attention" layer
-         * are used to modulate the output of another hidden layer
-         * through element-wise multiplication.
-         */
-        attn.dot(attn_in, attn_out);
+        /* The "spatial attention" layer modulates L2. */
+        activate(a._output_b, attn_in); // process output of hidden_1b
+        attn.dot(attn_in, attn_out, [](const Vector& v) { return max(v, v_zero); });
 
         static_assert(L2::INPUTS % Vector::size() == 0);
 
-    #if true /* vectorized */
         Vector v1, v2;
         for (int i = 0; i != L2::INPUTS; i += Vector::size())
         {
             v1.load_a(&l2_in[i]);
             v2.load_a(&attn_out[i % ATTN::OUTPUTS]);
-            (v1 * v2).store_a(&l2_in[i]);
+
+            mul_add(v1, v2, v1).store_a(&l2_in[i]);
         }
-    #else
-        for (int i = 0; i < A::OUTPUTS_A; ++i)
-        {
-            l2_in[i] *= attn_out[i % ATTN::OUTPUTS];
-        }
-    #endif /* !vectorized */
+        /* end of modulation */
 
         l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
         l3.dot(l2_out, l3_out, [](const Vector& v) { return max(v, v_zero); });
@@ -696,13 +755,28 @@ namespace nnue
     }
 
 
-    /**
-     * Evaluate FEN from White's point of view, for testing.
-     */
-    int eval_fen(const std::string&);
+    template <typename T>
+    INLINE void sort_moves(T& moves, const int16_t(& logits)[4096])
+    {
+        for (auto& move : moves)
+        {
+            const auto index = move.from_square() * 64 + move.to_square();
+            ASSERT(index >= 0);
+            ASSERT(index < 4096);
+            move._score = logits[index];
+        }
 
-#if !WITH_NNUE
-    INLINE int eval_fen(const std::string&) { return 0; }
-#endif
+        // Sort highest scores first
+        std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) { return a._score > b._score; });
+    }
 
+
+    template <typename I, typename L, typename T>
+    INLINE void predict_moves(const I& input, const L& moves, T& pseudo_legal_moves)
+    {
+        ALIGN int16_t logits[L::OUTPUTS];
+        moves.dot(input, logits);
+
+        sort_moves(pseudo_legal_moves, logits);
+    }
 } /* namespace nnue */

@@ -29,13 +29,13 @@
 #include "utility.h"
 
 
-INLINE constexpr score_t checkmated(int ply)
+INLINE constexpr int16_t checkmated(int ply)
 {
     return -CHECKMATE + ply;
 }
 
 
-INLINE constexpr score_t checkmating(int ply)
+INLINE constexpr int16_t checkmating(int ply)
 {
     return CHECKMATE + ply;
 }
@@ -73,7 +73,6 @@ namespace search
     }
 
     using BaseMove = chess::BaseMove;
-    using PV = std::vector<BaseMove>;
     using Color = chess::Color;
     using Move = chess::Move;
     using MovesList = chess::MovesList;
@@ -126,14 +125,24 @@ namespace search
 
         INLINE T& lookup(chess::PieceType piece_type, const Move& move)
         {
-            ASSERT(piece_type != chess::PieceType::NONE);
-            ASSERT(move);
-            return _table[piece_type][move.to_square()];
+            return lookup_impl(piece_type, move);
         }
 
         INLINE const T& lookup(chess::PieceType piece_type, const Move& move) const
         {
-            return const_cast<PieceMoveTable*>(this)->lookup(piece_type, move);
+            return const_cast<PieceMoveTable*>(this)->lookup_impl(piece_type, move);
+        }
+
+    private:
+        INLINE T& lookup_impl(chess::PieceType piece_type, const Move& move)
+        {
+            ASSERT(piece_type != chess::PieceType::NONE);
+            ASSERT(move);
+
+            if (piece_type == chess::PieceType::NONE || move.is_none())
+                return _table[0][0];
+
+            return _table[piece_type][move.to_square()];
         }
 
         T _table[7][64] = {};
@@ -143,36 +152,40 @@ namespace search
     using KillerMovesTable = std::array<KillerMoves, PLY_MAX>;
 
 
-    enum class TT_Type : int8_t
+    enum class TT_Type : uint8_t
     {
         NONE = 0,
+        UPPER,
         EXACT,
         LOWER,
-        UPPER,
     };
 
-#pragma pack(push, 4)
+
+#pragma pack(push, 2)
 
     class TT_Entry
     {
     public:
-        TT_Type     _type = TT_Type::NONE;
-        uint8_t     _age = 0;
+        uint64_t    _hash = 0;
+        TT_Type     _type : 2;
+        uint8_t     _generation : 5;
+        bool        _pv : 1;
         int8_t      _depth = std::numeric_limits<int8_t>::min();
         BaseMove    _best_move;
         BaseMove    _hash_move;
-        int16_t     _eval = SCORE_MIN; /* static */
-        int16_t     _value = SCORE_MIN;
-        int16_t     _captures = SCORE_MIN;
-        uint64_t    _hash = 0;
+        int16_t     _eval = SCORE_MIN; /* static eval */
+        int16_t     _value = SCORE_MIN; /* search score */
 
+        TT_Entry() : _type(TT_Type::NONE), _generation(0), _pv(false) {}
+
+        INLINE bool is_exact() const { return _type == TT_Type::EXACT; }
         INLINE bool is_lower() const { return _type == TT_Type::LOWER; }
         INLINE bool is_upper() const { return _type == TT_Type::UPPER; }
         INLINE bool is_valid() const { return _type != TT_Type::NONE; }
 
         INLINE bool matches(const State& state) const
         {
-            return is_valid() && _hash == state.hash();
+            return /* is_valid() && */ _hash == state.hash();
         }
 
         template<typename C>
@@ -192,13 +205,19 @@ namespace search
                 }
                 else
                 {
-                    return &_value;
+                    ctxt._alpha = ctxt._beta = _value;
                 }
 
                 if (ctxt._alpha >= ctxt._beta)
                 {
-                    ASSERT(_value >= ctxt._beta);
-                    return &_value;
+                    if (is_upper())
+                    {
+                        return &ctxt._beta; // return the tightened beta
+                    }
+                    else
+                    {
+                        return &_value; // return TT value for lower/exact
+                    }
                 }
             }
 
@@ -208,14 +227,14 @@ namespace search
 #pragma pack(pop)
 
 
+    using HashTable = hash_table<TT_Entry>;
+
     /*
      * Hash table, counter moves, historical counts.
      * Under SMP the hash table is shared between threads.
      */
     class TranspositionTable
     {
-        using HashTable = hash_table<TT_Entry>;
-
     #if USE_BUTTERFLY_TABLES
         using HistoryCounters = MoveTable<std::pair<int, int>>;
         using IndexedMoves = MoveTable<BaseMove>;
@@ -234,22 +253,16 @@ namespace search
         HistoryCounters     _hcounters[2]; /* History heuristic counters. */
         static HashTable    _table;        /* shared hashtable */
 
+        void clear(); /* clear search stats, bump up generation */
+
     public:
         TranspositionTable() = default;
         ~TranspositionTable() = default;
 
-               void clear();
-        static void clear_shared_hashtable();
-        static void increment_clock();
-
-        INLINE void init() { clear(); shift(); increment_clock(); _eval_depth = 0; }
-
         int _tid = 0;
-        int _iteration = 0;
-        int _eval_depth = 0;
-        PV  _pv; /* principal variation */
-        PV  _pvBuilder;
-        PlyHistory _plyHistory;
+        int16_t _iteration = 0;
+        int16_t _eval_depth = 0;
+        PlyHistory _ply_history;
 
         /* search window bounds */
         score_t _w_alpha = SCORE_MIN;
@@ -276,6 +289,13 @@ namespace search
         size_t _reductions = 0;
         size_t _retry_reductions = 0;
 
+        unsigned _pass = 0; /* MTD(f) pass */
+
+        void clear_history();
+
+        /* Re-initialize before new search or new game*/
+        void init(bool new_game);
+
         template<typename C>
         BaseMove lookup_countermove(const C& ctxt) const;
 
@@ -285,33 +305,15 @@ namespace search
             return &_killer_moves[ply];
         }
 
-        const PV& get_pv() const { return _pv; }
-
-        /* Reconstruct PV from hash table moves. Called by store_pv. */
-        template<bool Debug=false> void get_pv_from_table(Context&, const Context&, PV&);
-
         template<typename C> const int16_t* lookup(C& ctxt);
-
-        // INLINE bool is_cached(const State& state) const
-        // {
-        //     return !!_table.lookup_read(state);
-        // }
-
-        // INLINE bool is_cutoff(const State& state) const
-        // {
-        //     auto p = _table.lookup_read(state);
-        //     return p ? p->is_lower() : false;
-        // }
 
         template<TT_Type=TT_Type::NONE, typename C=struct Context>
         void store(C& ctxt, int depth);
 
-        void store(Context&, TT_Entry&, int depth);
+        void store(Context&, TT_Entry&, TT_Type, int depth);
 
         template<typename C> void store_countermove(C& ctxt);
         void store_killer_move(const Context&);
-
-        template<bool Debug=false> void store_pv(Context&);
 
         const std::pair<int, int>& historical_counters(const State&, Color, const Move&) const;
         float history_score(int ply, const State&, Color, const Move&) const;
@@ -325,8 +327,6 @@ namespace search
         /* nodes per second */
         size_t nps() const { return _nps; }
         void set_nps(size_t nps) { _nps = nps; }
-
-        void shift();
 
         void history_update_cutoffs(const Move&);
         void history_update_non_cutoffs(const Move&);
@@ -374,13 +374,14 @@ namespace search
         float score = 0;
         if (ply < PLY_HISTORY_MAX)
         {
-            const auto& h = _plyHistory[ply][turn].lookup(move);
+            const auto& h = _ply_history[ply][turn].lookup(move);
             if (h.second)
                 score = h.first / double(h.second * HISTORY_SCORE_DIV);
         }
         const auto& counters = historical_counters(state, turn, move);
         ASSERT(counters.first <= counters.second);
 
+        /* blend scores */
         return score + (counters.second < 1 ? 0 : (double(HISTORY_SCORE_MUL) * counters.first) / counters.second);
     }
 
@@ -390,7 +391,7 @@ namespace search
         if (move)
         {
             ASSERT(move._state);
-            ASSERT(move._state->capture_value == 0);
+            ASSERT(!move._state->is_capture());
 
             const auto turn = !move._state->turn; /* side that moved */
         #if USE_BUTTERFLY_TABLES
@@ -409,7 +410,7 @@ namespace search
     {
         ASSERT(move);
         ASSERT(move._state);
-        ASSERT(move._state->capture_value == 0);
+        ASSERT(!move._state->is_capture());
 
         const auto turn = !move._state->turn; /* side that moved */
 
@@ -440,26 +441,30 @@ namespace search
     template<typename C>
     INLINE const int16_t* TranspositionTable::lookup(C& ctxt)
     {
-        ctxt._tt_entry = TT_Entry();
         if (ctxt.is_root() || ctxt._excluded)
             return nullptr;
 
         /* expect repetitions to be dealt with before calling into this function */
         ASSERT(!ctxt.is_repeated());
 
-        if (const auto p = _table.lookup_read(ctxt.state()))
+        if (!ctxt.tt_entry().is_valid() || ctxt.tt_entry()._depth < ctxt.depth())
+            StorageView<HashTable::Result>::store(ctxt._state->tt_result, ctxt._state->has_tt_result, _table.probe(ctxt.state(), ctxt.depth()));
+        else
+            ASSERT(ctxt.tt_entry()._hash == ctxt.state().hash());
+
+
+        if (ctxt.tt_entry().is_valid())
         {
-            ASSERT(p->matches(ctxt.state()));
-            ctxt._tt_entry = *p;
+            ASSERT(ctxt.tt_entry().matches(ctxt.state()));
 
             if constexpr(EXTRA_STATS)
                 ++_hits;
         }
 
         /* http://www.talkchess.com/forum3/viewtopic.php?topic_view=threads&p=305236&t=30788 */
-        if (!ctxt.is_pv_node())
+        if (!ctxt.is_pv_node() && !ctxt.is_retry())
         {
-            if (auto value = ctxt._tt_entry.lookup_score(ctxt))
+            if (auto value = ctxt.tt_entry().lookup_score(ctxt))
             {
                 ctxt._score = *value;
                 return value;
@@ -473,19 +478,32 @@ namespace search
     }
 
 
-    template<TT_Type type, typename C>
+    template<TT_Type T, typename C>
     INLINE void TranspositionTable::store(C& ctxt, int depth)
     {
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
 
-        if (auto p = _table.lookup_write(ctxt.state(), depth))
+        if (ctxt.tt_result()._replacement_slot >= 0)
         {
-            auto& entry = *p;
-            store(ctxt, entry, depth);
+            auto type = T;
 
-            if constexpr(type != TT_Type::NONE)
-                entry._type = type;
+            /* type unknown at compile-time? */
+            if constexpr(T == TT_Type::NONE)
+            {
+                type = TT_Type::EXACT;
+                if (ctxt._score >= ctxt._beta)
+                {
+                    type = TT_Type::LOWER;
+                }
+                else if (ctxt._score <= ctxt._alpha)
+                {
+                    type = TT_Type::UPPER;
+                }
+            }
+
+            store(ctxt, ctxt.tt_entry(), type, depth);
+            _table.update(ctxt.tt_result());
         }
     }
 

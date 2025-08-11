@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,19 +22,18 @@
 /*
  * Core Chess support data structures and routines.
  *
- * Parts inspired and adapted from:
+ * Small parts inspired and adapted from:
  * python-chess (C) Niklas Fiekas (https://python-chess.readthedocs.io/en/latest/)
 */
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
-
-#include <utility>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 #if _MSC_VER
 #include <intrin.h>
@@ -72,6 +71,7 @@ constexpr int SIGN[] = { -1, 1 };
 template<typename T> INLINE T constexpr pow2(T x) { return x * x; }
 
 
+/* Fixed capacity container */
 template<typename T, size_t max_size = 256>
 class MaxSizeVector
 {
@@ -79,9 +79,24 @@ public:
     using const_iterator = const T*;
     using iterator = T*;
 
-    MaxSizeVector() : _current_size(0)
+    MaxSizeVector() = default;
+
+    MaxSizeVector(const MaxSizeVector& other)
+        : _container(other._container)
+        , _current_size(other._current_size)
+    {}
+
+    INLINE MaxSizeVector& operator=(const MaxSizeVector& other)
     {
-        _container.reserve(max_size);
+        auto that(other);
+        this->swap(that);
+        return *this;
+    }
+
+    INLINE void swap(MaxSizeVector& other)
+    {
+        _container.swap(other._container);
+        std::swap(_current_size, other._current_size);
     }
 
     template <typename InputIterator>
@@ -96,60 +111,139 @@ public:
     INLINE void clear() { _current_size = 0; }
     INLINE size_t size() const { return _current_size; }
     INLINE bool empty() const { return size() == 0; }
-    INLINE iterator begin() { return &_container[0]; }
-    INLINE iterator end() { return &_container[0] + _current_size; }
-    INLINE const_iterator begin() const { return &_container[0]; }
-    INLINE const_iterator end() const { return &_container[0] + _current_size; }
+    INLINE iterator begin() { return &_container.data()[0]; }
+    INLINE iterator end() { return &_container.data()[0] + _current_size; }
+    INLINE const_iterator begin() const { return &_container.data()[0]; }
+    INLINE const_iterator end() const { return &_container.data()[0] + _current_size; }
 
     INLINE void emplace_back(T&& value)
     {
         check_capacity(__func__);
-        _container[_current_size++] = std::move(value);
+        _container.data()[_current_size++] = std::move(value);
     }
 
     template <typename... Args>
     INLINE void emplace_back(Args&&... args)
     {
         check_capacity(__func__);
-        _container[_current_size++] = T(std::forward<Args>(args)...);
+        _container.data()[_current_size++] = T(std::forward<Args>(args)...);
     }
 
     INLINE T& operator[](size_t index)
     {
         check_size(__func__, index);
-        return _container[index];
+        return _container.data()[index];
     }
 
     INLINE const T& operator[](size_t index) const
     {
         check_size(__func__, index);
-        return _container[index];
+        return _container.data()[index];
     }
 
 private:
     INLINE void check_capacity(const char* func) const
     {
-    #if 0
-        if (_current_size >= max_size)
-            throw std::out_of_range(std::string("capacity exceeded: ") + func);
-    #endif
+        check_range("capacity exceeded", func, _current_size, max_size);
     }
 
     INLINE void check_capacity(const char* func, size_t i) const
     {
-        if (i >= max_size)
-            throw std::out_of_range(std::string("capacity exceeded: ") + func);
+        check_range("capacity exceeded", func, i, max_size);
     }
 
     INLINE void check_size(const char* func, size_t i) const
     {
-        if (i >= _current_size)
-            throw std::out_of_range(std::string("index out of range: ") + func);
+        check_range("index out of range", func, i, _current_size);
     }
 
-    std::vector<T> _container;
-    size_t _current_size;
+    static void out_of_range(const std::string& prefix, const char* func, size_t v, size_t vmax)
+    {
+        const auto msg = (prefix + " in ") + func + ": " + std::to_string(v) + " >= " + std::to_string(vmax);
+        throw std::out_of_range(msg);
+    }
+
+    static INLINE void check_range(const char* prefix, const char* func, size_t v, size_t vmax)
+    {
+        if (v >= vmax)
+            out_of_range(std::string(prefix), func, v, vmax);
+    }
+
+private:
+    std::array<T, max_size> _container;
+
+    size_t _current_size = 0;
 };
+
+
+/*
+ * https://www.chessprogramming.org/Tapered_Eval
+ */
+namespace impl
+{
+    /* Recursive template for computing exponential at compile time */
+    template<int N> struct _exp {
+        static constexpr double value = _exp<N-1>::value * M_E;
+    };
+
+    template<> struct _exp<0> {
+        static constexpr double value = 1;
+    };
+
+    template<size_t... I>
+    static constexpr std::array<double, sizeof ... (I)> _exp_table(std::index_sequence<I...>)
+    {
+        return { _exp<I>::value ... };
+    }
+
+    INLINE constexpr double _e(int x)
+    {
+        ASSERT(abs(x) < 33);
+
+        auto constexpr e = _exp_table(std::make_index_sequence<33>{});
+        return x < 0 ? (1.0 / e[-x]) : e[x];
+    }
+
+    /* Compile-time sigmoid */
+    INLINE constexpr double _logistic(int x)
+    {
+        return 1 / (1.0 + _e(-x));
+    }
+
+    INLINE constexpr double _interpolate(int pc, int from, int to)
+    {
+        ASSERT(pc >= 2);
+        ASSERT(pc <= 32);
+
+        constexpr auto max_pc = 32 - ENDGAME_PIECE_COUNT;
+        return from + (to - from) * (1 - _logistic(pc * max_pc / 32.0 - max_pc / 2 - 2));
+    }
+
+    template<int MG, int EG> struct Interpolate
+    {
+        /* Pre-populate interpolated values at compile time */
+        template<typename T, T... is>  static constexpr std::array<double, sizeof ...(is)>
+        make_values(std::integer_sequence<T, is...> int_seq)
+        {
+            return { _interpolate(is, MG, EG)... };
+        }
+
+        static constexpr auto _value = make_values(std::make_index_sequence<33>{});
+
+        static double value(int i) {
+            ASSERT(i >= 0);
+            ASSERT(i <= 32);
+            return _value[i];
+        }
+    };
+} /* namespace impl */
+
+
+#if NO_ASSERT && !TUNING_ENABLED && !TUNING_PARTIAL
+    #define interpolate(pc, from, to) impl::Interpolate<from, to>::value(pc)
+#else
+    #define interpolate(pc, from, to) impl::_interpolate(pc, from, to)
+#endif
 
 
 namespace chess
@@ -290,7 +384,7 @@ namespace chess
 
     constexpr const char* PIECE_SYMBOL[] = { "", "p", "n", "b", "r", "q", "k" };
 
-    enum Color : int8_t
+    enum Color : uint8_t
     {
         BLACK = 0,
         WHITE = 1,
@@ -325,31 +419,22 @@ namespace chess
         BB_SQUARES[A1] | BB_SQUARES[H1] | BB_SQUARES[A8] | BB_SQUARES[H8];
 
 
-#define DEFAULT_MOBILITY_WEIGHTS { 0, 0, 0, 7, 6, 5, 0 }
-#define DEFAULT_WEIGHTS { 0, 85, 319, 343, 522, 986, 20000 }
-
-
-#if MOBILITY_TUNING_ENABLED
-    extern int MOBILITY[7];
+#if EVAL_PIECE_GRADING
+#define PIECE_VALUES { 0, 73, 305, 367, 528, 1083, 20000 }
 #else
-    static constexpr int MOBILITY[7] = DEFAULT_MOBILITY_WEIGHTS;
-#endif
+#define PIECE_VALUES { 0, 85, 319, 343, 522, 986, 20000 }
+#endif /* EVAL_PIECE_GRADING */
+
+#define ENDGAME_ADJUST { 0, 21, -12, -16, 65, -24, 0 }
+
 
     /* Piece values */
 #if WEIGHT_TUNING_ENABLED
     extern int WEIGHT[7];
-
-    INLINE int max_material_delta()
-    {
-        return WEIGHT[1]*16 + WEIGHT[2]*4 + WEIGHT[3]*4 + WEIGHT[4]*4 + WEIGHT[5]*2;
-    }
+    extern int ADJUST[7];
 #else
-    constexpr int WEIGHT[7] = DEFAULT_WEIGHTS;
-
-    INLINE constexpr int max_material_delta()
-    {
-        return WEIGHT[1]*16 + WEIGHT[2]*4 + WEIGHT[3]*4 + WEIGHT[4]*4 + WEIGHT[5]*2;
-    }
+    constexpr int WEIGHT[7] = PIECE_VALUES;
+    constexpr int ADJUST[7] = ENDGAME_ADJUST;
 #endif /* WEIGHT_TUNING_ENABLED */
 
 
@@ -403,9 +488,6 @@ namespace chess
     #error "unsupported"
 #endif /* _MSC_VER */
     }
-
-
-    std::vector<int> scan_forward(Bitboard);
 
 
     INLINE constexpr int square_file(int square)
@@ -495,44 +577,50 @@ namespace chess
     /* Move representation */
     class BaseMove
     {
-        Square _from_square = Square::UNDEFINED;
-        Square _to_square = Square::UNDEFINED;
-        PieceType _promotion = PieceType::NONE;
+        uint16_t _move = 0xFFFF;
 
     public:
         BaseMove() = default;
+
         BaseMove(Square from, Square to, PieceType promo) noexcept
-            : _from_square(from)
-            , _to_square(to)
-            , _promotion(promo)
-        {}
+        {
+            ASSERT(from >= 0 && from < 64);
+            ASSERT(to >= 0 && to < 64);
+            ASSERT(static_cast<int>(promo) >= 0 && static_cast<int>(promo) < 8);
+
+            // promotion(3 bits) | from(6 bits) | to(6 bits)
+            _move = (static_cast<uint16_t>(promo) << 12) |
+                    (static_cast<uint16_t>(from) << 6) |
+                    static_cast<uint16_t>(to);
+        }
 
         BaseMove(Square from, Square to) noexcept
-            : _from_square(from)
-            , _to_square(to)
-            , _promotion(PieceType::NONE)
+            : BaseMove(from, to, PieceType::NONE)
         {}
+
+        BaseMove(uint16_t move) : _move(move) {}
 
         INLINE constexpr Square to_square() const
         {
-            return _to_square;
+            ASSERT(_move != 0xFFFF);
+            return static_cast<Square>(_move & 0x3F);
         }
 
         INLINE constexpr Square from_square() const
         {
-            return _from_square;
+            ASSERT(_move != 0xFFFF);
+            return static_cast<Square>((_move >> 6) & 0x3F);
         }
 
         constexpr PieceType promotion() const
         {
-            return _promotion;
+            if (_move == 0xFFFF) return PieceType::NONE;
+            return static_cast<PieceType>((_move >> 12) & 0x7);
         }
 
         constexpr bool is_equal(const BaseMove& other) const
         {
-            return _from_square == other._from_square
-                && _to_square == other._to_square
-                && _promotion == other._promotion;
+            return _move == other._move;
         }
 
         std::string uci() const;
@@ -544,10 +632,7 @@ namespace chess
 
         bool is_none() const
         {
-            bool none = (_from_square == _to_square);
-
-            ASSERT(none || (_from_square != UNDEFINED && _to_square != UNDEFINED));
-            return none;
+            return _move == 0xFFFF;
         }
     };
 
@@ -578,8 +663,13 @@ namespace chess
         /* group id, for move ordering */
         int8_t  _group = ::search::MoveOrder::UNORDERED_MOVES;
         int8_t  _old_group = ::search::MoveOrder::UNDEFINED;
+    #if 0
         float   _score = 0;         /* sort score, for move ordering */
         float   _old_score = 0;
+    #else
+        int16_t _score = 0;
+        int16_t _old_score = 0;
+    #endif
         State*  _state = nullptr;   /* state of the board after the move */
     };
 
@@ -601,9 +691,15 @@ namespace chess
 #endif
 
 #if USE_PIECE_SQUARE_TABLES
+    extern int piece_square_table[12][64];
+    extern int king_endgame_table[2][64];
+
+    void init_piece_square_tables();
+
+
     INLINE constexpr int square_index(int i, chess::Color color)
     {
-        return square_indices[color][i];
+        return color == WHITE ? square_mirror(i) : i;
     }
 
 
@@ -614,6 +710,19 @@ namespace chess
 
         return SQUARE_TABLE[pt];
     }
+
+
+    INLINE const int (&select_piece_square_table_rt(bool endgame, PieceType pt, Color color))[64]
+    {
+        if (endgame && pt == PieceType::KING)
+            return king_endgame_table[color];
+
+        return piece_square_table[(pt - 1) * 2 + int(color)];
+    }
+#else
+
+    #define init_piece_square_tables()
+
 #endif /* USE_PIECE_SQUARE_TABLES */
 
 
@@ -641,10 +750,8 @@ namespace chess
                 Bitboard queens;
                 Bitboard kings;
             };
-            Bitboard _pieces[6] = { 0 };
+            Bitboard _pieces[6] = {};
         };
-
-        PieceType _piece_types[64] = { PieceType::NONE };
 
         /* Get the bitboard of squares attacked from a given square */
         Bitboard attacks_mask(Square, Bitboard occupied) const;
@@ -666,6 +773,7 @@ namespace chess
          */
         INLINE Bitboard attacker_pieces_mask(Color color, Square square, Bitboard occupied_mask) const
         {
+            ASSERT(square != Square::UNDEFINED);
             auto attackers = knights & BB_KNIGHT_ATTACKS[square];
 
     #if USE_MAGIC_BITS
@@ -711,8 +819,6 @@ namespace chess
             return BB_EMPTY;
         }
 
-        score_t eval_mobility() const;
-
         INLINE constexpr Bitboard occupied() const
         {
             return white | black;
@@ -743,23 +849,24 @@ namespace chess
 
         INLINE Bitboard& pieces(PieceType piece_type)
         {
+            ASSERT(piece_type);
             return _pieces[piece_type - 1];
         }
 
         INLINE Bitboard pieces(PieceType piece_type) const
         {
-            return _pieces[piece_type - 1];
+            ASSERT(piece_type);
+            return piece_type == NONE ? BB_EMPTY : _pieces[piece_type - 1];
         }
 
         INLINE Bitboard pieces_mask(PieceType piece_type, Color color) const
         {
-            return const_cast<Position*>(this)->pieces(piece_type) & occupied_co(color);
+            return pieces(piece_type) & occupied_co(color);
         }
 
         INLINE PieceType piece_type_at(Square square) const
         {
-            ASSERT(_piece_types[square] == _piece_type_at(square));
-            return _piece_types[square];
+            return _piece_type_at(square);
         }
 
         INLINE Color piece_color_at(Square square) const
@@ -837,6 +944,9 @@ namespace chess
 
     INLINE Bitboard between(Square a, Square b)
     {
+        if (a == Square::UNDEFINED || b == Square::UNDEFINED)
+            return BB_EMPTY;
+
         const auto bb = BB_RAYS[a][b] & ((BB_ALL << a) ^ (BB_ALL << b));
         return bb & (bb - 1);
     }
@@ -921,87 +1031,13 @@ namespace chess
     }
 
 
-    namespace
-    {
-        /* Recursive template for computing exponential at compile time */
-        template<int N> struct _exp {
-            static constexpr double value = _exp<N-1>::value * M_E;
-        };
-
-        template<> struct _exp<0> {
-            static constexpr double value = 1;
-        };
-
-        template<size_t... I>
-        static constexpr std::array<double, sizeof ... (I)> _exp_table(std::index_sequence<I...>)
-        {
-            return { _exp<I>::value ... };
-        }
-
-        /* Compile-time sigmoid in range [0,32] */
-        INLINE constexpr double _e(int x)
-        {
-            auto constexpr e = _exp_table(std::make_index_sequence<33>{});
-            return x < 0 ? (1.0 / e[-x]) : e[x];
-        }
-    }
-
-    INLINE constexpr double logistic(int x)
-    {
-        return 1 / (1.0 + _e(-x));
-    }
-
-    /*
-     * https://www.chessprogramming.org/Tapered_Eval
-     */
-    INLINE constexpr double _interpolate(double pc, int midgame, int endgame)
-    {
-        ASSERT(pc >= 2);
-        ASSERT(pc <= 32);
-
-    #if 0
-        /* linear, hockey stick */
-        return pc <= ENDGAME_PIECE_COUNT
-            ? endgame
-            : midgame + (endgame - midgame) * double(32 - pc) / (32 - ENDGAME_PIECE_COUNT);
-    #else
-        /* sigmoid */
-        return (endgame - midgame) * (1 - logistic((pc - 19) / 2)) + midgame;
-    #endif
-    }
-
-
-#if TUNING_ENABLED || defined(TUNING_PARTIAL)
-    INLINE constexpr double interpolate(int pc, int mg, int eg)
-    {
-        return _interpolate(pc, mg, eg);
-    }
-#else
-    template<int MG, int EG> struct Interpolate
-    {
-        template<typename T, T... is>  static constexpr std::array<double, sizeof ...(is)>
-        make_values(std::integer_sequence<T, is...> int_seq)
-        {
-            return { _interpolate(is, MG, EG)... };
-        }
-
-        static constexpr auto _value = make_values(std::make_index_sequence<33>{});
-
-        static double value(int i) { return _value[i]; }
-    };
-
-    #define interpolate(pc, mg, eg) Interpolate<mg, eg>::value(pc)
-
-#endif /* !TUNING_ENABLED */
-
-
     struct State : public BoardPosition
     {
-        int capture_value = 0;
-        int pushed_pawns_score = 0; /* ranks past the middle of the board */
+        PieceType capture_type = PieceType::NONE;
+        int8_t pushed_pawns_score = 0; /* ranks past the middle of the board */
         bool is_castle = false;
-
-        PieceType promotion = PieceType::NONE;
+        bool has_tt_result = false;
+        alignas(std::max_align_t) uint8_t tt_result[32] = {};
 
         /* material and PST from white's POV */
         static constexpr auto UNKNOWN_SCORE = std::numeric_limits<score_t>::max();
@@ -1037,7 +1073,7 @@ namespace chess
         }
 
         /* evaluate base score from the perspective of the side to play */
-        template<bool EVAL_MOBILITY = true> score_t eval() const;
+        score_t eval() const;
 
         INLINE score_t eval_lazy() const
         {
@@ -1050,8 +1086,7 @@ namespace chess
         score_t eval_material() const;
 
         /*
-         * Evaluate material and piece-squares (i.e. excluding mobility)
-         * from the white side's perspective
+         * Evaluate material and piece-squares from the white side's perspective.
          */
         score_t eval_simple() const;
 
@@ -1093,6 +1128,8 @@ namespace chess
 
         bool has_insufficient_material(Color) const;
 
+        INLINE bool is_capture() const { return capture_type != PieceType::NONE; }
+
         bool is_capture(const BaseMove& move) const;
         bool is_castling(const BaseMove&) const;
 
@@ -1111,6 +1148,8 @@ namespace chess
         bool is_endgame() const;
         bool is_en_passant(const BaseMove&) const;
         bool is_pinned(Color color) const;
+
+        bool is_valid(const BaseMove&, bool validate_check = false) const;
 
         INLINE bool just_king(Color color) const
         {
@@ -1146,29 +1185,93 @@ namespace chess
         /*
          * Apply incremental material and piece squares evaluation.
          */
-        INLINE void eval_apply_delta(const BaseMove& move, const State& prev)
+        INLINE score_t eval_apply_delta(const BaseMove& move, const State& prev) const
         {
-            simple_score = prev.eval_incremental(move);
-            eval_lazy();
+            if (simple_score == UNKNOWN_SCORE)
+            {
+                /* Sanity-check the previous state */
+                ASSERT(prev.occupied());
+                ASSERT(prev.occupied_co(BLACK));
+                ASSERT(prev.occupied_co(WHITE));
+
+                if (prev.simple_score == UNKNOWN_SCORE)
+                {
+                    simple_score = eval_simple();
+                }
+                else
+                {
+                    simple_score = prev.eval_incremental(move);
+                    ASSERT(simple_score == eval_simple());
+                }
+            }
+            else
+            {
+                ASSERT(simple_score == eval_simple());
+            }
+
+            return simple_score;
         }
 
-        score_t eval_incremental(const BaseMove&) const;
 
         /*
          * Indirection point for future ideas (dynamic piece weights).
          * Ideas:
          * - use different weights for midgame / endgame and interpolate;
          * - use tables for game phases, use number of pawns to determine phase;
+         * Since the above make incremental eval difficult:
          * - leave weights alone and alter material eval (see eval_piece_grading).
          */
-        static INLINE constexpr int weight(PieceType piece_type)
+        INLINE int weight(PieceType piece_type) const
         {
             return WEIGHT[piece_type];
         }
 
-        INLINE int piece_weight_at(Square square) const
+        INLINE int piece_count() const
         {
-            return weight(piece_type_at(square));
+            if (_piece_count < 0)
+                _piece_count = popcount(occupied());
+
+            return _piece_count;
+        }
+
+        INLINE int piece_value_adjustment(PieceType piece_type) const
+        {
+    #if EVAL_PIECE_GRADING
+            switch (piece_type)
+            {
+            case PAWN: return interpolate(piece_count(), 0, ADJUST[PAWN]);
+            case KNIGHT: return interpolate(piece_count(), 0, ADJUST[KNIGHT]);
+            case BISHOP: return interpolate(piece_count(), 0, ADJUST[BISHOP]);
+            case ROOK: return interpolate(piece_count(), 0, ADJUST[ROOK]);
+            case QUEEN: return interpolate(piece_count(), 0, ADJUST[QUEEN]);
+            case KING:
+            case NONE:
+                break;
+            }
+    #endif /* EVAL_PIECE_GRADING */
+
+            return 0;
+        }
+
+        INLINE int piece_value_at(Square square, Color color, PieceType piece_type) const
+        {
+            auto value = WEIGHT[piece_type] + piece_value_adjustment(piece_type);
+
+        #if USE_PIECE_SQUARE_TABLES
+            if (piece_type)
+            {
+                const auto& table = select_piece_square_table_rt(is_endgame(), piece_type, color);
+                value += table[square];
+            }
+        #endif /* USE_PIECE_SQUARE_TABLES */
+
+            return value;
+        }
+
+        INLINE int piece_value_at(Square square, Color color) const
+        {
+            const auto piece_type = piece_type_at(square);
+            return piece_value_at(square, color, piece_type);
         }
 
         void set_piece_at(Square, PieceType, Color, PieceType promotion = PieceType::NONE);
@@ -1178,6 +1281,7 @@ namespace chess
 
     private:
         void ep_moves(MovesList& moves, Bitboard to_mask) const;
+        score_t eval_incremental(const BaseMove&) const;
 
         /*
          * Evaluate the incremental change of a move.
@@ -1195,7 +1299,9 @@ namespace chess
             ENDGAME_TRUE = 1
         }
         mutable _endgame = ENDGAME_UNKNOWN;
+        mutable int8_t _piece_count = -1;
     }; /* State */
+
 
     INLINE int score_pushed_pawns(const State& state, const BaseMove& move)
     {
@@ -1226,16 +1332,25 @@ namespace chess
 
         _check = { -1, -1 };
 
-        this->capture_value = piece_weight_at(move.to_square());
-        this->promotion = move.promotion();
+        this->capture_type = piece_type_at(move.to_square());
 
-        const auto color = piece_color_at(move.from_square());
+        ASSERT(!is_capture() || piece_type_at(move.to_square()));
+
+        const auto color = turn;
+        ASSERT(color == piece_color_at(move.from_square()));
+
+        Square to_square = move.to_square();
 
         if ((this->is_castle = is_castling(move)) == true)
         {
+        #if 0
             const auto king_to_file = square_file(move.to_square());
             ASSERT(king_to_file == 2 || king_to_file == 6);
-
+        #else
+            // More robust when dealing with Polyglot files that may contain e.g. E8H8
+            const auto king_to_file = square_file(move.to_square()) >= 6 ? 6 : 2;
+            to_square = Square(square_rank(move.to_square()) * 8 + king_to_file);
+        #endif
             const auto rook_from_square = rook_castle_squares[king_to_file == 2][0][color];
             const auto rook_to_square = rook_castle_squares[king_to_file == 2][1][color];
 
@@ -1253,7 +1368,7 @@ namespace chess
         {
             castling_rights &= ~BB_BACKRANKS[color];
         }
-        castling_rights &= ~BB_SQUARES[move.from_square()] & ~BB_SQUARES[move.to_square()];
+        castling_rights &= ~BB_SQUARES[move.from_square()] & ~BB_SQUARES[to_square];
 
         /* save current en-passant square */
         const auto ep_square = en_passant_square;
@@ -1271,21 +1386,37 @@ namespace chess
             {
                 en_passant_square = Square(move.from_square() - 8);
             }
-            else if (move.to_square() == ep_square && (abs(diff) == 7 || abs(diff) == 9) && !capture_value)
+            else if (move.to_square() == ep_square && (abs(diff) == 7 || abs(diff) == 9))
             {
+                ASSERT(!is_capture());
+
                 /* Remove pawns captured en passant. */
-                remove_piece_at(Square(ep_square - 8 * SIGN[turn]));
-                capture_value = weight(PieceType::PAWN);
+                const auto sq = Square(ep_square - 8 * SIGN[turn]);
+
+                ASSERT(piece_type_at(sq) == PAWN);
+                ASSERT(piece_color_at(sq) != turn);
+
+                this->capture_type = PieceType::PAWN;
+                ASSERT(piece_type_at(sq) == capture_type);
+
+                remove_piece_at(sq);
             }
         }
 
-        set_piece_at(move.to_square(), piece_type, color, move.promotion());
+        set_piece_at(to_square, piece_type, color, move.promotion());
         flip(turn);
+
+        if (is_capture() && _piece_count > 0)
+        {
+            --_piece_count;
+            ASSERT(popcount(occupied()) == _piece_count);
+        }
 
         pushed_pawns_score = score_pushed_pawns(*this, move);
 
         _endgame = ENDGAME_UNKNOWN; /* recalculate lazily */
         _hash = 0; /* invalidate */
+        has_tt_result = false;
     }
 
 
@@ -1293,17 +1424,18 @@ namespace chess
     {
         state = *this;
 
-        state.capture_value = 0;
-        state.promotion = PieceType::NONE;
+        state.capture_type = PieceType::NONE;
         state.simple_score = UNKNOWN_SCORE;
         state._check = {-1, -1};
         state._hash = 0;
         state._endgame = ENDGAME_UNKNOWN;
+        state.has_tt_result = false;
     }
 
 
     /*
      * Evaluate the incremental score change for a move.
+     * NOTE: Does NOT take piece grading into account.
      */
     template<bool WithEnPassant>
     INLINE score_t State::eval_delta(const BaseMove& move) const
@@ -1312,20 +1444,23 @@ namespace chess
 
         const auto eg = is_endgame();
         const auto color = turn;
-        const auto moved_piece_type = piece_type_at(move.from_square());
+        const auto moving_piece_type = piece_type_at(move.from_square());
 
+        ASSERT(moving_piece_type);
         ASSERT(color == piece_color_at(move.from_square()));
 
     #if USE_PIECE_SQUARE_TABLES
-        const auto i = square_index(move.from_square(), color);
-        const auto j = square_index(move.to_square(), color);
+        const auto i = move.from_square();
+        const auto j = move.to_square();
 
-        /* piece-square table for the initial position of the moved piece */
-        const auto& table_i = select_piece_square_table(eg, moved_piece_type);
+        /* piece-square table for the initial position of the moving piece */
+        const auto& table_i = select_piece_square_table_rt(eg, moving_piece_type, color);
+
+        ASSERT(select_piece_square_table(eg, moving_piece_type)[square_index(i, color)] == table_i[i]);
 
         if (move.promotion())
         {
-            const auto& table_j = select_piece_square_table(eg, move.promotion());
+            const auto& table_j = select_piece_square_table_rt(eg, move.promotion(), color);
 
             delta = table_j[j] - table_i[i] + weight(move.promotion()) - weight(PieceType::PAWN);
         }
@@ -1356,21 +1491,19 @@ namespace chess
                 capt_sq = Square(move.to_square() - 8 * SIGN[color]);
             }
 
-        if (const auto type = piece_type_at(capt_sq))
+        if (const auto captured_type = piece_type_at(capt_sq))
         {
-            ASSERT(type != PieceType::KING);
+            ASSERT(captured_type != PieceType::KING);
             ASSERT(piece_color_at(capt_sq) != color);
 
-            delta += weight(type);
+            delta += weight(captured_type);
 
         #if USE_PIECE_SQUARE_TABLES
             /*
-             * Can't capture the king, no need to check for king's endgame table;
-             * the only alternate endgame table for now is ENDGAME_KING_SQUARE_TABLE
+             * The only endgame table (for now) is ENDGAME_KING_SQUARE_TABLE.
+             * Since the king cannot be captured, use a non-endgame table.
              */
-            /* const auto& table = select_piece_square_table(eg, type); */
-
-            const auto& table = SQUARE_TABLE[type];
+            const auto& table = SQUARE_TABLE[captured_type];
 
             delta += table[square_index(capt_sq, !color)];
 
@@ -1379,13 +1512,16 @@ namespace chess
              */
             if (!eg && popcount(occupied()) == ENDGAME_PIECE_COUNT + 1)
             {
-                /* Update piece-square values for KING */
+                /* Update piece-square values for KING to account for endgame table */
+
                 for (const auto c : { BLACK, WHITE })
                 {
                     const auto k1 = square_index(king(c), c);
                     auto k2 = k1;
 
-                    if (moved_piece_type == PieceType::KING && c == color) /* king moved? */
+                    ASSERT(SQUARE_TABLE[KING][k1] == piece_square_table[(KING - 1) * 2 + c][king(c)]);
+
+                    if (moving_piece_type == PieceType::KING && c == color) /* king move? */
                     {
                         k2 = square_index(move.to_square(), c);
 
@@ -1407,32 +1543,33 @@ namespace chess
 
     INLINE score_t State::eval_incremental(const BaseMove& move) const
     {
-        if (simple_score == UNKNOWN_SCORE)
-        {
-            return UNKNOWN_SCORE; /* full eval needed */
-        }
-        else
-        {
-            auto eval = simple_score + eval_delta<true>(move);
+        ASSERT(simple_score != UNKNOWN_SCORE);
 
-            if (is_castling(move))
-            {
-                const auto king_file = square_file(move.to_square());
-                const auto rook_move = BaseMove(
-                    chess::rook_castle_squares[king_file == 2][0][turn],
-                    chess::rook_castle_squares[king_file == 2][1][turn]);
+        auto eval = simple_score + eval_delta<true>(move);
 
-                eval += eval_delta<false>(rook_move);
-            }
-            return eval;
+        if (is_castling(move))
+        {
+            const auto king_file = square_file(move.to_square());
+            const auto rook_move = BaseMove(
+                chess::rook_castle_squares[king_file == 2][0][turn],
+                chess::rook_castle_squares[king_file == 2][1][turn]);
+
+            eval += eval_delta<false>(rook_move);
         }
+
+        return eval;
     }
 
 
+    /* Evaluate material from white's perspective. For high order evals (HCE, NNUE) see Context. */
+    /* NOTE: Does NOT take piece grading into account. */
     INLINE score_t State::eval_simple() const
     {
         int score = 0;
+
+    #if USE_PIECE_SQUARE_TABLES
         const auto endgame = is_endgame();
+    #endif
 
         for (auto color: {BLACK, WHITE})
         {
@@ -1444,10 +1581,11 @@ namespace chess
                 score += sign * weight(piece_type) * popcount(mask);
 
             #if USE_PIECE_SQUARE_TABLES
-                const auto& table = select_piece_square_table(endgame, piece_type);
+                const auto& table = select_piece_square_table_rt(endgame, piece_type, color);
 
-                for_each_square(mask, [&](Square square) {
-                    score += sign * table[square_index(square, color)];
+                for_each_square_r(mask, [&](Square square) {
+                    ASSERT(piece_type_at(square) == piece_type);
+                    score += sign * table[square];
                 });
             #endif /* USE_PIECE_SQUARE_TABLES */
             }
@@ -1468,7 +1606,7 @@ namespace chess
     {
         int count = 0;
 
-        for_each_square(pawns & color_mask & mask, [&](Square p) {
+        for_each_square_r(pawns & color_mask & mask, [&](Square p) {
             const auto file_mask = bb_neighbour_files_mask[square_file(p)];
 
             count += bool(pawns & color_mask & file_mask) == connected;
@@ -1527,15 +1665,9 @@ namespace chess
     }
 
 
-    template<bool EVAL_MOBILITY> INLINE score_t State::eval() const
+    INLINE score_t State::eval() const
     {
-        auto value = eval_lazy();
-
-        if constexpr(EVAL_MOBILITY)
-        {
-            if (!is_endgame())
-                value += eval_mobility();
-        }
+        const auto value = eval_lazy();
         return value * SIGN[turn];
     }
 
@@ -1600,7 +1732,7 @@ namespace chess
 
     /* static */ INLINE bool State::is_endgame(const State& state)
     {
-        return (popcount(state.occupied()) <= ENDGAME_PIECE_COUNT);
+        return (state.piece_count() <= ENDGAME_PIECE_COUNT);
         /*
             || state.just_king_and_pawns(BLACK)
             || state.just_king_and_pawns(WHITE)
@@ -1619,6 +1751,7 @@ namespace chess
         }
         return (_endgame == ENDGAME_TRUE);
     }
+
 
 
     INLINE int State::longest_pawn_sequence(Bitboard mask) const
@@ -1659,8 +1792,6 @@ namespace chess
             black &= ~mask;
         }
 
-        _piece_types[square] = PieceType::NONE;
-
         return piece_type;
     }
 
@@ -1681,9 +1812,6 @@ namespace chess
 
         pieces(type) |= mask;
         _occupied_co[color] |= mask;
-
-        ASSERT(_piece_types[square] == PieceType::NONE);
-        _piece_types[square] = type;
     }
 
 
@@ -1769,8 +1897,109 @@ namespace chess
     void _init();
 
 
-    /* SEE captures.cpp */
-    score_t estimate_static_exchanges(const State&, Color, Square, PieceType = PieceType::NONE);
+    INLINE Square get_least_valuable_attacker(const State& board, Color color, Square target_square, Bitboard occupied)
+    {
+        Bitboard attackers = board.attackers_mask(color, target_square, occupied);
+
+        if (attackers != BB_EMPTY)
+        {
+            const PieceType piece_order[] = {PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING};
+
+            for (PieceType piece_type : piece_order)
+            {
+                Bitboard piece_attackers = attackers & board.pieces_mask(piece_type, color);
+
+                if (piece_attackers != BB_EMPTY)
+                {
+                    Square candidate = Square(lsb(piece_attackers));
+
+                    if (piece_type == KING)
+                    {
+                        // Temporarily remove the king and target piece
+                        Bitboard temp_occupied = occupied & ~BB_SQUARES[candidate] & ~BB_SQUARES[target_square];
+
+                        // Check if king would be in check on target square
+                        if (board.attackers_mask(!color, target_square, temp_occupied) != BB_EMPTY)
+                        {
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        Bitboard pin_mask = board.pin_mask(color, candidate);
+                        if (pin_mask != BB_ALL && !(pin_mask & BB_SQUARES[target_square]))
+                        {
+                            continue; // Piece is pinned and target is not on the pin ray
+                        }
+                    }
+
+                    return candidate;
+                }
+            }
+        }
+
+        return Square::UNDEFINED;
+    }
+
+
+    /* https://www.chessprogramming.org/SEE_-_The_Swap_Algorithm */
+    INLINE score_t estimate_static_exchanges(const State& board, Color side, Square square, PieceType target = NONE)
+    {
+        static constexpr int MAX_DEPTH = 8;
+
+        if (target == NONE)
+        {
+            target = board.piece_type_at(square);
+            if (target == NONE)
+            {
+                ASSERT(false); /* expect a target piece on the square */
+                return 0;
+            }
+        }
+
+        Bitboard occupied = board.occupied();
+
+        Square from = get_least_valuable_attacker(board, side, square, occupied);
+        if (from == Square::UNDEFINED)
+            return 0;
+
+        score_t gain[MAX_DEPTH];
+        gain[0] = board.piece_value_at(square, !side, target);
+        int d = 0;
+
+        while (from != Square::UNDEFINED && d < MAX_DEPTH - 1)
+        {
+            ++d;
+
+            score_t attacker_value = board.piece_value_at(from, side);
+
+            /* Check for promotion */
+            if (board.piece_type_at(from) == PAWN)
+            {
+                int target_rank = square_rank(square);
+
+                if ((side == WHITE && target_rank == 7) || (side == BLACK && target_rank == 0))
+                {
+                    /* Assume promotion to queen (most common case). Subtract pawn value, add queen value */
+                    attacker_value = board.piece_value_at(from, side, QUEEN) - board.piece_value_at(from, side, PAWN);
+                }
+            }
+
+            gain[d] = attacker_value - gain[d - 1];
+
+            occupied &= ~BB_SQUARES[from];
+            flip(side);
+            from = get_least_valuable_attacker(board, side, square, occupied);
+        }
+
+        while (--d)
+        {
+            gain[d - 1] = -std::max(-gain[d - 1], gain[d]);
+        }
+
+        return gain[0];
+    }
+
 
     INLINE score_t estimate_captures(const State& board)
     {
@@ -1784,7 +2013,7 @@ namespace chess
 
             const auto victims = board.pieces_mask(piece_type, Color(color ^ 1));
 
-            for_each_square(victims, [&](Square square)
+            for_each_square_r(victims, [&](Square square)
             {
                 auto v = estimate_static_exchanges(board, color, square, piece_type);
                 value = std::max(value, v);
@@ -1874,6 +2103,7 @@ namespace chess
         template<typename T, typename P> INLINE bool parse_pos(T tok, P& pos)
         {
             static constexpr auto squares = mirror_squares(std::make_index_sequence<64>{});
+
             size_t i = 0;
             for (const auto c : tok)
             {
@@ -1903,7 +2133,13 @@ namespace chess
                     break;
                 }
             }
-            return i == 64;
+            ASSERT(i == 64);
+            if (i != 64)
+                return false;
+
+            pos._hash = 0; /* reset hash */
+            pos.piece_count(); /* update cached _piece_count */
+            return true;
         }
 
         /** Parse castling rights */

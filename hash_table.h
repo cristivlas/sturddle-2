@@ -3,12 +3,21 @@
 #include <array>
 #include <atomic>
 #include <cstdlib>
-#include <limits>
-#include <new>
+
+#if _WIN32
+  #include "ms_windows.h"
+#else
+  #include <sys/mman.h>
+#endif /* !_WIN32 */
+#include "utility.h"
 
 constexpr size_t HASH_TABLE_MAX_READERS = 64;
 constexpr int SPIN_LOCK_MAX_RETRY = 1024 * 1024;
 
+
+namespace alloc
+{
+/* Allocators */
 #if _MSC_VER
 static constexpr auto CACHE_LINE_SIZE = std::hardware_destructive_interference_size;
 
@@ -80,32 +89,146 @@ INLINE bool operator!=(const cache_line_allocator<T> &a, const cache_line_alloca
     return !(a == b);
 }
 
-/*
- * Thomas Neumann's primes.hpp requires __int128
- * http://databasearchitects.blogspot.com/2020/01/all-hash-table-sizes-you-will-ever-need.html
- */
-#if HAVE_INT128
-#include "primes.hpp"
+template <typename T>
+class mmap_allocator
+{
+public:
+    static constexpr size_t PAGE_SIZE = 4096;
 
-static INLINE size_t pick_prime(size_t n)
-{
-    return primes::Prime::pick(n).get();
-}
+    using value_type = T;
+    using pointer = T *;
+
+    mmap_allocator() = default;
+
+    template <typename U>
+    struct rebind
+    {
+        using other = mmap_allocator<U>;
+    };
+
+    template <typename U>
+    mmap_allocator(const mmap_allocator<U> &) noexcept {}
+
+private:
+#if _WIN32
+    /* Stored before user data */
+    struct alignas(CACHE_LINE_SIZE) allocation_header
+    {
+        size_t size;
+        HANDLE mapping_handle;
+        size_t user_size;
+    };
+#endif
+
+public:
+    INLINE pointer allocate(std::size_t n)
+    {
+#if _WIN32
+        constexpr size_t header_size = sizeof(allocation_header);
+        static_assert(header_size == CACHE_LINE_SIZE);
+        const auto user_bytes = n * sizeof(value_type);
+        const auto total_bytes = ((header_size + user_bytes + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+
+        HANDLE h_mapping = ::CreateFileMapping(
+            INVALID_HANDLE_VALUE,
+            nullptr,
+            PAGE_READWRITE,
+            static_cast<DWORD>(total_bytes >> 32),
+            static_cast<DWORD>(total_bytes & 0xFFFFFFFF),
+            nullptr);
+
+        if (!h_mapping)
+            throw std::bad_alloc();
+
+        void* ptr = ::MapViewOfFile(h_mapping, FILE_MAP_ALL_ACCESS, 0, 0, total_bytes);
+        if (!ptr)
+        {
+            ::CloseHandle(h_mapping);
+            throw std::bad_alloc();
+        }
+
+        // Store header info
+        allocation_header* header = static_cast<allocation_header*>(ptr);
+        header->size = header_size;
+        header->mapping_handle = h_mapping;
+        header->user_size = user_bytes;
+
+        // Return aligned pointer after the header
+        return reinterpret_cast<pointer>(header + 1);
+
 #else
-static INLINE size_t pick_prime(size_t n)
+        const auto bytes = ((n * sizeof(value_type) + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+        void* ptr = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (ptr == MAP_FAILED)
+            throw std::bad_alloc();
+
+        return reinterpret_cast<pointer>(ptr);
+#endif /* !_WIN32 */
+    }
+
+    INLINE void deallocate(pointer p, std::size_t n)
+    {
+#if _WIN32
+        if (p)
+        {
+            // Get the header that precedes the user data
+            allocation_header* header = reinterpret_cast<allocation_header*>(p) - 1;
+            ASSERT_ALWAYS(header->size == sizeof(allocation_header));
+            HANDLE h_mapping = header->mapping_handle;
+
+            // Unmap the view starting from the header
+            ::UnmapViewOfFile(header);
+            ::CloseHandle(h_mapping);
+        }
+#else
+        // POSIX implementation
+        if (p)
+        {
+            const auto bytes = ((n * sizeof(value_type) + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+            ::munmap(p, bytes);
+        }
+#endif /* !_WIN32 */
+    }
+
+    template <typename U, typename... Args>
+    INLINE void construct(U *p, Args &&...args) {
+        new (p) U(std::forward<Args>(args)...);
+    }
+
+    template <typename U>
+    INLINE void destroy(U *p) {
+        p->~U();
+    }
+};
+
+template <typename T, typename U>
+INLINE bool operator==(const mmap_allocator<T> &, const mmap_allocator<U> &) noexcept
 {
-    return n;
+    return true;
 }
-#endif /* HAVE_INT128 */
+
+template <typename T, typename U>
+INLINE bool operator!=(const mmap_allocator<T> &a, const mmap_allocator<U> &b) noexcept
+{
+    return !(a == b);
+}
+} /* Allocators */
+
+
+static INLINE size_t get_even(size_t n)
+{
+    return (n + 1) & ~1;
+}
 
 
 INLINE uint64_t scramble64(uint64_t h)
 {
-    h ^= h >> 33;
-    h *= 0xff51afd7ed558ccd;
-    h ^= h >> 33;
-    h *= 0xc4ceb9fe1a85ec53;
-    h ^= h >> 33;
+    // h ^= h >> 33;
+    // h *= 0xff51afd7ed558ccd;
+    // h ^= h >> 33;
+    // h *= 0xc4ceb9fe1a85ec53;
+    // h ^= h >> 33;
+
     return h;
 }
 
@@ -116,21 +239,20 @@ namespace search
     class BaseLock
     {
     protected:
-        std::atomic<T> *_mutex;
-        bool _locked;
+        std::atomic<T> *_mutex = nullptr;
+        bool _locked = false;
 
     public:
-        BaseLock() : _mutex(nullptr), _locked(false) {}
-
-        BaseLock(BaseLock &&other) : _mutex(other._mutex), _locked(other._locked)
+        BaseLock() = default;
+        INLINE BaseLock(BaseLock &&other) : _mutex(other._mutex), _locked(other._locked)
         {
             other._locked = false;
         }
-        explicit BaseLock(std::atomic<T> &mutex) : _mutex(&mutex), _locked(false)
+        explicit INLINE BaseLock(std::atomic<T> &mutex) : _mutex(&mutex), _locked(false)
         {
         }
 
-        BaseLock &operator=(const BaseLock &) = delete;
+        INLINE BaseLock &operator=(const BaseLock &) = delete;
 
         INLINE bool is_valid() const { return _locked; }
     };
@@ -147,7 +269,7 @@ namespace search
         UniqueLock() = default;
         UniqueLock(UniqueLock &&other) = default;
 
-        explicit UniqueLock(std::atomic<T> &mutex) : BaseLock<T>(mutex)
+        explicit INLINE UniqueLock(std::atomic<T> &mutex) : BaseLock<T>(mutex)
         {
 #if SMP
             int i = 0;
@@ -164,13 +286,15 @@ namespace search
             this->_locked = true;
         }
 
-        ~UniqueLock()
+        INLINE ~UniqueLock()
         {
 #if SMP
             if (this->_locked)
             {
                 this->_mutex->store(T(), std::memory_order_seq_cst);
             }
+#else
+            this->_locked = false;
 #endif /* SMP */
         }
     };
@@ -182,7 +306,7 @@ namespace search
         SharedLock() = default;
         SharedLock(SharedLock &&other) = default;
 
-        explicit SharedLock(std::atomic<T> &mutex) : BaseLock<T>(mutex)
+        explicit INLINE SharedLock(std::atomic<T> &mutex) : BaseLock<T>(mutex)
         {
 #if SMP
             while (true)
@@ -206,7 +330,7 @@ namespace search
 #endif /* SMP */
         }
 
-        ~SharedLock()
+        INLINE ~SharedLock()
         {
 #if SMP
             if (this->_locked)
@@ -214,60 +338,74 @@ namespace search
                 auto value = --(*this->_mutex);
                 ASSERT(value >= T());
             }
+#else
+            this->_locked = false;
 #endif /* SMP */
         }
     };
 
 
-    template <typename T>
+    template <typename T, size_t BUCKET_SIZE = 14>
     class hash_table
     {
-        template <size_t S>
-        struct Bucket
+        using clock_t = uint16_t;
+
+        template <size_t SIZE>
+        struct alignas(64) Bucket
         {
             using lock_state_t = int8_t;
 
-            lock_state_t _lock_state;
-            std::array<T, S> _entries;
+            lock_state_t        _lock_state;
+            uint8_t             _used = 0;
+            clock_t             _clock = 0;
+            std::array<T, SIZE> _entries;
 
-            std::atomic<lock_state_t> &mutex()
+            INLINE std::atomic<lock_state_t> &mutex()
             {
                 static_assert(sizeof(std::atomic<lock_state_t>) == sizeof(_lock_state));
                 return *reinterpret_cast<std::atomic<lock_state_t> *>(&_lock_state);
             }
 
-            static constexpr size_t size() { return S; }
+            static constexpr size_t size() { static_assert(SIZE); return SIZE; }
         };
 
-        using bucket_t = Bucket<CACHE_LINE_SIZE / sizeof(T)>;
-        using data_t = std::vector<bucket_t, cache_line_allocator<bucket_t>>;
+        using bucket_t = Bucket<BUCKET_SIZE>;
+
+    #if USE_MMAP_HASH_TABLE
+        using allocator_type = alloc::mmap_allocator<bucket_t>;
+    #else
+        using allocator_type = alloc::cache_line_allocator<bucket_t>;
+    #endif
+
+        using data_t = std::vector<bucket_t, allocator_type>;
 
         using shared_lock_t = SharedLock<typename bucket_t::lock_state_t, HASH_TABLE_MAX_READERS>;
         using unique_lock_t = UniqueLock<typename bucket_t::lock_state_t>;
 
-        uint8_t _clock = 0;
+        clock_t _clock = 0;
         count_t _used = 0;
+        uint8_t _generation = 0;
         data_t _data; /* table entries */
 
     private:
-        static INLINE size_t get_num_buckets(size_t megabytes, size_t mem_avail)
+        static INLINE size_t get_num_buckets(size_t megabytes)
         {
-            auto buckets = megabytes * 1024 * 1024 / bucket_size();
-            auto prime_buckets = pick_prime(buckets);
+            static_assert(sizeof(T) == 18);
+            static_assert(bucket_size() == 256);
 
-            while (prime_buckets * bucket_size() > mem_avail)
-            {
-                if (buckets == 0)
-                    return 0;
-
-                prime_buckets = pick_prime(--buckets);
-            }
-            return prime_buckets;
+            auto buckets = megabytes * ONE_MEGABYTE / bucket_size();
+            return get_even(buckets);
         }
 
         INLINE bucket_t &get_bucket(uint64_t hash)
         {
-            return _data[scramble64(hash) % _data.size()];
+            ASSERT(!_data.empty());
+            ASSERT(_data.size() % 2 == 0);
+
+            const auto idx = scramble64(hash) & (_data.size() - 1);
+            ASSERT(idx >= 0 && idx < _data.size());
+
+            return _data[idx];
         }
 
     public:
@@ -275,44 +413,9 @@ namespace search
 
         using entry_t = T;
 
-        template <typename L>
-        class Proxy
+        explicit hash_table(size_t megabytes)
         {
-            using lock_t = L;
-
-            entry_t *_entry;
-            lock_t _lock;
-
-        public:
-            Proxy() : _entry(nullptr) {}
-            Proxy(entry_t *entry, lock_t &&lock) : _entry(entry), _lock(std::move(lock)) {}
-
-            INLINE explicit operator bool() const { return _lock.is_valid(); }
-            INLINE const entry_t *operator->() const
-            {
-                ASSERT(_entry);
-                return _entry;
-            }
-            INLINE const entry_t &operator*() const
-            {
-                ASSERT(_entry);
-                return *_entry;
-            }
-            INLINE entry_t *operator->()
-            {
-                ASSERT(_entry);
-                return _entry;
-            }
-            INLINE entry_t &operator*()
-            {
-                ASSERT(_entry);
-                return *_entry;
-            }
-        };
-
-        hash_table(size_t megabytes, size_t mem_avail)
-        {
-            resize(megabytes, mem_avail);
+            resize(megabytes);
         }
 
         hash_table(const hash_table &) = delete;
@@ -323,30 +426,37 @@ namespace search
         /* Capacity in entries of type T */
         INLINE size_t capacity() const { return _data.size() * bucket_t::size(); }
 
-        void clear()
+        void clear(bool wipe)
         {
-            if (_used)
+            // Fully erase if reasonably sized
+            if (wipe && _data.size() <= 1024 * ONE_MEGABYTE)
                 std::fill_n(&_data[0], _data.size(), bucket_t());
+
+            ++_clock; // O(1) -- buckets are lazily erased on write
             _used = 0;
+
+            _generation = 0;
         }
 
-        INLINE uint8_t clock() const { return _clock; }
-        INLINE void increment_clock() { ++_clock; }
+        INLINE uint8_t generation() const { return _generation; }
+        INLINE void increment_generation() { _generation = (_generation + 1) & 31; }
 
-        INLINE void increment_usage()
+        INLINE void increment_usage(bucket_t& bucket)
         {
 #if SMP
             _used.fetch_add(1, std::memory_order_relaxed);
 #else
             ++_used;
 #endif
+            ASSERT(bucket._used < bucket_t::size());
+            ++bucket._used;
         }
 
         INLINE size_t size() const { return _used; }
 
-        void resize(size_t megabytes, size_t mem_avail)
+        void resize(size_t megabytes)
         {
-            const auto buckets = get_num_buckets(megabytes, mem_avail + byte_capacity());
+            const auto buckets = get_num_buckets(megabytes);
 
             if (buckets == 0)
                 throw std::bad_alloc();
@@ -354,65 +464,98 @@ namespace search
             _data.resize(buckets);
         }
 
-        template <typename S, typename lock_t = shared_lock_t>
-        INLINE Proxy<lock_t> lookup_read(const S &s)
+        struct Result
         {
+            entry_t     _entry;
+            int16_t     _replacement_slot = -1;
+            bucket_t*   _bucket = nullptr;
+        };
+
+
+        template <typename S>
+        INLINE Result probe(const S &s, int depth)
+        {
+            Result result;
+
             const auto h = s.hash();
             ASSERT(h);
 
-            auto &bucket = get_bucket(h);
+            auto& bucket = get_bucket(h);
+            shared_lock_t lock(bucket.mutex());
 
-            lock_t lock(bucket.mutex());
             if (lock.is_valid())
             {
-                for (auto &e : bucket._entries)
+                result._bucket = &bucket;
+
+                if (bucket._clock != this->_clock)
                 {
-                    if (e._hash == h)
-                        return Proxy<lock_t>(&e, std::move(lock));
+                    result._replacement_slot = 0;
+                }
+                else
+                {
+                    int replacement_score = depth + 1;
+
+                    for (size_t slot = 0; slot < bucket_t::size(); ++slot)
+                    {
+                        auto& e = bucket._entries[slot];
+
+                        if (e._hash == h)
+                        {
+                            result._entry = e;
+                            result._replacement_slot = slot;
+                            break;
+                        }
+
+                        if (!e.is_valid())
+                        {
+                            result._replacement_slot = slot;
+                            break;
+                        }
+
+                        const int age = (32 + generation() - e._generation) & 31;
+                        const int score = e._depth - 2 * age + e.is_exact();
+
+                        if (replacement_score > score)
+                        {
+                            replacement_score = score;
+                            result._replacement_slot = slot;
+                        }
+                    }
                 }
             }
-            return Proxy<lock_t>();
+
+            return result;
         }
 
-        template <typename S, typename lock_t = unique_lock_t>
-        INLINE Proxy<lock_t> lookup_write(const S &s, int depth)
+        INLINE void update(Result& r)
         {
-            const auto h = s.hash();
-            ASSERT(h);
+            ASSERT(r._replacement_slot >= 0 && r._entry.is_valid());
+            ASSERT(r._bucket);
+            auto& bucket = *r._bucket;
 
-            auto &bucket = get_bucket(h);
-
-            lock_t lock(bucket.mutex());
+            unique_lock_t lock(bucket.mutex());
             if (lock.is_valid())
             {
-                entry_t *entry = &bucket._entries[0];
-
-                for (auto &e : bucket._entries)
+                // Lazily erase stale buckets
+                if (bucket._clock != this->_clock)
                 {
-                    if (!e.is_valid())
+                    if (bucket._used)
                     {
-                        increment_usage();
-                        entry = &e;
-                        break;
+                        bucket._entries.fill(entry_t());
+                        bucket._used = 0;
                     }
-
-                    if (e._hash == h || e._age != _clock)
-                    {
-                        entry = &e;
-                        break;
-                    }
-
-                    if (depth >= e._depth)
-                    {
-                        entry = &e;
-                        depth = e._depth;
-                    }
+                    bucket._clock = this->_clock;
                 }
 
-                return Proxy<lock_t>(entry, std::move(lock));
-            }
+                auto& e = bucket._entries[r._replacement_slot];
 
-            return Proxy<lock_t>();
+                if (!e.is_valid())
+                {
+                    increment_usage(bucket);
+                }
+
+                e = r._entry;
+            }
         }
     };
 }

@@ -1,6 +1,7 @@
 argparse
 chess
 cpufeature;"x86" in platform_machine or "AMD64" in platform_machine
+cpuid;"x86" in platform_machine or "AMD64" in platform_machine
 cython
 psutil
 setuptools

@@ -23,9 +23,10 @@
  * Constants, compile-time configuration, misc. helpers.
  */
 #include <atomic>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
-
+#include "backtrace.h"
 
 #if defined(_MSC_VER) && !defined(__clang__)
   #pragma warning(disable:4244)
@@ -40,19 +41,25 @@
   #define INLINE __forceinline
 #elif __GNUC__
   #define INLINE __attribute__((always_inline)) inline
-#endif
+#endif /* _MSC_VER */
 #else
+#if _MSC_VER
   #define INLINE inline
-#endif
-
-#include <cmath>
-#include "backtrace.h"
+#elif __GNUC__
+  #define INLINE __attribute__((noinline))
+#endif /* _MSC_VER */
+#endif /* _DEBUG */
 
 using score_t = int;
 
+constexpr size_t ONE_MEGABYTE = 1024 * 1024;
+
+#if WEIGHT_TUNING_ENABLED
+  #define TUNING_PARTIAL                    true
+#endif
 
 // ---------------------------------------------------------------------
-// Configuration
+// Compile-time Configuration
 // ---------------------------------------------------------------------
 
 #define ADAPTIVE_NULL_MOVE                  true
@@ -63,21 +70,15 @@ using score_t = int;
  */
 #define COUNT_VALID_MOVES_AS_NODES          true
 
-/* Collect and generate moves data */
-#if !defined(DATAGEN)
-  #define DATAGEN                           false
-#endif
-
-/* NOTE: this setting has no effect when using SEE */
-#define EXCHANGES_DETECT_CHECKMATE          false
+/* Experimental in 2.03 */
+#define EVAL_PIECE_GRADING                  false /* TODO: tuneup */
 
 /* Collect extra stats for troubleshooting */
 #define EXTRA_STATS                         false
 
-#if !defined(NATIVE_UCI)
-  #define NATIVE_UCI                        false
-#endif /* NATIVE_UCI */
+#define FRACTIONAL_EXTENSIONS               true
 
+/* Filter out quiet moves if extended at leaf (depth < 0) */
 #define GROUP_QUIET_MOVES                   true
 
 #define KILLER_MOVE_HEURISTIC               true
@@ -85,6 +86,16 @@ using score_t = int;
 #define MTDF_CSTAR_BISECT                   true
 
 #define MTDF_REORDER_MOVES                  true
+
+/* Use C++ implementation for Polyglot opening book (NATIVE_UCI only) */
+#if !defined(NATIVE_BOOK)
+  #define NATIVE_BOOK                       true
+#endif /* NATIVE_BOOK */
+
+/* Use C++ implementation for UCI protocol */
+#if !defined(NATIVE_UCI)
+  #define NATIVE_UCI                        true
+#endif /* NATIVE_UCI */
 
 #define RAZORING                            true
 
@@ -97,11 +108,18 @@ using score_t = int;
  */
 #define SINGULAR_EXTENSION                  true
 
+/* Compile with multithread (symmetric multiprocessing) support */
 #define SMP                                 true
 
-#if !WITH_NNUE && !defined(USE_PIECE_SQUARE_TABLES)
-  #define USE_PIECE_SQUARE_TABLES           true
+#if !defined(USE_PIECE_SQUARE_TABLES)
+  #define USE_PIECE_SQUARE_TABLES           false /* TODO: tuneup */
 #endif
+
+/* Experimental */
+#define USE_BOOK_HINT                       false
+#define USE_ROOT_MOVES                      false
+
+#define USE_ENDTABLES                       false
 
 #define USE_LIBPOPCOUNT                     true
 
@@ -122,17 +140,16 @@ using score_t = int;
 
 
 /* default hash table size in megabytes */
+#if USE_MMAP_HASH_TABLE
+constexpr size_t DEFAULT_HASH_TABLE_SIZE =  256;
+#else
 constexpr size_t DEFAULT_HASH_TABLE_SIZE =  32;
-
-
-#if !defined(MOBILITY_TUNING_ENABLED)
-  #define MOBILITY_TUNING_ENABLED           false
-#endif
+#endif /* USE_MMAP_HASH_TABLE */
 
 /*
  * When TUNING_ENABLED is true, values introduced by DECLARE_VALUE in config.h
  * become visible to Python scripts (via set_param, get_params, get_param_info)
- * and can be tweaked at runtime.
+ * and in the UCI interface (setoption) and can be tweaked at runtime.
  */
 #if !defined(TUNING_ENABLED)
   #define TUNING_ENABLED                    false
@@ -146,7 +163,7 @@ constexpr size_t DEFAULT_HASH_TABLE_SIZE =  32;
  * https://github.com/goutham/magic-bits
  */
 #if !defined(USE_MAGIC_BITS)
-  #define USE_MAGIC_BITS                    false
+  #define USE_MAGIC_BITS                    true
 #endif
 
 /*
@@ -177,18 +194,18 @@ namespace search
     enum MoveOrder : int8_t
     {
         UNDEFINED = 0,
-        PREV_ITER = 1, /* best move from previous iteration */
-        BEST_MOVES = 2, /* best move(s) from cache (hashtable) */
-        HASH_MOVES = 3, /* moves from hashtable */
-        PROMOTIONS = 4,
-        LAST_MOVED_CAPTURE = 5,
-        WINNING_CAPTURES = 6,
-        EQUAL_CAPTURES = 7,
-        KILLER_MOVES = 8,
-        LOSING_CAPTURES = 9,
-        HISTORY_COUNTERS = 10,
-        TACTICAL_MOVES = 11, /* pushed pawns, checks, etc. */
-     // ROOT_MOVES = 12, /* unused */
+        ROOT_MOVES = 1, /* NN suggestions -- @root & top iterations */
+        PREV_ITER = 2, /* best move from previous iteration */
+        BEST_MOVES = 3, /* best move(s) from cache (hashtable) */
+        HASH_MOVES = 4, /* moves from hashtable */
+        PROMOTIONS = 5,
+        LAST_MOVED_CAPTURE = 6,
+        WINNING_CAPTURES = 7,
+        EQUAL_CAPTURES = 8,
+        KILLER_MOVES = 9,
+        LOSING_CAPTURES = 10,
+        HISTORY_COUNTERS = 11,
+        TACTICAL_MOVES = 12, /* pushed pawns, checks, etc. */
         LATE_MOVES = 13, /* all other legal moves not covered above */
         UNORDERED_MOVES = 14,
         PRUNED_MOVES = 15,
@@ -196,24 +213,6 @@ namespace search
         ILLEGAL_MOVES = 17,
     };
 }
-
-
-enum class LogLevel : int
-{
-    DEBUG = 1,
-    INFO = 2,
-    WARN = 3,
-    ERROR = 4
-};
-
-
-template<typename T> struct Hasher
-{
-    constexpr std::size_t operator()(const T& key) const
-    {
-        return key.hash();
-    }
-};
 
 
 // ---------------------------------------------------------------------

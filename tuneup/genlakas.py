@@ -21,7 +21,7 @@ sys.path.append(root_path())
 from chess_engine import *
 
 
-def get_engine_path(args, windows):
+def get_engine_path(args, windows=False):
     try:
         import uci
         engine = make_path('sturddle.py')
@@ -29,32 +29,45 @@ def get_engine_path(args, windows):
         # use native (built-in) uci version
         engine = make_path('main.py')
     if windows:
-        engine = sys.executable + ' ' + engine
+        with open('engine.bat', 'w') as out:
+            out.write(f'"{sys.executable}" "{engine}"')
+        engine = 'engine.bat'
     return engine
 
 optimizers = ('oneplusone', 'tbpsa', 'bayesopt', 'spsa', 'cmaes', 'ngopt')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate Lakas tuning script.')
-    parser.add_argument('-b', '--budget', type=int, default=100)
+    parser.add_argument('-b', '--budget', type=int, default=200000)
     parser.add_argument('-c', '--concurrency', type=int, default=os.cpu_count())
     parser.add_argument('-d', '--data-file', default='checkpoint.dat')
-    parser.add_argument('-g', '--games_per_budget', type=int, default=200)
+    parser.add_argument('-D', '--depth', type=int)
+    parser.add_argument('-g', '--games_per_budget', type=int, default=8)
+    parser.add_argument('-H', '--hash', type=int, default=256, help='Engine hash table size in MB')
     parser.add_argument('-l', '--log-file', default='log.txt')
+    parser.add_argument('-O', '--opening-file')
     parser.add_argument('-o', '--output')
     parser.add_argument('-p', '--lakas-path', default='')
     parser.add_argument('-s', '--strategy', choices=optimizers, default='spsa')
-    parser.add_argument('-t', '--time-control', default='5+0.05')
+    parser.add_argument('-t', '--time-control', default='1+0.2')
+    parser.add_argument('-T', '--threads', type=int, default=1, help='Engine threads (logical CPUs)')
 
     # Enumerate available engine settings
     params = {}
     groups = set()
 
-    for name, (val, lo, hi, grp) in  get_param_info().items():
+    for name, (val, lo, hi, grp, normal) in  get_param_info().items():
         if grp == 'Settings':
             continue
         groups.add(grp)
-        params[name] = val, lo, hi, grp
+        if normal:
+            unscaled_val = val
+            val = 2 * (val - lo) / (hi - lo) - 1
+            if val < -1 or val > 1:
+                raise ValueError(f'{name}: {val} (unscaled: {unscaled_val}) is out of range')
+            params[name] = val, -1.0, 1.0, grp
+        else:
+            params[name] = val, lo, hi, grp
 
     tunable = tuple(['all'] + list(params.keys()))
     parser.add_argument('tune', choices=tunable, nargs='*', default='all')
@@ -79,30 +92,56 @@ if __name__ == '__main__':
 
     # construct time control arguments
     tc = args.time_control.split('+')
-    time_control = f'--base-time-sec {tc[0]} --inc-time-sec {tc[1] if len(tc) > 1 else 0}'
+    time_control = f'--base-time-sec {tc[0]} --inc-time-sec {tc[1] if len(tc) > 1 else 0}' if args.depth is None else ''
+    depth = '' if args.depth is None else f'--depth {args.depth}'
 
     # detect cutechess-cli location
-    cutechess = 'cutechess-cli.exe' if sysconfig.get_platform().startswith('win') else 'cutechess-cli'
-    cutechess = shutil.which(cutechess)
+    cutechess = shutil.which('cutechess-cli')
     if cutechess is None:
-        raise RuntimeError('Could not locate cutechess-cli')
+        cutechess = 'cutechess-cli'
+        warnings.warn('Could not locate cutechess-cli')
+
+    opening_file = args.opening_file
+    if opening_file is None or not os.path.isfile(opening_file):
+         opening_file = os.path.join(args.lakas_path, 'start_opening', 'ogpt_chess_startpos.epd')
+    else:
+        opening_file = os.path.abspath(opening_file)
 
     windows = sysconfig.get_platform().startswith('win')
 
     # fill out the script template
-    script = f'''#!/usr/bin/env bash
+    if windows:
+        input_param=''.join(tune_params).replace('\\\n', ' ')
+        script = f'''
+@python {os.path.join(args.lakas_path, 'lakas.py')} ^
+    --budget {args.budget} --games-per-budget {args.games_per_budget} ^
+    --common-param="{{'OwnBook':'false', 'Hash':{args.hash}, 'Threads':{args.threads} }}" ^
+    --concurrency {min(args.games_per_budget, args.concurrency)} ^
+    --engine {get_engine_path(args, True)} ^
+    --input-data-file {args.data_file} ^
+    --opening-file "{opening_file}" ^
+    --optimizer {args.strategy} ^
+    --optimizer-log-file {args.log_file} ^
+    --output-data-file {args.data_file} ^
+    --match-manager-path "{cutechess}" ^
+    {depth}{time_control} ^
+    --input-param="{{{input_param} }}"
+'''
+    else:
+        script = f'''#!/usr/bin/env bash
 
 python3 {os.path.join(args.lakas_path, 'lakas.py')} \\
     --budget {args.budget} --games-per-budget {args.games_per_budget} \\
-    --concurrency {args.concurrency} \\
-    --engine {get_engine_path(args, windows)} \\
+    --common-param="{{'OwnBook':'false', 'Hash':{args.hash}, 'Threads':{args.threads} }}" \\
+    --concurrency {min(args.games_per_budget, args.concurrency)} \\
+    --engine {get_engine_path(args)} \\
     --input-data-file {args.data_file} \\
-    --opening-file {os.path.join(args.lakas_path, 'start_opening/ogpt_chess_startpos.epd')} \\
+    --opening-file {opening_file} \\
     --optimizer {args.strategy} \\
     --optimizer-log-file {args.log_file} \\
     --output-data-file {args.data_file} \\
     --match-manager-path {cutechess} \\
-    {time_control} \\
+    {depth}{time_control} \\
     --input-param="{{{"".join(tune_params)}\\
 }}"
 '''

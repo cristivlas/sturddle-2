@@ -21,7 +21,6 @@
 #pragma once
 
 #include <atomic>
-#include <chrono>
 #include <map>
 #include <memory>
 #include <string>
@@ -30,18 +29,33 @@
 #include <unordered_set> /* unordered_multiset */
 #include "Python.h"
 #include "config.h"
-#include "nnue.h"
 #include "search.h"
 #include "utility.h"
 
 constexpr auto FIRST_EXCHANGE_PLY = PLY_MAX;
 
 /* Configuration API */
-struct Param { int val = 0; int min_val; int max_val; std::string group; };
+struct Param {
+    int val = 0;
+    int min_val;
+    int max_val;
+    std::string group;
+    bool normal = false;
+};
+
 extern std::map<std::string, Param> _get_param_info();
 extern void _set_param(const std::string&, int value, bool echo=false);
 extern std::map<std::string, int> _get_params();
-extern void assert_param_ref();
+
+
+enum class LogLevel : int
+{
+    DEBUG = 1,
+    INFO = 2,
+    WARN = 3,
+    ERROR = 4
+};
+
 
 namespace search
 {
@@ -58,7 +72,7 @@ namespace search
     using atomic_time = std::atomic<time>; /* sic */
 
 
-    enum Algorithm : int
+    enum Algorithm : uint8_t
     {
         NEGAMAX,
         NEGASCOUT,
@@ -104,12 +118,14 @@ namespace search
     public:
         MoveMaker() = default;
 
-        const Move* get_next_move(Context& ctxt, score_t futility = 0);
-
         /* Return upperbound of legal moves, which may include pruned and quiet moves. */
         int count() const { return _count; }
 
         int current(Context&);
+
+        void ensure_moves(Context&, bool order_root_moves = false);
+
+        const Move* get_next_move(Context& ctxt, score_t futility = 0);
 
         bool group_quiet_moves() const { return _group_quiet_moves; }
         bool has_moves(Context&);
@@ -134,9 +150,8 @@ namespace search
 
     private:
         bool can_late_move_prune(const Context& ctxt) const;
-        void ensure_moves(Context&);
 
-        void generate_unordered_moves(Context&);
+        void generate_unordered_moves(Context&, bool order_root_moves = false);
         const Move* get_move_at(Context& ctxt, int index, score_t futility = 0);
 
         void make_capture(Context&, Move&);
@@ -181,6 +196,7 @@ namespace search
     /* Reason for retrying */
     enum class RETRY : uint8_t { None = 0, Reduced, PVS };
 
+    INLINE constexpr bool operator!(RETRY retry) { return retry == RETRY::None; }
 
     struct IterationInfo
     {
@@ -215,6 +231,8 @@ namespace search
     };
 
 
+    using PV = std::vector<BaseMove>;
+
     /*
      * The context of a searched node.
      */
@@ -222,11 +240,14 @@ namespace search
     {
         using ContextStack = std::array<struct ContextBuffer, PLY_MAX>;
 
-        /* Note: half of the moves stack are reserved for do_exchanges. */
-        static constexpr size_t MAX_MOVE = 2 * PLY_MAX;
+        /* Note: stack beyond PLY_MAX is reserved for do_exchanges. */
+        static constexpr size_t MAX_MOVE = PLY_MAX + 32;
         using MoveStack = std::array<MovesList, MAX_MOVE>;
+        using StatePool = std::vector<State>;
+        using StateStack = std::array<StatePool, PLY_MAX>;
 
-        using StateStack = std::array<std::vector<State>, PLY_MAX>;
+        using Path = std::array<BaseMove, PV_PATH_MAX>;
+        using TT_Result = search::HashTable::Result;
 
         friend class MoveMaker;
 
@@ -242,30 +263,37 @@ namespace search
 
         /* parent move in the graph */
         Context*    _parent = nullptr;
-        int         _ply = 0;
-        int         _max_depth = 0;
-
-        Algorithm   _algorithm = Algorithm::NEGAMAX;
-
-        score_t     _alpha = SCORE_MIN;
-        score_t     _beta = SCORE_MAX;
-        score_t     _score = SCORE_MIN; /* dynamic eval score */
-        score_t     _retry_beta = SCORE_MAX; /* NEGASCOUT only */
+        int16_t     _ply = 0;
+        int16_t     _max_depth = 0;
+        int16_t     _alpha = SCORE_MIN;
+        int16_t     _beta = SCORE_MAX;
+        int16_t     _score = SCORE_MIN; /* dynamic eval score */
+        int16_t     _retry_beta = SCORE_MAX; /* NEGASCOUT only */
         mutable int _improvement = SCORE_MIN;
 
+        Algorithm   _algorithm = Algorithm::MTDF;
+
+        mutable int8_t _can_forward_prune = -1;
+        mutable int8_t _repetitions = -1;
+
+        Square      _capture_square = Square::UNDEFINED;
         bool        _futility_pruning = true;
         bool        _has_singleton = false;
         bool        _is_null_move = false; /* for null-move pruning */
         bool        _is_pv = false;
         bool        _is_retry = false;
         bool        _is_singleton = false;
+        bool        _leftmost = false;
         bool        _multicut_allowed = MULTICUT;
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
         bool        _retry_next = false;
-        bool        _non_incremental_update = false; /* NNUE */
+        int8_t      _nnue_prev_offs = 1; /* NNUE */
 
-        int         _double_ext = 0;
+        uint8_t     _double_ext = 0;
+        uint8_t     _path_len = 1;
+        Path        _path;
+
         score_t     _eval = SCORE_MIN; /* static eval */
         score_t     _eval_raw = SCORE_MIN; /* unscaled _eval */
 
@@ -277,13 +305,12 @@ namespace search
 
         Move        _move;          /* from parent to current state */
         BaseMove    _best_move;
+        BaseMove    _counter_move;
         BaseMove    _cutoff_move;   /* from current state to the next */
         BaseMove    _prev;          /* best move from previous iteration */
         BaseMove    _excluded;      /* singular extension search */
 
         State*      _state = nullptr;
-        TT_Entry    _tt_entry;
-        Square      _capture_square = Square::UNDEFINED;
 
         void        cache_scores(bool force_write /* bypass eviction strategy */ = false);
 
@@ -298,9 +325,9 @@ namespace search
 
         bool        can_reuse_moves() const;
 
-        int64_t     check_time_and_update_nps(); /* return elapsed milliseconds */
+        int64_t     check_time_and_update_nps(int64_t* = nullptr); /* return elapsed milliseconds */
 
-        static void clear_moves_cache();
+        static void clear_caches_and_stacks();
 
         Context*    clone(ContextBuffer&, int ply = 0) const;
 
@@ -320,22 +347,22 @@ namespace search
         template<bool EvalCaptures = true> score_t evaluate();
 
         score_t     evaluate_end();
-
-        template<bool with_piece_squares = true>
         score_t     evaluate_material() const;
 
-        void        eval_nnue();
-        score_t     eval_nnue_raw(bool update_only = false, bool side_to_move_pov = true);
+        score_t     eval(bool as_white, int depth, int millisec); /* testing and tuning */
+
+        score_t     eval_nnue_raw(bool side_to_move_pov);
+        void        eval_with_nnue();
         static void update_root_accumulators();
 
-        score_t     static_eval();  /* use TT value if available, eval material otherwise */
+        score_t     static_eval() const; /* use TT value if available, eval material otherwise */
 
-        void        extend();       /* fractional and other extensions */
+        void        extend(); /* fractional and other extensions */
         const Move* first_valid_move();
 
         score_t     futility_margin() const;
 
-        INLINE bool has_improved(score_t margin = 0) { return improvement() > margin; }
+        INLINE bool has_improved() const { return improvement() > 0; }
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
 
         int         history_count(const Move&) const;
@@ -345,7 +372,7 @@ namespace search
         static void init();
         bool        is_beta_cutoff(Context*, score_t);
         static bool is_cancelled() { return _cancel.load(std::memory_order_acquire); }
-        INLINE bool is_capture() const { return state().capture_value != 0; }
+        INLINE bool is_capture() const { return state().is_capture(); }
         INLINE bool is_check() const { return state().is_check(); }
         bool        is_counter_move(const Move&) const;
         bool        is_evasion() const;
@@ -354,9 +381,9 @@ namespace search
         INLINE bool is_leftmost() const { return is_root() || _leftmost; }
         bool        is_leaf(); /* treat as terminal node ? */
         bool        is_mate_bound() const;
-        bool        is_null_move_ok(); /* ok to generate null move? */
+        bool        is_null_move_ok() const; /* ok to generate null move? */
         INLINE bool is_null_move() const { return _is_null_move; }
-        INLINE bool is_promotion() const { return state().promotion; }
+        INLINE bool is_promotion() const { return _move.promotion(); }
         INLINE bool is_pv_node() const { return _is_pv; }
         bool        is_pvs_ok() const;
         INLINE bool is_leaf_extended() const { return _ply > _max_depth; }
@@ -368,26 +395,25 @@ namespace search
 
         INLINE int  iteration() const { ASSERT(_tt); return _tt->_iteration; }
 
-        float       late_move_prune_factor() const;
+        LMRAction   late_move_reduce(int move_count, int64_t time_left);
 
-        LMRAction   late_move_reduce(int move_count);
-
-        static void load_nnue_model(const std::string& json_file_path); /* no-op if !WITH_NNUE */
         static void log_message(LogLevel, const std::string&, bool force = false);
 
         int         move_count() const { return _move_maker.count(); }
         int64_t     nanosleep(int nanosec);
 
-        Context*    next(bool null_move, score_t, int& move_count);
+        Context*    next(bool null_move, score_t, int& move_count, int64_t* time_left = nullptr);
 
         template<bool Construct = false> Context* next_ply() const;
 
         INLINE int  next_move_index() { return _move_maker.current(*this); }
 
-        bool        on_next();
-        INLINE int  piece_count() const { return chess::popcount(state().occupied()); }
+        bool        on_next(int64_t*);
+        INLINE int  piece_count() const { return state().piece_count(); }
 
-        void        reinitialize();
+        void        reset(bool force_reorder_moves = true, bool clear_best_move = true);
+        int         repeated_count(const State&) const;
+
         int         rewind(int where = 0, bool reorder = false);
         INLINE void set_counter_move(const BaseMove& move) { _counter_move = move; }
         void        set_search_window(score_t score, score_t& prev_score);
@@ -396,10 +422,16 @@ namespace search
         void        set_time_ctrl(const TimeControl&);
         INLINE void set_tt(TranspositionTable* tt) { _tt = tt; }
         bool        should_verify_null_move() const;
-        int         singular_margin() const;
+
         int         tid() const { return _tt ? _tt->_tid : 0; }
         static int  time_limit() { return _time_limit.load(std::memory_order_relaxed); }
         Color       turn() const { return state().turn; }
+
+        INLINE TT_Result& tt_result() { return StorageView<TT_Result>::get(_state->tt_result, _state->has_tt_result); }
+        INLINE const TT_Result& tt_result() const { return StorageView<TT_Result>::get(_state->tt_result, _state->has_tt_result); }
+
+        INLINE TT_Entry& tt_entry() { return tt_result()._entry; }
+        INLINE const TT_Entry& tt_entry() const { return tt_result()._entry; }
 
         INLINE const State& state() const { ASSERT(_state); return *_state; }
         INLINE TranspositionTable* get_tt() const { return _tt; }
@@ -407,12 +439,19 @@ namespace search
         INLINE const MovesList& moves() const { return moves(tid(), _ply); }
         INLINE MovesList& moves() { return moves(tid(), _ply); }
 
-        /* retrieve PV from TT */
-        INLINE const PV& get_pv() const { return get_tt()->get_pv(); }
+        INLINE const PV& get_pv() const
+        {
+            auto& pv = _pvs[tid()];
+            const auto size = std::min<size_t>(_path_len, _path.size());
+            pv.resize(size);
+            // off-by-one because PV[0] = root context move
+            std::copy_if(_path.begin() + 1, _path.begin() + size, pv.begin() + 1, [](Move move) {return bool(move);});
+            return pv;
+        }
 
         /* buffers for generating and making moves */
         static MovesList& moves(int tid, int ply);
-        static std::vector<State>& states(int tid, int ply);
+        static StatePool& states(int tid, int ply);
 
         static void set_syzygy_path(const std::string& path) { _syzygy_path = path; }
         static const std::string& syzygy_path() { return _syzygy_path; }
@@ -444,13 +483,8 @@ namespace search
         const Move* get_next_move(score_t);
         bool has_cycle(const State&) const;
 
-        int repeated_count(const State&) const;
+        void update_accumulators();
 
-        BaseMove            _counter_move;
-        mutable int8_t      _can_forward_prune = -1;
-
-        mutable int8_t      _repetitions = -1;
-        bool                _leftmost = false;
         MoveMaker           _move_maker;
 
         TranspositionTable* _tt = nullptr;
@@ -467,6 +501,7 @@ namespace search
         static std::vector<ContextStack>    _context_stacks;
         static std::vector<MoveStack>       _move_stacks;
         static std::vector<StateStack>      _state_stacks;
+        static std::vector<PV>              _pvs;
     };
 
 
@@ -477,27 +512,27 @@ namespace search
 
     struct alignas(64) ContextBuffer
     {
-        std::array<uint8_t, sizeof(Context)> _mem = { 0 };
+        uint8_t _mem [sizeof(Context)] = {};
         State _state; /* for null-move and clone() */
+        bool _valid = false;
 
-        INLINE Context* as_context() { return reinterpret_cast<Context*>(&_mem[0]); }
-        INLINE const Context* as_context() const { return reinterpret_cast<const Context*>(&_mem[0]); }
+        INLINE Context* as_context(bool validate) { ASSERT(!validate || _valid); return reinterpret_cast<Context*>(&_mem[0]); }
+        INLINE const Context* as_context(bool validate) const { ASSERT(!validate || _valid); return reinterpret_cast<const Context*>(&_mem[0]); }
     };
 
 
     template<bool Debug = false>
-    int do_exchanges(const State&, Bitboard, score_t, int tid, int ply = FIRST_EXCHANGE_PLY);
-
+    int do_exchanges(const State&, Bitboard, int tid, int ply = FIRST_EXCHANGE_PLY);
 
     extern score_t eval_captures(Context& ctxt, score_t);
 
-    using PieceSquares = std::array<Square, 32>;
 
-    static INLINE bool
-    depleted(const PieceSquares (&piece_squares)[2], size_t (&index)[2], chess::Color side)
+    static int INLINE capture_gain(const State& state, const State& next_state, const BaseMove& move)
     {
-        const auto i = index[side];
-        return i >= 32 || piece_squares[side][i] == Square::UNDEFINED;
+        ASSERT(next_state.is_capture());
+        const auto state_eval = state.eval_lazy();
+        const auto adjust = next_state.piece_value_adjustment(next_state.capture_type);
+        return (next_state.eval_apply_delta(move, state) - state_eval + adjust) * SIGN[state.turn];
     }
 
 
@@ -505,7 +540,7 @@ namespace search
      * Evaluate same square exchanges. Called by make_captures.
      */
     template<bool StaticExchangeEvaluation>
-    INLINE score_t eval_exchanges(int tid, const Move& move, score_t value)
+    INLINE score_t eval_exchanges(int tid, const Move& move)
     {
         score_t val = 0;
 
@@ -522,27 +557,23 @@ namespace search
             else
             {
                 auto mask = chess::BB_SQUARES[move.to_square()];
-                val = do_exchanges<DEBUG_CAPTURES != 0>(*move._state, mask, value, tid);
+                val = do_exchanges<DEBUG_CAPTURES != 0>(*move._state, mask, tid);
             }
         }
         return val;
     }
 
 
-    /* Evaluate material plus piece-squares from the point of view
-     * of the side that just moved. This is different from the other
-     * evaluate methods which apply the perspective of the side-to-move.
-     * Side-effect: caches simple score inside the State object.
+    /* Evaluate material from the point of view of the side that just moved.
+     * Include piece-square values if USE_PIECE_SQUARE_TABLES defined as true (see common.h)
      */
-    INLINE int eval_material_and_piece_squares(State& state)
-    {
-        return state.eval_lazy() * SIGN[!state.turn];
-    }
+    score_t eval_material_for_side_that_moved(const State& state, const State* prev, const BaseMove& move);
 
 
     INLINE void incremental_update(Move& move, const Context& ctxt)
     {
         ASSERT(move._state);
+        ASSERT(ctxt._ply < PLY_MAX - 1);
 
         if (move._state->simple_score == State::UNKNOWN_SCORE)
         {
@@ -569,13 +600,20 @@ namespace search
     }
 
 
-    INLINE bool is_quiet(const State& state, const Context* ctxt = nullptr)
+    INLINE bool is_quiet(const Move& move)
     {
-        return state.promotion != chess::PieceType::QUEEN /* ignore under-promotions */
-            && state.capture_value == 0
-            && state.pushed_pawns_score <= 1
-            && (!ctxt || !ctxt->is_evasion())
-            && !state.is_check();
+        return move.promotion() != chess::PieceType::QUEEN /* ignore under-promotions */
+            && !move._state->is_capture()
+            && move._state->pushed_pawns_score <= 1
+            && !move._state->is_check();
+    }
+
+
+    INLINE void copy_search_path(const Context& from_ctxt, Context& to_ctxt)
+    {
+        const auto size = std::min<size_t>(from_ctxt._path_len, PV_PATH_MAX);
+        std::copy_n(from_ctxt._path.begin(), size, to_ctxt._path.begin());
+        to_ctxt._path_len = from_ctxt._path_len;
     }
 
 
@@ -617,8 +655,9 @@ namespace search
     {
         ASSERT(move && move._state && move != _move);
 
-        return (move != _tt_entry._hash_move)
-            && (PruneCaptures || move._state->capture_value == 0)
+        return (move != tt_entry()._best_move)
+            && (move != tt_entry()._hash_move)
+            && (PruneCaptures || !move._state->is_capture())
             && (move.promotion() == chess::PieceType::NONE)
             && (move.from_square() != _capture_square)
             && can_forward_prune()
@@ -691,23 +730,21 @@ namespace search
     /*
      * Use value from the TT if available, else use material evaluation.
      */
-    INLINE score_t Context::static_eval()
+    INLINE score_t Context::static_eval() const
     {
-    #if WITH_NNUE
         if (is_valid(_eval))
             return _eval;
-    #else
-        if (is_valid(_tt_entry._value) && _tt_entry._depth >= depth())
-            return _tt_entry._value;
-    #endif /* WITH_NNUE */
+
+        if (is_valid(tt_entry()._value) && tt_entry()._depth >= depth())
+            return tt_entry()._value;
 
         return evaluate_material();
     }
 
+
 #if !WITH_NNUE
-    INLINE void search::Context::eval_nnue() {}
-    INLINE score_t search::Context::eval_nnue_raw(bool update_only, bool pov) { return 0; }
-    INLINE void search::Context::load_nnue_model(const std::string&) {}
+    INLINE void search::Context::eval_with_nnue() {}
+    INLINE score_t search::Context::eval_nnue_raw(bool) { return 0; }
     INLINE void search::Context::update_root_accumulators() {}
 #endif /* !WITH_NNUE */
 
@@ -729,15 +766,7 @@ namespace search
             /* Captures may not make a difference for large score gaps. */
             if (abs(score) < CAPTURES_THRESHOLD)
             {
-                /* 3. Captures */
-                const auto capt = eval_captures(*this, score);
-
-                ASSERT(capt <= CHECKMATE);
-
-                if (capt >= MATE_HIGH)
-                    score = capt - 1;
-                else
-                    score += capt * CAPTURES_SCALE / 100;
+                score += eval_captures(*this, score);
 
                 ASSERT(score > SCORE_MIN);
                 ASSERT(score < SCORE_MAX);
@@ -747,21 +776,13 @@ namespace search
     }
 
 
-    template<bool with_piece_squares>
     INLINE score_t Context::evaluate_material() const
     {
-        if constexpr (with_piece_squares)
-        {
-            /*
-             * Flip it from the pov of the side that moved
-             * to the perspective of the side-to-move.
-             */
-            return -eval_material_and_piece_squares(*_state);
-        }
-        else
-        {
-            return state().eval_material() * SIGN[state().turn];
-        }
+        /*
+         * Flip it from the pov of the side that moved
+         * to the perspective of the side-to-move.
+         */
+        return -eval_material_for_side_that_moved(*_state, _parent ? _parent->_state : nullptr, _move);
     }
 
 
@@ -771,7 +792,11 @@ namespace search
     template<std::size_t... I>
     static constexpr std::array<int, sizeof ... (I)> margins(std::index_sequence<I...>)
     {
+    #if 0
         return { static_cast<int>(75 * I + pow(I, 1.99)) ... };
+    #else
+        return { static_cast<int>(std::min(75.0 * I + pow(I, 1.99), 1289.0 + 200.0 * log(I))) ... };
+    #endif
     }
 
 
@@ -831,13 +856,8 @@ namespace search
             else
             {
                 const auto prev = _parent->_parent;
-            #if WITH_NNUE
-                const auto eval = _eval;
-                const auto prev_eval = prev->_eval;
-            #else
                 const auto eval = static_eval();
                 const auto prev_eval = prev->static_eval();
-            #endif /* WITH_NNUE */
 
                 if (abs(eval) < MATE_HIGH && abs(prev_eval) < MATE_HIGH)
                 {
@@ -845,12 +865,16 @@ namespace search
                 }
                 else
                 {
+                    const auto gg_parent = prev->_parent;
+                    const auto gg_parent_state = gg_parent ? gg_parent->_state : nullptr;
+
                     _improvement = std::max(0,
-                          eval_material_and_piece_squares(*_state)
-                        - eval_material_and_piece_squares(*prev->_state));
+                          eval_material_for_side_that_moved(*_state, _parent->_state, _move)
+                        - eval_material_for_side_that_moved(*prev->_state, gg_parent_state, prev->_move));
                 }
             }
         }
+
         return _improvement;
     }
 
@@ -876,17 +900,17 @@ namespace search
 
     INLINE bool Context::is_mate_bound() const
     {
-        return _tt_entry._value >= MATE_HIGH && _tt_entry._depth >= depth();
+        return tt_entry()._value >= MATE_HIGH && tt_entry()._depth >= depth();
     }
 
 
     /*
      * Ok to generate a null-move?
      */
-    INLINE bool Context::is_null_move_ok()
+    INLINE bool Context::is_null_move_ok() const
     {
         if (is_root()
-            || depth() < 0
+            || depth() < NULL_MOVE_MIN_DEPTH
             || _null_move_allowed[turn()] == false
             || _excluded
             || is_null_move() /* consecutive null moves are not allowed */
@@ -898,10 +922,7 @@ namespace search
            )
             return false;
 
-        return static_eval() >= _beta
-            - NULL_MOVE_DEPTH_WEIGHT * depth()
-            - improvement() / NULL_MOVE_IMPROVEMENT_DIV
-            + NULL_MOVE_MARGIN;
+        return static_eval() >= _beta - NULL_MOVE_DEPTH_WEIGHT * depth() + NULL_MOVE_MARGIN;
     }
 
 
@@ -961,34 +982,20 @@ namespace search
 
 
     /*
-     * A simple model of position complexity, used with late move prunning.
-     */
-    INLINE float Context::late_move_prune_factor() const
-    {
-        const auto piece_count = chess::popcount(state().occupied());
-
-        return 1 + (
-            float(LMP_ALPHA) * move_count() / piece_count +
-            float(LMP_BETA) * evaluate_material() / chess::max_material_delta()
-        ) / (LMP_ALPHA + LMP_BETA);
-    }
-
-
-    /*
      * Reduction formula based on ideas from SF and others.
      */
-    INLINE int null_move_reduction(Context& ctxt)
+    INLINE int null_move_reduction(const Context& ctxt)
     {
-        return NULL_MOVE_REDUCTION
-            + ctxt.depth() / NULL_MOVE_DEPTH_DIV
-            + std::min(ctxt.depth() / 2, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_DIV);
+        return NULL_MOVE_REDUCTION_BASE /* base reduction */
+            + ctxt.depth() / NULL_MOVE_REDUCTION_DEPTH_DIV
+            + std::min(ctxt.depth() / 2, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_REDUCTION_DIV);
     }
 
 
     /*
      * Get the next move and wrap it into a Context object.
      */
-    INLINE Context* Context::next(bool null_move, score_t futility, int& move_count)
+    INLINE Context* Context::next(bool make_null_move, score_t futility, int& move_count, int64_t* time_left)
     {
         ASSERT(_alpha < _beta);
 
@@ -1000,23 +1007,21 @@ namespace search
         }
         _retry_next = false;
 
-        if (!_excluded && !on_next() && move_count > 0)
+        if (!_excluded && !on_next(time_left) && move_count > 0)
             return nullptr;
 
         /* null move must be tried before actual moves */
-        ASSERT(!null_move || move_count == 0);
+        ASSERT(!make_null_move || move_count == 0);
 
-        const Move* move;
+        const Move* move = nullptr;
 
-        if (null_move)
-            move = nullptr;
-        else
+        if (!make_null_move)
             if ((move = get_next_move(futility)) == nullptr)
                 return nullptr;
 
-        ASSERT(null_move || move->_state);
-        ASSERT(null_move || move->_group != MoveOrder::UNDEFINED);
-        ASSERT(null_move || move->_group < MoveOrder::UNORDERED_MOVES);
+        ASSERT(make_null_move || move->_state);
+        ASSERT(make_null_move || move->_group != MoveOrder::UNDEFINED);
+        ASSERT(make_null_move || move->_group < MoveOrder::UNORDERED_MOVES);
 
         /* Save previously generated moves for reuse on retry */
         MoveMaker temp;
@@ -1034,6 +1039,8 @@ namespace search
 
         auto ctxt = next_ply<true>(); /* Construct new context */
 
+        copy_search_path(*this, *ctxt);
+
         if (move)
         {
             ASSERT(move->_state);
@@ -1042,6 +1049,13 @@ namespace search
             ctxt->_move = *move;
             ctxt->_state = move->_state;
             ctxt->_leftmost = is_leftmost() && next_move_index() == 1;
+
+            if (_path_len >= _ply + 1 && _ply + 1 < PV_PATH_MAX)
+            {
+                /* Add move to search path */
+                ctxt->_path[_ply + 1] = *move;
+                ctxt->_path_len = _ply + 2;
+            }
 
         #if REPORT_CURRENT_MOVE
             /* Report (main thread only) the move being searched from the root. */
@@ -1056,7 +1070,7 @@ namespace search
         }
         else
         {
-            ASSERT(null_move);
+            ASSERT(make_null_move);
             ASSERT(!ctxt->_move);
             ASSERT(ctxt->_state);
 
@@ -1082,15 +1096,15 @@ namespace search
         ctxt->_multicut_allowed = _multicut_allowed && MULTICUT;
 
         for (auto side : { chess::BLACK, chess::WHITE })
-            ctxt->_null_move_allowed[side] = _null_move_allowed[side] && (NULL_MOVE_REDUCTION > 0);
+            ctxt->_null_move_allowed[side] = _null_move_allowed[side] && (NULL_MOVE_REDUCTION_BASE > 0);
 
         ctxt->_tt = _tt;
         ctxt->_alpha = -_beta;
 
         if (ctxt->is_null_move())
         {
-            ASSERT(null_move);
-            ASSERT(NULL_MOVE_REDUCTION > 0);
+            ASSERT(make_null_move);
+            ASSERT(NULL_MOVE_REDUCTION_BASE > 0);
 
             ctxt->_beta = -_beta + 1;
 
@@ -1119,6 +1133,8 @@ namespace search
         }
         else
         {
+            ASSERT(move);
+
             ctxt->_beta = -_alpha;
 
             if (ctxt->is_pvs_ok())
@@ -1168,12 +1184,12 @@ namespace search
     /*
      * Check how much time is left, update NPS, call optional Python callback.
      */
-    INLINE bool Context::on_next()
+    INLINE bool Context::on_next(int64_t* time_left)
     {
         if (tid() == 0 && ++_callback_count >= CALLBACK_PERIOD)
         {
             _callback_count = 0; /* reset */
-            const auto millisec = check_time_and_update_nps();
+            const auto millisec = check_time_and_update_nps(time_left);
 
             if (millisec < 0) /* time is up? */
                 return false;
@@ -1194,13 +1210,11 @@ namespace search
 
     INLINE bool Context::should_verify_null_move() const
     {
+    #if 0
         return depth() >= NULL_MOVE_MIN_VERIFICATION_DEPTH;
-    }
-
-
-    INLINE int Context::singular_margin() const
-    {
-        return SINGULAR_DEPTH_MARGIN * depth();
+    #else
+        return depth() >= std::max(NULL_MOVE_MIN_VERIFICATION_DEPTH, _max_depth - 8);
+    #endif
     }
 
 
@@ -1212,14 +1226,15 @@ namespace search
 
         if constexpr(Construct)
         {
-            auto ctxt = new (buffer.as_context()) Context;
-
+            auto ctxt = new (buffer.as_context(false)) Context;
+            buffer._valid = true;
             ctxt->_state = &buffer._state;
+
             return ctxt;
         }
         else
         {
-            return buffer.as_context();
+            return buffer.as_context(true);
         }
     }
 
@@ -1233,7 +1248,7 @@ namespace search
     }
 
 
-    /* static */ INLINE std::vector<State>& Context::states(int tid, int ply)
+    /* static */ INLINE Context::StatePool& Context::states(int tid, int ply)
     {
         ASSERT(ply >= 0);
         ASSERT(size_t(ply) < PLY_MAX);
@@ -1259,49 +1274,38 @@ namespace search
 
     INLINE void Context::set_time_ctrl(const TimeControl& ctrl)
     {
-        constexpr int AVERAGE_MOVES_PER_GAME = 80;
+        // Margin for OS context-switching, I/O overhead, etc.
+        constexpr int MAX_SAFETY_MARGIN = 10;
 
         const auto side_to_move = turn();
-        const auto millisec = ctrl.millisec[side_to_move];
+        const auto millisec = std::max(0, ctrl.millisec[side_to_move]);
+        const auto bonus = std::max(0, ctrl.increments[side_to_move]);
 
-        int moves;
+        int moves = ctrl.moves; // Moves left until next time control
+        if (moves == 0)
+        {
+            const int moves_played = int(_history->size() / 2); // plies -> moves
+            const int estimated_moves_left = AVERAGE_MOVES_PER_GAME - moves_played;
 
-        if (ctrl.score > CHECKMATE - 10)
-        {
-            moves = 10;
-        }
-        else if (ctrl.delta < TIME_CTRL_EVAL_THRESHOLD_LOW)
-        {
-            /* score worsened? take more time */
-            moves = std::min(10, ctrl.moves + 1);
-        }
-        else
-        {
-            /* estimate how many moves are left in the game */
-            int moves_left = AVERAGE_MOVES_PER_GAME - int(_history->size());
-
-            moves = std::max(ctrl.moves, std::max(2, moves_left));
-        }
-        int time_limit = millisec / moves;
-
-        /* Apply per-move time bonus, if any */
-        if (const auto bonus = ctrl.increments[side_to_move])
-        {
-            time_limit += bonus;
+            if (bonus >= millisec - MAX_SAFETY_MARGIN)
+            {
+                moves = 1; // bonus dominates, play move-by-move
+            }
+            else
+            {
+                moves = std::max(AVERAGE_MOVES_PER_GAME / (2 + 2 * int(bonus > 0)), estimated_moves_left);
+            }
         }
 
-        /*
-         * If there's a time deficit, and search improved: lower the time limit.
-         */
-        const auto t_diff = (millisec - ctrl.millisec[!side_to_move] - 1) / moves;
+        int time_limit = std::max(millisec / moves, std::min(millisec, bonus));
 
-        if (t_diff < 0 && time_limit + t_diff > 0
-            && (ctrl.score >= 0 || ctrl.delta > TIME_CTRL_EVAL_THRESHOLD_HIGH))
-        {
-            time_limit += t_diff;
-        }
+        const int margin = std::min(MAX_SAFETY_MARGIN, time_limit / 15);
+        time_limit = std::max(1, time_limit - margin);
 
-        _time_limit.store(std::max(1, time_limit), std::memory_order_relaxed);
+        // DEBUG
+        // std::cout << "info string movestogo " << moves << " time_limit " << time_limit << std::endl;
+
+        _time_limit.store(time_limit, std::memory_order_relaxed);
     }
 
 
@@ -1310,7 +1314,7 @@ namespace search
         ASSERT(_phase > 1);
 
         return ctxt.depth() > 1 /* do not LMP leaf nodes */
-            && _current >= LMP[ctxt.depth() - 1] * ctxt.late_move_prune_factor()
+            && _current >= LMP[ctxt.depth() - 1]
             && ctxt.can_forward_prune();
     }
 
@@ -1322,14 +1326,15 @@ namespace search
     }
 
 
-    INLINE void MoveMaker::ensure_moves(Context& ctxt)
+    INLINE void MoveMaker::ensure_moves(Context& ctxt, bool order_root_moves)
     {
+        ASSERT(ctxt.iteration());
         if (_count < 0)
         {
             ASSERT(_current < 0);
             ASSERT(_phase == 0);
 
-            generate_unordered_moves(ctxt);
+            generate_unordered_moves(ctxt, order_root_moves);
 
             ASSERT(_count >= 0);
             ASSERT(_current >= 0);
@@ -1353,7 +1358,8 @@ namespace search
         else
         {
             ASSERT(_current == _count || ctxt.moves()[_current]._group >= PRUNED_MOVES);
-            ctxt.cache_scores();
+            if (_count >= 0)
+                ctxt.cache_scores();
         }
         return move;
     }
@@ -1452,7 +1458,7 @@ namespace search
     INLINE void MoveMaker::make_capture(Context& ctxt, Move& move)
     {
         /* captures of the last piece moved by the opponent are handled separately */
-        ASSERT(move.to_square() != ctxt._move.to_square());
+        ASSERT(!ctxt._move || move.to_square() != ctxt._move.to_square());
 
         ASSERT(is_valid(ctxt._eval));
 
@@ -1465,13 +1471,12 @@ namespace search
         }
         else if (make_move<false>(ctxt, move))
         {
-            ASSERT(move._state->capture_value);
+            ASSERT(move._state->is_capture());
 
-            auto capture_gain = move._state->capture_value;
-            capture_gain -= eval_exchanges<false>(ctxt.tid(), move, capture_gain);
+            const auto gain = capture_gain(ctxt.state(), *move._state, move) - eval_exchanges<true>(ctxt.tid(), move);
 
             if (SEE_PRUNING
-                && capture_gain < 0
+                && gain < SEE_PRUNING_MARGIN
                 && !ctxt.is_root()
                 && ctxt.depth() > 0
                 && ctxt.depth() <= SEE_PRUNING_DEPTH
@@ -1481,17 +1486,17 @@ namespace search
             }
             else
             {
-                if (capture_gain < 0)
+                if (gain < 0)
                 {
                     move._group = MoveOrder::LOSING_CAPTURES;
                 }
                 else
                 {
                     static_assert(MoveOrder::WINNING_CAPTURES + 1 == MoveOrder::EQUAL_CAPTURES);
-                    move._group = MoveOrder::WINNING_CAPTURES + (capture_gain == 0);
+                    move._group = MoveOrder::WINNING_CAPTURES + (gain == 0);
                 }
 
-                move._score = capture_gain;
+                move._score = gain;
             }
         }
     }
@@ -1507,6 +1512,9 @@ namespace search
         ASSERT(move._group == MoveOrder::UNORDERED_MOVES);
 
         _need_sort = true;
+
+        /* Capturing the king is an illegal move (Louis XV?) */
+        ASSERT((ctxt.state().kings & chess::BB_SQUARES[move.to_square()]) == chess::BB_EMPTY);
 
         /* Check the old group (saved to cache or from before rewinding) */
         /* NB: do not filter out old pruned moves, they are path-dependent. */
@@ -1526,6 +1534,16 @@ namespace search
 
         if (move._state == nullptr)
         {
+            /* Late-move prune before making the move. */
+            if constexpr(LateMovePrune)
+            {
+                if (can_late_move_prune(ctxt))
+                {
+                    mark_as_pruned(ctxt, move);
+                    return false;
+                }
+            }
+
             /* Ensure that there's a board state associated with the move. */
             ASSERT(_state_index < Context::states(ctxt.tid(), ctxt._ply).size());
 
@@ -1546,43 +1564,13 @@ namespace search
             return (_have_move = true);
         }
 
-        /* Capturing the king is an illegal move (Louis XV?) */
-        if (ctxt.state().kings & chess::BB_SQUARES[move.to_square()])
-        {
-            mark_as_illegal(move);
-            return false;
-        }
-
-        /* Late-move prune before making the move. */
-        if constexpr(LateMovePrune)
-        {
-            if (can_late_move_prune(ctxt))
-            {
-                mark_as_pruned(ctxt, move);
-                return false;
-            }
-        }
-
         ctxt.state().clone_into(*move._state);
-        ASSERT(move._state->capture_value == 0);
+        ASSERT(!move._state->is_capture());
 
         move._state->apply_move(move);
 
-        if constexpr(LateMovePrune)
-        {
-            /* History-based pruning. */
-            if (ctxt.depth() > 0
-                && ctxt.history_count(move) >= HISTORY_PRUNE * pow2(ctxt.depth())
-                && ctxt.history_score(move) < HISTORY_LOW
-                && ctxt.can_prune_move(move))
-            {
-                mark_as_pruned(ctxt, move);
-                return false;
-            }
-        }
-
     #if GROUP_QUIET_MOVES
-        if (_group_quiet_moves && is_quiet(*move._state))
+        if (_group_quiet_moves && is_quiet(move))
         {
             _have_quiet_moves = true;
             move._group = MoveOrder::QUIET_MOVES;
@@ -1600,7 +1588,7 @@ namespace search
             /* The futility margin is calculated after at least one move has been searched. */
             ASSERT(_current > 0);
 
-            const auto val = futility + move._state->simple_score * SIGN[!move._state->turn];
+            const auto val = futility + eval_material_for_side_that_moved(*move._state, ctxt._state, move);
 
             if (val < ctxt._alpha && ctxt.can_prune_move<true>(move))
             {
@@ -1612,14 +1600,17 @@ namespace search
             }
         }
 
-        if (move._state->is_check(ctxt.turn()))
+        if (move._old_group == MoveOrder::UNDEFINED || move._old_group >= MoveOrder::UNORDERED_MOVES)
         {
-            mark_as_illegal(move); /* can't leave the king in check */
-            return false;
+            if (move._state->is_check(ctxt.turn()))
+            {
+                mark_as_illegal(move); /* can't leave the king in check */
+                return false;
+            }
         }
 
         /* consistency check */
-        ASSERT((move._state->capture_value != 0) == ctxt.state().is_capture(move));
+        ASSERT((move._state->is_capture()) == ctxt.state().is_capture(move));
 
         if constexpr(COUNT_VALID_MOVES_AS_NODES)
             ++ctxt.get_tt()->_nodes;
@@ -1653,7 +1644,7 @@ namespace search
             move._state = &Context::states(ctxt.tid(), ctxt._ply)[_state_index++];
 
             ctxt.state().clone_into(*move._state);
-            ASSERT(move._state->capture_value == 0);
+            ASSERT(!move._state->is_capture());
 
             move._state->apply_move(move);
         }
@@ -1716,13 +1707,10 @@ namespace search
 
         _need_sort = false;
     }
-
-    /*
-     * Collect eval data for training, implemented in uci_native.cpp
-     */
-    void data_collect_move(const Context& ctxt, const BaseMove& move);
-
 } /* namespace search */
+
+
+score_t eval(const std::string& epd, bool as_side_to_move, int depth = 0, int millis = -1);
 
 
 /* C++ implementation of UCI protocol if NATIVE_UCI is defined,
@@ -1736,4 +1724,17 @@ void uci_loop(std::unordered_map<std::string, std::string> params);
 INLINE void _uci_loop(std::unordered_map<std::string, std::string> params) noexcept
 {
     cython_wrapper::call_nogil(uci_loop, params);
+}
+
+
+namespace nnue
+{
+    /**
+     * Evaluate FEN from White's point of view, for testing.
+     */
+#if WITH_NNUE
+    int eval_fen(const std::string&);
+#else
+    INLINE int eval_fen(const std::string&) { return 0; }
+#endif
 }

@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,12 +39,9 @@ namespace chess
 {
     const AttackTable attack_table;
 
-#if MOBILITY_TUNING_ENABLED
-    int MOBILITY[] = DEFAULT_MOBILITY_WEIGHTS;
-#endif
-
 #if WEIGHT_TUNING_ENABLED
-    int WEIGHT[] = DEFAULT_WEIGHTS;
+    int WEIGHT[] = PIECE_VALUES;
+    int ADJUST[] = ENDGAME_ADJUST;
 #endif
 
     AttackMasks BB_DIAG_MASKS, BB_FILE_MASKS, BB_RANK_MASKS;
@@ -109,7 +106,7 @@ namespace chess
         if (is_none())
             return "none";
 
-        return square_name(_from_square) + square_name(_to_square) + PIECE_SYMBOL[_promotion];
+        return square_name(from_square()) + square_name(to_square()) + PIECE_SYMBOL[promotion()];
     }
 
 
@@ -203,7 +200,40 @@ namespace chess
         init_attack_masks(BB_RANK_MASKS, BB_RANK_ATTACKS, {-1, 1});
 
         BB_RAYS = init_rays();
+
+        init_piece_square_tables();
     }
+
+
+#if USE_PIECE_SQUARE_TABLES
+    int piece_square_table[12][64] = {};
+    int king_endgame_table[2][64] = {};
+
+    void init_piece_square_tables()
+    {
+        for (auto piece_type : { PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING })
+        {
+            const auto& table = select_piece_square_table(false, piece_type);
+            const auto pt = (piece_type - 1) * 2;
+
+            for (int square = 0; square < 64; ++square)
+            {
+                piece_square_table[pt + BLACK][square] = table[square_index(square, BLACK)];
+                piece_square_table[pt + WHITE][square] = table[square_index(square, WHITE)];
+            }
+        }
+
+        /*
+         * Separate endgame table for King only
+         */
+        const auto& table = select_piece_square_table(true, KING);
+        for (int square = 0; square < 64; ++square)
+        {
+            king_endgame_table[BLACK][square] = table[square_index(square, BLACK)];
+            king_endgame_table[WHITE][square] = table[square_index(square, WHITE)];
+        }
+    }
+#endif /* USE_PIECE_SQUARE_TABLES */
 
 
     template<typename T>
@@ -234,121 +264,6 @@ namespace chess
         {
             add_move(moves_list, from_square, to_square);
         }
-    }
-
-
-    /*
-     * Rough approximation of the (difference in) move options. No en-passant, no SEE.
-     */
-    score_t Position::eval_mobility() const
-    {
-        score_t mobility = 0;
-
-        Bitboard attacks[2][7] = { { 0 }, { 0 } };
-        Bitboard attacks_from[2][64] = { { 0 }, { 0 } };
-        Bitboard checks_from[2][64] = { { 0 }, { 0 } };
-        Bitboard checks[2] = { 0 };
-        Bitboard pinned[2] = { 0, 0 };
-
-        const auto occupied = this->occupied();
-
-        /*
-         * Step 1, build some tables...
-         */
-        for (const auto color: {BLACK, WHITE})
-        {
-            const auto our_pieces = this->occupied_co(color);
-
-            for_each_square(our_pieces, [&](Square square) {
-                const auto piece_type = piece_type_at(square);
-                auto piece_attacks = attacks_mask(square, occupied);
-
-                checks_from[color][square] = piece_attacks;
-                checks[color] |= piece_attacks;
-
-                const Bitboard mask = (piece_type == KING) ? BB_ALL : pin_mask(color, square);
-                piece_attacks &= mask; /* can only attack in the direction of the pin */
-                pinned[color] |= (mask != BB_ALL) * BB_SQUARES[square];
-
-                attacks[color][piece_type] |= piece_attacks;
-                attacks_from[color][square] = piece_attacks & ~(kings | our_pieces);
-            });
-        }
-        /*
-         * Step 2, count where pieces can go without being captured by the
-         * king or pieces of lower values, king not allowed to move into check.
-         */
-        for (const auto color: {BLACK, WHITE})
-        {
-            if constexpr(MOBILITY_TUNING_ENABLED || MOBILITY[PieceType::PAWN] != 0)
-            {
-                /* pawns moves... */
-                const auto own_pawns = pawns & occupied_co(color) & ~pinned[color];
-
-                Bitboard single_pawn_moves, double_pawn_moves;
-
-                if (color)
-                {
-                    single_pawn_moves = shift_up(own_pawns) & ~occupied;
-                    double_pawn_moves = shift_up(single_pawn_moves) & ~occupied & (BB_RANK_3 | BB_RANK_4);
-                }
-                else
-                {
-                    single_pawn_moves = shift_down(own_pawns) & ~occupied;
-                    double_pawn_moves = shift_down(single_pawn_moves) & ~occupied & (BB_RANK_6 | BB_RANK_5);
-                }
-
-                /* ... and captures */
-                const auto pawn_captures = attacks[color][PieceType::PAWN] & occupied_co(!color);
-
-                mobility += SIGN[color] * MOBILITY[PieceType::PAWN]
-                    * (popcount(single_pawn_moves | double_pawn_moves) + popcount(pawn_captures));
-            }
-
-            /* non-pawns */
-            for_each_square(occupied_co(color) & ~pawns, [&](Square square) {
-                if (attacks_from[color][square] == BB_EMPTY)
-                    return;
-
-                const auto piece_type = piece_type_at(square);
-                ASSERT(piece_type != PieceType::PAWN);
-                if (MOBILITY[piece_type] == 0)
-                    return;
-
-                /* where can the enemy king capture? */
-                Bitboard defended = attacks[!color][KING];
-                for (int i = 0; i != 64; ++i)
-                {
-                    /* skip checks by the piece to move */
-                    // if (i != square)
-                    //     defended &= ~checks_from[color][i];
-                    defended &= ~checks_from[color][i] | ((i == square) * BB_ALL);
-                }
-                switch (piece_type)
-                {
-                case PieceType::KNIGHT:
-                case PieceType::BISHOP:
-                    defended |= attacks[!color][PieceType::PAWN];
-                    break;
-
-                case PieceType::ROOK:
-                case PieceType::QUEEN:
-                    for (int i = PieceType::PAWN; i != piece_type; ++i)
-                        defended |= attacks[!color][i];
-                    break;
-
-                case PieceType::KING:
-                    defended |= checks[!color];
-                default:
-                    break;
-                }
-
-                mobility += SIGN[color] * MOBILITY[piece_type]
-                    * popcount(attacks_from[color][square] & ~defended);
-            });
-        }
-
-        return mobility;
     }
 
 
@@ -396,6 +311,8 @@ namespace chess
     const MovesList&
     State::generate_pseudo_legal_moves(MovesList& moves_list, Bitboard to_mask, Bitboard from_mask) const
     {
+        ASSERT(!is_check(!turn));
+
         moves_list.clear();
 
         const auto our_pieces = this->occupied_co(turn);
@@ -405,9 +322,9 @@ namespace chess
 
         /* Piece moves. */
         if (const auto non_pawns = our_pieces & ~pawns & from_mask)
-            for_each_square(non_pawns, [&](Square from_square) {
+            for_each_square_r(non_pawns, [&](Square from_square) {
                 const auto moves = attacks_mask(from_square, occupied) & to_mask;
-                for_each_square(moves, [&](Square to_square) {
+                for_each_square_r(moves, [&](Square to_square) {
                     add_move(moves_list, from_square, to_square);
                 });
             });
@@ -420,9 +337,9 @@ namespace chess
         {
             /* captures */
             const auto capturers = our_pawns;
-            for_each_square(capturers, [&](Square from_square) {
+            for_each_square_r(capturers, [&](Square from_square) {
                 const auto targets = BB_PAWN_ATTACKS[turn][from_square] & occupied_co(!turn) & to_mask;
-                for_each_square(targets, [&moves_list, from_square](Square to_square) {
+                for_each_square_r(targets, [&moves_list, from_square](Square to_square) {
                     add_pawn_moves(moves_list, from_square, to_square);
                 });
             });
@@ -447,13 +364,13 @@ namespace chess
 
             const auto sign = SIGN[turn];
             /* single pawn moves */
-            for_each_square(single_moves, [&moves_list, sign](Square to_square) {
+            for_each_square_r(single_moves, [&moves_list, sign](Square to_square) {
                 auto from_square = Square(to_square - 8 * sign);
                 add_pawn_moves(moves_list, from_square, to_square);
             });
 
             /* double pawn moves */
-            for_each_square(double_moves, [&moves_list, sign](Square to_square) {
+            for_each_square_r(double_moves, [&moves_list, sign](Square to_square) {
                 auto from_square = Square(to_square - 16 * sign);
                 add_move(moves_list, from_square, to_square);
             });
@@ -471,6 +388,8 @@ namespace chess
         const auto king_square = king(turn);
         const auto backrank = (turn == WHITE) ? BB_RANK_1 : BB_RANK_8;
 
+        ASSERT(king_square != Square::UNDEFINED);
+
         /* king not on the back rank? */
         if ((BB_SQUARES[king_square] & backrank & BB_FILE_E) == 0)
             return;
@@ -480,7 +399,7 @@ namespace chess
         if (is_check())
             return;
 
-        for_each_square((rooks & occupied_co(turn) & castling_rights), [&](Square rook_square)
+        for_each_square_r((rooks & occupied_co(turn) & castling_rights), [&](Square rook_square)
         {
             /* any pieces between the king and the rook? */
             if (between(king_square, rook_square) & occupied)
@@ -518,9 +437,36 @@ namespace chess
         auto capturers = pawns & occupied_co(turn) &
             BB_PAWN_ATTACKS[!turn][en_passant_square] & BB_RANKS[turn == WHITE ? 4 : 3];
 
-        for_each_square(capturers, [&](Square capturer) {
+        for_each_square_r(capturers, [&](Square capturer) {
             moves.emplace_back(capturer, en_passant_square);
         });
+    }
+
+
+    bool State::is_valid(const BaseMove& move, bool validate_check) const
+    {
+        if (piece_type_at(move.from_square()) == PieceType::NONE)
+            return false;
+
+        if (is_castling(move))
+            return true;
+
+        if (occupied_co(turn) & BB_SQUARES[move.to_square()])
+            return false;
+
+        if (kings & BB_SQUARES[move.to_square()])
+            return false;
+
+        if (validate_check)
+        {
+            State state;
+            clone_into(state);
+
+            state.apply_move(move);
+            return !is_check(turn);
+        }
+
+        return true;
     }
 
 

@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022, 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@
  */
 #pragma once
 
+#include <chrono>
 #include <random>
 #include <stdexcept>
 #include "Python.h"
@@ -114,25 +115,26 @@ namespace
         }
     }
 
+
     template<typename  I> INLINE void shift_left_2(I first, I last)
     {
-    #if __cplusplus >= 202002L
-        /* C++20 */
-        std::shift_left(first, last, 2);
-    #else
+        ASSERT(std::distance(first, last) >= 2);
+
         using V = typename std::iterator_traits<I>::value_type;
 
+    #if __cplusplus >= 202002L
+        /* C++20 */
+        auto i = std::shift_left(first, last, 2);
+    #else
         auto i = std::rotate(first, first + 2, last);
-        *i++ = V(); *i = V();
     #endif
+        *i++ = V(); *i = V();
     }
 
 
     static INLINE int random_int(int low, int high)
     {
-        static std::random_device rd;  // Will be used to obtain a seed for the random number engine
-        static std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
-
+        static thread_local std::mt19937 gen(std::random_device{}());
         return std::uniform_int_distribution<int>(low, high)(gen);
     }
 
@@ -152,4 +154,90 @@ namespace
         F _f;
     };
 
+
+    template<typename T, typename H = std::size_t> struct Hasher
+    {
+        using hash_type = H;
+
+        constexpr hash_type operator()(const T& key) const
+        {
+            return key.hash();
+        }
+    };
+
+    namespace profile
+    {
+        struct Overhead
+        {
+            std::chrono::high_resolution_clock::duration value;
+            Overhead()
+            {
+                const auto start = std::chrono::high_resolution_clock::now();
+                const auto end = std::chrono::high_resolution_clock::now();
+                value = end - start;
+            }
+        };
+        const static Overhead overhead;
+    }
+
+    template <typename T, int PRINT_INTERVAL = 100000>
+    struct ProfileScope
+    {
+        static std::chrono::high_resolution_clock::duration total_time;
+        static int num_calls;
+
+        std::chrono::time_point<std::chrono::high_resolution_clock> _start;
+
+        INLINE void tally()
+        {
+            const auto end = std::chrono::high_resolution_clock::now();
+            total_time += end - _start - profile::overhead.value;
+            if (num_calls % PRINT_INTERVAL == 0)
+            {
+                const auto avg_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(total_time).count() / num_calls;
+                const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(total_time).count();
+                std::clog << &num_calls << " calls: " << num_calls << ", total: " << total_ms << " ms" << ", avg: " << avg_ns << " ns" << std::endl;
+            }
+        }
+
+        ProfileScope() : _start(std::chrono::high_resolution_clock::now()) { ++num_calls; }
+        ~ProfileScope() { tally(); }
+    };
+
+    template <typename T, int PRINT_INTERVAL>
+    std::chrono::high_resolution_clock::duration ProfileScope<T, PRINT_INTERVAL>::total_time{};
+
+    template <typename T, int PRINT_INTERVAL>
+    int ProfileScope<T, PRINT_INTERVAL>::num_calls = 0;
+
+
+    template<typename T>
+    struct StorageView
+    {
+        static_assert(std::is_trivially_destructible<T>::value);
+
+        template <size_t N>
+        static T& get(unsigned char (&buf)[N], bool& valid)
+        {
+            static_assert(sizeof(T) <= N);
+            static_assert(alignof(T) <= alignof(std::max_align_t));
+
+            if (!valid)
+            {
+                new (buf) T();
+                valid = true;
+            }
+            return *reinterpret_cast<T*>(&buf[0]);
+        }
+
+        template<size_t N>
+        static void store(unsigned char (&buf)[N], bool& valid, const T& value)
+        {
+            static_assert(sizeof(T) <= N);
+            static_assert(alignof(T) <= alignof(std::max_align_t));
+
+            new (buf) T(value);
+            valid = true;
+        }
+    };
 } /* namespace */
