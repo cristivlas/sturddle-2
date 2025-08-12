@@ -43,11 +43,7 @@
   #define INLINE __attribute__((always_inline)) inline
 #endif /* _MSC_VER */
 #else
-#if _MSC_VER
   #define INLINE inline
-#elif __GNUC__
-  #define INLINE __attribute__((noinline))
-#endif /* _MSC_VER */
 #endif /* _DEBUG */
 
 using score_t = int;

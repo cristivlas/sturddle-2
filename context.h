@@ -241,7 +241,7 @@ namespace search
         using ContextStack = std::array<struct ContextBuffer, PLY_MAX>;
 
         /* Note: stack beyond PLY_MAX is reserved for do_exchanges. */
-        static constexpr size_t MAX_MOVE = PLY_MAX + 32;
+        static constexpr int MAX_MOVE = PLY_MAX + 32;
         using MoveStack = std::array<MovesList, MAX_MOVE>;
         using StatePool = std::vector<State>;
         using StateStack = std::array<StatePool, PLY_MAX>;
@@ -346,7 +346,6 @@ namespace search
 
         template<bool EvalCaptures = true> score_t evaluate();
 
-        score_t     evaluate_end();
         score_t     evaluate_material() const;
 
         score_t     eval(bool as_white, int depth, int millisec); /* testing and tuning */
@@ -364,6 +363,7 @@ namespace search
 
         INLINE bool has_improved() const { return improvement() > 0; }
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
+        INLINE bool has_pruned_moves() const { return _pruned_count || _move_maker.have_skipped_moves(); }
 
         int         history_count(const Move&) const;
         float       history_score(const Move&) const;
@@ -1007,7 +1007,7 @@ namespace search
         }
         _retry_next = false;
 
-        if (!_excluded && !on_next(time_left) && move_count > 0)
+        if (!on_next(time_left))
             return nullptr;
 
         /* null move must be tried before actual moves */

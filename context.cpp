@@ -842,26 +842,6 @@ namespace search
 
 
     /*
-     * Called when there are no more moves available (endgame reached or
-     * qsearch has examined all non-quiet moves in the current position).
-     */
-    score_t Context::evaluate_end()
-    {
-        /* precondition for calling this function */
-        ASSERT(!has_moves());
-
-        if (_pruned_count || _move_maker.have_skipped_moves())
-        {
-            ASSERT(!is_check());
-
-            return evaluate<false>();
-        }
-
-        return is_check() ? checkmated(_ply) : 0;
-    }
-
-
-    /*
      * Make the capturing move, return false if not legal (verification optional).
      */
     static bool INLINE apply_capture(const State& state, State& next_state, const Move& move, bool verify = true)

@@ -522,6 +522,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     {
         ASSERT(ctxt._score == *p);
         ASSERT(!ctxt._excluded);
+
         ctxt._prune_reason = PruneReason::PRUNE_TT;
         return *p;
     }
@@ -719,10 +720,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         }
                         else if (s_beta >= ctxt._beta)
                         {
-                        /*
-                         * Got another fail-high from the (reduced) search that skipped the known
-                         * cutoff move, so there must be multiple cutoffs, do 2nd multicut pruning.
-                         */
+                           /*
+                            * Got another fail-high from the (reduced) search that skipped the known
+                            * cutoff move, so there must be multiple cutoffs, do 2nd multicut pruning.
+                            */
                             ctxt._prune_reason = PruneReason::PRUNE_SINGULAR;
                             return s_beta;
                         }
@@ -856,32 +857,17 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             }
         }
         ASSERT(ctxt._score <= ctxt._alpha || ctxt._best_move);
-    #if 0
-        /*
-         * since v0.98 Context::next() checks that at least one move
-         * has been searched before returning nullptr on cancellation
-         */
-        if (!ctxt.is_cancelled())
-    #endif
-        {
-            if (!move_count && !ctxt.has_moves())
-            {
-                /* checkmate or stalemate? */
-                ctxt._score = ctxt.evaluate_end();
 
-                ASSERT(ctxt._score > SCORE_MIN);
-                ASSERT(ctxt._score < SCORE_MAX);
-            }
-    #if !NO_ASSERT
-            else if (!ctxt._excluded && !ctxt.is_cancelled())
-            {
-                /* algorithm invariants */
-                ASSERT(ctxt._score > SCORE_MIN);
-                ASSERT(ctxt._score < SCORE_MAX);
-                ASSERT(ctxt._alpha >= ctxt._score);
-            }
-    #endif /* NO_ASSERT */
+        if (move_count == 0)
+        {
+            if (ctxt._excluded || ctxt.has_pruned_moves() || ctxt.has_moves())
+                ctxt._score = ctxt.evaluate();
+            else
+                ctxt._score = ctxt.is_check() ? checkmated(ctxt._ply) : 0;
         }
+
+        ASSERT(ctxt._score < SCORE_MAX);
+        ASSERT(ctxt._score > SCORE_MIN);
     }
 
     /*
