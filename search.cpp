@@ -861,7 +861,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         if (move_count == 0)
         {
             if (ctxt._excluded || ctxt.has_pruned_moves() || ctxt.has_moves())
-                ctxt._score = ctxt.evaluate();
+                ctxt._score = ctxt.evaluate<false>();
             else
                 ctxt._score = ctxt.is_check() ? checkmated(ctxt._ply) : 0;
         }

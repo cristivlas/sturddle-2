@@ -371,7 +371,7 @@ namespace search
         score_t     improvement() const;
         static void init();
         bool        is_beta_cutoff(Context*, score_t);
-        static bool is_cancelled() { return _cancel.load(std::memory_order_acquire); }
+        static bool is_cancelled() { return _cancel.load(std::memory_order_relaxed); }
         INLINE bool is_capture() const { return state().is_capture(); }
         INLINE bool is_check() const { return state().is_check(); }
         bool        is_counter_move(const Move&) const;
