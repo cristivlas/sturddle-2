@@ -20,20 +20,21 @@ import numpy as np
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-ACCUMULATOR_SIZE = 1280
-ATTN_FAN_OUT = 32
+ACCUMULATOR_SIZE = 640
+ATTN_FAN_OUT = 16
 POOL_SIZE = 8
 
-Q_SCALE = 1024
-# Quantization range: use int16_t with Q_SCALE, prevent overflow
+Q16_SCALE = 1024
+
+# Quantization range: use int16_t with Q16_SCALE, prevent overflow
 # 64 squares + (16 + 16) occupancy + 1 side-to-move + 1 bias == 98
 
-Q_MAX_A = 32767 / Q_SCALE / 98
-Q_MIN_A = -Q_MAX_A
+Q16_MAX_A = 32767 / Q16_SCALE / 98
+Q16_MIN_A = -Q16_MAX_A
 
 # (8 pawns + 1 king) x 2 + 1 bias == 19
-Q_MAX_B = 32767  / Q_SCALE / 19
-Q_MIN_B = -Q_MAX_B
+Q16_MAX_B = 32767  / Q16_SCALE / 19
+Q16_MIN_B = -Q16_MAX_B
 
 SCALE = 100.0
 
@@ -51,17 +52,17 @@ def configure_logging(args):
 
 
 def make_model(args, strategy):
-    class CustomConstraint(tf.keras.constraints.Constraint):
-        def __init__(self, qmin, qmax, quantize=args.quantize):
+    class Q16Constraint(tf.keras.constraints.Constraint):
+        def __init__(self, qmin, qmax, quantize_round=args.quantize_round):
             self.qmin = qmin
             self.qmax = qmax
-            self.quantize = quantize
+            self.quantize_round = quantize_round
 
         def __call__(self, w):
-            if self.quantize:
-                w = tf.round(w * Q_SCALE) / Q_SCALE
+            if self.quantize_round:
+                w = tf.round(w * Q16_SCALE) / Q16_SCALE
             return tf.clip_by_value(w, self.qmin, self.qmax)
-
+    
     @tf.function
     def soft_clip(x, clip_value, alpha=0.1):
         return (2 * tf.math.sigmoid(.5 * x) - 1) * clip_value + x * alpha
@@ -160,7 +161,7 @@ def make_model(args, strategy):
 
         concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
 
-        constr_a = CustomConstraint(Q_MIN_A, Q_MAX_A)
+        constr_a = Q16Constraint(Q16_MIN_A, Q16_MAX_A)
         hidden_1a = Dense(
             ACCUMULATOR_SIZE,
             activation=ACTIVATION,
@@ -170,7 +171,7 @@ def make_model(args, strategy):
             bias_constraint=constr_a,
         )(concat)
 
-        constr_b = CustomConstraint(Q_MIN_B, Q_MAX_B)
+        constr_b = Q16Constraint(Q16_MIN_B, Q16_MAX_B)
         # constr_b = constr_a  # use same weight ranges as accumulator
 
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
@@ -203,10 +204,8 @@ def make_model(args, strategy):
         # Add residual connection: pooled + pooled * attention_weights
         weighted = Add(name='weighted')([pooled, modulation])
 
-        hidden_2 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_2')(weighted)
-        hidden_3 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_3')(hidden_2)
-        #hidden_2 = Dense(16, activation='swish', kernel_initializer=K_INIT, name='hidden_2')(weighted)
-        #hidden_3 = Dense(16, activation='swish', kernel_initializer=K_INIT, name='hidden_3')(hidden_2)
+        hidden_2 = Dense(16, name='hidden_2', activation=ACTIVATION, kernel_initializer=K_INIT)(weighted)
+        hidden_3 = Dense(16, name='hidden_3', activation=ACTIVATION, kernel_initializer=K_INIT)(hidden_2)
 
         # Define the position evaluation output (original output)
         eval_output = Dense(1, name='out', dtype='float32')(hidden_3)
@@ -265,7 +264,6 @@ def make_model(args, strategy):
             scale = tf.constant(args.outcome_scale, dtype=tf.float32)
             logits = centipawns / scale
             probs = tf.nn.sigmoid(logits)
-            # tf.print(tf.reshape(outcome_target, [-1]), tf.reshape(probs, [-1]))
             mae = tf.reduce_mean(tf.abs(probs - outcome_target))
             accuracy_score = 1.0 - mae  # Convert to accuracy (higher is better)
             return accuracy_score
@@ -467,7 +465,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             # Convert to win probability: -1->0.0, 0->0.5, 1->1.0
             y_outcome = (y_outcome + 1.0) / 2.0
 
-            smoothing = 0.05
+            smoothing = 0.1
             y_outcome = y_outcome * (1 - smoothing) + 0.5 * smoothing
 
             # Combine both targets into a single tensor
@@ -770,12 +768,12 @@ if __name__ == '__main__':
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-3, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
-        parser.add_argument('-q', '--quantize', action='store_true')
+        parser.add_argument('-q', '--quantize-round', action='store_true')
         parser.add_argument('--no-draw', action='store_true')
 
         parser.add_argument('--huber-delta', type=float, default=2.0)
         parser.add_argument('--loss-weight', type=float, default=1.0, help='weight for outcome loss vs eval loss (0=eval only, 1=outcome only)')
-        parser.add_argument('--outcome-scale', type=float, default=100.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
+        parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
 
         # Move prediction related arguments
         parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')

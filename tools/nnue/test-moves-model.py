@@ -53,8 +53,8 @@ def encode(board):
 def load_model(args):
     path = args.input[0]
     return tf.keras.models.load_model(path, custom_objects = {
-            'ACCUMULATOR_SIZE': 1280,
-            'ATTN_FAN_OUT': 32,
+            'ACCUMULATOR_SIZE': 640,
+            'ATTN_FAN_OUT': 16,
             'POOL_SIZE': 8,
             'adaptive_loss': None,
             'combined_loss': None,
