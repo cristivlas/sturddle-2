@@ -268,13 +268,13 @@ DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
 
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                 25,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_DEPTH_MARGIN,          261,   10,     300)
-DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,     100)
+DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,       7)
 
-DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,     100)
-DECLARE_VALUE(  MULTICUT_MARGIN,                    124,    0,    1000)
+DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,      15)
+DECLARE_VALUE(  MULTICUT_MARGIN,                    124,   20,     200)
 
 #if WITH_NNUE
-DECLARE_VALUE(  NNUE_BLEND_PERCENT,                  75,    0,     100)
+DECLARE_VALUE(  NNUE_BLEND_PERCENT,                  75,   50,     100)
 DECLARE_VALUE(  NNUE_EVAL_TERM,                     502,  450,     600)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      452,  300,     600)
 #endif /* WITH_NNUE */
@@ -293,16 +293,16 @@ DECLARE_VALUE(  NULL_MOVE_REDUCTION_DEPTH_DIV,        4,    1,       8)
 DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,            278,  200,     300)
 
 /* Do not verify null move below this depth */
-DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,     100)
+DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,      20)
 
 DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  248,   25,     300)
 DECLARE_VALUE(  RAZOR_INTERCEPT,                    224,  150,     250)
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
-DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     500)
+DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     150)
 DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             33,    0,     150)
 
 #if USE_ROOT_MOVES
-DECLARE_VALUE(  ROOT_MAX_MOVES,                       5,    0,     256)
+DECLARE_VALUE(  ROOT_MAX_MOVES,                       5,    0,      10)
 DECLARE_VALUE(  ROOT_MOVES_MIN_TIME,                  3,    0,      10)
 #endif /* USE_ROOT_MOVES */
 
@@ -319,25 +319,25 @@ DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                7,    3,      10)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    1,      10)
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
-DECLARE_VALUE(  STANDPAT_MARGIN,                     85,    0,     350)
+DECLARE_VALUE(  STANDPAT_MARGIN,                     85,   50,     350)
 
 /* Aspiration window */
-DECLARE_VALUE(  WINDOW_COEFF,                         6,    0,     100)
-DECLARE_VALUE(  WINDOW_DIV,                          67,    1,     200)
-DECLARE_VALUE(  WINDOW_HALF,                         25,    5,     100)
+DECLARE_VALUE(  WINDOW_COEFF,                         6,    0,      20)
+DECLARE_VALUE(  WINDOW_DIV,                          67,    1,     100)
+DECLARE_VALUE(  WINDOW_HALF,                         25,    5,      50)
 
 /* Time management */
 DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              36,   20,     100)
 
 GROUP(MoveOrdering)
-DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 218,   50,     250)
+DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 217,  150,     230)
 DECLARE_VALUE(  COUNTER_MOVE_MIN_DEPTH,               2,    0,       5)
 
-DECLARE_VALUE(  HISTORY_SCORE_DIV,                   85,   50,     100)
-DECLARE_VALUE(  HISTORY_SCORE_MUL,                  258,  200,     280)
+DECLARE_VALUE(  HISTORY_SCORE_DIV,                   86,   50,     100)
+DECLARE_VALUE(  HISTORY_SCORE_MUL,                  261,  200,     280)
 DECLARE_VALUE(  HISTORY_HIGH,                        91,   50,     150)
-DECLARE_VALUE(  HISTORY_LOW,                         12,    0,      70)
-DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,     100)
+DECLARE_VALUE(  HISTORY_LOW,                         12,    0,      30)
+DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,      15)
 
 GROUP(Eval)
 

@@ -710,23 +710,6 @@ namespace search
     }
 
 
-#if 0
-    /* Populate prev move from the Principal Variation, if missing. */
-    void Context::ensure_prev_move()
-    {
-        if (!is_root() && !_prev && !is_null_move() && !_excluded)
-        {
-            const auto& pv = Context::_pvs[0];
-            const size_t ply = _ply;
-
-            if (ply + 1 < pv.size() && pv[ply] == _move)
-            {
-                _prev = pv[ply + 1];
-            }
-        }
-    }
-#endif
-
 
     /* static */ void Context::ensure_stacks()
     {
@@ -1340,7 +1323,7 @@ namespace search
         if (time_left)
         {
             auto node_count = time_left * _tt->_nps * 0.001f;
-            auto recip_log_branch = std::min(16u, _tt->_pass) * 0.1 / 16 + 0.5 * piece_count() / 32;
+            auto recip_log_branch = std::min(15u, _tt->_pass) * 0.1 / 15 + 0.495 * piece_count() / 32;
             auto affordable_depth = fast_log2(1 + node_count) * recip_log_branch;
             reduction = std::max(reduction, std::max<int>(0, depth - affordable_depth));
         }
@@ -1722,7 +1705,7 @@ namespace search
             {
                 if (move == ctxt._prev)
                 {
-                    make_move<false>(ctxt, move, ctxt._ply < 3 ? MoveOrder::PREV_ITER : MoveOrder::HASH_MOVES);
+                    make_move<false>(ctxt, move, MoveOrder::PREV_ITER);
                 }
                 else if (move == ctxt.tt_entry()._best_move)
                 {

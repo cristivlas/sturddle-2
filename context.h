@@ -335,7 +335,6 @@ namespace search
 
         static int64_t elapsed_milliseconds();
 
-        void        ensure_prev_move();
         static void ensure_stacks();
 
         std::string epd() const { return epd(state()); }
@@ -1275,7 +1274,7 @@ namespace search
     INLINE void Context::set_time_ctrl(const TimeControl& ctrl)
     {
         // Margin for OS context-switching, I/O overhead, etc.
-        constexpr int MAX_SAFETY_MARGIN = 10;
+        constexpr int MAX_SAFETY_MARGIN = 20;
 
         const auto side_to_move = turn();
         const auto millisec = std::max(0, ctrl.millisec[side_to_move]);
@@ -1299,7 +1298,7 @@ namespace search
 
         int time_limit = std::max(millisec / moves, std::min(millisec, bonus));
 
-        const int margin = std::min(MAX_SAFETY_MARGIN, time_limit / 15);
+        const int margin = std::min(MAX_SAFETY_MARGIN, std::max(5, time_limit / 15));
         time_limit = std::max(1, time_limit - margin);
 
         // DEBUG
