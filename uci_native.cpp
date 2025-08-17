@@ -320,7 +320,7 @@ public:
             ensure_background_thread();
 
         _options.emplace("algorithm", std::make_shared<OptionAlgo>(_algorithm));
-        _options.emplace("best opening", std::make_shared<OptionBool>("Best Opening", _best_book_move));
+        _options.emplace("bestbookmove", std::make_shared<OptionBool>("BestBookMove", _best_book_move));
         _options.emplace("debug", std::make_shared<OptionBool>("Debug", _debug));
         _options.emplace("ownbook", std::make_shared<OptionBool>("OwnBook", _use_opening_book));
         _options.emplace("ponder", std::make_shared<OptionBool>("Ponder", _ponder));
