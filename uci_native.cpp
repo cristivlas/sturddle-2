@@ -970,6 +970,8 @@ void UCI::set_process_priority()
             std::cout << "info string " << msg << std::endl;
         }
 #else /* POSIX */
+        /* Requires "sudo setcap cap_sys_nice+ep <engine_name>" */
+
         const int nice_value = _high_priority ? -10 : 0;
         if (setpriority(PRIO_PROCESS, 0, nice_value) == 0)
         {
