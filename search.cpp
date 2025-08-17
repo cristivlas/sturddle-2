@@ -973,7 +973,6 @@ static score_t search_iteration(Context& ctxt, TranspositionTable& table, score_
     return score;
 }
 
-
 #if SMP
 /****************************************************************************
  * Lazy SMP. https://www.chessprogramming.org/Lazy_SMP
@@ -982,7 +981,7 @@ using ThreadPool = thread_pool<std::vector<std::function<void()>>, false>;
 
 static std::unique_ptr<ThreadPool> threads;
 
-static size_t start_pool()
+static size_t start_threads()
 {
     Context::ensure_stacks();
 
@@ -992,10 +991,19 @@ static size_t start_pool()
             return 0;
 
         threads = std::make_unique<ThreadPool>(SMP_CORES - 1);
+        Context::log_message(LogLevel::INFO, "Started engine threads");
     }
 
     return threads->get_thread_count();
 }
+
+
+void search::stop_threads()
+{
+    threads.reset();
+    Context::log_message(LogLevel::INFO, "Stopped engine threads");
+}
+
 
 struct TaskData
 {
@@ -1023,7 +1031,7 @@ public:
     SMPTasks(Context& ctxt, TranspositionTable& table, score_t score)
         : _root(ctxt)
     {
-        const auto thread_count = start_pool();
+        const auto thread_count = start_threads();
         ASSERT(thread_count + 1 == size_t(SMP_CORES));
 
         if (table._iteration == 1)
@@ -1110,6 +1118,9 @@ struct SMPTasks
         }
     }
 };
+
+void search::stop_threads() {}
+
 #endif /* SMP */
 
 std::vector<TaskData> SMPTasks::_tables;

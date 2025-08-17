@@ -224,6 +224,10 @@ void _set_param(const std::string& name, int value, bool echo)
             std::cout << "info string " << name << "=" << TranspositionTable::get_hash_size() << "\n";
         return;
     }
+    else if (name == "Threads" && value != SMP_CORES)
+    {
+        search::stop_threads();
+    }
 
     const auto iter = Config::_namespace.find(name);
 

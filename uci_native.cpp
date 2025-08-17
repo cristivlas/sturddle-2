@@ -1,10 +1,6 @@
 /** Native C++ UCI */
 /** http://wbec-ridderkerk.nl/html/UCIProtocol.html */
 #include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <string_view>
-#include <tuple>
 #include <unordered_map>
 #include "context.h"
 #if WITH_NNUE
@@ -25,12 +21,20 @@ static void raise_runtime_error(const char* err)
 #if NATIVE_UCI /* requires compiler with C++20 support */
 #include <cmath>
 #include <format>
+#include <fstream>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <ranges>
 #include <string>
+#include <string_view>
 #include <sstream>
 #include <vector>
+#if !_WIN32
+  #include <unistd.h>
+  #include <sys/resource.h>
+#endif /* !_WIN32 */
+
 #include "book.h"
 #include "thread_pool.hpp" /* pondering, go infinite */
 
@@ -322,6 +326,7 @@ public:
         _options.emplace("algorithm", std::make_shared<OptionAlgo>(_algorithm));
         _options.emplace("bestbookmove", std::make_shared<OptionBool>("BestBookMove", _best_book_move));
         _options.emplace("debug", std::make_shared<OptionBool>("Debug", _debug));
+        _options.emplace("highpriority", std::make_shared<OptionBool>("HighPriority", _high_priority));
         _options.emplace("ownbook", std::make_shared<OptionBool>("OwnBook", _use_opening_book));
         _options.emplace("ponder", std::make_shared<OptionBool>("Ponder", _ponder));
     #if USE_ENDTABLES
@@ -346,6 +351,8 @@ private:
     void uci();
     void newgame();
 
+    void set_process_priority();
+
     /** Context callbacks */
     static void on_iteration(PyObject *, search::Context *, const search::IterationInfo *);
     static void on_move(PyObject *, const std::string&, int);
@@ -356,7 +363,7 @@ private:
         if (_compute_pool->get_thread_count() == 0)
         {
             _compute_pool = std::make_unique<ThreadPool>(1);
-            log_info("Initialized thread pool");
+            log_info("Initialized UCI thread pool");
         }
     }
 
@@ -527,6 +534,8 @@ private:
     bool _ponder = false;
     bool _use_opening_book = false;
     bool _best_book_move = true;
+    bool _prev_priority = false;
+    bool _high_priority = false;
     chess::BaseMove _last_move;
 #if NATIVE_BOOK
     PolyglotBook _opening_book = {};
@@ -932,6 +941,7 @@ void UCI::newgame()
 
     _tt.init(/* new_game = */ true);
 
+    set_process_priority();
     set_start_position();
     _book_depth = max_depth;
 
@@ -939,6 +949,40 @@ void UCI::newgame()
     chess::init_piece_square_tables();
     std::cout << "info string PST_init\n";
 #endif
+}
+
+void UCI::set_process_priority()
+{
+    if (_prev_priority != _high_priority)
+    {
+        _prev_priority = _high_priority;
+
+#if _WIN32
+        const DWORD priority_class = _high_priority ? HIGH_PRIORITY_CLASS : NORMAL_PRIORITY_CLASS;
+        if (SetPriorityClass(GetCurrentProcess(), priority_class))
+        {
+            std::cout << "info string priority_class " << priority_class << std::endl;
+        }
+        else
+        {
+            const auto msg = std::format("SetPriorityClass({}) failed: {}", priority_class, GetLastError());
+            log_error(msg);
+            std::cout << "info string " << msg << std::endl;
+        }
+#else /* POSIX */
+        const int nice_value = _high_priority ? -10 : 0;
+        if (setpriority(PRIO_PROCESS, 0, nice_value) == 0)
+        {
+            std::cout << "info string nice_value " << nice_value << std::endl;
+        }
+        else
+        {
+            const auto msg = std::format("setpriority({}) failed: {}", nice_value, errno);
+            log_error(msg);
+            std::cout << "info string " << msg << std::endl;
+        }
+#endif
+    }
 }
 
 /**

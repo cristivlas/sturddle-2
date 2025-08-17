@@ -524,4 +524,8 @@ namespace search
             ctxt.set_counter_move(ctxt._cutoff_move);
         }
     }
-} /* namespace */
+
+
+    void stop_threads();
+
+} /* namespace search */
