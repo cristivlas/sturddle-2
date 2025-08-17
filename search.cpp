@@ -1000,8 +1000,11 @@ static size_t start_threads()
 
 void search::stop_threads()
 {
-    threads.reset();
-    Context::log_message(LogLevel::INFO, "Stopped engine threads");
+    if (threads)
+    {
+        threads.reset();
+        Context::log_message(LogLevel::INFO, "Stopped engine threads");
+    }
 }
 
 
