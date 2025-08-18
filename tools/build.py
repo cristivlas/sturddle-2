@@ -12,7 +12,7 @@ import shutil
 import sys
 
 BOOK = 'book.bin'
-
+OUT_DIR = 'dist'
 
 def find_editbin():
     """Find editbin using distutils MSVC detection"""
@@ -150,8 +150,26 @@ if __name__ == '__main__':
 
     data = f'--add-data={BOOK}{os.path.pathsep}.'
 
+    exclude_modules = [
+        'setuptools', 'setuptools._vendor', 'setuptools._distutils', 'jaraco',
+        'pkg_resources', 'distutils', 'wheel', 'packaging._vendor',
+        'importlib_metadata', 'more_itertools', 'platformdirs', 'tomli', 'zipp',
+        'cython', 'Cython', 'pyinstaller', 'altgraph', 'pefile', 'pywin32_ctypes',
+        'email', 'http', 'https', 'ftplib', 'ssl', 'socketserver',
+        'smtplib', 'poplib', 'imaplib', 'nntplib', 'telnetlib',
+        'doctest', 'test',
+        'xmlrpc', 'tarfile', 'gzip', 'bz2', 'lzma',
+        'webbrowser', 'cgi', 'wsgiref', 'html',
+        'pydoc', 'help',
+        'netrc', 'mailbox',
+        '_ssl', 'libssl', 'libcrypto',
+        '_hashlib', 'hashlib',
+    ]
+
+    exclude_args = ' '.join([f'--exclude-module {mod}' for mod in exclude_modules])
+
     # run PyInstaller
-    if run_cmd(f'{installer} {script} -p . --onefile {" ".join(libs)} {data} --icon chess.ico'):
+    if run_cmd(f'{installer} {script} -p . --onefile --distpath {OUT_DIR} {" ".join(libs)} {data} {exclude_args} --icon chess.ico'):
         print('pyinstaller failed')
         sys.exit(-2)
 
@@ -159,8 +177,8 @@ if __name__ == '__main__':
     sys.path.append('.')
     import chess_engine
 
-    MAIN = os.path.join('dist', 'main' if args.native_uci else 'sturddle')
-    NAME = os.path.join('dist', f'sturddle-{".".join(chess_engine.__build__[:2])}')
+    MAIN = os.path.join(OUT_DIR, 'main' if args.native_uci else 'sturddle')
+    NAME = os.path.join(OUT_DIR, f'sturddle-{".".join(chess_engine.__build__[:2])}')
     if is_windows():
         MAIN += '.exe'
         NAME += '.exe'
