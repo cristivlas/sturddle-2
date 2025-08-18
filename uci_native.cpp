@@ -534,7 +534,7 @@ private:
     bool _ponder = false;
     bool _use_opening_book = false;
     bool _best_book_move = true;
-    bool _prev_priority = false;
+    bool _current_priority = false; /* not high */
     bool _high_priority = false;
     chess::BaseMove _last_move;
 #if NATIVE_BOOK
@@ -951,16 +951,16 @@ void UCI::newgame()
 #endif
 }
 
+/** Set process priority lazily */
 void UCI::set_process_priority()
 {
-    if (_prev_priority != _high_priority)
+    if (_current_priority != _high_priority)
     {
-        _prev_priority = _high_priority;
-
 #if _WIN32
         const DWORD priority_class = _high_priority ? HIGH_PRIORITY_CLASS : NORMAL_PRIORITY_CLASS;
         if (SetPriorityClass(GetCurrentProcess(), priority_class))
         {
+            _current_priority = _high_priority;
             std::cout << "info string priority_class " << priority_class << std::endl;
         }
         else
@@ -968,6 +968,7 @@ void UCI::set_process_priority()
             const auto msg = std::format("SetPriorityClass({}) failed: {}", priority_class, GetLastError());
             log_error(msg);
             std::cout << "info string " << msg << std::endl;
+            _high_priority = _current_priority;
         }
 #else /* POSIX */
         /* Requires "sudo setcap cap_sys_nice+ep <engine_name>" */
@@ -975,6 +976,7 @@ void UCI::set_process_priority()
         const int nice_value = _high_priority ? -10 : 0;
         if (setpriority(PRIO_PROCESS, 0, nice_value) == 0)
         {
+            _current_priority = _high_priority;
             std::cout << "info string nice_value " << nice_value << std::endl;
         }
         else
@@ -982,6 +984,7 @@ void UCI::set_process_priority()
             const auto msg = std::format("setpriority({}) failed: {}", nice_value, errno);
             log_error(msg);
             std::cout << "info string " << msg << std::endl;
+            _high_priority = _current_priority;
         }
 #endif
     }
