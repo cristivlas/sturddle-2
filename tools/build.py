@@ -83,9 +83,9 @@ if __name__ == '__main__':
 
     if args.native_uci:
         if platform.machine() in ['x86_64', 'AMD64']:
-            # TODO: Re-evaluate VNNI support in next release
-            # ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', '']
-            ARCHS = ['AVX512', 'AVX2', '']
+            # TODO: Re-evaluate VNNI support
+            # ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', 'AVX', '']
+            ARCHS = ['AVX512', 'AVX2', 'AVX', '']
         elif platform.machine() == 'aarch64':
             ARCHS = ['ARMv8_2', '']
 
@@ -102,12 +102,14 @@ if __name__ == '__main__':
                     continue
                 arch_flags = f'/arch:{arch}'
         # otherwise assume Clang or GCC on POSIX
+        elif arch == 'AVX':
+           arch_flags = '-mavx -mpopcnt -mfma'
         elif arch == 'AVX2':
-            arch_flags = '-march=core-avx2 -mtune=core-avx2'
+           arch_flags = '-mavx2 -mpopcnt -mfma'
         elif arch == 'AVX2_VNNI':
-            arch_flags = '-march=core-avx2 -mtune=core-avx2 -mavxvnni'
+           arch_flags = '-mavx2 -mpopcnt -mfma -mavxvnni'
         elif arch == 'AVX512':
-            arch_flags = '-march=skylake-avx512 -mtune=skylake-avx512'
+           arch_flags = '-mavx512f -mavx512bw -mpopcnt -mfma'
         elif arch == 'ARMv8_2':
             arch_flags = '-march=armv8.2-a+fp16'
 
