@@ -257,6 +257,11 @@ DECLARE_CONST(  FIFTY_MOVES_RULE,                     1,    0,       1)
 DECLARE_CONST(  FUTILITY_PRUNING,                     1,    0,       1)
 DECLARE_CONST(  MULTICUT,                             1,    0,       1)
 
+/* Time management */
+DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              36,   20,     100)
+DECLARE_PARAM(  MaxTimeMargin,                       20,    0,     100)
+DECLARE_PARAM(  MinTimeMargin,                        5,    0,     100)
+
 GROUP(Search)
 
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
@@ -325,11 +330,6 @@ DECLARE_VALUE(  STANDPAT_MARGIN,                     85,   50,     350)
 DECLARE_VALUE(  WINDOW_COEFF,                         6,    0,      20)
 DECLARE_VALUE(  WINDOW_DIV,                          67,    1,     100)
 DECLARE_VALUE(  WINDOW_HALF,                         25,    5,      50)
-
-/* Time management */
-DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              36,   20,     100)
-DECLARE_PARAM(  MaxTimeMargin,                       20,    0,     100)
-DECLARE_PARAM(  MinTimeMargin,                        5,    0,     100)
 
 GROUP(MoveOrdering)
 DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 217,  150,     230)

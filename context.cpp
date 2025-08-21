@@ -714,7 +714,6 @@ namespace search
     }
 
 
-
     /* static */ void Context::ensure_stacks()
     {
         const size_t n_threads(SMP_CORES);

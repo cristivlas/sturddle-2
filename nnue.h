@@ -250,21 +250,6 @@ namespace nnue
     }
 
 
-#if __AVXVNNI__
-    using VSum = Vec8i;
-    static INLINE VSum mul_add(Vec16s a, Vec16s b, Vec8i acc)
-    {
-        return _mm256_dpwssd_epi32(acc, a, b);
-    }
-#else
-    using VSum = Vec16s;
-    static INLINE VSum mul_add(Vec16s a, Vec16s b, Vec16s acc)
-    {
-        return acc + a * b;
-    }
-#endif /* __AVXVNNI__ */
-
-
     template <int I, int O, typename T, int Scale>
     struct BaseLayer
     {
@@ -354,6 +339,13 @@ namespace nnue
             static_assert(R == INPUTS); /* expect padded inputs */
 
             Vec16s in, vw;
+
+        #if __AVXVNNI__
+            using VSum = Vec8i;
+        #else
+            using VSum = Vec16s;
+        #endif /* __AVXVNNI__ */
+
             VSum sum[N]; /* accumulate partial sums */
 
             for (int j = 0; j != OUTPUTS; j += N)
@@ -371,7 +363,11 @@ namespace nnue
                     for (int k = 0; k != N; ++k)
                     {
                         vw.load_a(&wt[j + k][i]);
-                        sum[k] = mul_add(in, vw, sum[k]);
+                    #if __AVXVNNI__
+                        sum[k] = _mm256_dpwssd_epi32(sum[k], in, vw);
+                    #else
+                        sum[k] += in * vw;
+                    #endif /* __AVXVNNI__ */
                     }
                 }
 

@@ -87,6 +87,7 @@ def load_engine():
         try:
             engine = importlib.import_module(eng)
             globals().update({k:v for k, v in engine.__dict__.items() if not k.startswith('_')})
+            logging.info(f'Loaded {engine.__name__}')
             return engine
         except Exception as e:
             logging.warning(e)
