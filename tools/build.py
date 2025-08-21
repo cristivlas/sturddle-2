@@ -103,13 +103,13 @@ if __name__ == '__main__':
                 arch_flags = f'/arch:{arch}'
         # otherwise assume Clang or GCC on POSIX
         elif arch == 'AVX':
-           arch_flags = '-mavx -mpopcnt -mfma'
+            arch_flags = '-march=corei7-avx -mtune=corei7-avx'  # sandybridge
         elif arch == 'AVX2':
-           arch_flags = '-mavx2 -mpopcnt -mfma'
+            arch_flags = '-march=core-avx2 -mtune=core-avx2'    # haswell
         elif arch == 'AVX2_VNNI':
-           arch_flags = '-mavx2 -mpopcnt -mfma -mavxvnni'
+            arch_flags = '-march=alderlake -mtune=alderlake'
         elif arch == 'AVX512':
-           arch_flags = '-mavx512f -mavx512bw -mpopcnt -mfma'
+            arch_flags = '-march=skylake-avx512 -mtune=skylake-avx512'
         elif arch == 'ARMv8_2':
             arch_flags = '-march=armv8.2-a+fp16'
 
