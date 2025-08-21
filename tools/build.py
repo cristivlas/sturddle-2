@@ -180,7 +180,9 @@ if __name__ == '__main__':
     import chess_engine
 
     MAIN = os.path.join(OUT_DIR, 'main' if args.native_uci else 'sturddle')
-    NAME = os.path.join(OUT_DIR, f'sturddle-{".".join(chess_engine.__build__[:2])}')
+    NAME = f'sturddle-{".".join(chess_engine.__build__[:2])}'
+    DGST = os.path.join(OUT_DIR, f'{NAME}-sha256.txt')
+    NAME = os.path.join(OUT_DIR, NAME)
     if is_windows():
         MAIN += '.exe'
         NAME += '.exe'
@@ -195,6 +197,7 @@ if __name__ == '__main__':
         try:
             print(f'rename {MAIN} as {NAME}')
             os.replace(MAIN, NAME)
+            run_cmd(f'openssl dgst -r -out {DGST} -sha256 {NAME}')
             break
         except Exception as e:
             print(e)
