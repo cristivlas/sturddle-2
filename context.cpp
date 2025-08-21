@@ -1327,7 +1327,7 @@ namespace search
         if (time_left)
         {
             auto node_count = time_left * _tt->_nps * 0.001f;
-            auto recip_log_branch = std::min(15u, _tt->_pass) * 0.1 / 15 + 0.495 * piece_count() / 32;
+            auto recip_log_branch = std::min(16u, _tt->_pass) * 0.1 / 16 + 0.5 * piece_count() / 32;
             auto affordable_depth = fast_log2(1 + node_count) * recip_log_branch;
             reduction = std::max(reduction, std::max<int>(0, depth - affordable_depth));
         }

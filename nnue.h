@@ -250,25 +250,19 @@ namespace nnue
     }
 
 
-#if __ARM__ || INSTRSET < 8
+#if __AVXVNNI__
+    using VSum = Vec8i;
+    static INLINE VSum mul_add(Vec16s a, Vec16s b, Vec8i acc)
+    {
+        return _mm256_dpwssd_epi32(acc, a, b);
+    }
+#else
     using VSum = Vec16s;
-
     static INLINE VSum mul_add(Vec16s a, Vec16s b, Vec16s acc)
     {
         return acc + a * b;
     }
-#elif INSTRSET >= 8  // AVX2
-    using VSum = Vec8i;
-
-    static INLINE VSum mul_add(Vec16s a, Vec16s b, Vec8i acc)
-    {
-    #if __AVXVNNI__
-        return _mm256_dpwssd_epi32(acc, a, b);
-    #else
-        return _mm256_add_epi32(acc, _mm256_madd_epi16(a, b));
-    #endif
-    }
-#endif /* __ARM__ || INSTRSET < 8 */
+#endif /* __AVXVNNI__ */
 
 
     template <int I, int O, typename T, int Scale>
