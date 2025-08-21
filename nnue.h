@@ -35,19 +35,17 @@
     #define ARCH_VNNI
 #endif /* __AVXVNNI__ */
 
-#if INSTRSET >= 9 /* AVX 512 */
-    #ifndef ARCH
+#ifndef ARCH
+    #if INSTRSET >= 9 /* AVX 512 */
         #define ARCH "AVX512"
-    #endif
-#else
-    #ifndef ARCH
-        #if INSTRSET >= 8
-            #define ARCH "AVX2"
-        #else
-            #define ARCH "SSE2"
-        #endif
-    #endif /* ARCH */
-#endif /* INSTRSET >= 9 */
+    #elif INSTRSET >= 8
+        #define ARCH "AVX2"
+    #elif INSTRSET >= 7
+        #define ARCH "AVX"
+    #else
+        #define ARCH "SSE2"
+    #endif /* INSTRSET*/
+#endif /* ARCH */
 
 #define ALIGN alignas(64)
 
@@ -76,7 +74,7 @@ namespace nnue
                 horizontal_add(v[8]), horizontal_add(v[9]), horizontal_add(v[10]),horizontal_add(v[11]),
                 horizontal_add(v[12]),horizontal_add(v[13]),horizontal_add(v[14]),horizontal_add(v[15]));
         }
-    #elif INSTRSET >= 8
+    #elif INSTRSET >= 7
         using Vector = Vec8f;
 
         INLINE Vector horizontal_add(const Vector (&v)[8])
@@ -131,7 +129,7 @@ namespace nnue
         if constexpr (N == 1)
             #if INSTRSET >= 9
                 v.load_partial(1, p);
-            #elif INSTRSET >= 8
+            #elif INSTRSET >= 7
                 v = Vector(_mm_load_ss(p), _mm_setzero_ps());
             #else
                 v = _mm_load_ss(p);
@@ -147,7 +145,7 @@ namespace nnue
         if constexpr (N == 1)
             #if INSTRSET >= 9
                 v.store_partial(1, p);
-            #elif INSTRSET >= 8
+            #elif INSTRSET >= 7
                 #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
                     *p = v[0];
                 #else
@@ -251,6 +249,22 @@ namespace nnue
 #endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
     }
 
+
+#if __AVXVNNI__
+    using VSum = Vec8i;
+    static INLINE VSum mul_add(Vec16s a, Vec16s b, Vec8i acc)
+    {
+        return _mm256_dpwssd_epi32(acc, a, b);
+    }
+#else
+    using VSum = Vec16s;
+    static INLINE VSum mul_add(Vec16s a, Vec16s b, Vec16s acc)
+    {
+        return acc + a * b;
+    }
+#endif /* __AVXVNNI__ */
+
+
     template <int I, int O, typename T, int Scale>
     struct BaseLayer
     {
@@ -340,11 +354,6 @@ namespace nnue
             static_assert(R == INPUTS); /* expect padded inputs */
 
             Vec16s in, vw;
-        #if __AVXVNNI__
-            using VSum = Vec8i;
-        #else
-            using VSum = Vec16s;
-        #endif /* __AVXVNNI__ */
             VSum sum[N]; /* accumulate partial sums */
 
             for (int j = 0; j != OUTPUTS; j += N)
@@ -362,11 +371,7 @@ namespace nnue
                     for (int k = 0; k != N; ++k)
                     {
                         vw.load_a(&wt[j + k][i]);
-                    #if __AVXVNNI__
-                        sum[k] = _mm256_dpwssd_epi32(sum[k], in, vw);
-                    #else
-                        sum[k] += in * vw;
-                    #endif /* __AVXVNNI__ */
+                        sum[k] = mul_add(in, vw, sum[k]);
                     }
                 }
 
