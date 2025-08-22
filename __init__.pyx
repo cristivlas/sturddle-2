@@ -400,7 +400,6 @@ cdef extern from 'context.h' namespace 'search':
         int increments[2]
         int moves
         int score
-        int delta
 
 
 def eval(fen, as_white=False, depth=0, millis=-1):
@@ -1081,7 +1080,6 @@ cdef class IterativeDeepening(SearchAlgorithm):
             ctrl.increments[chess.WHITE] = self.time_ctrl[1][chess.WHITE]
             ctrl.moves = self.time_ctrl[2]
             ctrl.score = self.score
-            ctrl.delta = self.delta
 
             self.context._ctxt.set_time_ctrl(ctrl)
 

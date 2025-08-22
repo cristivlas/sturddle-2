@@ -213,7 +213,6 @@ namespace search
         int increments[2];  /* time increments for black/white */
         int moves;          /* number of moves till next time control */
         score_t score;
-        score_t delta;      /* score difference from last search */
     };
 
 
