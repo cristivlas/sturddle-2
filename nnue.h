@@ -127,7 +127,7 @@ namespace nnue
     template <int N> INLINE void load_partial(Vector& v, const float* p)
     {
         if constexpr (N == 1)
-            #if INSTRSET >= 9
+            #if INSTRSET >= 8
                 v.load_partial(1, p);
             #elif INSTRSET >= 7
                 v = Vector(_mm_load_ss(p), _mm_setzero_ps());
@@ -143,7 +143,7 @@ namespace nnue
     template <int N> INLINE void store_partial(const Vector& v, float* p)
     {
         if constexpr (N == 1)
-            #if INSTRSET >= 9
+            #if INSTRSET >= 8
                 v.store_partial(1, p);
             #elif INSTRSET >= 7
                 #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
