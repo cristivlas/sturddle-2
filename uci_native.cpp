@@ -32,7 +32,6 @@ static void raise_runtime_error(const char* err)
 #include <vector>
 #if !_WIN32
   #include <unistd.h>
-  #include <sys/capability.h>
   #include <sys/resource.h>
 #endif /* !_WIN32 */
 
@@ -174,20 +173,16 @@ namespace
     static bool can_change_priority()
     {
     #if _WIN32
-        return true;
+        /*
+         * Do not allow Windows users to change the default behavior.
+         */
+        return false;
     #else
-        // Check if current process has CAP_SYS_NICE
-        cap_t caps = cap_get_proc();
-        if (caps == nullptr)
-        {
-            return false;
-        }
-
-        cap_flag_value_t value;
-        int result = cap_get_flag(caps, CAP_SYS_NICE, CAP_EFFECTIVE, &value);
-        cap_free(caps);
-
-        return (result == 0) && (value == CAP_SET);
+        /*
+         * On POSIX assume true, to avoid libcap dependency (or manually parsing /proc/self/status).
+         * If geteuid() != 0 and CAP_SYS_NICE not set, set_high_priority fails and resets _high_priority
+         */
+        return true;
     #endif /* !_WIN32 */
     }
 
@@ -1002,7 +997,9 @@ void UCI::set_high_priority(bool high_priority)
         }
         else
         {
-            log_error(std::format("setpriority({}) failed: {}", nice_value, errno));
+            const auto msg = std::format("setpriority({}) failed: {}", nice_value, errno);
+            log_error(msg);
+            std::cout << "info string " << msg << std::endl;
             _current_priority = _high_priority = false; /* prevent future calls */
         }
 #endif /* !_WIN32 */
