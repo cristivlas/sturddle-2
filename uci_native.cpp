@@ -170,23 +170,6 @@ namespace
     }
 
 
-    static bool can_change_priority()
-    {
-    #if _WIN32
-        /*
-         * Do not allow Windows users to change the default behavior.
-         */
-        return false;
-    #else
-        /*
-         * On POSIX assume true, to avoid libcap dependency (or manually parsing /proc/self/status).
-         * If geteuid() != 0 and CAP_SYS_NICE not set, set_high_priority fails and resets _high_priority
-         */
-        return true;
-    #endif /* !_WIN32 */
-    }
-
-
     struct Option
     {
         virtual ~Option() = default;
@@ -349,15 +332,13 @@ public:
         _options.emplace("algorithm", std::make_shared<OptionAlgo>(_algorithm));
         _options.emplace("bestbookmove", std::make_shared<OptionBool>("BestBookMove", _best_book_move));
         _options.emplace("debug", std::make_shared<OptionBool>("Debug", _debug));
+        _options.emplace("highpriority", std::make_shared<OptionBool>("HighPriority", _high_priority));
         _options.emplace("ownbook", std::make_shared<OptionBool>("OwnBook", _use_opening_book));
         _options.emplace("ponder", std::make_shared<OptionBool>("Ponder", _ponder));
 
     #if USE_ENDTABLES
         _options.emplace("syzygypath", std::make_shared<OptionSyzygy>());
     #endif /*USE_ENDTABLES */
-
-        if (can_change_priority())
-            _options.emplace("highpriority", std::make_shared<OptionBool>("HighPriority", _high_priority));
     }
 
     static bool output_expected() { return _output_expected.load(std::memory_order_relaxed); }

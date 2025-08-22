@@ -653,8 +653,12 @@ namespace search
     {
         ASSERT(move && move._state && move != _move);
 
+        if (move == tt_entry()._hash_move && tt_entry()._value > MATE_LOW)
+        {
+            return false;
+        }
+
         return (move != tt_entry()._best_move)
-            && (move != tt_entry()._hash_move)
             && (PruneCaptures || !move._state->is_capture())
             && (move.promotion() == chess::PieceType::NONE)
             && (move.from_square() != _capture_square)
