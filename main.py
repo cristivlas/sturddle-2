@@ -74,7 +74,7 @@ else:
 
     flavors = {
         'chess_engine_avx512': _is_avx512_supported,
-        #'chess_engine_avx2_vnni': _is_avx2_vnni_supported,
+        'chess_engine_avx2_vnni': _is_avx2_vnni_supported,
         'chess_engine_avx2': _is_avx2_supported,
         'chess_engine_avx': _is_avx_supported,
         'chess_engine': lambda *_: True,

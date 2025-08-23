@@ -83,9 +83,7 @@ if __name__ == '__main__':
 
     if args.native_uci:
         if platform.machine() in ['x86_64', 'AMD64']:
-            # TODO: Re-evaluate VNNI support
-            # ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', 'AVX', '']
-            ARCHS = ['AVX512', 'AVX2', 'AVX', '']
+            ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', 'AVX', '']
         elif platform.machine() == 'aarch64':
             ARCHS = ['ARMv8_2', '']
 
@@ -105,9 +103,9 @@ if __name__ == '__main__':
         elif arch == 'AVX':
             arch_flags = '-march=corei7-avx -mtune=corei7-avx'  # sandybridge
         elif arch == 'AVX2':
-            arch_flags = '-march=core-avx2 -mtune=core-avx2'    # haswell
+            arch_flags = '-march=core-avx2 -mtune=znver3'       # optimize for AMD Zen3
         elif arch == 'AVX2_VNNI':
-            arch_flags = '-march=alderlake -mtune=alderlake'
+            arch_flags = '-march=alderlake -mtune=raptorlake'
         elif arch == 'AVX512':
             arch_flags = '-march=skylake-avx512 -mtune=skylake-avx512'
         elif arch == 'ARMv8_2':
