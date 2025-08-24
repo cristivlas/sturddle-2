@@ -205,10 +205,8 @@ def make_model(args, strategy):
 
         hidden_2 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_2')(weighted)
         hidden_3 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_3')(hidden_2)
-        #hidden_2 = Dense(16, activation='swish', kernel_initializer=K_INIT, name='hidden_2')(weighted)
-        #hidden_3 = Dense(16, activation='swish', kernel_initializer=K_INIT, name='hidden_3')(hidden_2)
 
-        # Define the position evaluation output (original output)
+        # Define the position evaluation output
         eval_output = Dense(1, name='out', dtype='float32')(hidden_3)
 
         # Add move prediction heads if enabled
