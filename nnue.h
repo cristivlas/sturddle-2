@@ -49,6 +49,12 @@
 
 #define ALIGN alignas(64)
 
+#if INSTRSET >= 9 /* AVX 512 */
+    constexpr int INPUT_STRIDE = 32;
+#else
+    constexpr int INPUT_STRIDE = 16;
+#endif
+
 #define DEBUG_INCREMENTAL false
 
 
@@ -113,15 +119,34 @@ namespace nnue
             horizontal_add_x(v[12]),horizontal_add_x(v[13]),horizontal_add_x(v[14]),horizontal_add_x(v[15]));
     }
 
+    INLINE Vec32s horizontal_add(const Vec32s (&v)[32])
+    {
+        return Vec32s(
+            horizontal_add_x(v[0]),  horizontal_add_x(v[1]),  horizontal_add_x(v[2]),  horizontal_add_x(v[3]),
+            horizontal_add_x(v[4]),  horizontal_add_x(v[5]),  horizontal_add_x(v[6]),  horizontal_add_x(v[7]),
+            horizontal_add_x(v[8]),  horizontal_add_x(v[9]),  horizontal_add_x(v[10]), horizontal_add_x(v[11]),
+            horizontal_add_x(v[12]), horizontal_add_x(v[13]), horizontal_add_x(v[14]), horizontal_add_x(v[15]),
+            horizontal_add_x(v[16]), horizontal_add_x(v[17]), horizontal_add_x(v[18]), horizontal_add_x(v[19]),
+            horizontal_add_x(v[20]), horizontal_add_x(v[21]), horizontal_add_x(v[22]), horizontal_add_x(v[23]),
+            horizontal_add_x(v[24]), horizontal_add_x(v[25]), horizontal_add_x(v[26]), horizontal_add_x(v[27]),
+            horizontal_add_x(v[28]), horizontal_add_x(v[29]), horizontal_add_x(v[30]), horizontal_add_x(v[31]));
+    }
+
     INLINE Vector horizontal_add(const Vector (&v)[1])
     {
         return horizontal_add(v[0]);
     }
 
     template <typename V>
-    INLINE bool all_zero(V&& v)
+    INLINE bool all_zero(V v)
     {
         return !horizontal_or(v);
+    }
+
+    template <>
+    INLINE bool all_zero<Vec32s>(Vec32s v)
+    {
+        return !horizontal_or(v.get_high() | v.get_low());
     }
 
     template <int N> INLINE void load_partial(Vector& v, const float* p)
@@ -173,7 +198,7 @@ namespace nnue
     }
 
     template <typename T>
-    INLINE void one_hot_encode(const State& board, T (&encoding)[912] /* round_up<16>(897) */)
+    INLINE void one_hot_encode(const State& board, T (&encoding)[round_up<INPUT_STRIDE>(897)])
     {
         const auto& color_masks = board._occupied_co;
         int i = 63;
@@ -256,7 +281,7 @@ namespace nnue
         static constexpr int ROWS = I;
         static constexpr int COLS = O;
         /* Round up to Vec16s::size() to deal with the 897 inputs. */
-        static constexpr int INPUTS = round_up<16>(I);
+        static constexpr int INPUTS = round_up<INPUT_STRIDE>(I);
         static constexpr int OUTPUTS = O;
 
         ALIGN T _b[OUTPUTS]; /* biases */
@@ -270,7 +295,7 @@ namespace nnue
     {
         static constexpr int ROWS = I;
         static constexpr int COLS = O;
-        static constexpr int INPUTS = round_up<16>(I);
+        static constexpr int INPUTS = I;
         static constexpr int OUTPUTS = O;
 
         ALIGN float _b[OUTPUTS]; /* biases */
@@ -332,20 +357,29 @@ namespace nnue
         {
             static_assert(S >= INPUTS);
 
-            constexpr auto N = Vec16s::size();
+        #define MUL_ADD(a, b, s) s += a * b
+        #if INSTRSET >= 9 /* AVX 512 */
+            using VecShort = Vec32s;
+            using VSum = Vec32s;
+        #else
+            using VecShort = Vec16s;
+            #if __AVXVNNI__
+                #undef MUL_ADD
+                #define MUL_ADD(a, b, s) s = _mm256_dpwssd_epi32(s, a, b)
+                using VSum = Vec8i;
+            #else
+                using VSum = Vec16s;
+            #endif /* __AVXVNNI__ */
+        #endif /* INSTRSET */
+
+            constexpr auto N = VecShort::size();
+            static_assert(N == INPUT_STRIDE);
             static_assert(OUTPUTS % N == 0);
 
             constexpr auto R = round_down<N>(INPUTS);
             static_assert(R == INPUTS); /* expect padded inputs */
 
-            Vec16s in, vw;
-
-        #if __AVXVNNI__
-            using VSum = Vec8i;
-        #else
-            using VSum = Vec16s;
-        #endif /* __AVXVNNI__ */
-
+            VecShort in, vw;
             VSum sum[N]; /* accumulate partial sums */
 
             for (int j = 0; j != OUTPUTS; j += N)
@@ -363,18 +397,15 @@ namespace nnue
                     for (int k = 0; k != N; ++k)
                     {
                         vw.load_a(&wt[j + k][i]);
-                    #if __AVXVNNI__
-                        sum[k] = _mm256_dpwssd_epi32(sum[k], in, vw);
-                    #else
-                        sum[k] += in * vw;
-                    #endif /* __AVXVNNI__ */
+                        MUL_ADD(in, vw, sum[k]);
                     }
                 }
 
-                auto sums = horizontal_add(sum);
+                const auto sums = horizontal_add(sum);
                 vw.load_a(&b[j]);
                 (vw + sums).store_a(&output[j]);
             }
+            #undef MUL_ADD
         }
 
         /* hidden, output */
@@ -471,7 +502,7 @@ namespace nnue
 
     template <int M, int N, int O> struct Accumulator
     {
-        static constexpr int INPUTS = round_up<16>(M);
+        static constexpr int INPUTS = round_up<INPUT_STRIDE>(M);
         static constexpr int OUTPUTS_A = N;
         static constexpr int OUTPUTS_B = O;
 

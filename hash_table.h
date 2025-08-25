@@ -348,17 +348,23 @@ namespace search
     template <typename T, size_t BUCKET_SIZE = 14>
     class hash_table
     {
-        using clock_t = uint16_t;
+        using clock_t = uint8_t;
+        static constexpr uint16_t MAGIC = 0xDA7A;
 
         template <size_t SIZE>
         struct alignas(64) Bucket
         {
             using lock_state_t = int8_t;
 
-            lock_state_t        _lock_state;
-            uint8_t             _used = 0;
+            uint16_t            _magic = MAGIC;
+            lock_state_t        _lock_state = 0;
             clock_t             _clock = 0;
             std::array<T, SIZE> _entries;
+
+            INLINE bool is_valid(clock_t clock) const
+            {
+                return _clock == clock && _magic == MAGIC;  // stale bucket or uninitialized?
+            }
 
             INLINE std::atomic<lock_state_t> &mutex()
             {
@@ -429,7 +435,7 @@ namespace search
         void clear(bool wipe)
         {
             // Fully erase if reasonably sized
-            if (wipe && _data.size() <= 1024 * ONE_MEGABYTE)
+            if (wipe && _data.size() * sizeof(decltype(_data[0])) <= 1024 * ONE_MEGABYTE)
                 std::fill_n(&_data[0], _data.size(), bucket_t());
 
             ++_clock; // O(1) -- buckets are lazily erased on write
@@ -441,27 +447,26 @@ namespace search
         INLINE uint8_t generation() const { return _generation; }
         INLINE void increment_generation() { _generation = (_generation + 1) & 31; }
 
-        INLINE void increment_usage(bucket_t& bucket)
+        INLINE void increment_usage()
         {
 #if SMP
             _used.fetch_add(1, std::memory_order_relaxed);
 #else
             ++_used;
 #endif
-            ASSERT(bucket._used < bucket_t::size());
-            ++bucket._used;
         }
 
         INLINE size_t size() const { return _used; }
 
         void resize(size_t megabytes)
         {
+            // Convert size in megabytes to size in buckets
             const auto buckets = get_num_buckets(megabytes);
 
             if (buckets == 0)
                 throw std::bad_alloc();
 
-            _data.resize(buckets);
+            _data.resize(buckets, bucket_t());
         }
 
         struct Result
@@ -487,7 +492,7 @@ namespace search
             {
                 result._bucket = &bucket;
 
-                if (bucket._clock != this->_clock)
+                if (!bucket.is_valid(_clock))
                 {
                     result._replacement_slot = 0;
                 }
@@ -531,27 +536,28 @@ namespace search
         {
             ASSERT(r._replacement_slot >= 0 && r._entry.is_valid());
             ASSERT(r._bucket);
+            // validate that bucket is in data range
+            ASSERT(r._bucket >= &_data[0]);
+            ASSERT(std::distance(&_data[0], r._bucket) < _data.size());
+
             auto& bucket = *r._bucket;
 
             unique_lock_t lock(bucket.mutex());
             if (lock.is_valid())
             {
-                // Lazily erase stale buckets
-                if (bucket._clock != this->_clock)
+                if (!bucket.is_valid(_clock))
                 {
-                    if (bucket._used)
-                    {
-                        bucket._entries.fill(entry_t());
-                        bucket._used = 0;
-                    }
-                    bucket._clock = this->_clock;
+                    // Lazily erase / initialize stale buckets
+                    bucket._entries.fill(entry_t());
+                    bucket._magic = MAGIC;
+                    bucket._clock = _clock;
                 }
 
                 auto& e = bucket._entries[r._replacement_slot];
 
                 if (!e.is_valid())
                 {
-                    increment_usage(bucket);
+                    increment_usage();
                 }
 
                 e = r._entry;
