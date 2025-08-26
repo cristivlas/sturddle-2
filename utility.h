@@ -34,6 +34,10 @@ enum class CancelReason
 
 extern void cancel_search(CancelReason);
 
+#if STANDALONE
+  #define PyErr_SetString(e, what) std::cerr << what << std::endl;
+#endif
+
 namespace
 {
     /*
@@ -42,6 +46,9 @@ namespace
      */
     struct cython_wrapper
     {
+#if STANDALONE
+        struct GIL_State {};
+#else
         class GIL_State
         {
             PyGILState_STATE state;
@@ -64,6 +71,7 @@ namespace
                 PyGILState_Release(state);
             }
         };
+#endif /* STANDALONE */
 
         template <typename R, typename... Params, typename... Args>
         static INLINE R call(R (*fn)(Params...), Args&&... args)

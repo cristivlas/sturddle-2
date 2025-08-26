@@ -58,12 +58,21 @@ using std::chrono::nanoseconds;
 #if __linux__
 #include <signal.h>
 
-static void segv_handler(int sig)
+#if STANDALONE
+#define PyErr_Print()
+
+static void segv_handler(int)
+{
+    dump_backtrace(std::cerr);
+}
+#else
+static void segv_handler(int /* sig */)
 {
     dump_backtrace(std::cerr);
     cython_wrapper::GIL_State gil_state;
     PyErr_SetString(PyExc_Exception, "Segmentation Fault");
 }
+#endif /* STANDALONE */
 
 static void setup_crash_handler()
 {
@@ -672,11 +681,14 @@ namespace search
     }
 
 
-    /* Call into the Python logger */
     /* static */
+    /* Call into the Python logger */
     void Context::log_message(LogLevel level, const std::string& msg, bool force)
     {
-        cython_wrapper::call(_log_message, int(level), msg, force);
+        if (_log_message)
+        {
+            cython_wrapper::call(_log_message, int(level), msg, force);
+        }
     }
 
 

@@ -13,9 +13,13 @@ using Params = std::unordered_map<std::string, std::string>;
 /** Raise RuntimeError, and let Python handle it... */
 static void raise_runtime_error(const char* err)
 {
+#if STANDALONE
+    throw std::runtime_error(err);
+#else
     PyGILState_STATE with_gil(PyGILState_Ensure());
     PyErr_SetString(PyExc_RuntimeError, err);
     PyGILState_Release(with_gil);
+#endif /* STANDALONE */
 }
 
 #if NATIVE_UCI /* requires compiler with C++20 support */
@@ -142,7 +146,11 @@ namespace
         const auto err = std::format(fmt, std::forward<Args>(args)...);
         cython_wrapper::GIL_State with_gil;
         log_error(err);
+#if STANDALONE
+        throw std::invalid_argument(err);
+#else
         PyErr_SetString(PyExc_ValueError, err.c_str());
+#endif
     }
 
     /*
