@@ -9,7 +9,7 @@
 
 #if (__arm64__) || (__aarch64__)
     #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC /* clang -march=armv8.2-a+fp16 */
-        #define INSTRSET 8 /* use Vec8f half-precision implementation */
+        #define INSTRSET 7 /* use Vec8f half-precision implementation */
         #define ARCH "ARM64/FP16"
     #else
         #define ARCH "ARM64"

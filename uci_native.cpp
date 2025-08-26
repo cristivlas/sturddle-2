@@ -1,10 +1,6 @@
 /** Native C++ UCI */
 /** http://wbec-ridderkerk.nl/html/UCIProtocol.html */
 #include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <string_view>
-#include <tuple>
 #include <unordered_map>
 #include "context.h"
 #if WITH_NNUE
@@ -25,12 +21,20 @@ static void raise_runtime_error(const char* err)
 #if NATIVE_UCI /* requires compiler with C++20 support */
 #include <cmath>
 #include <format>
+#include <fstream>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <ranges>
 #include <string>
+#include <string_view>
 #include <sstream>
 #include <vector>
+#if !_WIN32
+  #include <unistd.h>
+  #include <sys/resource.h>
+#endif /* !_WIN32 */
+
 #include "book.h"
 #include "thread_pool.hpp" /* pondering, go infinite */
 
@@ -40,6 +44,12 @@ static void raise_runtime_error(const char* err)
 #else
   #define LOG_DEBUG(x)
 #endif
+
+#if _WIN32
+static constexpr bool DEFAULT_HIGH_PRIORITY = true;
+#else
+static constexpr bool DEFAULT_HIGH_PRIORITY = false;
+#endif /* !_WIN32 */
 
 using ThreadPool = thread_pool<>;
 
@@ -157,6 +167,23 @@ namespace
                 return 1;
             throw;
         }
+    }
+
+
+    static bool can_change_priority()
+    {
+    #if _WIN32
+        /*
+         * Do not allow Windows users to change the default behavior.
+         */
+        return false;
+    #else
+        /*
+         * On POSIX assume true, to avoid libcap dependency (or manually parsing /proc/self/status).
+         * If geteuid() != 0 and CAP_SYS_NICE not set, set_high_priority fails and resets _high_priority
+         */
+        return true;
+    #endif /* !_WIN32 */
     }
 
 
@@ -320,13 +347,17 @@ public:
             ensure_background_thread();
 
         _options.emplace("algorithm", std::make_shared<OptionAlgo>(_algorithm));
-        _options.emplace("best opening", std::make_shared<OptionBool>("Best Opening", _best_book_move));
+        _options.emplace("bestbookmove", std::make_shared<OptionBool>("BestBookMove", _best_book_move));
         _options.emplace("debug", std::make_shared<OptionBool>("Debug", _debug));
         _options.emplace("ownbook", std::make_shared<OptionBool>("OwnBook", _use_opening_book));
         _options.emplace("ponder", std::make_shared<OptionBool>("Ponder", _ponder));
+
     #if USE_ENDTABLES
         _options.emplace("syzygypath", std::make_shared<OptionSyzygy>());
     #endif /*USE_ENDTABLES */
+
+        if (can_change_priority())
+            _options.emplace("highpriority", std::make_shared<OptionBool>("HighPriority", _high_priority));
     }
 
     static bool output_expected() { return _output_expected.load(std::memory_order_relaxed); }
@@ -346,6 +377,8 @@ private:
     void uci();
     void newgame();
 
+    void set_high_priority(bool);
+
     /** Context callbacks */
     static void on_iteration(PyObject *, search::Context *, const search::IterationInfo *);
     static void on_move(PyObject *, const std::string&, int);
@@ -356,7 +389,7 @@ private:
         if (_compute_pool->get_thread_count() == 0)
         {
             _compute_pool = std::make_unique<ThreadPool>(1);
-            log_info("Initialized thread pool");
+            log_info("Initialized UCI thread pool");
         }
     }
 
@@ -521,12 +554,13 @@ private:
     int _depth = max_depth;
     int _ply_count = 0;
     score_t _score = 0;
-    score_t _score_delta = 0;
     EngineOptions _options;
     static std::atomic_bool _output_expected;
     bool _ponder = false;
     bool _use_opening_book = false;
     bool _best_book_move = true;
+    bool _current_priority = false; /* not high */
+    bool _high_priority = DEFAULT_HIGH_PRIORITY;
     chess::BaseMove _last_move;
 #if NATIVE_BOOK
     PolyglotBook _opening_book = {};
@@ -903,7 +937,6 @@ void UCI::go(const Arguments &args)
                 ctrl.increments[chess::WHITE] = time_increments[chess::WHITE];
                 ctrl.moves = movestogo;
                 ctrl.score = _score;
-                ctrl.delta = _score_delta;
 
                 search::Context::set_start_time();
                 ctxt->set_time_ctrl(ctrl);
@@ -939,6 +972,38 @@ void UCI::newgame()
     chess::init_piece_square_tables();
     std::cout << "info string PST_init\n";
 #endif
+}
+
+void UCI::set_high_priority(bool high_priority)
+{
+    if (_current_priority != high_priority)
+    {
+#if _WIN32
+        const DWORD priority_class = high_priority ? HIGH_PRIORITY_CLASS : NORMAL_PRIORITY_CLASS;
+        if (SetPriorityClass(GetCurrentProcess(), priority_class))
+        {
+            _current_priority = high_priority;
+        }
+        else
+        {
+            log_error(std::format("SetPriorityClass({}) failed: {}", priority_class, GetLastError()));
+            _current_priority = _high_priority = false; /* prevent future calls */
+        }
+#else /* POSIX -- requires "sudo setcap cap_sys_nice+ep <engine_name>" */
+        const int nice_value = high_priority ? -10 : 0;
+        if (setpriority(PRIO_PROCESS, 0, nice_value) == 0)
+        {
+            _current_priority = high_priority;
+        }
+        else
+        {
+            const auto msg = std::format("setpriority({}) failed: {}", nice_value, errno);
+            log_error(msg);
+            std::cout << "info string " << msg << std::endl;
+            _current_priority = _high_priority = false; /* prevent future calls */
+        }
+#endif /* !_WIN32 */
+    }
 }
 
 /**
@@ -1048,6 +1113,9 @@ INLINE score_t UCI::search(F set_time_limit)
     ctxt._max_depth = 1;
     ctxt._move = _last_move;
 
+    set_high_priority(_high_priority);
+    auto restore_priority = on_scope_exit([this] { set_high_priority(false); });
+
     set_time_limit();
 
 #if NATIVE_BOOK && USE_BOOK_HINT
@@ -1055,11 +1123,7 @@ INLINE score_t UCI::search(F set_time_limit)
         ctxt._prev = search_book(false /* do not validate */);
 #endif /* USE_BOOK_HINT */
 
-    const auto score = search::iterative(ctxt, _tt, _depth + 1);
-
-    _score_delta = score - _score;
-
-    return score;
+    return search::iterative(ctxt, _tt, _depth + 1);
 }
 
 void UCI::setoption(const Arguments &args)

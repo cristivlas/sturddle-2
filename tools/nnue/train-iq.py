@@ -186,6 +186,7 @@ def make_model(args, strategy):
         )(input_1b)
 
         spatial_attn = Dense(ATTN_FAN_OUT, activation=ACTIVATION, name='spatial_attn')(hidden_1b)
+        outcome_head = Dense(1, name='kp', dtype='float32')(spatial_attn)
 
         def custom_pooling(x):
             reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
@@ -206,11 +207,11 @@ def make_model(args, strategy):
         hidden_2 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_2')(weighted)
         hidden_3 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_3')(hidden_2)
 
-        # Define the position evaluation output
+        # Define the position evaluation output (original output)
         eval_output = Dense(1, name='out', dtype='float32')(hidden_3)
 
         # Add move prediction heads if enabled
-        outputs = [eval_output]
+        outputs = [eval_output, outcome_head]
 
         if args.predict_moves:
             stop_grad = tf.stop_gradient(concat)
@@ -273,9 +274,9 @@ def make_model(args, strategy):
             eval_target = y_true[:, 0:1]  # Extract eval component
             return tf.keras.metrics.mean_absolute_error(eval_target, y_pred)
 
-        losses = {'out': adaptive_loss if args.adaptive else combined_loss}
+        losses = {'out': adaptive_loss if args.adaptive else combined_loss, 'kp': compute_prob_loss}
         metrics = {'out': [accuracy, mae]}
-        loss_weights = {'out': 1.0}
+        loss_weights = {'out': 1.0, 'kp': 1.0}
 
         if args.predict_moves:
             @tf.function
@@ -483,10 +484,9 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                 # Reshape to match expected output shape
                 move_indices = tf.reshape(move_indices, (-1, 1))
 
-                # Return as tuple
-                return x, (y_combined, move_indices)
+                return x, (y_combined, y_outcome, move_indices)
             else:
-                return x, y_combined
+                return x, (y_combined, y_outcome)
 
         def rows(self):
             return self.data.shape[0]
@@ -555,15 +555,15 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
         if args.predict_moves:
             output_types = (
                 np.uint64,
-                (np.float32, np.float32)
+                (np.float32, np.float32, np.float32)
             )
             output_shapes = (
                 (None, packed_feature_count),
-                ((None, 2), (None, 1))
+                ((None, 2), (None, 1), (None, 1))
             )
         else:
-            output_types = (np.uint64, np.float32)
-            output_shapes = ((None, packed_feature_count), (None, 2))
+            output_types = (np.uint64, (np.float32, np.float32))
+            output_shapes = ((None, packed_feature_count), ((None, 2), (None, 1)))
 
         dataset = tf.data.Dataset.from_generator(
             generator,
@@ -575,12 +575,12 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             @tf.function
             def filter_data(x, y):
                 if args.predict_moves:
-                    combined_y = y[0]
-                    eval_y = combined_y[:, 0:1]
-                    outcome_y = combined_y[:, 1:2]
+                    combined_y, outcome_y_separate, move_indices = y
                 else:
-                    eval_y = y[:, 0:1]
-                    outcome_y = y[:, 1:2]
+                    combined_y, outcome_y_separate = y
+
+                eval_y = combined_y[:, 0:1]
+                outcome_y = combined_y[:, 1:2]
 
                 bound = args.filter / SCALE
                 lower_bound = tf.greater(eval_y, -bound)
@@ -593,12 +593,18 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
                 condition = tf.reshape(condition, [-1])  # Flatten to 1D
 
-                # Apply mask to both input and all outputs
+                # Apply mask to both input and all outputs individually
                 filtered_x = tf.boolean_mask(x, condition)
+
                 if args.predict_moves:
-                    filtered_y = tuple(tf.boolean_mask(y_item, condition) for y_item in y)
+                    filtered_combined = tf.boolean_mask(combined_y, condition)
+                    filtered_outcome = tf.boolean_mask(outcome_y_separate, condition)
+                    filtered_moves = tf.boolean_mask(move_indices, condition)
+                    filtered_y = (filtered_combined, filtered_outcome, filtered_moves)
                 else:
-                    filtered_y = tf.boolean_mask(y, condition)
+                    filtered_combined = tf.boolean_mask(combined_y, condition)
+                    filtered_outcome = tf.boolean_mask(outcome_y_separate, condition)
+                    filtered_y = (filtered_combined, filtered_outcome)
 
                 return filtered_x, filtered_y
 
@@ -622,6 +628,7 @@ def load_model(path):
     custom_objects = {
         'adaptive_loss': None,
         'combined_loss': None,
+        'compute_prob_loss': None,
         'chess_move_loss': None,
         'scaled_sparse_categorical_crossentropy': None,
         'top': None,

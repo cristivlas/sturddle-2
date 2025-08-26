@@ -12,7 +12,7 @@ import shutil
 import sys
 
 BOOK = 'book.bin'
-
+OUT_DIR = 'dist'
 
 def find_editbin():
     """Find editbin using distutils MSVC detection"""
@@ -83,9 +83,7 @@ if __name__ == '__main__':
 
     if args.native_uci:
         if platform.machine() in ['x86_64', 'AMD64']:
-            # TODO: Re-evaluate VNNI support in next release
-            # ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', '']
-            ARCHS = ['AVX512', 'AVX2', '']
+            ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', 'AVX', '']
         elif platform.machine() == 'aarch64':
             ARCHS = ['ARMv8_2', '']
 
@@ -102,10 +100,12 @@ if __name__ == '__main__':
                     continue
                 arch_flags = f'/arch:{arch}'
         # otherwise assume Clang or GCC on POSIX
+        elif arch == 'AVX':
+            arch_flags = '-march=corei7-avx -mtune=corei7-avx'  # sandybridge
         elif arch == 'AVX2':
-            arch_flags = '-march=core-avx2 -mtune=core-avx2'
+            arch_flags = '-march=core-avx2 -mtune=znver3'       # optimize for AMD Zen3
         elif arch == 'AVX2_VNNI':
-            arch_flags = '-march=core-avx2 -mtune=core-avx2 -mavxvnni'
+            arch_flags = '-march=alderlake -mtune=raptorlake'
         elif arch == 'AVX512':
             arch_flags = '-march=skylake-avx512 -mtune=skylake-avx512'
         elif arch == 'ARMv8_2':
@@ -150,8 +150,26 @@ if __name__ == '__main__':
 
     data = f'--add-data={BOOK}{os.path.pathsep}.'
 
+    exclude_modules = [
+        'setuptools', 'setuptools._vendor', 'setuptools._distutils', 'jaraco',
+        'pkg_resources', 'distutils', 'wheel', 'packaging._vendor',
+        'importlib_metadata', 'more_itertools', 'platformdirs', 'tomli', 'zipp',
+        'cython', 'Cython', 'pyinstaller', 'altgraph', 'pefile', 'pywin32_ctypes',
+        'email', 'http', 'https', 'ftplib', 'ssl', 'socketserver',
+        'smtplib', 'poplib', 'imaplib', 'nntplib', 'telnetlib',
+        'doctest', 'test',
+        'xmlrpc', 'tarfile', 'gzip', 'bz2', 'lzma',
+        'webbrowser', 'cgi', 'wsgiref', 'html',
+        'pydoc', 'help',
+        'netrc', 'mailbox',
+        '_ssl', 'libssl', 'libcrypto',
+        '_hashlib', 'hashlib',
+    ]
+
+    exclude_args = ' '.join([f'--exclude-module {mod}' for mod in exclude_modules])
+
     # run PyInstaller
-    if run_cmd(f'{installer} {script} -p . --onefile {" ".join(libs)} {data} --icon chess.ico'):
+    if run_cmd(f'{installer} {script} -p . --onefile --distpath {OUT_DIR} {" ".join(libs)} {data} {exclude_args} --icon chess.ico'):
         print('pyinstaller failed')
         sys.exit(-2)
 
@@ -159,8 +177,10 @@ if __name__ == '__main__':
     sys.path.append('.')
     import chess_engine
 
-    MAIN = os.path.join('dist', 'main' if args.native_uci else 'sturddle')
-    NAME = os.path.join('dist', f'sturddle-{".".join(chess_engine.__build__[:2])}')
+    MAIN = os.path.join(OUT_DIR, 'main' if args.native_uci else 'sturddle')
+    NAME = f'sturddle-{".".join(chess_engine.__build__[:2])}'
+    DGST = os.path.join(OUT_DIR, f'{NAME}-sha256.txt')
+    NAME = os.path.join(OUT_DIR, NAME)
     if is_windows():
         MAIN += '.exe'
         NAME += '.exe'
@@ -175,6 +195,7 @@ if __name__ == '__main__':
         try:
             print(f'rename {MAIN} as {NAME}')
             os.replace(MAIN, NAME)
+            run_cmd(f'openssl dgst -r -out {DGST} -sha256 {NAME}')
             break
         except Exception as e:
             print(e)

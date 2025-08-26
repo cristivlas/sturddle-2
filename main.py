@@ -47,17 +47,20 @@ elif armcpu.is_apple_silicon():
         'chess_engine': lambda *_: True
     }
 else:
-    # Select AVX2 or AVX512 on x86/AMD64
+    # Select AVX, AVX2 or AVX512 on x86/AMD64
     import cpufeature
 
-    def _is_avx512_supported():
-        for f in cpufeature.extension.CPUFeature:
-            if (f.startswith('AVX512') and cpufeature.extension.CPUFeature[f]):
-                return True
-        return False
+    def _is_avx_supported():
+        return cpufeature.extension.CPUFeature['AVX']
 
     def _is_avx2_supported():
-        return cpufeature.extension.CPUFeature['AVX2']
+        # Check for AVX2 with FMA
+        return (cpufeature.extension.CPUFeature['AVX2'] and
+                (cpufeature.extension.CPUFeature['FMA3'] or cpufeature.extension.CPUFeature['FMA4']))
+
+    def _is_avx512_supported():
+        return (cpufeature.extension.CPUFeature['AVX512f'] and
+                cpufeature.extension.CPUFeature['AVX512bw'])
 
     def _is_avx2_vnni_supported():
         if not _is_avx2_supported():
@@ -71,8 +74,9 @@ else:
 
     flavors = {
         'chess_engine_avx512': _is_avx512_supported,
-        #'chess_engine_avx2_vnni': _is_avx2_vnni_supported,
+        'chess_engine_avx2_vnni': _is_avx2_vnni_supported,
         'chess_engine_avx2': _is_avx2_supported,
+        'chess_engine_avx': _is_avx_supported,
         'chess_engine': lambda *_: True,
     }
 
@@ -83,6 +87,7 @@ def load_engine():
         try:
             engine = importlib.import_module(eng)
             globals().update({k:v for k, v in engine.__dict__.items() if not k.startswith('_')})
+            logging.info(f'Loaded {engine.__name__}')
             return engine
         except Exception as e:
             logging.warning(e)

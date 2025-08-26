@@ -522,6 +522,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     {
         ASSERT(ctxt._score == *p);
         ASSERT(!ctxt._excluded);
+
         ctxt._prune_reason = PruneReason::PRUNE_TT;
         return *p;
     }
@@ -593,10 +594,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             return ctxt._alpha;
         }
     #endif /* RAZORING */
-
-    #if 0
-        ctxt.ensure_prev_move();
-    #endif
 
         if (multicut(ctxt, table))
         {
@@ -719,10 +716,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         }
                         else if (s_beta >= ctxt._beta)
                         {
-                        /*
-                         * Got another fail-high from the (reduced) search that skipped the known
-                         * cutoff move, so there must be multiple cutoffs, do 2nd multicut pruning.
-                         */
+                           /*
+                            * Got another fail-high from the (reduced) search that skipped the known
+                            * cutoff move, so there must be multiple cutoffs, do 2nd multicut pruning.
+                            */
                             ctxt._prune_reason = PruneReason::PRUNE_SINGULAR;
                             return s_beta;
                         }
@@ -856,32 +853,17 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             }
         }
         ASSERT(ctxt._score <= ctxt._alpha || ctxt._best_move);
-    #if 0
-        /*
-         * since v0.98 Context::next() checks that at least one move
-         * has been searched before returning nullptr on cancellation
-         */
-        if (!ctxt.is_cancelled())
-    #endif
-        {
-            if (!move_count && !ctxt.has_moves())
-            {
-                /* checkmate or stalemate? */
-                ctxt._score = ctxt.evaluate_end();
 
-                ASSERT(ctxt._score > SCORE_MIN);
-                ASSERT(ctxt._score < SCORE_MAX);
-            }
-    #if !NO_ASSERT
-            else if (!ctxt._excluded && !ctxt.is_cancelled())
-            {
-                /* algorithm invariants */
-                ASSERT(ctxt._score > SCORE_MIN);
-                ASSERT(ctxt._score < SCORE_MAX);
-                ASSERT(ctxt._alpha >= ctxt._score);
-            }
-    #endif /* NO_ASSERT */
+        if (move_count == 0)
+        {
+            if (ctxt._excluded || ctxt.has_pruned_moves() || ctxt.has_moves())
+                ctxt._score = ctxt.evaluate<false>();
+            else
+                ctxt._score = ctxt.is_check() ? checkmated(ctxt._ply) : 0;
         }
+
+        ASSERT(ctxt._score < SCORE_MAX);
+        ASSERT(ctxt._score > SCORE_MIN);
     }
 
     /*
@@ -991,7 +973,6 @@ static score_t search_iteration(Context& ctxt, TranspositionTable& table, score_
     return score;
 }
 
-
 #if SMP
 /****************************************************************************
  * Lazy SMP. https://www.chessprogramming.org/Lazy_SMP
@@ -1000,7 +981,7 @@ using ThreadPool = thread_pool<std::vector<std::function<void()>>, false>;
 
 static std::unique_ptr<ThreadPool> threads;
 
-static size_t start_pool()
+static size_t start_threads()
 {
     Context::ensure_stacks();
 
@@ -1010,10 +991,22 @@ static size_t start_pool()
             return 0;
 
         threads = std::make_unique<ThreadPool>(SMP_CORES - 1);
+        Context::log_message(LogLevel::INFO, "Started engine threads");
     }
 
     return threads->get_thread_count();
 }
+
+
+void search::stop_threads()
+{
+    if (threads)
+    {
+        threads.reset();
+        Context::log_message(LogLevel::INFO, "Stopped engine threads");
+    }
+}
+
 
 struct TaskData
 {
@@ -1041,7 +1034,7 @@ public:
     SMPTasks(Context& ctxt, TranspositionTable& table, score_t score)
         : _root(ctxt)
     {
-        const auto thread_count = start_pool();
+        const auto thread_count = start_threads();
         ASSERT(thread_count + 1 == size_t(SMP_CORES));
 
         if (table._iteration == 1)
@@ -1128,6 +1121,9 @@ struct SMPTasks
         }
     }
 };
+
+void search::stop_threads() {}
+
 #endif /* SMP */
 
 std::vector<TaskData> SMPTasks::_tables;

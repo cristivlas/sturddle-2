@@ -213,7 +213,6 @@ namespace search
         int increments[2];  /* time increments for black/white */
         int moves;          /* number of moves till next time control */
         score_t score;
-        score_t delta;      /* score difference from last search */
     };
 
 
@@ -241,7 +240,7 @@ namespace search
         using ContextStack = std::array<struct ContextBuffer, PLY_MAX>;
 
         /* Note: stack beyond PLY_MAX is reserved for do_exchanges. */
-        static constexpr size_t MAX_MOVE = PLY_MAX + 32;
+        static constexpr int MAX_MOVE = PLY_MAX + 32;
         using MoveStack = std::array<MovesList, MAX_MOVE>;
         using StatePool = std::vector<State>;
         using StateStack = std::array<StatePool, PLY_MAX>;
@@ -335,7 +334,6 @@ namespace search
 
         static int64_t elapsed_milliseconds();
 
-        void        ensure_prev_move();
         static void ensure_stacks();
 
         std::string epd() const { return epd(state()); }
@@ -346,7 +344,6 @@ namespace search
 
         template<bool EvalCaptures = true> score_t evaluate();
 
-        score_t     evaluate_end();
         score_t     evaluate_material() const;
 
         score_t     eval(bool as_white, int depth, int millisec); /* testing and tuning */
@@ -364,6 +361,7 @@ namespace search
 
         INLINE bool has_improved() const { return improvement() > 0; }
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
+        INLINE bool has_pruned_moves() const { return _pruned_count || _move_maker.have_skipped_moves(); }
 
         int         history_count(const Move&) const;
         float       history_score(const Move&) const;
@@ -371,7 +369,7 @@ namespace search
         score_t     improvement() const;
         static void init();
         bool        is_beta_cutoff(Context*, score_t);
-        static bool is_cancelled() { return _cancel.load(std::memory_order_acquire); }
+        static bool is_cancelled() { return _cancel.load(std::memory_order_relaxed); }
         INLINE bool is_capture() const { return state().is_capture(); }
         INLINE bool is_check() const { return state().is_check(); }
         bool        is_counter_move(const Move&) const;
@@ -1007,7 +1005,7 @@ namespace search
         }
         _retry_next = false;
 
-        if (!_excluded && !on_next(time_left) && move_count > 0)
+        if (!on_next(time_left))
             return nullptr;
 
         /* null move must be tried before actual moves */
@@ -1275,7 +1273,8 @@ namespace search
     INLINE void Context::set_time_ctrl(const TimeControl& ctrl)
     {
         // Margin for OS context-switching, I/O overhead, etc.
-        constexpr int MAX_SAFETY_MARGIN = 10;
+        const int MAX_SAFETY_MARGIN = MaxTimeMargin;
+        const int MIN_SAFETY_MARGIN = MinTimeMargin;
 
         const auto side_to_move = turn();
         const auto millisec = std::max(0, ctrl.millisec[side_to_move]);
@@ -1298,8 +1297,8 @@ namespace search
         }
 
         int time_limit = std::max(millisec / moves, std::min(millisec, bonus));
+        const int margin = std::min(MAX_SAFETY_MARGIN, std::max(MIN_SAFETY_MARGIN, time_limit / 15));
 
-        const int margin = std::min(MAX_SAFETY_MARGIN, time_limit / 15);
         time_limit = std::max(1, time_limit - margin);
 
         // DEBUG

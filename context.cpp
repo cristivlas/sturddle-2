@@ -224,6 +224,10 @@ void _set_param(const std::string& name, int value, bool echo)
             std::cout << "info string " << name << "=" << TranspositionTable::get_hash_size() << "\n";
         return;
     }
+    else if (name == "Threads" && value != SMP_CORES)
+    {
+        search::stop_threads();
+    }
 
     const auto iter = Config::_namespace.find(name);
 
@@ -710,24 +714,6 @@ namespace search
     }
 
 
-#if 0
-    /* Populate prev move from the Principal Variation, if missing. */
-    void Context::ensure_prev_move()
-    {
-        if (!is_root() && !_prev && !is_null_move() && !_excluded)
-        {
-            const auto& pv = Context::_pvs[0];
-            const size_t ply = _ply;
-
-            if (ply + 1 < pv.size() && pv[ply] == _move)
-            {
-                _prev = pv[ply + 1];
-            }
-        }
-    }
-#endif
-
-
     /* static */ void Context::ensure_stacks()
     {
         const size_t n_threads(SMP_CORES);
@@ -838,26 +824,6 @@ namespace search
         ASSERT(_alpha >= _score); /* invariant */
 
         return _alpha >= _beta;
-    }
-
-
-    /*
-     * Called when there are no more moves available (endgame reached or
-     * qsearch has examined all non-quiet moves in the current position).
-     */
-    score_t Context::evaluate_end()
-    {
-        /* precondition for calling this function */
-        ASSERT(!has_moves());
-
-        if (_pruned_count || _move_maker.have_skipped_moves())
-        {
-            ASSERT(!is_check());
-
-            return evaluate<false>();
-        }
-
-        return is_check() ? checkmated(_ply) : 0;
     }
 
 
@@ -1742,7 +1708,7 @@ namespace search
             {
                 if (move == ctxt._prev)
                 {
-                    make_move<false>(ctxt, move, ctxt._ply < 3 ? MoveOrder::PREV_ITER : MoveOrder::HASH_MOVES);
+                    make_move<false>(ctxt, move, MoveOrder::PREV_ITER);
                 }
                 else if (move == ctxt.tt_entry()._best_move)
                 {
