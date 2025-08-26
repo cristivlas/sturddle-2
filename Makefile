@@ -20,20 +20,21 @@ INCLUDES = -I./libpopcnt -I./magic-bits/include -I./version2 -I/usr/include/pyth
 BUILD_STAMP = $(shell date +%m%d%y)
 
 CXXFLAGS = -MMD -MP \
+        $(INCLUDES) \
         -O3 \
+        -gdwarf-4 \
         -std=c++20 \
         -stdlib=libc++ \
         -fexperimental-library \
         -DNO_ASSERT \
         -D_FORTIFY_SOURCE=0 \
         -DSTANDALONE \
-        -DUSE_MAGIC_BITS=false \
         -DBUILD_STAMP=$(BUILD_STAMP) \
         -DCALLBACK_PERIOD=8192 \
-        -fno-stack-protector \
         -DWITH_NNUE \
         -DNATIVE_UCI=true \
-        -DUSE_MAGIC_BITS=false \
+        -DUSE_MAGIC_BITS=true \
+        -fno-stack-protector \
         -Wextra \
         -Wno-unused-label \
         -Wno-unknown-pragmas \
@@ -43,8 +44,7 @@ CXXFLAGS = -MMD -MP \
         -Wno-int-in-bool-context \
         -Wno-macro-redefined \
         -Wno-deprecated-declarations \
-        -march=native \
-        $(INCLUDES)
+        -march=native
 
 #. Linker flags
 LDFLAGS = \
