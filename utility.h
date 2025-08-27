@@ -78,6 +78,8 @@ namespace
         {
             GIL_State gil_state;
             ASSERT(fn);
+            if (!fn)
+                return R();
             return fn(std::forward<Args>(args)...);
         }
 
@@ -86,6 +88,8 @@ namespace
         {
             try
             {
+                if (!fn)
+                    return R();
                 return fn(std::forward<Args>(args)...);
             }
             catch (const std::exception& e)
