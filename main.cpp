@@ -1,4 +1,3 @@
-#pragma clang attribute push(__attribute__((no_sanitize("memory"))), apply_to=function)
 #include <iostream>
 #include <stdexcept>
 #include "context.h"
@@ -33,5 +32,3 @@ int main()
     return 0;
 }
 
-
-#pragma clang attribute pop
