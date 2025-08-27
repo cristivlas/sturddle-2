@@ -8,7 +8,7 @@ SOURCES = chess.cpp context.cpp search.cpp uci_native.cpp main.cpp
 # Object files
 OBJECTS = $(SOURCES:.cpp=.o)
 
-DEPS = $(OBJECTS:.o=.d) $(MAIN_OBJECT:.o=.d)
+DEPS = $(OBJECTS:.o=.d)
 
 # Target executable
 TARGET = sturddle-2.3
@@ -63,12 +63,12 @@ all: $(TARGET)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # Link executable
-$(TARGET): $(OBJECTS) $(MAIN_OBJECT)
-	$(CXX) $(LDFLAGS) $(OBJECTS) $(MAIN_OBJECT) -o $(TARGET)
+$(TARGET): $(OBJECTS)
+	$(CXX) $(LDFLAGS) $(OBJECTS) -o $(TARGET)
 
 # Clean build files
 clean:
-	rm -f $(OBJECTS) $(MAIN_OBJECT) $(TARGET) $(DEPS)
+	rm -f $(OBJECTS) $(TARGET) $(DEPS)
 
 # Print variables for debugging
 debug:
