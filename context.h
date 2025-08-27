@@ -1184,16 +1184,19 @@ namespace search
      */
     INLINE bool Context::on_next(int64_t* time_left)
     {
-        if (tid() == 0 && ++_callback_count >= CALLBACK_PERIOD)
+        if (tid() == 0)
         {
-            _callback_count = 0; /* reset */
-            const auto millisec = check_time_and_update_nps(time_left);
+            if (++_callback_count >= CALLBACK_PERIOD)
+            {
+                _callback_count = 0; /* reset */
+                const auto millisec = check_time_and_update_nps(time_left);
 
-            if (millisec < 0) /* time is up? */
-                return false;
+                if (millisec < 0) /* time is up? */
+                    return false;
 
-            if (_on_next)
-                cython_wrapper::call(_on_next, _engine, millisec);
+                if (_on_next)
+                    cython_wrapper::call(_on_next, _engine, millisec);
+            }
         }
 
         return !is_cancelled();
