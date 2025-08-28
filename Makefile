@@ -36,14 +36,7 @@ CXXFLAGS = -MMD -MP \
         -DUSE_MAGIC_BITS=true \
         -fno-stack-protector \
         -Wextra \
-        -Wno-unused-label \
-        -Wno-unknown-pragmas \
         -Wno-unused-parameter \
-        -Wno-unused-variable \
-        -Wno-empty-body \
-        -Wno-int-in-bool-context \
-        -Wno-macro-redefined \
-        -Wno-deprecated-declarations \
         -march=native
 
 #. Linker flags
