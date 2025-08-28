@@ -632,7 +632,7 @@ static void INLINE output_info(std::ostream& out, const Info& info)
         }
         std::format_to(
             std::back_inserter(g_out),
-            "info score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} pv ",
+            "info score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} pv",
             score_unit,
             score,
             info.iteration,
@@ -641,7 +641,6 @@ static void INLINE output_info(std::ostream& out, const Info& info)
             info.nodes,
             int(info.knps * 1000),
             info.hashfull);
-        output(out, g_out);
 
         /* output PV */
         for (size_t i = 1; i < info.pv->size(); ++i)
@@ -649,10 +648,11 @@ static void INLINE output_info(std::ostream& out, const Info& info)
             auto& m = (*info.pv)[i];
             if (!m)
                 break;
-            const auto uci = m.uci();
-            out.write(uci.data(), uci.size());
-            out.write(" ", 1);
+            g_out += " ";
+            g_out += m.uci();
         }
+
+        output(out, g_out);
     }
 }
 
