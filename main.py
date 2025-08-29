@@ -4,12 +4,13 @@ Alternative engine bootloader that uses the native UCI implementation.
 '''
 # import everything for the benefit of pyinstaller
 import argparse
+import atexit
 import importlib
 import logging
-import math
+# import math
 import os
 import sysconfig
-import time
+# import time
 
 import chess
 import chess.pgn
@@ -119,8 +120,12 @@ def _hide_console():
             import ctypes
             ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
 
+def bye():
+    os._exit(0)
+
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Sturddle Chess Engine bootloader')
+    atexit.register(bye)
+    parser = argparse.ArgumentParser(description='Sturddle Chess Engine')
     parser.add_argument('-l', '--logfile', default='sturddle.log')
     parser.add_argument('-s', '--separate-logs', action='store_true')
     parser.add_argument('-v', '--verbose', action='store_true', help='enable verbose logging')

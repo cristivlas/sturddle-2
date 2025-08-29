@@ -275,38 +275,38 @@ namespace nnue
     }
 
 
-    template <int I, int O, typename T, int Scale>
+    template <int I, int O, typename T, int Scale, bool Incremental>
     struct BaseLayer
     {
         static constexpr int ROWS = I;
         static constexpr int COLS = O;
-        /* Round up to Vec16s::size() to deal with the 897 inputs. */
+        /* Round up to INPUT_STRIDE to deal with the 897 inputs. */
         static constexpr int INPUTS = round_up<INPUT_STRIDE>(I);
         static constexpr int OUTPUTS = O;
 
         ALIGN T _b[OUTPUTS]; /* biases */
         ALIGN T _wt[OUTPUTS][INPUTS]; /* weights transposed */
-        ALIGN T _w[INPUTS][OUTPUTS]; /* weights - only in accumulator layers */
+        ALIGN T _w[INPUTS][OUTPUTS]; /* weights - only in accumulator (incremental) layers */
     };
 
 
-    template <int I, int O>
-    struct BaseLayer<I, O, float, 1>
+    template <int I, int O, typename T, int Scale>
+    struct BaseLayer<I, O, T, Scale, false>
     {
         static constexpr int ROWS = I;
         static constexpr int COLS = O;
-        static constexpr int INPUTS = I;
+        static constexpr int INPUTS = (Scale == 1) ? I : round_up<INPUT_STRIDE>(I);
         static constexpr int OUTPUTS = O;
 
-        ALIGN float _b[OUTPUTS]; /* biases */
-        ALIGN float _wt[OUTPUTS][INPUTS]; /* weights transposed */
+        ALIGN T _b[OUTPUTS]; /* biases */
+        ALIGN T _wt[OUTPUTS][INPUTS]; /* weights transposed */
     };
 
 
-    template <int I, int O, typename T=float, int Scale=1>
-    struct Layer : BaseLayer<I, O, T, Scale>
+    template <int I, int O, typename T=float, int Scale=1, bool Incremental=false>
+    struct Layer : BaseLayer<I, O, T, Scale, Incremental>
     {
-        using Base = BaseLayer<I, O, T, Scale>;
+        using Base = BaseLayer<I, O, T, Scale, Incremental>;
         using Base::INPUTS;
         using Base::OUTPUTS;
         using Base::_b;
@@ -329,7 +329,7 @@ namespace nnue
                 for (int j = 0; j != OUTPUTS; ++j)
                 {
                     _wt[j][i] = w[i][j] * Scale;
-                    if constexpr (Scale != 1)
+                    if constexpr (Incremental)
                         this->_w[i][j] = _wt[j][i];
                 }
             }
@@ -338,7 +338,7 @@ namespace nnue
             {
                 for (int j = 0; j != OUTPUTS; ++j)
                 {
-                    if constexpr (Scale != 1)
+                    if constexpr (Incremental)
                         this->_w[i][j] = 0;
                     _wt[j][i] = 0;
                 }

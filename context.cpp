@@ -285,12 +285,13 @@ constexpr int HIDDEN_2 = 16;
 constexpr int HIDDEN_3 = 16;
 
 using LAttnType = nnue::Layer<HIDDEN_1B, 32>;
-using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE>;
-using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE>;
+using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
+using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true>;
 using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2>;
 using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
 using EVALType = nnue::Layer<HIDDEN_3, 1>;
 using LMOVEType = nnue::Layer<INPUTS_A, 4096, int16_t, nnue::QSCALE>;
+
 /*
  * The accumulator takes the inputs and processes them into two outputs,
  * using layers L1A and L1B. L1B processes the 1st 256 inputs, which
@@ -770,11 +771,14 @@ namespace search
                     }
                     else if (next_ctxt->_retry_above_alpha == RETRY::Reduced)
                     {
-                        ASSERT(!next_ctxt->is_retry());
-                        _retry_next = true;
+                        if (score > MATE_LOW)
+                        {
+                            ASSERT(!next_ctxt->is_retry());
+                            _retry_next = true;
 
-                        if constexpr(EXTRA_STATS)
-                            ++_tt->_retry_reductions;
+                            if constexpr(EXTRA_STATS)
+                                ++_tt->_retry_reductions;
+                        }
                     }
                     else if (next_ctxt->_retry_above_alpha == RETRY::PVS && score < _beta)
                     {
@@ -1608,7 +1612,7 @@ namespace search
     #if USE_ROOT_MOVES
         if (order_root_moves && ctxt._time_limit >= ROOT_MOVES_MIN_TIME)
         {
-            int16_t input[nnue::round_up<16>(INPUTS_A)] = {};
+            int16_t input[nnue::round_up<INPUT_STRIDE>(INPUTS_A)] = {};
             nnue::one_hot_encode(ctxt.state(), input);
             nnue::predict_moves(input, model.L_M, moves_list);
 

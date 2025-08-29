@@ -124,14 +124,24 @@ namespace
         out.write(str.data(), str.size());
     }
 
-    template <bool flush=true>
-    INLINE void output(const std::string& str)
+    template <bool Flush = true, typename T>
+    INLINE void output(T&& str)
     {
-        output(std::cout, str);
-        std::cout.write("\n", 1);
         if (_debug)
             log_debug(std::format("<<< {}", str));
-        if constexpr(flush)
+
+        if constexpr (std::is_const_v<std::remove_reference_t<T>>)
+        {
+            output(std::cout, str);
+            std::cout.write("\n", 1);
+        }
+        else
+        {
+            str += "\n";
+            output(std::cout, str);
+        }
+
+        if constexpr(Flush)
             std::cout.flush();
     }
 
@@ -315,7 +325,7 @@ namespace
 class UCI
 {
     using Arguments = std::vector<std::string_view>;
-    using EngineOptions = std::map<std::string, std::shared_ptr<Option>>;
+    using EngineOptions = std::map<std::string, std::unique_ptr<Option>>;
 
     static constexpr int max_depth = PLY_MAX;
 
@@ -330,6 +340,9 @@ public:
         , _use_opening_book(search::Context::_book_init(_book))
     #endif
     {
+        std::ios_base::sync_with_stdio(false);
+        std::cin.tie(nullptr);
+
         search::Context::_history = std::make_unique<search::History>();
 
         log_debug(std::format("Context size: {}", sizeof(search::Context)));
@@ -346,18 +359,18 @@ public:
         if (_ponder)
             ensure_background_thread();
 
-        _options.emplace("algorithm", std::make_shared<OptionAlgo>(_algorithm));
-        _options.emplace("bestbookmove", std::make_shared<OptionBool>("BestBookMove", _best_book_move));
-        _options.emplace("debug", std::make_shared<OptionBool>("Debug", _debug));
-        _options.emplace("ownbook", std::make_shared<OptionBool>("OwnBook", _use_opening_book));
-        _options.emplace("ponder", std::make_shared<OptionBool>("Ponder", _ponder));
+        _options.emplace("algorithm", std::make_unique<OptionAlgo>(_algorithm));
+        _options.emplace("bestbookmove", std::make_unique<OptionBool>("BestBookMove", _best_book_move));
+        _options.emplace("debug", std::make_unique<OptionBool>("Debug", _debug));
+        _options.emplace("ownbook", std::make_unique<OptionBool>("OwnBook", _use_opening_book));
+        _options.emplace("ponder", std::make_unique<OptionBool>("Ponder", _ponder));
 
     #if USE_ENDTABLES
-        _options.emplace("syzygypath", std::make_shared<OptionSyzygy>());
+        _options.emplace("syzygypath", std::make_unique<OptionSyzygy>());
     #endif /*USE_ENDTABLES */
 
         if (can_change_priority())
-            _options.emplace("highpriority", std::make_shared<OptionBool>("HighPriority", _high_priority));
+            _options.emplace("highpriority", std::make_unique<OptionBool>("HighPriority", _high_priority));
     }
 
     static bool output_expected() { return _output_expected.load(std::memory_order_relaxed); }
@@ -533,7 +546,7 @@ private:
         {
             auto name = p.first;
             /* option names are case insensitive, and can contain _single_ spaces */
-            _options[lowercase(name)] = std::make_shared<OptionParam>(p.first, p.second);
+            _options[lowercase(name)] = std::make_unique<OptionParam>(p.first, p.second);
         }
     }
 
@@ -603,13 +616,12 @@ struct Info : public search::IterationInfo
 
 search::PV Info::no_pv;
 
-static void INLINE output_info(std::ostream& out, const Info& info)
+static void INLINE format_info(const Info& info)
 {
     g_out.clear();
     if (info.brief)
     {
         std::format_to(std::back_inserter(g_out), "info score cp {} depth {}", info.score, info.iteration);
-        output(out, g_out);
     }
     else
     {
@@ -624,7 +636,7 @@ static void INLINE output_info(std::ostream& out, const Info& info)
         }
         std::format_to(
             std::back_inserter(g_out),
-            "info score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} pv ",
+            "info score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} pv",
             score_unit,
             score,
             info.iteration,
@@ -633,7 +645,6 @@ static void INLINE output_info(std::ostream& out, const Info& info)
             info.nodes,
             int(info.knps * 1000),
             info.hashfull);
-        output(out, g_out);
 
         /* output PV */
         for (size_t i = 1; i < info.pv->size(); ++i)
@@ -642,23 +653,17 @@ static void INLINE output_info(std::ostream& out, const Info& info)
             if (!m)
                 break;
             const auto uci = m.uci();
-            out.write(uci.data(), uci.size());
-            out.write(" ", 1);
+            g_out += " ";
+            g_out += uci;
         }
     }
 }
 
+
 static void INLINE output_info(const Info& info)
 {
-    output_info(std::cout, info);
-    std::cout << std::endl;
-
-    if (_debug)
-    {
-        std::ostringstream out;
-        output_info(out << "<<< ", info);
-        log_debug(out.str());
-    }
+    format_info(info);
+    output<true>(g_out);
 }
 
 
@@ -1165,7 +1170,6 @@ void UCI::stop()
 
 void UCI::uci()
 {
-    std::ios_base::sync_with_stdio(false);
     output<false>(std::format("id name {} {}", _name, _version));
     output<false>("id author Cristian Vlasceanu");
 
