@@ -1,11 +1,55 @@
 /** Native C++ UCI */
 /** http://wbec-ridderkerk.nl/html/UCIProtocol.html */
+
 #include <filesystem>
 #include <unordered_map>
 #include "context.h"
 #if WITH_NNUE
     #include "nnue.h"
 #endif
+
+#if __has_feature(memory_sanitizer)
+#include <sanitizer/msan_interface.h>
+
+template <typename T>
+class unpoison_allocator
+{
+public:
+    using value_type = T;
+    using pointer = T *;
+
+    unpoison_allocator() = default;
+
+    template <typename U>
+    struct rebind
+    {
+        using other = unpoison_allocator<U>;
+    };
+
+    template <typename U>
+    unpoison_allocator(const unpoison_allocator<U> &) noexcept {}
+
+    INLINE pointer allocate(std::size_t n)
+    {
+        auto p = malloc(n * sizeof(T));
+        if (!p)
+            throw std::bad_alloc();
+        return reinterpret_cast<pointer>(p);
+    }
+
+    INLINE void deallocate(pointer p, std::size_t)
+    {
+        if (p)
+            std::free(p);
+    }
+
+    template <typename U, typename... Args>
+    INLINE void construct(U *p, Args &&...args) { new (p) U(std::forward<Args>(args)...); }
+
+    template <typename U>
+    INLINE void destroy(U *p) { p->~U(); }
+};
+#endif /* memory_sanitizer */
 
 namespace fs = std::filesystem;
 using Params = std::unordered_map<std::string, std::string>;
@@ -64,6 +108,7 @@ static auto _compute_pool(std::make_unique<ThreadPool>(initial_thread_count));
 static constexpr auto INFINITE = -1;
 static std::string g_out; /* global output buffer */
 
+
 namespace std
 {
     INLINE std::string to_string(std::string_view v)
@@ -117,10 +162,21 @@ namespace
 
     template <typename T> static INLINE std::string join(std::string_view sep, const T &v)
     {
+#if 1
         std::ostringstream s;
         for (const auto &elem : v)
             (s.tellp() ? s << sep : s) << elem;
         return s.str();
+#else
+        std::string s;
+        for (const auto &elem : v)
+        {
+            if (!s.empty())
+                s += sep;
+            s += elem;
+        }
+        return s;
+#endif
     }
 
     INLINE void output(std::ostream& out, const std::string& str)
@@ -199,7 +255,24 @@ namespace
     {
         virtual ~Option() = default;
         virtual void print(std::ostream &) const = 0;
-        virtual void set(std::string_view value) = 0;
+        virtual void set(const std::string& value) = 0;
+
+#if __has_feature(memory_sanitizer)
+        static void* operator new(size_t sz)
+        {
+            const auto p = malloc(sz);
+            if (!p)
+                throw std::bad_alloc();
+            __msan_unpoison(p, sz);
+            return p;
+        }
+
+        static void operator delete(void* p, size_t sz)
+        {
+            if (p)
+                free(p);
+        }
+#endif /* memory_sanitizer */
     };
 
     struct OptionBase : public Option
@@ -229,7 +302,7 @@ namespace
             }
             return "";
         }
-        void set(std::string_view value) override
+        void set(const std::string& value) override
         {
             if (value == "mtdf") _algo = search::Algorithm::MTDF;
             else if (value == "negascout") _algo = search::Algorithm::NEGASCOUT;
@@ -251,7 +324,7 @@ namespace
             out << "type check default " << std::boolalpha << _b;
         }
 
-        void set(std::string_view value) override
+        void set(const std::string& value) override
         {
             if (value == "true")
                 _b = true;
@@ -284,7 +357,7 @@ namespace
             }
         }
 
-        void set(std::string_view value) override
+        void set(const std::string& value) override
         {
             if (_p.normal)
             {
@@ -313,17 +386,21 @@ namespace
                 out << " default " << path;
         }
 
-        void set(std::string_view value) override
+        void set(const std::string& value) override
         {
-            cython_wrapper::call(search::Context::_set_syzygy_path, std::string(value));
+            cython_wrapper::call(search::Context::_set_syzygy_path, value);
         }
     };
 } /* namespace */
 
 class UCI
 {
+#if __has_feature(memory_sanitizer)
+    using Arguments = std::vector<std::string_view, unpoison_allocator<std::string_view>>;
+#else
     using Arguments = std::vector<std::string_view>;
-    using EngineOptions = std::map<std::string, std::shared_ptr<Option>>;
+#endif
+    using EngineOptions = std::map<std::string, std::unique_ptr<Option>>;
 
     static constexpr int max_depth = PLY_MAX;
 
@@ -354,18 +431,18 @@ public:
         if (_ponder)
             ensure_background_thread();
 
-        _options.emplace("algorithm", std::make_shared<OptionAlgo>(_algorithm));
-        _options.emplace("bestbookmove", std::make_shared<OptionBool>("BestBookMove", _best_book_move));
-        _options.emplace("debug", std::make_shared<OptionBool>("Debug", _debug));
-        _options.emplace("ownbook", std::make_shared<OptionBool>("OwnBook", _use_opening_book));
-        _options.emplace("ponder", std::make_shared<OptionBool>("Ponder", _ponder));
+        _options.emplace("algorithm", std::make_unique<OptionAlgo>(_algorithm));
+        _options.emplace("bestbookmove", std::make_unique<OptionBool>("BestBookMove", _best_book_move));
+        _options.emplace("debug", std::make_unique<OptionBool>("Debug", _debug));
+        _options.emplace("ownbook", std::make_unique<OptionBool>("OwnBook", _use_opening_book));
+        _options.emplace("ponder", std::make_unique<OptionBool>("Ponder", _ponder));
 
     #if USE_ENDTABLES
-        _options.emplace("syzygypath", std::make_shared<OptionSyzygy>());
+        _options.emplace("syzygypath", std::make_unique<OptionSyzygy>());
     #endif /*USE_ENDTABLES */
 
         if (can_change_priority())
-            _options.emplace("highpriority", std::make_shared<OptionBool>("HighPriority", _high_priority));
+            _options.emplace("highpriority", std::make_unique<OptionBool>("HighPriority", _high_priority));
     }
 
     static bool output_expected() { return _output_expected.load(std::memory_order_relaxed); }
@@ -537,11 +614,11 @@ private:
 
     void refresh_options()
     {
-        for (auto p : _get_param_info())
+        for (const auto& p : _get_param_info())
         {
             auto name = p.first;
             /* option names are case insensitive, and can contain _single_ spaces */
-            _options[lowercase(name)] = std::make_shared<OptionParam>(p.first, p.second);
+            _options[lowercase(name)] = std::make_unique<OptionParam>(p.first, p.second);
         }
     }
 
@@ -642,17 +719,19 @@ static void INLINE output_info(std::ostream& out, const Info& info)
             int(info.knps * 1000),
             info.hashfull);
 
+        output(out, g_out);
+
         /* output PV */
         for (size_t i = 1; i < info.pv->size(); ++i)
         {
             auto& m = (*info.pv)[i];
             if (!m)
                 break;
-            g_out += " ";
-            g_out += m.uci();
+            const auto uci = m.uci();
+            out.write(" ", 1);
+            out.write(uci.data(), uci.size());
         }
 
-        output(out, g_out);
     }
 }
 
@@ -698,6 +777,10 @@ void UCI::run()
     while (true)
     {
         std::getline(std::cin, cmd);
+
+#if __has_feature(memory_sanitizer)
+        __msan_unpoison(cmd.data(), cmd.length());
+#endif
         if (std::cin.fail() || std::cin.eof())
         {
             stop();
@@ -1129,20 +1212,23 @@ INLINE score_t UCI::search(F set_time_limit)
 #if NATIVE_BOOK && USE_BOOK_HINT
     if (_ply_count < 12)
         ctxt._prev = search_book(false /* do not validate */);
-#endif /* USE_BOOK_HINT */
+#endif /* NATIVE_BOOK && USE_BOOK_HINT */
 
     return search::iterative(ctxt, _tt, _depth + 1);
 }
 
 void UCI::setoption(const Arguments &args)
 {
+    static const std::string_view NAME("name");
+    static const std::string_view VALUE("value");
+
     Arguments name, value, *acc = nullptr;
 
     for (const auto &a : std::ranges::subrange(args.begin() + 1, args.end()))
     {
-        if (a == "name")
+        if (a.compare(NAME) == 0)
             acc = &name;
-        else if (a == "value")
+        else if (a.compare(VALUE) == 0)
             acc = &value;
         else if (acc)
             acc->emplace_back(a);
@@ -1182,9 +1268,15 @@ void UCI::uci()
     /* show available options */
     for (const auto &opt : _options)
     {
+#if true || __has_feature(memory_sanitizer)
+        std::cout << "option name ";
+        opt.second->print(std::cout);
+        std::cout << std::endl;
+#else
         std::ostringstream opts;
         opt.second->print(opts << "option name ");
         output<false>(opts.str());
+#endif
     }
     output("uciok");
 }

@@ -229,8 +229,10 @@ void _set_param(const std::string& name, int value, bool echo)
         const int HASH_MAX = int(TranspositionTable::max_hash_size());
         TranspositionTable::set_hash_size(std::max(std::min(value, HASH_MAX), HASH_MIN));
 
+    #if 0
         if (echo)
             std::cout << "info string " << name << "=" << TranspositionTable::get_hash_size() << "\n";
+    #endif
         return;
     }
     else if (name == "Threads" && value != SMP_CORES)

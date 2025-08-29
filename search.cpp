@@ -115,11 +115,13 @@ HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE);
     }
     if (ok)
     {
+#if 0
         std::ostringstream out;
         out << "set_hash_size: requested=" << MB << " new="
             << get_hash_size() << " free=" << mem_avail() / ONE_MEGABYTE;
 
         Context::log_message(LogLevel::DEBUG, out.str());
+#endif
     }
     else
     {

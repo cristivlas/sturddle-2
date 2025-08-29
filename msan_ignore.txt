@@ -1,0 +1,5 @@
+# Exclusion of all std library
+
+fun:_ZNSt*
+fun:_ZNKSt*
+
