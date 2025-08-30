@@ -771,14 +771,11 @@ namespace search
                     }
                     else if (next_ctxt->_retry_above_alpha == RETRY::Reduced)
                     {
-                        if (score > MATE_LOW)
-                        {
-                            ASSERT(!next_ctxt->is_retry());
-                            _retry_next = true;
+                        ASSERT(!next_ctxt->is_retry());
+                        _retry_next = true;
 
-                            if constexpr(EXTRA_STATS)
-                                ++_tt->_retry_reductions;
-                        }
+                        if constexpr(EXTRA_STATS)
+                            ++_tt->_retry_reductions;
                     }
                     else if (next_ctxt->_retry_above_alpha == RETRY::PVS && score < _beta)
                     {

@@ -591,10 +591,12 @@ static INLINE int mate_distance(score_t score, const search::PV &pv)
 /** Info sent to the GUI. */
 struct Info : public search::IterationInfo
 {
-    bool brief = false;
+    static constexpr auto TIME_LOW = 1; /* millisec */
+
     const int eval_depth;
     const int hashfull;
     const int iteration;
+    const bool brief;
     const search::PV* pv;
     static search::PV no_pv;
 
@@ -603,15 +605,9 @@ struct Info : public search::IterationInfo
         , eval_depth(ctxt.get_tt()->_eval_depth)
         , hashfull(search::TranspositionTable::usage() * 10)
         , iteration(ctxt.iteration())
-        , pv(&no_pv)
-    {
-        constexpr auto TIME_LOW = 1; /* millisec */
-
-        brief = milliseconds < TIME_LOW || !ctxt._best_move;
-
-        if (!brief)
-            pv = &ctxt.get_pv();
-    }
+        , brief(milliseconds < TIME_LOW || !ctxt._best_move)
+        , pv(brief ? &no_pv : pv = &ctxt.get_pv())
+    {}
 };
 
 search::PV Info::no_pv;
