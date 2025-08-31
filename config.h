@@ -279,9 +279,9 @@ DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,      15)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    124,   20,     200)
 
 #if WITH_NNUE
-DECLARE_VALUE(  NNUE_BLEND_PERCENT,                  75,   50,     100)
+DECLARE_VALUE(  NNUE_BLEND_PERCENT,                  82,   50,     100)
 DECLARE_VALUE(  NNUE_EVAL_TERM,                     502,  450,     600)
-DECLARE_VALUE(  NNUE_MAX_EVAL,                      452,  300,     600)
+DECLARE_VALUE(  NNUE_MAX_EVAL,                      459,  400,     600)
 #endif /* WITH_NNUE */
 
 /* is_null_move_ok */
