@@ -24,7 +24,7 @@ ACCUMULATOR_SIZE = 1280
 ATTN_FAN_OUT = 32
 POOL_SIZE = 8
 
-Q_SCALE = 1024
+Q_SCALE = 64
 # Quantization range: use int16_t with Q_SCALE, prevent overflow
 # 64 squares + (16 + 16) occupancy + 1 side-to-move + 1 bias == 98
 
@@ -359,8 +359,8 @@ def write_weigths(args, model, indent):
                         print(f'\n{" " * 2 * indent}', end='')
                     else:
                         print(f'{" " * (indent - 1)}', end='')
-                #print(f'{weights[i][j]:12.8f},', end='')
-                print(f'{float(weights[i][j]).hex()}f,', end='')
+                print(f'{weights[i][j]:12.8f},', end='')
+                #print(f'{float(weights[i][j]).hex()}f,', end='')
             if cols > 1:
                 print()
             print(f'{" " * indent}}}, /* {i} */')
@@ -374,8 +374,8 @@ def write_weigths(args, model, indent):
                 if i:
                     print()
                 print(f'{" " * 2 *indent}', end='')
-            #print(f'{biases[i]:12.8f},', end='')
-            print(f'{float(biases[i]).hex()}f,', end='')
+            print(f'{biases[i]:12.8f},', end='')
+            #print(f'{float(biases[i]).hex()}f,', end='')
         print('\n};')
 
 
@@ -465,8 +465,8 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             # Convert to win probability: -1->0.0, 0->0.5, 1->1.0
             y_outcome = (y_outcome + 1.0) / 2.0
 
-            smoothing = 0.05
-            y_outcome = y_outcome * (1 - smoothing) + 0.5 * smoothing
+            SMOOTHING = 0.01
+            y_outcome = y_outcome * (1 - SMOOTHING) + 0.5 * SMOOTHING
 
             # Combine both targets into a single tensor
             y_combined = tf.concat([y_eval, y_outcome], axis=1)  # Shape: (batch_size, 2)
@@ -623,6 +623,7 @@ def load_model(path):
         'adaptive_loss': None,
         'combined_loss': None,
         'chess_move_loss': None,
+        'compute_prob_loss': None,
         'scaled_sparse_categorical_crossentropy': None,
         'top': None,
         'top_3': None,

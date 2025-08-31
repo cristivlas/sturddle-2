@@ -64,7 +64,7 @@ namespace nnue
     using input_t = int16_t;
 
     constexpr auto POOL_STRIDE = Vec8s::size();
-    constexpr int QSCALE = 1024;
+    constexpr int QSCALE = 64;
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;

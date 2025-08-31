@@ -113,7 +113,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 /* Experimental */
 #define USE_BOOK_HINT                       false
-#define USE_ROOT_MOVES                      false
+#define USE_ROOT_MOVES                      true
 
 #define USE_ENDTABLES                       false
 
