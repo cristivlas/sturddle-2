@@ -110,6 +110,12 @@ namespace nnue
 
 
     template <typename V>
+    INLINE bool all_zero(V v)
+    {
+        return !horizontal_or(v);
+    }
+
+    template <typename V>
     INLINE Vec16s horizontal_add(const V (&v)[16])
     {
         return Vec16s(
@@ -117,6 +123,13 @@ namespace nnue
             horizontal_add_x(v[4]), horizontal_add_x(v[5]), horizontal_add_x(v[6]), horizontal_add_x(v[7]),
             horizontal_add_x(v[8]), horizontal_add_x(v[9]), horizontal_add_x(v[10]),horizontal_add_x(v[11]),
             horizontal_add_x(v[12]),horizontal_add_x(v[13]),horizontal_add_x(v[14]),horizontal_add_x(v[15]));
+    }
+
+#if !__ARM__ /* Vec32s not supported on NEON */
+    template <>
+    INLINE bool all_zero<Vec32s>(Vec32s v)
+    {
+        return !horizontal_or(v.get_high() | v.get_low());
     }
 
     INLINE Vec32s horizontal_add(const Vec32s (&v)[32])
@@ -131,22 +144,11 @@ namespace nnue
             horizontal_add_x(v[24]), horizontal_add_x(v[25]), horizontal_add_x(v[26]), horizontal_add_x(v[27]),
             horizontal_add_x(v[28]), horizontal_add_x(v[29]), horizontal_add_x(v[30]), horizontal_add_x(v[31]));
     }
+#endif /* !__ARM__ */
 
     INLINE Vector horizontal_add(const Vector (&v)[1])
     {
         return horizontal_add(v[0]);
-    }
-
-    template <typename V>
-    INLINE bool all_zero(V v)
-    {
-        return !horizontal_or(v);
-    }
-
-    template <>
-    INLINE bool all_zero<Vec32s>(Vec32s v)
-    {
-        return !horizontal_or(v.get_high() | v.get_low());
     }
 
     template <int N> INLINE void load_partial(Vector& v, const float* p)
