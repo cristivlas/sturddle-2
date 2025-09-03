@@ -169,7 +169,7 @@ if __name__ == '__main__':
     exclude_args = ' '.join([f'--exclude-module {mod}' for mod in exclude_modules])
 
     # run PyInstaller
-    if run_cmd(f'{installer} {script} -p . --onefile --distpath {OUT_DIR} {" ".join(libs)} {data} {exclude_args} --icon chess.ico'):
+    if run_cmd(f'{installer} {script} -p . --hide-console hide-early --onefile --distpath {OUT_DIR} {" ".join(libs)} {data} {exclude_args} --icon chess.ico'):
         print('pyinstaller failed')
         sys.exit(-2)
 
@@ -178,7 +178,7 @@ if __name__ == '__main__':
     import chess_engine
 
     MAIN = os.path.join(OUT_DIR, 'main' if args.native_uci else 'sturddle')
-    NAME = f'sturddle-{".".join(chess_engine.__build__[:2])}'
+    NAME = f'sturddle-{".".join(chess_engine.__build__[:3])}'
     DGST = os.path.join(OUT_DIR, f'{NAME}-sha256.txt')
     NAME = os.path.join(OUT_DIR, NAME)
     if is_windows():

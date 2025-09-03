@@ -118,7 +118,14 @@ def _hide_console():
         # Make an exception and show the window if started from explorer.exe.
         if p and p.name().lower() != 'explorer.exe':
             import ctypes
-            ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
+            import sys
+
+            ctypes.windll.kernel32.FreeConsole()
+
+            sys.stdout = open(os.devnull, 'w') if not sys.stdout else sys.stdout
+            sys.stderr = open(os.devnull, 'w') if not sys.stderr else sys.stderr
+
+_hide_console()
 
 def bye():
     os._exit(0)
@@ -130,8 +137,8 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--separate-logs', action='store_true')
     parser.add_argument('-v', '--verbose', action='store_true', help='enable verbose logging')
     args = parser.parse_args()
+
     _configure_logging(args)
-    _hide_console()
 
     engine = load_engine()
     assert engine, 'Failed to load engine.'

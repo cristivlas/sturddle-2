@@ -1318,7 +1318,8 @@ _tb_init()
 
 __major__   = 2
 __minor__   = 3
-__build__   = [str(__major__), f'{int(__minor__):d}', timestamp().decode()]
+__patch__   = 1
+__build__   = [str(__major__), f'{int(__minor__):d}', str(__patch__), timestamp().decode()]
 
 
 def version():
