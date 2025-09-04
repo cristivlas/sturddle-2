@@ -372,7 +372,9 @@ cdef class BoardState:
 # ---------------------------------------------------------------------
 # context.h
 # ---------------------------------------------------------------------
-cdef extern from 'context.h' nogil:
+cdef extern from 'context.h':
+
+    cdef bool _ensure_console() nogil
 
     cdef void _uci_loop(unordered_map[string, string]) noexcept nogil
 
@@ -1318,11 +1320,20 @@ _tb_init()
 
 __major__   = 2
 __minor__   = 3
-__build__   = [str(__major__), f'{int(__minor__):d}', timestamp().decode()]
+__patch__   = 1
+__build__   = [str(__major__), f'{int(__minor__):d}', str(__patch__), timestamp().decode()]
 
 
 def version():
     return '.'.join(__build__)
+
+
+def ensure_console():
+    if _ensure_console():
+        # reopen C runtime file descriptors to console device
+        sys.stdin  = open("CONIN$", "r")
+        sys.stdout = open("CONOUT$", "w", buffering=1)
+        sys.stderr = open("CONOUT$", "w", buffering=1)
 
 
 # ---------------------------------------------------------------------

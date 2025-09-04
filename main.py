@@ -102,43 +102,48 @@ def _configure_logging(args):
     level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(level=level, filename=filename, format=format)
 
+
 '''
 Workaround for --onefile executable built with PyInstaller:
 hide the console if not running from a CMD prompt or Windows Terminal.
 
 PyInstaller 6.9.0 has --hide-console, not available in 5.7.0
 '''
-def _hide_console():
+def manage_console():
     # Running under Windows, but not from under CMD.EXE or Windows Terminal (PowerShell)?
     if sysconfig.get_platform().startswith('win') and all(
         (v not in os.environ) for v in ['PROMPT', 'WT_SESSION']
         ):
+
+        # When running under the PyInstaller bootloader, check the grandparent process
         # Grandparent is None if running under Python interpreter in CMD.
         p = psutil.Process().parent().parent()
-        # Make an exception and show the window if started from explorer.exe.
-        if p and p.name().lower() != 'explorer.exe':
-            import ctypes
-            ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
-
-def bye():
-    os._exit(0)
+        if p:
+            if p.name().lower() in ['explorer.exe', 'powershell.exe']:
+                engine.ensure_console()
+            else:
+                import ctypes
+                ctypes.windll.kernel32.FreeConsole()
 
 if __name__ == '__main__':
-    atexit.register(bye)
     parser = argparse.ArgumentParser(description='Sturddle Chess Engine')
     parser.add_argument('-l', '--logfile', default='sturddle.log')
     parser.add_argument('-s', '--separate-logs', action='store_true')
     parser.add_argument('-v', '--verbose', action='store_true', help='enable verbose logging')
     args = parser.parse_args()
+
     _configure_logging(args)
-    _hide_console()
 
     engine = load_engine()
     assert engine, 'Failed to load engine.'
     try:
+        manage_console()
         engine.uci('Sturddle', debug=args.verbose)
     except KeyboardInterrupt:
         pass
     except Exception as e:
         print(e)
         logging.exception('UCI')
+        os._exit(-1)
+
+    os._exit(0)

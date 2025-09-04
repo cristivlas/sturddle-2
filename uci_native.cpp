@@ -322,6 +322,33 @@ namespace
     };
 } /* namespace */
 
+
+/* Return true if a console is allocated. */
+bool _ensure_console()
+{
+#if _WIN32
+    if (!GetConsoleWindow())
+    {
+        if (!AllocConsole())
+        {
+            log_error(std::format("Could not allocate console, error: {}", GetLastError()));
+        }
+        else
+        {
+            // Rebind standard handles
+            FILE* fp = nullptr;
+            freopen_s(&fp, "CONIN$",  "r", stdin);
+            freopen_s(&fp, "CONOUT$", "w", stdout);
+            freopen_s(&fp, "CONOUT$", "w", stderr);
+
+            return true;
+        }
+    }
+#endif /* _WIN32 */
+    return false;
+}
+
+
 class UCI
 {
     using Arguments = std::vector<std::string_view>;

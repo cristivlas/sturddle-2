@@ -151,7 +151,7 @@ if platform.startswith('win'):
             '-Wno-nan-infinity-disabled',
         ]
         if not environ.get('BUILD_DEBUG', None):
-            args += [ '-Ofast ']
+            args += [ '-Ofast']
 
     link += ['/LTCG:OFF']  # MSFT linker args
 else:
