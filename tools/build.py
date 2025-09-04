@@ -172,7 +172,10 @@ if __name__ == '__main__':
     # run PyInstaller
     py_installer_cmd = f'{installer} {script} -p . --onefile --distpath {OUT_DIR} {" ".join(libs)} {data} {exclude_args} --icon chess.ico'
     if is_windows():
-        py_installer_cmd += ' --hide-console hide-early --manifest manifest.xml'
+        # --hide-console appears to be problematic on Windows 10.
+        # py_installer_cmd += ' --hide-console hide-early --manifest manifest.xml'
+        # https://learn.microsoft.com/en-us/windows/console/console-allocation-policy
+        py_installer_cmd += ' --manifest manifest.xml'
 
     if run_cmd(py_installer_cmd):
         print('pyinstaller failed')
