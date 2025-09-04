@@ -119,8 +119,7 @@ def manage_console():
         # Grandparent is None if running under Python interpreter in CMD.
         p = psutil.Process().parent().parent()
         if p:
-            # Make an exception and show the window if started from explorer.exe.
-            if p.name().lower() == 'explorer.exe':
+            if p.name().lower() in ['explorer.exe', 'powershell.exe']:
                 engine.ensure_console()
             else:
                 import ctypes

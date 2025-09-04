@@ -1716,7 +1716,7 @@ namespace search
 score_t eval(const std::string& epd, bool as_side_to_move, int depth = 0, int millis = -1);
 
 /*** uci_native.cpp ***/
-void _ensure_console();
+bool _ensure_console();
 
 /* C++ implementation of UCI protocol if NATIVE_UCI is defined,
  * or just a stub otherwise (and the uci.pyx impl is used instead).

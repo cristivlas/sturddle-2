@@ -323,7 +323,8 @@ namespace
 } /* namespace */
 
 
-void _ensure_console()
+/* Return true if a console is allocated. */
+bool _ensure_console()
 {
 #if _WIN32
     if (!GetConsoleWindow())
@@ -339,9 +340,12 @@ void _ensure_console()
             freopen_s(&fp, "CONIN$",  "r", stdin);
             freopen_s(&fp, "CONOUT$", "w", stdout);
             freopen_s(&fp, "CONOUT$", "w", stderr);
+
+            return true;
         }
     }
 #endif /* _WIN32 */
+    return false;
 }
 
 
