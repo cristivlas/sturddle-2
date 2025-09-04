@@ -372,7 +372,9 @@ cdef class BoardState:
 # ---------------------------------------------------------------------
 # context.h
 # ---------------------------------------------------------------------
-cdef extern from 'context.h' nogil:
+cdef extern from 'context.h':
+
+    cdef void _ensure_console() nogil
 
     cdef void _uci_loop(unordered_map[string, string]) noexcept nogil
 
@@ -1324,6 +1326,10 @@ __build__   = [str(__major__), f'{int(__minor__):d}', str(__patch__), timestamp(
 
 def version():
     return '.'.join(__build__)
+
+
+def ensure_console():
+    _ensure_console()
 
 
 # ---------------------------------------------------------------------

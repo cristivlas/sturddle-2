@@ -1712,22 +1712,22 @@ namespace search
 } /* namespace search */
 
 
+/*** Export misc. stuff to Cython ***/
 score_t eval(const std::string& epd, bool as_side_to_move, int depth = 0, int millis = -1);
 
+/*** uci_native.cpp ***/
+void _ensure_console();
 
 /* C++ implementation of UCI protocol if NATIVE_UCI is defined,
  * or just a stub otherwise (and the uci.pyx impl is used instead).
- * See uci_native.cpp for details.
  */
 void uci_loop(std::unordered_map<std::string, std::string> params);
 
-
-/* Make uci_loop accessible from Python */
+/* Call uci_loop from Python in a nogil scope */
 INLINE void _uci_loop(std::unordered_map<std::string, std::string> params) noexcept
 {
     cython_wrapper::call_nogil(uci_loop, params);
 }
-
 
 namespace nnue
 {
