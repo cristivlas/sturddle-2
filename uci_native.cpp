@@ -22,7 +22,9 @@ using Params = std::unordered_map<std::string, std::string>;
 #include <string_view>
 #include <sstream>
 #include <vector>
-#if !_WIN32
+#if _WIN32
+  #include <tlhelp32.h>
+#else
   #include <unistd.h>
   #include <sys/resource.h>
 #endif /* !_WIN32 */
@@ -313,6 +315,33 @@ namespace
 
 
 #if _WIN32
+/*
+ * Helpers for manage_console (see below).
+ */
+static DWORD get_parent_pid(DWORD processId)
+{
+    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnapshot == INVALID_HANDLE_VALUE)
+        return 0;
+
+    auto cleanup = on_scope_exit([hSnapshot]() {
+        CloseHandle(hSnapshot);
+    });
+
+    PROCESSENTRY32 pe32 = {};
+    pe32.dwSize = sizeof(PROCESSENTRY32);
+
+    if (!Process32First(hSnapshot, &pe32))
+        return 0;
+
+    do {
+        if (pe32.th32ProcessID == processId)
+            return pe32.th32ParentProcessID;
+    } while (Process32Next(hSnapshot, &pe32));
+
+    return 0;
+}
+
 static bool ensure_console()
 {
     if (!GetConsoleWindow())
@@ -346,18 +375,25 @@ static bool ensure_console()
  *
  * On older Windows versions: call FreeConsole if console detected in chess GUI mode.
  *
- * Return true if a console needs to be allocated.
+ * Return true if a console was allocated.
  */
 static bool manage_console()
 {
-    /* use STDIN handle to detect how the engine is being run */
+    /* Use STDIN handle to detect how the engine is being run. */
     const HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
 
     DWORD mode = 0;
+
     if (GetConsoleMode(h, &mode))
     {
-        /* Looks like engine got started from a command line */
-        log_debug(std::format("STDIN is in console mode: {:#x}", mode));
+        if (auto wnd = GetConsoleWindow())
+        {
+            DWORD consolePID = 0;
+            GetWindowThreadProcessId(wnd, &consolePID);
+
+            const auto ourPID = GetProcessId(GetCurrentProcess());
+            return (ourPID == consolePID) || get_parent_pid(ourPID) == consolePID;
+        }
     }
     else if (GetFileType(h) == FILE_TYPE_PIPE)
     {
