@@ -336,7 +336,15 @@ static DWORD get_parent_pid(DWORD processId)
 
     do {
         if (pe32.th32ProcessID == processId)
+        {
+            std::string name(pe32.szExeFile);
+
+            // Running as a python script? bail
+            if (lowercase(name).starts_with("python"))
+                return 0;
+
             return pe32.th32ParentProcessID;
+        }
     } while (Process32Next(hSnapshot, &pe32));
 
     return 0;
