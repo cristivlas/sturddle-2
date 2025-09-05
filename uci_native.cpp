@@ -10,14 +10,6 @@
 namespace fs = std::filesystem;
 using Params = std::unordered_map<std::string, std::string>;
 
-/** Raise RuntimeError, and let Python handle it... */
-static void raise_runtime_error(const char* err)
-{
-    PyGILState_STATE with_gil(PyGILState_Ensure());
-    PyErr_SetString(PyExc_RuntimeError, err);
-    PyGILState_Release(with_gil);
-}
-
 #if NATIVE_UCI /* requires compiler with C++20 support */
 #include <cmath>
 #include <format>
@@ -147,12 +139,9 @@ namespace
 
     /** Raise ValueError exception, and exit with error (see dtor of GIL_State) */
     template <typename... Args>
-    void raise_value_error(std::format_string<Args...> fmt, Args&&... args)
+    [[noreturn]] void raise_value_error(std::format_string<Args...> fmt, Args&&... args)
     {
-        const auto err = std::format(fmt, std::forward<Args>(args)...);
-        cython_wrapper::GIL_State with_gil;
-        log_error(err);
-        PyErr_SetString(PyExc_ValueError, err.c_str());
+        throw std::invalid_argument(std::format(fmt, std::forward<Args>(args)...));
     }
 
     /*
@@ -177,7 +166,6 @@ namespace
                 return 1;
             raise_value_error("to_int({}): {}", v, e.what());
         }
-        return -1;
     }
 
 
@@ -357,8 +345,10 @@ static bool ensure_console()
  * (https://learn.microsoft.com/en-us/windows/console/console-allocation-policy).
  *
  * On older Windows versions: call FreeConsole if console detected in chess GUI mode.
+ *
+ * Return true if a console needs to be allocated.
  */
-static void manage_console()
+static bool manage_console()
 {
     /* use STDIN handle to detect how the engine is being run */
     const HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
@@ -386,15 +376,17 @@ static void manage_console()
         /* The engine was likely started by the user double clicking in explorer.exe */
         /* or in some other file manager. The user likely wants to test the engine by */
         /* entering UCI commands manually, so make sure that there is a console. */
-        ensure_console();
+        return ensure_console();
     }
+    return false;
 }
 
 #else
 
 /* No action needed on POSIX. TODO: Test on Mac */
-static void manage_console()
+static bool manage_console()
 {
+    return false;
 }
 #endif /* _WIN32 */
 
@@ -1260,7 +1252,7 @@ void UCI::uci()
 
 void uci_loop(Params params)
 {
-    manage_console();
+    const auto console_allocated = manage_console();
 
     const auto name = params["name"];
     const auto version = params["version"];
@@ -1290,7 +1282,13 @@ void uci_loop(Params params)
     if (!err.empty())
     {
         search::Context::log_message(LogLevel::ERROR, err);
-        raise_runtime_error(err.c_str());
+        std::cerr << err << std::endl;
+
+        if (console_allocated)
+        {
+            std::cerr << "Press Enter to close this console... ";
+            std::cin.get();
+        }
     }
 }
 
