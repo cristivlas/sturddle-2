@@ -169,14 +169,15 @@ namespace
         {
             return std::stoi(std::string(v));
         }
-        catch(const std::exception&)
+        catch(const std::exception& e)
         {
             if (v == "false")
                 return 0;
             if (v == "true")
                 return 1;
-            throw;
+            raise_value_error("to_int({}): {}", v, e.what());
         }
+        return -1;
     }
 
 
