@@ -98,6 +98,7 @@ if __name__ == '__main__':
         if is_windows() and 'clang-cl.exe' not in cl_exe.lower():
             if arch:
                 if arch.endswith('_VNNI'):
+                    print('Skipping. Compiler is NOT clang!')
                     continue
                 arch_flags = f'/arch:{arch}'
         # otherwise assume Clang or GCC on POSIX

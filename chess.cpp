@@ -106,7 +106,7 @@ namespace chess
         if (is_none())
             return "none";
 
-        return square_name(from_square()) + square_name(to_square()) + PIECE_SYMBOL[promotion()];
+        return square_name(from_square()) + square_name(to_square()) + PIECE_SYMBOL[0][promotion()];
     }
 
 

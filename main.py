@@ -4,13 +4,9 @@ Alternative engine bootloader that uses the native UCI implementation.
 '''
 # import everything for the benefit of pyinstaller
 import argparse
-import atexit
 import importlib
 import logging
-# import math
 import os
-import sysconfig
-# import time
 
 import chess
 import chess.pgn

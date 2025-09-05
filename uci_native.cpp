@@ -880,11 +880,11 @@ INLINE const auto &next(const T &v, size_t &i)
 void UCI::debug()
 {
 #if _WIN32
-    bool use_unicode = false; /* cmd does not support unicode */
+    const bool use_unicode = (_isatty(_fileno(stdout)) && GetConsoleOutputCP() == CP_UTF8);
 #else
-    bool use_unicode = true;
+    const bool use_unicode = true;
 #endif
-    cython_wrapper::call(search::Context::_print_state, _buf._state, use_unicode);
+    search::Context::print_board(std::cout, _buf._state, use_unicode);
     output(std::format("fen: {}", search::Context::epd(_buf._state)));
     output(std::format("hash: {}", _buf._state._hash));
     size_t history_size = 0;

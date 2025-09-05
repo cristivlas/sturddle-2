@@ -409,6 +409,8 @@ namespace search
         bool        on_next(int64_t*);
         INLINE int  piece_count() const { return state().piece_count(); }
 
+        static void print_board(std::ostream&, const State&, bool unicode);
+
         void        reset(bool force_reorder_moves = true, bool clear_best_move = true);
         int         repeated_count(const State&) const;
 
@@ -461,15 +463,15 @@ namespace search
          */
         static PyObject*    _engine; /* searcher instance */
 
-        static bool         (*_book_init)(const std::string&);
-        static BaseMove     (*_book_lookup)(const State&, bool);
+        static bool         (*_book_init)(const std::string&); /* DEPRECATED with NATIVE_BOOK */
+        static BaseMove     (*_book_lookup)(const State&, bool); /* DEPRECATED with NATIVE_BOOK */
         static std::string  (*_epd)(const State&);
         static void         (*_log_message)(int, const std::string&, bool);
         static void         (*_on_iter)(PyObject*, Context*, const IterationInfo*);
         static void         (*_on_move)(PyObject*, const std::string&, int);
         static void         (*_on_next)(PyObject*, int64_t);
         static std::string  (*_pgn)(Context*);
-        static void         (*_print_state)(const State&, bool unicode);
+        static void         (*_print_state)(const State&, bool unicode); /* DEPRECATED, use print_board */
         static void         (*_report)(PyObject*, std::vector<Context*>&);
         static void         (*_set_syzygy_path)(const std::string&);
         static bool         (*_tb_probe_wdl)(const State&, int*);

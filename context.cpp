@@ -1176,6 +1176,41 @@ namespace search
     }
 
 
+    static const char* piece_symbol(chess::PieceType type, chess::Color color, bool unicode)
+    {
+        if (unicode)
+            return chess::UNICODE_PIECE_SYMBOLS[color][type];
+        else
+            return chess::PIECE_SYMBOL[color][type];
+    }
+
+
+    /* static */
+    void Context::print_board(std::ostream& out, const State& state, bool unicode)
+    {
+        for (int rank = 7; rank >= 0; --rank)
+        {
+            out << rank + 1 << ' ';
+
+            for (int file = 0; file < 8; ++file)
+            {
+                const auto square = Square(rank * 8 + file);
+                if (const auto piece_type = state.piece_type_at(square))
+                {
+                    const auto piece_color = state.piece_color_at(square);
+                    out << piece_symbol(piece_type, piece_color, unicode) << ' ';
+                }
+                else
+                {
+                    out << ". ";
+                }
+            }
+            out << "\n";
+        }
+        out << "  a b c d e f g h" << std::endl;
+    }
+
+
     /*
      * Reinitialize top context at the start of a new iteration.
      */

@@ -382,7 +382,15 @@ namespace chess
         PieceType::KING,
     };
 
-    constexpr const char* PIECE_SYMBOL[] = { "", "p", "n", "b", "r", "q", "k" };
+    constexpr const char* PIECE_SYMBOL[2][7] = {
+        { "", "p", "n", "b", "r", "q", "k" },
+        { "", "P", "N", "B", "R", "Q", "K" },
+    };
+
+    constexpr const char* UNICODE_PIECE_SYMBOLS[2][7] = {
+        {"", "♟", "♞", "♝", "♜", "♛", "♚"},
+        {"", "♙", "♘", "♗", "♖", "♕", "♔"},
+    };
 
     enum Color : uint8_t
     {
