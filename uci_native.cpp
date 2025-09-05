@@ -323,10 +323,10 @@ namespace
 } /* namespace */
 
 
-/* Return true if a console is allocated. */
-bool _ensure_console()
-{
+
 #if _WIN32
+static bool ensure_console()
+{
     if (!GetConsoleWindow())
     {
         if (!AllocConsole())
@@ -344,9 +344,35 @@ bool _ensure_console()
             return true;
         }
     }
-#endif /* _WIN32 */
     return false;
 }
+
+
+static void manage_console()
+{
+    const HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+
+    DWORD mode = 0;
+    if (GetConsoleMode(h, &mode))
+    {
+        log_info(std::format("STDIN in console mode: {}", mode));
+    }
+    else if (GetFileType(h) == FILE_TYPE_PIPE)
+    {
+        log_info("STDIN is a pipe");
+    }
+    else
+    {
+        ensure_console();
+    }
+}
+
+#else
+
+static void manage_console()
+{
+}
+#endif /* _WIN32 */
 
 
 class UCI
@@ -1210,6 +1236,8 @@ void UCI::uci()
 
 void uci_loop(Params params)
 {
+    manage_console();
+
     const auto name = params["name"];
     const auto version = params["version"];
     const auto debug = params["debug"];
