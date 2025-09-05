@@ -95,7 +95,7 @@ if __name__ == '__main__':
         print('*********************************************************')
 
         arch_flags = ''
-        if is_windows() and not cl_exe.lower().startswith('clang-cl'):
+        if is_windows() and 'clang-cl.exe' not in cl_exe.lower():
             if arch:
                 if arch.endswith('_VNNI'):
                     continue

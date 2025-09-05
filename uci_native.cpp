@@ -323,7 +323,6 @@ namespace
 } /* namespace */
 
 
-
 #if _WIN32
 static bool ensure_console()
 {
@@ -348,27 +347,51 @@ static bool ensure_console()
 }
 
 
+/*
+ * An improved solution for: https://github.com/cristivlas/sturddle-2/issues/11
+ *
+ * Currently the engine runs from under the PyInstaller bootloader, and, under some
+ * GUIs such as Shredder, an extra console pops up. The solution for recent Windows 11
+ * builds is to use the "detached" setting in a manifest file at build time
+ * (https://learn.microsoft.com/en-us/windows/console/console-allocation-policy).
+ *
+ * On older Windows versions: call FreeConsole if console detected in chess GUI mode.
+ */
 static void manage_console()
 {
+    /* use STDIN handle to detect how the engine is being run */
     const HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
 
     DWORD mode = 0;
     if (GetConsoleMode(h, &mode))
     {
-        log_info(std::format("STDIN in console mode: {}", mode));
+        /* Looks like engine got started from a command line */
+        log_debug(std::format("STDIN is in console mode: {:#x}", mode));
     }
     else if (GetFileType(h) == FILE_TYPE_PIPE)
     {
-        log_info("STDIN is a pipe");
+        /* STDIN is attached to a pipe, assume it is running under a chess GUI. */
+        /* GUIs connect pipes to the engine's standard input and output to send */
+        /* UCI command and to read back responses. */
+
+        /* Do away with console window if detected. */
+        if (GetConsoleWindow())
+        {
+            FreeConsole();
+        }
     }
     else
     {
+        /* The engine was likely started by the user double clicking in explorer.exe */
+        /* or in some other file manager. The user likely wants to test the engine by */
+        /* entering UCI commands manually, so make sure that there is a console. */
         ensure_console();
     }
 }
 
 #else
 
+/* No action needed on POSIX. TODO: Test on Mac */
 static void manage_console()
 {
 }
