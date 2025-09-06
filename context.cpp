@@ -276,7 +276,7 @@ std::map<std::string, int> _get_params()
 
 #if WITH_NNUE
 
-constexpr int INPUTS_A = 897;
+constexpr int INPUTS_A = nnue::INPUTS;
 constexpr int INPUTS_B = 256;
 constexpr int HIDDEN_1A = 1280;
 constexpr int HIDDEN_1A_POOLED = HIDDEN_1A / nnue::POOL_STRIDE;
@@ -290,6 +290,8 @@ using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true>;
 using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2>;
 using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
 using EVALType = nnue::Layer<HIDDEN_3, 1>;
+
+/* Experimental */
 using LMOVEType = nnue::Layer<INPUTS_A, 4096, int16_t, nnue::QSCALE>;
 
 /*

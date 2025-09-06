@@ -63,8 +63,9 @@ namespace nnue
     using namespace chess;
     using input_t = int16_t;
 
+    constexpr int INPUTS = 1665;
     constexpr auto POOL_STRIDE = Vec8s::size();
-    constexpr int QSCALE = 1024;
+    constexpr int QSCALE = 512;
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
@@ -200,7 +201,7 @@ namespace nnue
     }
 
     template <typename T>
-    INLINE void one_hot_encode(const State& board, T (&encoding)[round_up<INPUT_STRIDE>(897)])
+    INLINE void one_hot_encode(const State& board, T (&encoding)[round_up<INPUT_STRIDE>(INPUTS)])
     {
         const auto& color_masks = board._occupied_co;
         int i = 63;
@@ -211,7 +212,10 @@ namespace nnue
             #pragma unroll 2
             for (const auto mask : color_masks)
             {
-                for_each_square_r((bb & mask), [&](Square j) { encoding[i - j] = 1; });
+                for_each_square_r((bb & mask), [&](Square j) {
+                    encoding[i - j] = 1;
+                    encoding[897 + i - square_mirror(j)] = 1; /* mirrored perspective */
+                });
                 i += 64;
             }
         }
@@ -282,7 +286,7 @@ namespace nnue
     {
         static constexpr int ROWS = I;
         static constexpr int COLS = O;
-        /* Round up to INPUT_STRIDE to deal with the 897 inputs. */
+        /* Round up to INPUT_STRIDE to deal with the odd number of inputs. */
         static constexpr int INPUTS = round_up<INPUT_STRIDE>(I);
         static constexpr int OUTPUTS = O;
 
@@ -540,6 +544,7 @@ namespace nnue
         {
             d[idx++] = piece_square_index(pt, col, sq);
             d[idx++] = mask_index(col, sq);
+            d[idx++] = 897 + piece_square_index(pt, col, Square(square_mirror(sq)));
         }
 
         INLINE bool needs_update(const State& state) const

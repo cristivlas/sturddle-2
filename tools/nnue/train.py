@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 '''
 **********************************************************************
-Trainer for the Sturddle Chess 2.3 engine's neural net.
+Trainer for the Sturddle Chess 2.4 engine's neural net.
 
 Copyright (c) 2023 - 2025 Cristian Vlasceanu.
 **********************************************************************
@@ -24,11 +24,12 @@ ACCUMULATOR_SIZE = 1280
 ATTN_FAN_OUT = 32
 POOL_SIZE = 8
 
-Q_SCALE = 1024
-# Quantization range: use int16_t with Q_SCALE, prevent overflow
-# 64 squares + (16 + 16) occupancy + 1 side-to-move + 1 bias == 98
+Q_SCALE = 512
 
-Q_MAX_A = 32767 / Q_SCALE / 98
+# Quantization range: use int16_t with Q_SCALE, prevent overflow
+# 64 squares + (16 + 16) occupancy + 1 side-to-move + 1 bias == 98 + 64 for mirrored (flip)
+
+Q_MAX_A = 32767 / Q_SCALE / 162
 Q_MIN_A = -Q_MAX_A
 
 # (8 pawns + 1 king) x 2 + 1 bias == 19
@@ -52,13 +53,13 @@ def configure_logging(args):
 
 def make_model(args, strategy):
     class CustomConstraint(tf.keras.constraints.Constraint):
-        def __init__(self, qmin, qmax, quantize=args.quantize):
+        def __init__(self, qmin, qmax, round=args.quantize_round):
             self.qmin = qmin
             self.qmax = qmax
-            self.quantize = quantize
+            self.round = round
 
         def __call__(self, w):
-            if self.quantize:
+            if self.round:
                 w = tf.round(w * Q_SCALE) / Q_SCALE
             return tf.clip_by_value(w, self.qmin, self.qmax)
 
@@ -129,9 +130,17 @@ def make_model(args, strategy):
 
         def call(self, packed):
             bitboards, turn = packed[:, :12], packed[:,-1:]
-
             f = tf.concat([tf_unpack_bits(bitboards), turn], axis=1)
             return tf.cast(f, tf.float32)
+
+    @tf.function
+    def vertical_flip_unpacked(unpacked_features):
+        """ Flip board vertically """
+        bitboards = unpacked_features[:, :768]
+        boards_reshaped = tf.reshape(bitboards, [-1, 12, 8, 8])
+        # Flip vertically: reverse only the rank dimension (axis 2)
+        flipped_boards = tf.reverse(boards_reshaped, axis=[2])
+        return tf.reshape(flipped_boards, [-1, 768])
 
     with strategy.scope():
         ACTIVATION = tf.keras.activations.relu
@@ -141,12 +150,14 @@ def make_model(args, strategy):
         input_layer = Input(shape=(13,), dtype=tf.uint64, name='input')
         unpack_layer = UnpackLayer(args.hot_encoding, name='unpack')(input_layer)
 
+        @tf.function
         def black_occupied_mask(x):
             mask = tf.zeros_like(x[:, :64])
             for i in range(0, 12, 2):
                 mask = tf.math.add(mask, x[:, i*64:(i+1)*64])
             return mask
 
+        @tf.function
         def white_occupied_mask(x):
             mask = tf.zeros_like(x[:, :64])
             for i in range(1, 12, 2):
@@ -157,8 +168,9 @@ def make_model(args, strategy):
         black_occupied = Lambda(black_occupied_mask, name='black')(unpack_layer)
         # Extract white occupation mask (summing white pieces' bitboards)
         white_occupied = Lambda(white_occupied_mask, name='white')(unpack_layer)
-
-        concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
+        # Flip vertically
+        flipped = Lambda(vertical_flip_unpacked, name='flipped')(unpack_layer)
+        concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied, flipped])
 
         constr_a = CustomConstraint(Q_MIN_A, Q_MAX_A)
         hidden_1a = Dense(
@@ -359,8 +371,10 @@ def write_weigths(args, model, indent):
                         print(f'\n{" " * 2 * indent}', end='')
                     else:
                         print(f'{" " * (indent - 1)}', end='')
-                #print(f'{weights[i][j]:12.8f},', end='')
-                print(f'{float(weights[i][j]).hex()}f,', end='')
+                if args.hex:
+                    print(f'{float(weights[i][j]).hex()}f,', end='')
+                else:
+                    print(f'{weights[i][j]:12.8f},', end='')
             if cols > 1:
                 print()
             print(f'{" " * indent}}}, /* {i} */')
@@ -374,8 +388,10 @@ def write_weigths(args, model, indent):
                 if i:
                     print()
                 print(f'{" " * 2 *indent}', end='')
-            #print(f'{biases[i]:12.8f},', end='')
-            print(f'{float(biases[i]).hex()}f,', end='')
+            if args.hex:
+                print(f'{float(biases[i]).hex()}f,', end='')
+            else:
+                print(f'{biases[i]:12.8f},', end='')
         print('\n};')
 
 
@@ -768,9 +784,10 @@ if __name__ == '__main__':
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-3, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
-        parser.add_argument('-q', '--quantize', action='store_true')
+        parser.add_argument('-q', '--quantize-round', action='store_true')
         parser.add_argument('--no-draw', action='store_true')
 
+        parser.add_argument('--hex', action='store_true', help='use with export function to output weights in hex format')
         parser.add_argument('--huber-delta', type=float, default=2.0)
         parser.add_argument('--loss-weight', type=float, default=1.0, help='weight for outcome loss vs eval loss (0=eval only, 1=outcome only)')
         parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
