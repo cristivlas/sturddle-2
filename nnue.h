@@ -199,21 +199,11 @@ namespace nnue
         return ((x + N - 1) / N) * N;
     }
 
-    template <size_t N, size_t... Is>
-    constexpr auto reverse_index_sequence(std::index_sequence<Is...>) {
-        return std::index_sequence<(N - 1 - Is)...>{};
-    }
-
-    template <size_t... Is>
-    inline Vec64c apply_permute64(const Vec64c& v, std::index_sequence<Is...>) {
-        return permute64<Is...>(v);
-    }
-
-    INLINE void one_hot_encode(const State& board, int16_t (&encoding)[round_up<INPUT_STRIDE>(897)])
+    template <typename T>
+    INLINE void one_hot_encode(const State& board, T (&encoding)[round_up<INPUT_STRIDE>(897)])
     {
         const auto& color_masks = board._occupied_co;
         int i = 63;
-
         #pragma unroll 6
         for (const auto bb : {
             board.kings, board.pawns, board.knights, board.bishops, board.rooks, board.queens })
@@ -221,27 +211,7 @@ namespace nnue
             #pragma unroll 2
             for (const auto mask : color_masks)
             {
-            #if true || INSTRSET < 8
                 for_each_square_r((bb & mask), [&](Square j) { encoding[i - j] = 1; });
-            #else
-                Vec64cb bits;
-                bits.load_bits(bb & mask);
-
-                // Convert bits to Vec64c (1 for true, 0 for false)
-                const Vec64c bytes = select(bits, Vec64c(1), Vec64c(0));
-
-                // Permute to reverse bit order (bit j -> position 63-j)
-                using ReverseIndices = decltype(reverse_index_sequence<64>(std::make_index_sequence<64>{}));
-                const Vec64c reversed = apply_permute64(bytes, ReverseIndices{});
-
-                // Convert to two sets of 32 int16_t
-                const Vec32s low  = extend_low(reversed);
-                const Vec32s high = extend_high(reversed);
-
-                low.store_a(&encoding[i - 63]);
-                high.store_a(&encoding[i - 31]);
-            #endif /* INSTRSET */
-
                 i += 64;
             }
         }
