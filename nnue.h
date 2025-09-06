@@ -221,7 +221,7 @@ namespace nnue
             #pragma unroll 2
             for (const auto mask : color_masks)
             {
-            #if INSTRSET < 8
+            #if true || INSTRSET < 8
                 for_each_square_r((bb & mask), [&](Square j) { encoding[i - j] = 1; });
             #else
                 Vec64cb bits;
