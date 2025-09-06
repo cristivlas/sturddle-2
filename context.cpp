@@ -1644,7 +1644,7 @@ namespace search
     #if USE_ROOT_MOVES
         if (order_root_moves && ctxt._time_limit >= ROOT_MOVES_MIN_TIME)
         {
-            int16_t input[nnue::round_up<INPUT_STRIDE>(INPUTS_A)] = {};
+            ALIGN int16_t input[nnue::round_up<INPUT_STRIDE>(INPUTS_A)] = {};
             nnue::one_hot_encode(ctxt.state(), input);
             nnue::predict_moves(input, model.L_M, moves_list);
 
