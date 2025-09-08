@@ -321,13 +321,27 @@ namespace chess
         to_mask &= ~(kings | our_pieces);
 
         /* Piece moves. */
-        if (const auto non_pawns = our_pieces & ~pawns & from_mask)
+        if (auto non_pawns = our_pieces & ~pawns & from_mask)
+        {
+            for (const auto sliders : {rooks, queens, bishops})
+            {
+                for_each_square_r(sliders & non_pawns, [&](Square from_square) {
+                    const auto moves = attacks_mask(from_square, occupied) & to_mask;
+                    for_each_square_r(moves, [&](Square to_square) {
+                        add_move(moves_list, from_square, to_square);
+                    });
+                });
+                non_pawns &= ~sliders;
+            }
+            ASSERT((non_pawns & ~(knights | kings)) == BB_EMPTY);
+
             for_each_square_r(non_pawns, [&](Square from_square) {
                 const auto moves = attacks_mask(from_square, occupied) & to_mask;
                 for_each_square_r(moves, [&](Square to_square) {
                     add_move(moves_list, from_square, to_square);
                 });
             });
+        }
 
         if (castling_rights && (kings & from_mask) != BB_EMPTY)
             generate_castling_moves(moves_list, to_mask);

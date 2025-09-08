@@ -46,6 +46,16 @@
   #define INLINE inline
 #endif /* _DEBUG */
 
+#ifdef _MSC_VER
+  #include <xmmintrin.h>
+  #define PREFETCH(addr) _mm_prefetch((char*)(addr), _MM_HINT_T0)
+#elif defined(__GNUC__) || defined(__clang__)
+  #define PREFETCH(addr) __builtin_prefetch(addr, 0, 3)
+#else
+  #define PREFETCH(addr) // No-op
+#endif
+
+
 using score_t = int;
 
 constexpr size_t ONE_MEGABYTE = 1024 * 1024;

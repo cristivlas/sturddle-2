@@ -411,6 +411,7 @@ namespace search
             const auto idx = scramble64(hash) & (_data.size() - 1);
             ASSERT(idx >= 0 && idx < _data.size());
 
+            PREFETCH(&_data[idx]);
             return _data[idx];
         }
 

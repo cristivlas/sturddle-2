@@ -452,7 +452,6 @@ namespace search
         else
             ASSERT(ctxt.tt_entry()._hash == ctxt.state().hash());
 
-
         if (ctxt.tt_entry().is_valid())
         {
             ASSERT(ctxt.tt_entry().matches(ctxt.state()));
