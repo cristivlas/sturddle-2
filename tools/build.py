@@ -1,7 +1,7 @@
 '''
 Build all-in-one executable using pyinstaller.
 
-Part of Sturddle Chess 2.0
+Part of Sturddle Chess 2
 Copyright (c) 2023 - 2025 Cristian Vlasceanu.
 '''
 import argparse
@@ -62,6 +62,7 @@ def run_cmd(command):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='build all-in-one executable')
+    parser.add_argument('-a', '--arch', help='Build only the specified architecture')  # and the generic module
     parser.add_argument('-n', '--name', default='sturddle', help='Executable base name (default: "sturddle")')
     parser.add_argument('-v', '--venv')
     parser.add_argument('--native-uci', dest='native_uci', action='store_true', default=True)
@@ -82,7 +83,9 @@ if __name__ == '__main__':
 
     ARCHS = [''] # default
 
-    if args.native_uci:
+    if args.arch:
+        ARCHS = [args.arch, '']
+    elif args.native_uci:
         if platform.machine() in ['x86_64', 'AMD64']:
             ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', 'AVX', '']
         elif platform.machine() == 'aarch64':
