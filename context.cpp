@@ -933,20 +933,23 @@ namespace search
      *
      * Called by eval_captures (if !STATIC_EXCHANGES).
      */
-    INLINE int
-    do_captures(int tid, const State& state, Bitboard from_mask, Bitboard to_mask, score_t standpat_threshold)
+    INLINE int do_captures(int tid, const State& state, score_t standpat_threshold)
     {
         ASSERT(!state.is_check(!state.turn)); /* expect legal position */
 
         static constexpr auto ply = FIRST_EXCHANGE_PLY;
-        const auto mask = to_mask & state.occupied_co(!state.turn) & ~state.kings;
+
+        auto mask = state.occupied_co(!state.turn);
+        if (state.en_passant_square != Square::UNDEFINED)
+            mask |= BB_SQUARES[state.en_passant_square];
+
+        mask &= ~state.kings;
 
         /*
          * Generate all pseudo-legal captures.
-         * NOTE: generate... function takes mask args in reverse: to, from.
          */
         auto& moves = Context::moves(tid, ply);
-        if (state.generate_pseudo_legal_moves(moves, mask, from_mask).empty())
+        if (state.generate_pseudo_legal_moves(moves, mask).empty())
         {
             return 0;
         }
@@ -958,11 +961,18 @@ namespace search
          */
         for (auto& move : moves)
         {
-            ASSERT(state.piece_type_at(move.to_square()));
             ASSERT(state.piece_type_at(move.from_square()));
-            ASSERT(state.piece_color_at(move.to_square()) != state.turn);
 
-            move._score = state.piece_value_at(move.to_square(), !state.turn); /* victim value */
+            if (state.en_passant_square == move.to_square())
+            {
+                if (BB_SQUARES[move.from_square()] & state.pawns)
+                    move._score = WEIGHT[PAWN]; /* TODO: piece-square, piece grading */
+            }
+            else
+            {
+                move._score = state.piece_value_at(move.to_square(), !state.turn); /* victim value */
+            }
+
             if (const auto promo = move.promotion())
             {
                 /* Take piece squares and piece grading (dynamic value) into account for the promo */
@@ -1004,7 +1014,8 @@ namespace search
          */
         for (const auto& move : moves)
         {
-            ASSERT(move._score > 0);
+            if (move._score == 0)
+                continue;
 
             /* potential gain is less than best score so far? bail */
             if (move._score /* + STANDPAT_MARGIN  */ <= score)
@@ -1070,7 +1081,7 @@ namespace search
         else
         {
             const int standpat_threshold = ctxt._ply > 1 ? ctxt._alpha - score : SCORE_MIN;
-            result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL, standpat_threshold);
+            result = do_captures(ctxt.tid(), *state, standpat_threshold);
         }
 
         ASSERT(result >= 0);
