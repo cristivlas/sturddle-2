@@ -106,7 +106,7 @@ if __name__ == '__main__':
         command = make_path('main.py')
     platform = sysconfig.get_platform()
     if platform.startswith('win'):
-        command = sys.executable + ' ' + command
+        command = f'"{sys.executable}" "{command}"'
 
     config = {
         'engines': [
