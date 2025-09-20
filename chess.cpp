@@ -323,6 +323,7 @@ namespace chess
         /* Piece moves. */
         if (auto non_pawns = our_pieces & ~pawns & from_mask)
         {
+        #if 0
             for (const auto sliders : {queens, rooks, bishops})
             {
                 for_each_square_r(sliders & non_pawns, [&](Square from_square) {
@@ -334,7 +335,7 @@ namespace chess
                 non_pawns &= ~sliders;
             }
             ASSERT((non_pawns & ~(knights | kings)) == BB_EMPTY);
-
+        #endif
             for_each_square_r(non_pawns, [&](Square from_square) {
                 const auto moves = attacks_mask(from_square, occupied) & to_mask;
                 for_each_square_r(moves, [&](Square to_square) {
