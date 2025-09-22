@@ -375,6 +375,7 @@ namespace search
         bool        is_counter_move(const Move&) const;
         bool        is_evasion() const;
         bool        is_extended() const;
+        bool        is_fifty_move_rule_draw() const { return _fifty >= 100; }
         bool        is_last_move();
         INLINE bool is_leftmost() const { return is_root() || _leftmost; }
         bool        is_leaf(); /* treat as terminal node ? */

@@ -1067,6 +1067,9 @@ namespace search
 
     score_t eval_captures(Context& ctxt, score_t score)
     {
+        if (ctxt.is_fifty_move_rule_draw() || ctxt.is_repeated())
+            return 0;
+
         if constexpr(DEBUG_CAPTURES)
             ctxt.log_message(LogLevel::DEBUG, "eval_captures");
 

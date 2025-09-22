@@ -466,8 +466,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     }
     else
     {
-        if (ctxt._fifty >= 100)
-            return 0; /* draw by fifty moves rule */
+        if (ctxt.is_fifty_move_rule_draw())
+            return 0;
 
         /* Update the Zobrist hash incrementally. */
         zobrist_update(ctxt._parent->state(), ctxt._move, *ctxt._state);
