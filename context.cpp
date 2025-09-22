@@ -290,7 +290,7 @@ using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true>;
 using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2>;
 using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
 using EVALType = nnue::Layer<HIDDEN_3, 1>;
-using LMOVEType = nnue::Layer<INPUTS_A, 4096, int16_t, nnue::QSCALE>;
+using LMOVEType = nnue::Layer<INPUTS_A, 4096, int16_t, nnue::QSCALE, true /* incremental */>;
 
 /*
  * The accumulator takes the inputs and processes them into two outputs,
@@ -301,6 +301,7 @@ using LMOVEType = nnue::Layer<INPUTS_A, 4096, int16_t, nnue::QSCALE>;
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
 using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
 
+/* Each thread uses its own stack */
 static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
 
 #if !SHARED_WEIGHTS
@@ -315,9 +316,9 @@ static struct
     L3Type L3{hidden_3_w, hidden_3_b};
     EVALType EVAL{out_w, out_b};
 
-#if USE_ROOT_MOVES
+#if USE_MOVE_PREDICTION
     LMOVEType L_M{move_w, move_b};
-#endif /* USE_ROOT_MOVES */
+#endif
 } model;
 
 #else
@@ -392,9 +393,9 @@ static struct
     L3Type L3;
     EVALType EVAL;
 
-#if USE_ROOT_MOVES
+#if USE_MOVE_PREDICTION
     LMOVEType L_M;
-#endif /* USE_ROOT_MOVES */
+#endif
 
     void init()
     {
@@ -407,9 +408,9 @@ static struct
         INIT_LAYER(L3, hidden_3);
         INIT_LAYER(EVAL, eval);
 
-    #if USE_ROOT_MOVES
+    #if USE_MOVE_PREDICTION
         INIT_LAYER(L_M, move);
-    #endif /* USE_ROOT_MOVES */
+    #endif
     }
 } model;
 #endif /* SHARED_WEIGHTS */
@@ -442,14 +443,22 @@ void search::Context::update_accumulators()
         if (ctxt->is_root())
         {
             ASSERT(ctxt->_parent == nullptr);
+        #if USE_MOVE_PREDICTION
+            accumulator.update(model.L1A, model.L1B, model.L_M, ctxt->state());
+        #else
             accumulator.update(model.L1A, model.L1B, ctxt->state());
+        #endif
         }
         else
         {
             auto& prev_acc = NNUE_data[t][ctxt->_ply - ctxt->_nnue_prev_offs];
             ASSERT(!prev_acc.needs_update(ctxt->_parent->state()));
 
+        #if USE_MOVE_PREDICTION
+            accumulator.update(model.L1A, model.L1B, model.L_M, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
+        #else
             accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
+        #endif
         }
 
         ctxt->_eval_raw = SCORE_MIN;
@@ -503,13 +512,6 @@ void search::Context::eval_with_nnue()
 
         if (state().just_king(!turn()) || (depth() >= 0 && abs(eval) <= eval_margin(*this)))
         {
-        #if USE_ROOT_MOVES
-            if (is_root() && iteration() == 1)
-            {
-                _move_maker.ensure_moves(*this, true);
-            }
-        #endif /* USE_ROOT_MOVES */
-
             const auto eval_nn = eval_nnue_raw(true);
 
             eval = (eval_nn * NNUE_BLEND_PERCENT + eval * (100 - NNUE_BLEND_PERCENT)) / 100;
@@ -541,6 +543,10 @@ void search::Context::update_root_accumulators()
         acc._hash = root._hash;
         memcpy(acc._output_a, root._output_a, sizeof(acc._output_a));
         memcpy(acc._output_b, root._output_b, sizeof(acc._output_b));
+
+    #if USE_MOVE_PREDICTION
+        memcpy(acc._move_logits, root._move_logits, sizeof(acc._move_logits));
+    #endif
 
     #if DEBUG_INCREMENTAL
         memcpy(acc._input, root._input, sizeof(acc._input));
@@ -1648,41 +1654,6 @@ namespace search
         _group_quiet_moves = (ctxt.depth() < 0 && !ctxt.is_check());
     #endif /* GROUP_QUIET_MOVES */
 
-    #if USE_ROOT_MOVES
-        if (order_root_moves && ctxt._time_limit >= ROOT_MOVES_MIN_TIME)
-        {
-            ALIGN int16_t input[nnue::round_up<INPUT_STRIDE>(INPUTS_A)] = {};
-            nnue::one_hot_encode(ctxt.state(), input);
-            nnue::predict_moves(input, model.L_M, moves_list);
-
-            bool all_valid = true;
-            int count = 0;
-
-            for (auto& move : moves_list)
-            {
-                ASSERT(move._group == MoveOrder::UNORDERED_MOVES);
-                if (count >= ROOT_MAX_MOVES)
-                {
-                    move._score = 0;
-                }
-                else if (make_move<false>(ctxt, move, MoveOrder::ROOT_MOVES, move._score))
-                {
-                    // std::cout << "info string " << move << ": " << move._score / float(nnue::QSCALE) << std::endl;
-                    ++count;
-                }
-                else
-                {
-                    all_valid = move._score = 0;
-                }
-            }
-
-            if (all_valid)
-                _need_sort = false; /* moves already sorted by eval_with_moves */
-            else
-                sort_moves(ctxt, 0, moves_list.size());
-        }
-    #endif /* USE_ROOT_MOVES */
-
         if (!from_cache)
             moves_cache.write(ctxt.state(), moves_list);
     }
@@ -1825,10 +1796,17 @@ namespace search
                 }
                 if (make_move<true>(ctxt, move, futility))
                 {
+                    move._group = MoveOrder::LATE_MOVES;
+                #if USE_MOVE_PREDICTION
+                    ctxt.update_accumulators();
+                    const auto index = move.from_square() * 64 + move.to_square();
+                    const auto& acc = NNUE_data[ctxt.tid()][ctxt._ply];
+                    move._score = acc._move_logits[index];
+                #else
                     incremental_update(move, ctxt);
                     const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
-                    move._group = MoveOrder::LATE_MOVES;
                     move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
+                #endif
                 }
             }
         }
@@ -1882,6 +1860,18 @@ namespace search
             ASSERT(compare_moves_ge(moves_list[i-1], moves_list[i]));
         }
     #endif /* NO_ASSERT */
+
+    #if 0 && USE_MOVE_PREDICTION /* debug */
+        if (_phase == 4 && ctxt.is_root())
+        {
+            for (const auto& m : moves_list)
+            {
+                if (m._group == MoveOrder::LATE_MOVES)
+                    std::cout << m.uci() << ": " << m._score << " (" << float(m._score) / nnue::QSCALE << ")\n";
+            }
+            std::cout << "\n";
+        }
+    #endif /* USE_MOVE_PREDICTION */
     }
 
 

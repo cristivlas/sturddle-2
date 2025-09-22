@@ -508,16 +508,26 @@ namespace nnue
         static constexpr int OUTPUTS_A = N;
         static constexpr int OUTPUTS_B = O;
 
+        uint64_t _hash = 0;
+
     #if DEBUG_INCREMENTAL
         ALIGN input_t _input[INPUTS] = { }; /* one-hot encoding */
     #endif
         ALIGN int16_t _output_a[OUTPUTS_A] = { };
         ALIGN int16_t _output_b[OUTPUTS_B] = { };
-        uint64_t _hash = 0;
+
+    #if USE_MOVE_PREDICTION
+        ALIGN int16_t _move_logits[4096] = { };
+    #endif
 
         /** Compute 1st layer output from scratch at root */
+    #if USE_MOVE_PREDICTION
+        template <typename LA, typename LB, typename LM>
+        INLINE void update(const LA& layer_1a, const LB& layer_1b, const LM& layer_m, const State& state)
+    #else
         template <typename LA, typename LB>
         INLINE void update(const LA& layer_1a, const LB& layer_1b, const State& state)
+    #endif
         {
             if (needs_update(state))
             {
@@ -530,6 +540,10 @@ namespace nnue
 
                 layer_1a.dot(_input, _output_a);
                 layer_1b.dot(_input, _output_b);
+
+            #if USE_MOVE_PREDICTION
+                layer_m.dot(_input, _move_logits);
+            #endif
 
                 _hash = state.hash();
             }
@@ -548,6 +562,17 @@ namespace nnue
         }
 
         /** Update 1st layer output incrementally, based on a previous state */
+    #if USE_MOVE_PREDICTION
+        template <typename LA, typename LB, typename LM, typename A>
+        INLINE void update(
+            const LA& layer_a,
+            const LB& layer_b,
+            const LM& layer_m,
+            const State& prev,
+            const State& state,
+            const Move& move,
+            A& ancestor)
+    #else
         template <typename LA, typename LB, typename A>
         INLINE void update(
             const LA& layer_a,
@@ -556,6 +581,7 @@ namespace nnue
             const State& state,
             const Move& move,
             A& ancestor)
+    #endif
         {
             if (needs_update(state))
             {
@@ -566,6 +592,10 @@ namespace nnue
 
                 memcpy(_output_a, ancestor._output_a, sizeof(_output_a));
                 memcpy(_output_b, ancestor._output_b, sizeof(_output_b));
+
+            #if USE_MOVE_PREDICTION
+                memcpy(_move_logits, ancestor._move_logits, sizeof(_move_logits));
+            #endif
 
             #if DEBUG_INCREMENTAL
                 memcpy(_input, ancestor._input, sizeof(_input));
@@ -603,7 +633,11 @@ namespace nnue
                 else
                     remove_inputs[r_idx++] = TURN_INDEX;
 
+            #if USE_MOVE_PREDICTION
+                recompute(layer_a, layer_b, layer_m, remove_inputs, add_inputs, r_idx, a_idx);
+            #else
                 recompute(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx);
+            #endif
 
             #if DEBUG_INCREMENTAL
                 int16_t output_a[OUTPUTS_A] = { };
@@ -620,6 +654,17 @@ namespace nnue
         }
 
         /** Recompute incrementally */
+    #if USE_MOVE_PREDICTION
+        template <typename LA, typename LB, typename LM>
+        INLINE void recompute(
+            const LA& layer_a,
+            const LB& layer_b,
+            const LM& layer_m,
+            const int (&remove_inputs)[INPUTS],
+            const int (&add_inputs)[INPUTS],
+            const int r_idx,
+            const int a_idx)
+    #else
         template <typename LA, typename LB>
         INLINE void recompute(
             const LA& layer_a,
@@ -628,6 +673,7 @@ namespace nnue
             const int (&add_inputs)[INPUTS],
             const int r_idx,
             const int a_idx)
+    #endif
         {
         #if __ARM__
             using VecShort = Vec16s;
@@ -647,6 +693,30 @@ namespace nnue
                 update_layer_b += add_inputs[i] < LB::INPUTS;
 
             VecShort vo, vw;
+
+        #if USE_MOVE_PREDICTION
+            for (int j = 0; j != 4096; j += VecShort::size())
+            {
+                vo.load_a(&_move_logits[j]);
+
+                for (int i = 0; i < r_idx; ++i)
+                {
+                    const auto index = remove_inputs[i];
+                    ASSERT(index < LM::INPUTS);
+                    vw.load_a(&layer_m._w[index][j]);
+                    vo -= vw;
+                }
+
+                for (int i = 0; i < a_idx; ++i)
+                {
+                    const auto index = add_inputs[i];
+                    ASSERT(index < LM::INPUTS);
+                    vw.load_a(&layer_m._w[index][j]);
+                    vo += vw;
+                }
+                vo.store_a(&_move_logits[j]);
+            }
+        #endif /* USE_MOVE_PREDICTION */
 
             /* Layer A */
             for (int j = 0; j != OUTPUTS_A; j += VecShort::size())
@@ -786,31 +856,5 @@ namespace nnue
 
         out.dot(l3_out, output);
         return 100 * output[0];
-    }
-
-
-    template <typename T>
-    INLINE void sort_moves(T& moves, const int16_t(& logits)[4096])
-    {
-        for (auto& move : moves)
-        {
-            const auto index = move.from_square() * 64 + move.to_square();
-            ASSERT(index >= 0);
-            ASSERT(index < 4096);
-            move._score = logits[index];
-        }
-
-        // Sort highest scores first
-        std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) { return a._score > b._score; });
-    }
-
-
-    template <typename I, typename L, typename T>
-    INLINE void predict_moves(const I& input, const L& moves, T& pseudo_legal_moves)
-    {
-        ALIGN int16_t logits[L::OUTPUTS];
-        moves.dot(input, logits);
-
-        sort_moves(pseudo_legal_moves, logits);
     }
 } /* namespace nnue */

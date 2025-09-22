@@ -66,7 +66,7 @@ def load_model(args):
         })
 
 
-def get_top_moves(move_logits, board, num_moves=5):
+def get_top_moves(move_logits, board, num_moves):
     """
     Get top moves from 4096 move logits output by scoring all legal moves.
     move_logits shape: (1, 4096) representing all 64x64 from-to combinations
@@ -129,7 +129,7 @@ def run_tests(args, model):
 
         # If model has move prediction capability, show top moves
         if has_move_prediction:
-            top_moves = get_top_moves(move_logits, board)
+            top_moves = get_top_moves(move_logits, board, args.num_moves)
 
             print("Top predicted moves:")
             for j, (move, prob) in enumerate(top_moves, 1):
@@ -165,5 +165,6 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('input', nargs=1, help='Path to the model file')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Show detailed output including model summary')
+    parser.add_argument('-n', '--num-moves', type=int, default=5)
+    parser.add_argument('-v', '--verbose', action='store_true', help='Show detailed output including model summary')
     main(parser.parse_args())

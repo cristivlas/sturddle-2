@@ -52,13 +52,13 @@ def configure_logging(args):
 
 def make_model(args, strategy):
     class CustomConstraint(tf.keras.constraints.Constraint):
-        def __init__(self, qmin, qmax, quantize=args.quantize):
+        def __init__(self, qmin, qmax, round=args.quantize_round):
             self.qmin = qmin
             self.qmax = qmax
-            self.quantize = quantize
+            self.quantize_round = quantize_round
 
         def __call__(self, w):
-            if self.quantize:
+            if self.quantize_round:
                 w = tf.round(w * Q_SCALE) / Q_SCALE
             return tf.clip_by_value(w, self.qmin, self.qmax)
 
@@ -359,8 +359,10 @@ def write_weigths(args, model, indent):
                         print(f'\n{" " * 2 * indent}', end='')
                     else:
                         print(f'{" " * (indent - 1)}', end='')
-                #print(f'{weights[i][j]:12.8f},', end='')
-                print(f'{float(weights[i][j]).hex()}f,', end='')
+                if args.hex:
+                    print(f'{float(weights[i][j]).hex()}f,', end='')
+                else:
+                    print(f'{weights[i][j]:12.9f},', end='')
             if cols > 1:
                 print()
             print(f'{" " * indent}}}, /* {i} */')
@@ -374,8 +376,10 @@ def write_weigths(args, model, indent):
                 if i:
                     print()
                 print(f'{" " * 2 *indent}', end='')
-            #print(f'{biases[i]:12.8f},', end='')
-            print(f'{float(biases[i]).hex()}f,', end='')
+            if args.hex:
+                print(f'{float(biases[i]).hex()}f,', end='')
+            else:
+                print(f'{biases[i]:12.9f},', end='')
         print('\n};')
 
 
@@ -769,7 +773,8 @@ if __name__ == '__main__':
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
         parser.add_argument('-q', '--quantize', action='store_true')
-        parser.add_argument('--no-draw', action='store_true')
+        parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
+        parser.add_argument('--hex', action='store_true', help='export weights in hex format')
 
         parser.add_argument('--huber-delta', type=float, default=2.0)
         parser.add_argument('--loss-weight', type=float, default=1.0, help='weight for outcome loss vs eval loss (0=eval only, 1=outcome only)')

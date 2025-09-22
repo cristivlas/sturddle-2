@@ -305,11 +305,6 @@ DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
 DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     150)
 DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             33,    0,     150)
 
-#if USE_ROOT_MOVES
-DECLARE_VALUE(  ROOT_MAX_MOVES,                       5,    0,      10)
-DECLARE_VALUE(  ROOT_MOVES_MIN_TIME,                  3,    0,      10)
-#endif /* USE_ROOT_MOVES */
-
 /* SEE */
 DECLARE_VALUE(  SEE_PRUNING,                          1,    0,       1)
 DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
