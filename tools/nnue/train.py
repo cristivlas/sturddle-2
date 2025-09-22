@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 '''
 **********************************************************************
-Trainer for the Sturddle Chess 2.3 engine's neural net.
+Trainer for the Sturddle Chess 2.X engine's neural net.
 
 Copyright (c) 2023 - 2025 Cristian Vlasceanu.
 **********************************************************************
@@ -769,15 +769,15 @@ if __name__ == '__main__':
         parser.add_argument('-F', '--filter', type=int, default=15000, help='filter out positions with absolute score higher than this')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
-        parser.add_argument('-r', '--learn-rate', type=float, default=1e-3, help='learning rate')
+        parser.add_argument('-r', '--learn-rate', type=float, default=1e-4, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
-        parser.add_argument('-o', '--export', help='filename to export weights to, as C++ code')
-        parser.add_argument('-q', '--quantize', action='store_true')
+        parser.add_argument('-o', '--export', help='filename to export weights to (in C++ header file format)')
+        parser.add_argument('-q', '--quantize-round', action='store_true')
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
         parser.add_argument('--hex', action='store_true', help='export weights in hex format')
 
         parser.add_argument('--huber-delta', type=float, default=2.0)
-        parser.add_argument('--loss-weight', type=float, default=1.0, help='weight for outcome loss vs eval loss (0=eval only, 1=outcome only)')
+        parser.add_argument('--loss-weight', type=float, default=0.95, help='weight for outcome loss vs eval loss (0=eval only, 1=outcome only)')
         parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
 
         # Move prediction related arguments
