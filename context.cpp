@@ -512,11 +512,7 @@ void search::Context::eval_with_nnue()
 
             const auto eval_nn = eval_nnue_raw(true);
 
-        #if 0
-            eval = eval_nn * (NNUE_EVAL_TERM + eval / 32) / 1024;
-        #else
             eval = (eval_nn * NNUE_BLEND_PERCENT + eval * (100 - NNUE_BLEND_PERCENT)) / 100;
-        #endif
         }
         else
         {
@@ -1067,9 +1063,6 @@ namespace search
 
     score_t eval_captures(Context& ctxt, score_t score)
     {
-        if (ctxt.is_fifty_move_rule_draw() || ctxt.is_repeated())
-            return 0;
-
         if constexpr(DEBUG_CAPTURES)
             ctxt.log_message(LogLevel::DEBUG, "eval_captures");
 

@@ -280,7 +280,6 @@ DECLARE_VALUE(  MULTICUT_MARGIN,                    124,   20,     200)
 
 #if WITH_NNUE
 DECLARE_VALUE(  NNUE_BLEND_PERCENT,                  82,   50,     100)
-DECLARE_VALUE(  NNUE_EVAL_TERM,                     502,  450,     600)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      459,  400,     600)
 #endif /* WITH_NNUE */
 

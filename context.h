@@ -765,7 +765,7 @@ namespace search
         if constexpr(EvalCaptures)
         {
             /* Captures may not make a difference for large score gaps. */
-            if (abs(score) < CAPTURES_THRESHOLD)
+            if (abs(score) < CAPTURES_THRESHOLD && !is_fifty_move_rule_draw() && !is_repeated())
             {
                 score += eval_captures(*this, score);
 
