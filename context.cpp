@@ -1263,7 +1263,7 @@ namespace search
 
         _mate_detected = 0;
 
-        _repetitions = -1;
+        _repeated = -1;
 
         _retry_next = false;
         _retry_beta = SCORE_MAX;
@@ -1437,7 +1437,7 @@ namespace search
         if (is_root())
             return false;
         else
-            ASSERT(is_repeated() <= 0);
+            ASSERT(!is_repeated());
 
         if (_ply + 1 >= PLY_MAX)
             return true;

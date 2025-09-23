@@ -273,7 +273,7 @@ namespace search
         Algorithm   _algorithm = Algorithm::MTDF;
 
         mutable int8_t _can_forward_prune = -1;
-        mutable int8_t _repetitions = -1;
+        mutable int8_t _repeated = -1;
 
         Square      _capture_square = Square::UNDEFINED;
         bool        _futility_pruning = true;
@@ -388,7 +388,7 @@ namespace search
         INLINE bool is_leaf_extended() const { return _ply > _max_depth; }
         bool        is_recapture() const;
         bool        is_reduced() const;
-        int         is_repeated() const;
+        bool        is_repeated() const;
         INLINE bool is_retry() const { return _is_retry; }
         INLINE bool is_root() const { return _ply == 0; }
 
@@ -413,9 +413,8 @@ namespace search
         static void print_board(std::ostream&, const State&, bool unicode);
 
         void        reset(bool force_reorder_moves = true, bool clear_best_move = true);
-        int         repeated_count(const State&) const;
-
         int         rewind(int where = 0, bool reorder = false);
+
         INLINE void set_counter_move(const BaseMove& move) { _counter_move = move; }
         void        set_search_window(score_t score, score_t& prev_score);
         static void set_start_time();
@@ -765,7 +764,7 @@ namespace search
         if constexpr(EvalCaptures)
         {
             /* Captures may not make a difference for large score gaps. */
-            if (abs(score) < CAPTURES_THRESHOLD && !is_fifty_move_rule_draw() && !is_repeated())
+            if (abs(score) < CAPTURES_THRESHOLD)
             {
                 score += eval_captures(*this, score);
 
@@ -956,23 +955,19 @@ namespace search
     }
 
 
-    INLINE int Context::repeated_count(const State& state) const
+    INLINE bool Context::is_repeated() const
     {
-        ASSERT(_history);
-        return int(_history->count(state)) + has_cycle(state);
-    }
-
-
-    INLINE int Context::is_repeated() const
-    {
-        if (_repetitions < 0)
+        if (_repeated < 0)
         {
-            ASSERT(_history);
-            _repetitions = repeated_count(state());
+            if (_parent)
+                zobrist_update(_parent->state(), _move, *_state);
 
-            ASSERT(_repetitions >= 0);
+            ASSERT(_history);
+            _repeated = _history->count(state()) > 0 || has_cycle(state());
+
+            ASSERT(_repeated >= 0);
         }
-        return _repetitions;
+        return _repeated > 0;
     }
 
 
