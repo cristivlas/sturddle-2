@@ -52,7 +52,7 @@ def configure_logging(args):
 
 def make_model(args, strategy):
     class CustomConstraint(tf.keras.constraints.Constraint):
-        def __init__(self, qmin, qmax, round=args.quantize_round):
+        def __init__(self, qmin, qmax, quantize_round=args.quantize_round):
             self.qmin = qmin
             self.qmax = qmax
             self.quantize_round = quantize_round
