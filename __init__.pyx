@@ -46,7 +46,6 @@ from datetime import datetime
 import chess
 import chess.pgn
 import chess.polyglot
-import chess.syzygy
 import logging
 import platform
 import os
@@ -436,9 +435,9 @@ cdef extern from 'context.h' namespace 'search':
 
     cdef cppclass IterationInfo:
         score_t score
-        size_t nodes
-        double knps
-        int milliseconds
+        size_t  nodes
+        float   knps
+        int     milliseconds
 
 
     ctypedef unique_ptr[History] HistoryPtr
@@ -469,8 +468,6 @@ cdef extern from 'context.h' namespace 'search':
         string          (*_pgn)(Context*) except*
         void            (*_print_state)(const State&, bool) except*
         void            (*_report)(PyObject*, vector[Context*]&) except*
-        void            (*_set_syzygy_path)(const string&) except*;
-        bool            (*_tb_probe_wdl)(const State&, int*) except*
         size_t          (*_vmem_avail)() except*
 
         int64_t         nanosleep(int) nogil
@@ -503,9 +500,6 @@ cdef extern from 'context.h' namespace 'search':
 
         @staticmethod
         void set_syzygy_path(const string&)
-
-        @staticmethod
-        void set_tb_cardinality(int)
 
         @staticmethod
         int tb_cardinality()
@@ -677,8 +671,6 @@ cdef class NodeContext:
         self._ctxt._pgn = <string (*)(Context*)> pgn
         self._ctxt._print_state = <void (*)(const State&, bool)> print_state
         self._ctxt._vmem_avail = <size_t (*)()> vmem_avail
-        self._ctxt._set_syzygy_path = <void (*)(const string&)> _set_syzygy_path
-        self._ctxt._tb_probe_wdl = <bool (*)(const State&, int*)> tb_probe_wdl
 
         self._ctxt._history.reset(new History())
         self.sync_to_board(board)
@@ -1234,7 +1226,10 @@ def read_config(fname='sturddle.cfg', echo=False):
         exec(f.read(), ns)
 
         for name, value in ns.get('params', {}).items():
-            set_param(name, value, echo)
+            if name.lower() == 'syzygypath':
+                set_syzygy_path(value)
+            else:
+                set_param(name, value, echo)
 
 
 # ---------------------------------------------------------------------
@@ -1246,66 +1241,13 @@ def board_from_fen(fen: str):
         return board
 
 
-# ---------------------------------------------------------------------
-# syzygy tablebases
-# Starting with 2.3, USE_ENDTABLES needs to be defined at compile time
-# to enable tablebases (default is OFF).
-# ---------------------------------------------------------------------
-_tb = chess.syzygy.Tablebase()
-_tb_paths = []
-
-def _tb_init():
-    cwd = os.getcwd()
-    syzygy_path_list = Context.syzygy_path().decode().split(os.pathsep)
-    for syzygy_path in syzygy_path_list:
-        if not os.path.isabs(syzygy_path):
-            syzygy_path = os.path.realpath(os.path.join(cwd, syzygy_path))
-        try:
-            _tb.add_directory(syzygy_path)
-            _tb_paths.append(syzygy_path)
-        except:
-            pass
-
-    log_message(1, f'_tb_init: {syzygy_path_list} {_tb_paths}'.encode(), False)
-    Context.set_syzygy_path(os.pathsep.join(_tb_paths).encode())
-    if not _tb_paths:
-        Context.set_tb_cardinality(0)
-
-
-cdef bool tb_probe_wdl(const State& state, int* result) except* :
-    board = board_from_cxx_state(state)
-    try:
-        result[0] = _tb.probe_wdl(board)
-        return True
-    except KeyError as e:
-        logging.error(f'tb_probe_wdl: {e}, path={_tb_paths}')
-
-    piece_count = chess.popcount(board.occupied)
-    Context.set_tb_cardinality(0 if piece_count <= 3 else piece_count - 1)
-
-    logging.info(f'tb_probe_wdl: cardinality={Context.tb_cardinality()}')
-    return False
-
 
 def set_syzygy_path(path):
-    global _tb
-    global _tb_paths
-
     Context.set_syzygy_path(path.encode())
-    _tb.close()
-    _tb = chess.syzygy.Tablebase()
-    _tb_paths = []
-    _tb_init()
 
 
 def syzygy_path():
     return Context.syzygy_path().decode()
-
-
-# C++ entry point
-cdef void _set_syzygy_path(const string& path):
-    log_message(1, f'_set_syzygy_path: {path.decode()}'.encode(), False)
-    set_syzygy_path(path.decode())
 
 
 # ---------------------------------------------------------------------
@@ -1314,11 +1256,11 @@ cdef void _set_syzygy_path(const string& path):
 Context.init()
 
 NodeContext(chess.Board()) # dummy context initializes static cpython methods
-_tb_init()
+
 
 __major__   = 2
-__minor__   = 3
-__patch__   = 2
+__minor__   = 4
+__patch__   = 0
 __build__   = [str(__major__), f'{int(__minor__):d}', str(__patch__), timestamp().decode()]
 
 

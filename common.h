@@ -28,13 +28,6 @@
 #include <stdexcept>
 #include "backtrace.h"
 
-#if defined(_MSC_VER) && !defined(__clang__)
-  #pragma warning(disable:4244)
-  #define _USE_MATH_DEFINES
-  #define HAVE_INT128 false
-#else
-  #define HAVE_INT128 (INTPTR_MAX == INT64_MAX)
-#endif /* !Microsoft Compiler */
 
 #if !defined(_DEBUG)
 #if _MSC_VER
@@ -125,7 +118,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define USE_BOOK_HINT                       false
 #define USE_MOVE_PREDICTION                 false
 
-#define USE_ENDTABLES                       false
+#define USE_ENDTABLES                       true
 
 #define USE_LIBPOPCOUNT                     true
 

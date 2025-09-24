@@ -30,6 +30,10 @@
 #include "thread_pool.hpp"
 #include "utility.h"
 
+#if USE_ENDTABLES
+#include "tbprobe.h"
+#endif
+
 #if __linux__
 #include <sys/sysinfo.h>
 #elif __APPLE__
@@ -158,6 +162,7 @@ void TranspositionTable::clear()
     _null_move_not_ok = 0;
     _reductions = 0;
     _retry_reductions = 0;
+    _tb_hits = 0;
 
     clear_history();
 }
@@ -408,30 +413,115 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
 #if USE_ENDTABLES
 /*
  * Syzygy endgame tablebase probing (https://www.chessprogramming.org/Syzygy_Bases).
- * This implementation simply calls back into the python-chess library.
  */
-static INLINE bool probe_endtables(Context& ctxt)
+static bool probe_endtables(Context& ctxt, TranspositionTable& table)
 {
-    int v;
-
-    if (  !ctxt.is_root()
-        && ctxt._fifty == 0
-        && ctxt.state().is_endgame()
-        && Context::tb_cardinality() > 0
-        && popcount(ctxt.state().occupied()) <= Context::tb_cardinality()
-        && cython_wrapper::call(Context::_tb_probe_wdl, ctxt.state(), &v))
+    if (!ctxt.is_root() && !ctxt._excluded && ctxt.can_probe_endtables())
     {
-        if (v < -1)
-            ctxt._score = MATE_LOW + ctxt._ply;
-        else if (v > 1)
-            ctxt._score = MATE_HIGH - ctxt._ply;
-        else
-            ctxt._score = v;
-        return true;
+        const auto& board = ctxt.state();
+        const auto result = ::tb_probe_wdl(
+            board.occupied_co(WHITE),
+            board.occupied_co(BLACK),
+            board.kings,
+            board.queens,
+            board.rooks,
+            board.bishops,
+            board.knights,
+            board.pawns,
+            ctxt._fifty,
+            board.castling_rights,
+            board.en_passant_square == Square::UNDEFINED ? 0 : board.en_passant_square,
+            board.turn == WHITE
+        );
+
+        if (result != TB_RESULT_FAILED)
+        {
+            ++table._tb_hits;
+
+            score_t score = 0;
+            TT_Type tt_type = TT_Type::EXACT;
+
+            if (result == TB_WIN)
+            {
+                score = MATE_HIGH - 1 - ctxt._ply;
+                tt_type = TT_Type::LOWER;
+            }
+            else if (result == TB_LOSS)
+            {
+                score = MATE_LOW + 1 + ctxt._ply;
+                tt_type = TT_Type::UPPER;
+            }
+
+            if ((tt_type == TT_Type::EXACT) || (tt_type == TT_Type::LOWER ? score >= ctxt._beta : score <= ctxt._alpha))
+            {
+                if (ctxt.depth() > 0 && ctxt.tt_result()._replacement_slot >= 0)
+                {
+                    // std::cout << "info string " << chess::color_name(board.turn) << " " << score << std::endl;
+                    ctxt._score = score;
+                    table.store(ctxt, ctxt.tt_entry(), tt_type, ctxt.depth());
+                    return true;
+                }
+            }
+
+            if (ctxt.is_pv_node() && tt_type == TT_Type::LOWER)
+            {
+                ctxt._score = score;
+                ctxt._alpha = std::max<score_t>(ctxt._alpha, score);
+                // std::cout << "info string alpha " << ctxt._alpha << std::endl;
+            }
+        }
     }
     return false;
 }
+
+
+static void probe_root(Context& ctxt)
+{
+    ASSERT(ctxt.is_root());
+
+    if (ctxt.tid() == 0 && ctxt.can_probe_endtables())
+    {
+        const auto& board = ctxt.state();
+        const auto result = tb_probe_root(
+            board.occupied_co(WHITE),
+            board.occupied_co(BLACK),
+            board.kings,
+            board.queens,
+            board.rooks,
+            board.bishops,
+            board.knights,
+            board.pawns,
+            ctxt._fifty,
+            board.castling_rights,
+            board.en_passant_square == Square::UNDEFINED ? 0 : board.en_passant_square,
+            board.turn,
+            nullptr);
+
+        if (result != TB_RESULT_FAILED)
+        {
+             constexpr PieceType PROMO_TABLE[5] = {
+                PieceType::NONE,
+                PieceType::QUEEN,
+                PieceType::ROOK,
+                PieceType::BISHOP,
+                PieceType::KNIGHT,
+            };
+            ctxt._best_move = chess::BaseMove(
+                Square(TB_GET_FROM(result)),
+                Square(TB_GET_TO(result)),
+                PROMO_TABLE[TB_GET_PROMOTES(result)]
+            );
+            std::cout << "info string " << ctxt._best_move << std::endl;
+        }
+    }
+}
+#else
+
+static inline bool probe_endtables(Context&, TranspositionTable&) { return false; }
+static inline void probe_root(Context&) { }
+
 #endif /* USE_ENDTABLES */
+
 
 static INLINE void update_pruned(Context& ctxt, const Context& next, size_t& count)
 {
@@ -453,16 +543,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
     if (ctxt.is_root())
     {
-    #if USE_ENDTABLES
-        /* Do not probe end tables if the number of pieces at root
-         * position has dropped below the end tables cardinality
-         * (the root of the search may already be in the tables).
-         */
-        table._probe_endtables =
-            table._iteration > 3
-            && Context::tb_cardinality() > 0
-            && popcount(ctxt.state().occupied()) > Context::tb_cardinality();
-    #endif /* USE_ENDTABLES */
+        probe_root(ctxt);
     }
     else
     {
@@ -534,15 +615,11 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
     }
-#if USE_ENDTABLES
-    else if (table._probe_endtables && probe_endtables(ctxt))
+    else if (probe_endtables(ctxt, table))
     {
-        table.store<TT_Type::EXACT>(ctxt, ctxt.depth() + 2 * ctxt.tb_cardinality());
-        ctxt._eval_raw = ctxt._score;
         ctxt._prune_reason = PruneReason::PRUNE_END_TABLES;
         return ctxt._score;
     }
-#endif /* USE_ENDTABLES */
     else
     {
         ASSERT(ctxt._alpha < ctxt._beta);
@@ -1179,15 +1256,17 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
         ASSERT(ctxt.iteration() == ctxt._max_depth);
 
-        /* post iteration info to Cython if there's a registered callback */
+        /* post iteration info if there's a registered callback */
         if (Context::_on_iter)
         {
-            IterationInfo info = { score, table.nodes(), 0, 0 };
+            IterationInfo info = { score, table.nodes(), 0, 0, table.tb_hits() };
             for (auto& t : SMPTasks::_tables)
+            {
                 info.nodes += t._tt.nodes();
-
+                info.tbhits += t._tt.tb_hits();
+            }
             const auto ms = Context::elapsed_milliseconds();
-            info.knps = ms ? info.nodes / ms : info.nodes;
+            info.knps = ms ? decltype(info.knps)(info.nodes) / ms : info.nodes;
             info.milliseconds = ms;
 
             (*Context::_on_iter)(Context::_engine, &ctxt, &info);

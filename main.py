@@ -11,7 +11,6 @@ import os
 import chess
 import chess.pgn
 import chess.polyglot
-import chess.syzygy
 import psutil
 
 import armcpu

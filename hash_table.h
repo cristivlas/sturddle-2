@@ -539,7 +539,8 @@ namespace search
             ASSERT(r._bucket);
             // validate that bucket is in data range
             ASSERT(r._bucket >= &_data[0]);
-            ASSERT(std::distance(&_data[0], r._bucket) < _data.size());
+            ASSERT(std::distance(&_data[0], r._bucket) >= 0);
+            ASSERT(std::distance(&_data[0], r._bucket) < int(_data.size()));
 
             auto& bucket = *r._bucket;
 

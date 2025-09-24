@@ -308,7 +308,7 @@ namespace
 
         void set(std::string_view value) override
         {
-            cython_wrapper::call(search::Context::_set_syzygy_path, std::string(value));
+            search::Context::set_syzygy_path(std::string(value));
         }
     };
 } /* namespace */
@@ -745,15 +745,23 @@ static void INLINE format_info(const Info& info)
         }
         std::format_to(
             std::back_inserter(g_out),
-            "info score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} pv",
-            score_unit,
-            score,
-            info.iteration,
-            info.eval_depth,
-            info.milliseconds,
-            info.nodes,
-            int(info.knps * 1000),
-            info.hashfull);
+        #if USE_ENDTABLES
+            "info score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} tbhits {} pv"
+        #else
+            "info score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} pv"
+        #endif
+            , score_unit
+            , score
+            , info.iteration
+            , info.eval_depth
+            , info.milliseconds
+            , info.nodes
+            , int(info.knps * 1000)
+            , info.hashfull
+        #if USE_ENDTABLES
+            , info.tbhits
+        #endif
+            );
 
         /* output PV */
         for (size_t i = 1; i < info.pv->size(); ++i)

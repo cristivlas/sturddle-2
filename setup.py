@@ -69,6 +69,7 @@ sourcefiles = [
     'context.cpp',
     'search.cpp',
     'uci_native.cpp',
+    'tbprobe.cpp',
 ]
 
 
@@ -84,6 +85,8 @@ inc_dirs = [
     '-I./libpopcnt',
     '-I./magic-bits/include',
     '-I./version2',
+    '-I.',
+    '-I./Fathom/src',
 ]
 
 link = []

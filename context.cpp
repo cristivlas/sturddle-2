@@ -48,6 +48,11 @@
 
 #include "eval.h"
 
+#if USE_ENDTABLES
+  #include <filesystem>
+  #include "tbprobe.h"
+#endif
+
 using namespace chess;
 using search::TranspositionTable;
 
@@ -580,7 +585,8 @@ namespace search
      * Context
      *---------------------------------------------------------------------*/
     atomic_bool Context::_cancel(false);
-    atomic_int  Context::_tb_cardinality(6);
+    int         Context::_tb_cardinality(0);
+    bool        Context::_tb_initialized(false);
     atomic_int  Context::_time_limit(-1); /* milliseconds */
     atomic_time Context::_time_start;
     size_t Context::_callback_count(0);
@@ -606,11 +612,9 @@ namespace search
     std::string(*Context::_pgn)(Context*) = nullptr;
     void (*Context::_print_state)(const State&, bool) = nullptr;
     void (*Context::_report)(PyObject*, std::vector<Context*>&) = nullptr;
-    void (*Context::_set_syzygy_path)(const std::string&) = nullptr;
-    bool (*Context::_tb_probe_wdl)(const State&, int*) = nullptr;
     size_t (*Context::_vmem_avail)() = nullptr;
 
-    std::string Context::_syzygy_path = "syzygy/3-4-5";
+    std::string Context::_syzygy_path;
 
 
     score_t eval_material_for_side_that_moved(const State& state, const State* prev, const BaseMove& move)
@@ -1547,6 +1551,36 @@ namespace search
         }
 
         _moves_cache[tid()].write(state(), moves_list, force_write);
+    }
+
+
+    /* static */ void Context::tb_init()
+    {
+#if USE_ENDTABLES
+        if (_tb_initialized)
+        {
+            ::tb_free();
+            _tb_initialized = false;
+            _tb_cardinality = 0;
+        }
+        if (!_syzygy_path.empty())
+        {
+            try
+            {
+                _syzygy_path = std::filesystem::canonical(_syzygy_path);
+            }
+            catch (const std::exception& e)
+            {
+                _syzygy_path = "";
+                log_message(LogLevel::ERROR, e.what());
+                return;
+            }
+
+            _tb_initialized = ::tb_init(_syzygy_path.c_str());
+            _tb_cardinality = TB_LARGEST;
+        }
+        log_message(LogLevel::INFO, std::format("tb_init({}): {}, cardinality: {}", _syzygy_path, _tb_initialized, _tb_cardinality));
+#endif /* USE_ENDTABLES */
     }
 
 

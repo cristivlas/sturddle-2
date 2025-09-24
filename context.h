@@ -201,9 +201,10 @@ namespace search
     struct IterationInfo
     {
         score_t score;
-        size_t nodes;
-        double knps;
-        int milliseconds;
+        size_t  nodes;
+        float   knps;
+        int     milliseconds;
+        size_t  tbhits;
     };
 
 
@@ -316,6 +317,7 @@ namespace search
         static void cancel() { _cancel.store(true, std::memory_order_relaxed); }
 
         bool        can_forward_prune() const;
+        bool        can_probe_endtables() const { return piece_count() <= tb_cardinality(); }
 
         template<bool PruneCaptures = false> bool can_prune() const;
         template<bool PruneCaptures = false> bool can_prune_move(const Move&) const;
@@ -453,10 +455,10 @@ namespace search
         static MovesList& moves(int tid, int ply);
         static StatePool& states(int tid, int ply);
 
-        static void set_syzygy_path(const std::string& path) { _syzygy_path = path; }
+        static void set_syzygy_path(const std::string& path) { _syzygy_path = path; tb_init(); }
         static const std::string& syzygy_path() { return _syzygy_path; }
-        static void set_tb_cardinality(int n) { _tb_cardinality = n; }
-        static int tb_cardinality() { return _tb_cardinality.load(std::memory_order_relaxed); }
+
+        static int tb_cardinality() { return _tb_cardinality; }
 
         /*
          * Python callbacks
@@ -473,8 +475,6 @@ namespace search
         static std::string  (*_pgn)(Context*);
         static void         (*_print_state)(const State&, bool unicode); /* DEPRECATED, use print_board */
         static void         (*_report)(PyObject*, std::vector<Context*>&);
-        static void         (*_set_syzygy_path)(const std::string&);
-        static bool         (*_tb_probe_wdl)(const State&, int*);
         static size_t       (*_vmem_avail)();
 
         static HistoryPtr   _history;
@@ -483,7 +483,9 @@ namespace search
         const Move* get_next_move(score_t);
         bool has_cycle(const State&) const;
 
-        void update_accumulators();
+        void update_accumulators(); /* lazy */
+
+        static void tb_init();
 
         MoveMaker           _move_maker;
 
@@ -496,7 +498,8 @@ namespace search
         static atomic_int   _time_limit; /* milliseconds */
         static atomic_time  _time_start;
         static std::string  _syzygy_path;
-        static atomic_int   _tb_cardinality;
+        static int          _tb_cardinality;
+        static bool         _tb_initialized;
 
         static std::vector<ContextStack>    _context_stacks;
         static std::vector<MoveStack>       _move_stacks;
