@@ -28,6 +28,9 @@
 #include <stdexcept>
 #include "backtrace.h"
 
+#if (__arm__) || (__arm64__) || (__aarch64__)
+  #define __ARM__ true
+#endif
 
 #if !defined(_DEBUG)
 #if _MSC_VER

@@ -38,9 +38,8 @@ namespace chess
 
 /*
  https://github.com/llvm/llvm-project/issues/55798
- workaround: turn on USE_MAGIC_BITS on ARM
 */
-#if USE_MAGIC_BITS && __ARM__
+#if __ARM__
   #if defined(__clang__)
       #pragma clang optimize off
   #elif defined(__GNUC__)
@@ -56,7 +55,7 @@ namespace chess
   #include "attacks.h"
 #endif
 
-#if USE_MAGIC_BITS && __ARM__
+#if __ARM__
   #if defined(__clang__)
       #pragma clang optimize on
   #elif defined(__GNUC__)
