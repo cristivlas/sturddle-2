@@ -1315,20 +1315,10 @@ namespace search
             const score_t delta = score - prev_score;
             prev_score = score;
 
-        #if 1
-            /* Widen in the OPPOSITE direction of the score trend, in case the raise/fall in
-             * the score is caused by too narrow a window and a refutation / tactic was missed.
-             */
             _alpha = std::max<score_t>(SCORE_MIN, score - std::max(WINDOW_HALF, delta));
             _beta = std::min<score_t>(SCORE_MAX, score + std::max(WINDOW_HALF, -delta));
-        #else
-            const score_t window_size = std::max(WINDOW_HALF, abs(delta));
-            _alpha = std::max<score_t>(SCORE_MIN, score - window_size);
-            _beta = std::min<score_t>(SCORE_MAX, score + window_size);
-        #endif
         }
 
-        // log_message(LogLevel::INFO, std::format("{}: {}, [{}:{}]", iteration(), score, _alpha, _beta));
         ASSERT(_alpha < _beta);
 
         /* save iteration bounds */
