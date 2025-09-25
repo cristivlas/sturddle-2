@@ -4,6 +4,15 @@ Sturddle 2 is a fork of my Sturddle Chess Engine (https://github.com/cristivlas/
 with many bug fixes and a rewritten (and trained from scratch) neural network.
 
 ## Building the Engine
+Python (3.9 or higher) and a working C++ compiler are required. The compiler must support
+the C++ 20 standard. Clang 16 or higher is recommended (clang-cl.exe on Windows).
+The GNU C++ compiler and the Microsoft Compiler may work but are not well tested.
+
+The Python libraries in requirements.txt must be installed.
+
+To build a self-contained executable, PyInstaller is also needed. It is recommended to use a Python
+virtual environment for building.
+
 <code>python3 tools\build.py</code> builds a native executable for the host OS. The executable
 bundles binary images that support AVX512, AVX2, and generic SSE2.
 
@@ -14,7 +23,7 @@ or:
 or:
 <code>CC=clang++ CFLAGS=-march=native NATIVE_UCI=1 python3 setup.py build_ext --inplace</code>
 
-Clang is recommended, the GNU C++ compiler may work but it is not supported.
+
 
 If built with the `NATIVE_UCI` flag, invoke `main.py` to run the UCI engine.
 Without the `NATIVE_UCI` flag, run `sturddle.py` instead.
