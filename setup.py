@@ -143,12 +143,12 @@ if platform.startswith('win'):
         args += [ '/D_FORTIFY_SOURCE=0', '/GS-' ]
         link += [ '/GUARD:NO' ]
 
-    if NATIVE_UCI:
-        args.append('/DNATIVE_UCI=true')
+    args.append(f'/DNATIVE_UCI={int(NATIVE_UCI)}')
 
     # clang specific
     if cl_exe.lower().endswith('clang-cl.exe'):
         args += [
+            '-Wno-deprecated-declarations',
             '-Wno-unused-command-line-argument',
             '-Wno-unused-variable',
             '-Wno-nan-infinity-disabled',
@@ -187,7 +187,7 @@ else:
         args += [
             '-Wno-macro-redefined',
             '-D_FORTIFY_SOURCE=0',  # Avoid the overhead.
-            #'-Wno-deprecated-declarations',
+            '-Wno-deprecated-declarations',
             '-fvisibility=hidden',
             '-DPyMODINIT_FUNC=__attribute__((visibility("default"))) extern "C" PyObject*',
         ]

@@ -1568,7 +1568,7 @@ namespace search
         {
             try
             {
-                _syzygy_path = std::filesystem::canonical(_syzygy_path);
+                _syzygy_path = std::filesystem::canonical(_syzygy_path).string();
             }
             catch (const std::exception& e)
             {
