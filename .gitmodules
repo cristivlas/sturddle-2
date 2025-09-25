@@ -10,3 +10,6 @@
 [submodule "simde"]
 	path = simde
 	url = https://github.com/simd-everywhere/simde.git
+[submodule "Fathom"]
+	path = Fathom
+	url = https://github.com/cristivlas/Fathom.git
