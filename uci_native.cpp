@@ -1348,6 +1348,6 @@ void uci_loop(Params params)
 
 void uci_loop(Params params)
 {
-    raise_runtime_error("Native UCI implementation is not enabled.");
+    throw std::runtime_error("Native UCI implementation is not enabled.");
 }
 #endif /* NATIVE_UCI */

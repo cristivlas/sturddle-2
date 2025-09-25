@@ -24,6 +24,7 @@
  * pertaining to the Context of the node being searched.
  */
 #include <cerrno>
+#include <format>
 #include <iomanip>
 #include <iterator>
 #include <map>

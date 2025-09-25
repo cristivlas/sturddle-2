@@ -159,7 +159,8 @@ if platform.startswith('win'):
     link += ['/LTCG:OFF']  # MSFT linker args
 else:
     # Linux, Mac
-    STDCPP=20 if NATIVE_UCI else 17
+    # STDCPP=20 if NATIVE_UCI else 17
+    STDCPP=20
 
     # Linux and Mac
     if '-O0' not in args:
@@ -186,16 +187,16 @@ else:
         args += [
             '-Wno-macro-redefined',
             '-D_FORTIFY_SOURCE=0',  # Avoid the overhead.
-            '-Wno-deprecated-declarations',
+            #'-Wno-deprecated-declarations',
             '-fvisibility=hidden',
             '-DPyMODINIT_FUNC=__attribute__((visibility("default"))) extern "C" PyObject*',
         ]
-        if NATIVE_UCI:
+        args.append(f'-DNATIVE_UCI={int(NATIVE_UCI)}')
+
+        if STDCPP >= 20:
             cc_ver = get_compiler_major_version(cc)
             if cc_ver < MIN_CLANG_VER:
-                raise RuntimeError(f'{cc} ver={cc_ver}. NATIVE_UCI requires clang {MIN_CLANG_VER} or higher')
-
-            args.append('-DNATIVE_UCI=true')
+                raise RuntimeError(f'{cc} ver={cc_ver}. clang {MIN_CLANG_VER} or higher required.')
 
             if '-arch arm64' in environ.get('ARCHFLAGS', ''):
                 print('ARM64 Target, skipping extra compiler and linker flags.')

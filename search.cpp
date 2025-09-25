@@ -456,18 +456,16 @@ static bool probe_endtables(Context& ctxt, TranspositionTable& table)
             {
                 if (ctxt.depth() > 0 && ctxt.tt_result()._replacement_slot >= 0)
                 {
-                    // std::cout << "info string " << chess::color_name(board.turn) << " " << score << std::endl;
                     ctxt._score = score;
                     table.store(ctxt, ctxt.tt_entry(), tt_type, ctxt.depth());
                     return true;
                 }
             }
-
             if (ctxt.is_pv_node() && tt_type == TT_Type::LOWER)
             {
                 ctxt._score = score;
                 ctxt._alpha = std::max<score_t>(ctxt._alpha, score);
-                // std::cout << "info string alpha " << ctxt._alpha << std::endl;
+                ctxt._beta = SCORE_MAX;
             }
         }
     }
@@ -499,19 +497,20 @@ static void probe_root(Context& ctxt)
 
         if (result != TB_RESULT_FAILED)
         {
-             constexpr PieceType PROMO_TABLE[5] = {
+             static constexpr PieceType PROMO_TABLE[5] = {
                 PieceType::NONE,
                 PieceType::QUEEN,
                 PieceType::ROOK,
                 PieceType::BISHOP,
                 PieceType::KNIGHT,
             };
+            const auto promo = TB_GET_PROMOTES(result);
+            ASSERT(promo >= 0 && promo < 5);
+
             ctxt._best_move = chess::BaseMove(
-                Square(TB_GET_FROM(result)),
-                Square(TB_GET_TO(result)),
-                PROMO_TABLE[TB_GET_PROMOTES(result)]
+                Square(TB_GET_FROM(result)), Square(TB_GET_TO(result)), PROMO_TABLE[promo]
             );
-            std::cout << "info string " << ctxt._best_move << std::endl;
+            // std::cout << "info string " << ctxt._best_move << std::endl;
         }
     }
 }
