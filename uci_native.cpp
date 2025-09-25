@@ -719,7 +719,7 @@ struct Info : public search::IterationInfo
         , hashfull(search::TranspositionTable::usage() * 10)
         , iteration(ctxt.iteration())
         , brief(milliseconds < TIME_LOW || !ctxt._best_move)
-        , pv(brief ? &no_pv : pv = &ctxt.get_pv())
+        , pv(brief ? &no_pv : &ctxt.get_pv())
     {}
 };
 

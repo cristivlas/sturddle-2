@@ -74,9 +74,13 @@ sourcefiles = [
 
 
 cxx = environ.get('CXX')
-if cxx and cxx.startswith('clang++') and 'CC' not in environ:
-    cc = cxx.replace('clang++', 'clang')
-    environ['CC'] = cc
+if cxx and 'CC' not in environ:
+    if cxx.startswith('clang++'):
+        cc = cxx.replace('clang++', 'clang')
+        environ['CC'] = cc
+    elif cxx.startswith('g++'):
+        cc = cxx.replace('g++', 'gcc')
+        environ['CC'] = cc
 
 """
 Compiler args.
