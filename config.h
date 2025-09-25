@@ -232,7 +232,11 @@ static constexpr int HASH_MIN = 16; /* MB */
 #if SMP
     #if defined(CONFIG_IMPL)
         static const auto THREAD_MAX = std::thread::hardware_concurrency();
+      #if 0
         static const auto THREAD_VAL = std::min<int>(4, THREAD_MAX);
+      #else
+        static const auto THREAD_VAL = 1;   // be nice to CCRL testers
+      #endif
     #endif
 #else
     static constexpr int SMP_CORES = 1;

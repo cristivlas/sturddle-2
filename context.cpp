@@ -24,7 +24,7 @@
  * pertaining to the Context of the node being searched.
  */
 #include <cerrno>
-#include <format>
+//#include <format>
 #include <iomanip>
 #include <iterator>
 #include <map>
@@ -1580,7 +1580,8 @@ namespace search
             _tb_initialized = ::tb_init(_syzygy_path.c_str());
             _tb_cardinality = TB_LARGEST;
         }
-        log_message(LogLevel::INFO, std::format("tb_init({}): {}, cardinality: {}", _syzygy_path, _tb_initialized, _tb_cardinality));
+        //log_message(LogLevel::INFO, std::format("tb_init({}): {}, cardinality: {}", _syzygy_path, _tb_initialized, _tb_cardinality));
+        std::cout << "info string " << _syzygy_path << " cardinality " << _tb_cardinality << "\n";
 #endif /* USE_ENDTABLES */
     }
 

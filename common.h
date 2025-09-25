@@ -140,7 +140,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 
 /* default hash table size in megabytes */
-#if USE_MMAP_HASH_TABLE
+#if USE_MMAP_HASH_TABLE || defined(_WIN32)
 constexpr size_t DEFAULT_HASH_TABLE_SIZE =  256;
 #else
 constexpr size_t DEFAULT_HASH_TABLE_SIZE =  32;
