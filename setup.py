@@ -102,7 +102,7 @@ else:
 
 platform = sysconfig.get_platform()
 
-NATIVE_UCI = environ.get('NATIVE_UCI', '').lower() in ['1', 'true', 'yes']
+NATIVE_UCI = environ.get('NATIVE_UCI', '1').lower() in ['1', 'true', 'yes']
 SHARED_WEIGHTS = environ.get('SHARED_WEIGHTS', '').lower() in ['1', 'true', 'yes']
 
 # Debug build
@@ -221,7 +221,7 @@ else:
         # Not Clang
         if NATIVE_UCI:
             if get_compiler_major_version() < MIN_GCC_VER:
-                raise RuntimeError(f'NATIVE_UCI uses C++20 and requires GCC {MIN_GCC_VER} or later')
+                raise RuntimeError(f'NATIVE_UCI uses C++20 and requires GCC >= {MIN_GCC_VER} or Clang >= {MIN_CLANG_VER}')
 
             args.append('-DNATIVE_UCI=true')
         else:

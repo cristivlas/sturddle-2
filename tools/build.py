@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 '''
 Build all-in-one executable using pyinstaller.
 
@@ -70,8 +71,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    if args.native_uci:
-        os.environ['NATIVE_UCI'] = '1'
+    os.environ['NATIVE_UCI'] = '1' if args.native_uci else '0'
 
     mods = '*.pyd' if is_windows() else '*.so'
     editbin = find_editbin() if is_windows() else None
