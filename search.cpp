@@ -477,6 +477,7 @@ static void probe_root(Context& ctxt)
 {
     ASSERT(ctxt.is_root());
 
+    /* tb_probe_root not thread-safe, main-thread only */
     if (ctxt.tid() == 0 && ctxt.can_probe_endtables())
     {
         const auto& board = ctxt.state();
