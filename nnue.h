@@ -324,13 +324,20 @@ namespace nnue
         void set_weights(const float(&w)[I][OUTPUTS], const float(&b)[OUTPUTS])
         {
             for (int j = 0; j != OUTPUTS; ++j)
-                _b[j] = b[j] * Scale;
+                if constexpr (Scale == 1)
+                    _b[j] = b[j];
+                else
+                    _b[j] = std::round(b[j] * Scale);
 
             for (int i = 0; i != I; ++i)
             {
                 for (int j = 0; j != OUTPUTS; ++j)
                 {
-                    _wt[j][i] = w[i][j] * Scale;
+                    if constexpr (Scale == 1)
+                        _wt[j][i] = w[i][j];
+                    else
+                        _wt[j][i] = std::round(w[i][j] * Scale);
+
                     if constexpr (Incremental)
                         this->_w[i][j] = _wt[j][i];
                 }

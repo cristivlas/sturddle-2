@@ -422,6 +422,27 @@ static struct
 #endif /* SHARED_WEIGHTS */
 
 
+static INLINE void update(Accumulator& accumulator, const Context* ctxt)
+{
+#if USE_MOVE_PREDICTION
+    accumulator.update(model.L1A, model.L1B, model.L_M, ctxt->state());
+#else
+    accumulator.update(model.L1A, model.L1B, ctxt->state());
+#endif
+}
+
+
+/* incremental version */
+static INLINE void update(Accumulator& accumulator, const Context* ctxt, const Accumulator& prev_acc)
+{
+#if USE_MOVE_PREDICTION
+    accumulator.update(model.L1A, model.L1B, model.L_M, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
+#else
+    accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
+#endif
+}
+
+
 void search::Context::update_accumulators()
 {
     const auto t = tid();
@@ -449,22 +470,14 @@ void search::Context::update_accumulators()
         if (ctxt->is_root())
         {
             ASSERT(ctxt->_parent == nullptr);
-        #if USE_MOVE_PREDICTION
-            accumulator.update(model.L1A, model.L1B, model.L_M, ctxt->state());
-        #else
-            accumulator.update(model.L1A, model.L1B, ctxt->state());
-        #endif
+            update(accumulator, ctxt);
         }
         else
         {
             auto& prev_acc = NNUE_data[t][ctxt->_ply - ctxt->_nnue_prev_offs];
             ASSERT(!prev_acc.needs_update(ctxt->_parent->state()));
 
-        #if USE_MOVE_PREDICTION
-            accumulator.update(model.L1A, model.L1B, model.L_M, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
-        #else
-            accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
-        #endif
+            update(accumulator, ctxt, prev_acc);
         }
 
         ctxt->_eval_raw = SCORE_MIN;
@@ -1810,7 +1823,9 @@ namespace search
                     || is_pawn_push(ctxt, move))
                 {
                     if (make_move<true>(ctxt, move, MoveOrder::TACTICAL_MOVES, hist_score))
+                    {
                         ASSERT(move._score == decltype(move._score)(hist_score));
+                    }
                 }
             }
             else /* Phase == 4 */

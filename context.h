@@ -607,7 +607,7 @@ namespace search
     {
         return move.promotion() != chess::PieceType::QUEEN /* ignore under-promotions */
             && !move._state->is_capture()
-            && move._state->pushed_pawns_score <= 1
+            && move._state->pushed_pawns_score == 0
             && !move._state->is_check();
     }
 
@@ -628,7 +628,7 @@ namespace search
                 (_parent != nullptr)
                 && !is_pv_node()
                 && !_excluded
-                && (state().pushed_pawns_score <= 2)
+                && (state().pushed_pawns_score == 0)
                 && !state().just_king_and_pawns()
                 && (_parent->_mate_detected == 0 || _parent->_mate_detected % 2)
                 && !is_check();
@@ -674,7 +674,7 @@ namespace search
 
         return !is_leftmost()
             && !is_retry()
-            && (state().pushed_pawns_score <= 1)
+            && (state().pushed_pawns_score == 0)
             && !is_extended()
             && (_move.from_square() != _parent->_capture_square)
             && !is_recapture()
@@ -962,13 +962,20 @@ namespace search
     {
         if (_repeated < 0)
         {
-            if (_parent)
-                zobrist_update(_parent->state(), _move, *_state);
+            if (state().en_passant_square != Square::UNDEFINED)
+            {
+                _repeated = 0;
+            }
+            else
+            {
+                if (_parent)
+                    zobrist_update(_parent->state(), _move, *_state);
 
-            ASSERT(_history);
-            _repeated = _history->count(state()) > 0 || has_cycle(state());
+                ASSERT(_history);
+                _repeated = _history->count(state()) > 0 || has_cycle(state());
 
-            ASSERT(_repeated >= 0);
+                ASSERT(_repeated >= 0);
+            }
         }
         return _repeated > 0;
     }
