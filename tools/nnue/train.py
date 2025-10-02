@@ -60,6 +60,10 @@ def make_model(args, strategy):
         def __call__(self, w):
             if self.quantize_round:
                 w = tf.round(w * Q_SCALE) / Q_SCALE
+
+            # Create dead zone: push values in (-1/Q_SCALE, 1/ Q_SCALE) to 0
+            # w = tf.where(tf.abs(w) < 1.0 / Q_SCALE, 0.0, w)
+
             return tf.clip_by_value(w, self.qmin, self.qmax)
 
     @tf.function
@@ -185,7 +189,7 @@ def make_model(args, strategy):
             bias_constraint=constr_b,
         )(input_1b)
 
-        spatial_attn = Dense(ATTN_FAN_OUT, activation=ACTIVATION, name='spatial_attn')(hidden_1b)
+        spatial_attn = Dense(ATTN_FAN_OUT, activation=None, name='spatial_attn')(hidden_1b)
 
         def custom_pooling(x):
             reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))

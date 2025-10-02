@@ -843,8 +843,8 @@ namespace nnue
         pool(a._output_a, l2_in);
 
         /* The "spatial attention" layer modulates L2. */
-        activate(a._output_b, attn_in); // process output of hidden_1b
-        attn.dot(attn_in, attn_out, [](const Vector& v) { return max(v, v_zero); });
+        activate(a._output_b, attn_in);
+        attn.dot(attn_in, attn_out);
 
         static_assert(L2::INPUTS % Vector::size() == 0);
 

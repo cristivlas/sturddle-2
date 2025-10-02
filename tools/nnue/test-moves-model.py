@@ -18,18 +18,21 @@ tests = [
     '5bk1/1p3p2/6pp/pPR1p3/P7/1P4P1/3r3P/5BK1 w - -',
     'r4rk1/ppq2p1p/4pp2/1P1p4/P7/3N1P2/6Pb/R2Q1R1K w - -',
     'rnbq1rk1/pp3pbp/3ppnp1/2p3N1/2BPP3/2N2Q2/PPP2PPP/R1B1K2R w KQ -',
-    'r7/8/5kp1/2p2p1p/1pRbbP1P/1P2p1PK/P3B3/5R2 b - -'
+    'r7/8/5kp1/2p2p1p/1pRbbP1P/1P2p1PK/P3B3/5R2 b - -',
+    'r2q3r/p1nkb1pn/b1p1p2p/1p2P2Q/2pP4/2N3P1/1P1B1PBP/R2R2K1 w - -',
 ]
 
 # Expected best moves and evaluations for each position
 expected_moves = [
     'b7b6', 'g3e3', 'b2b4', 'd1d4', 'h5f6',
-    'g7g5', 'c5c7', 'd3f2', 'e4e5', 'a8a2'
+    'g7g5', 'c5c7', 'd3f2', 'e4e5', 'a8a2',
+    'd4d5',
 ]
 
 expected_evals = [
     0.09, -5.97, 5.62, 4.78, 0.44,
-    -4.79, -0.20, 1.82, -0.52, -5.77
+    -4.79, -0.20, 1.82, -0.52, -5.77,
+    3.4
 ]
 
 def encode(board):
