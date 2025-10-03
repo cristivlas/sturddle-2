@@ -282,7 +282,7 @@ namespace nnue
     {
         static constexpr int ROWS = I;
         static constexpr int COLS = O;
-        /* Round up to INPUT_STRIDE to deal with the 897 inputs. */
+        /* Round up to INPUT_STRIDE to deal with odd inputs. */
         static constexpr int INPUTS = round_up<INPUT_STRIDE>(I);
         static constexpr int OUTPUTS = O;
 

@@ -51,20 +51,21 @@ def configure_logging(args):
 
 
 def make_model(args, strategy):
-    class CustomConstraint(tf.keras.constraints.Constraint):
+    class QConstraint(tf.keras.constraints.Constraint):
         def __init__(self, qmin, qmax, quantize_round=args.quantize_round):
             self.qmin = qmin
             self.qmax = qmax
             self.quantize_round = quantize_round
 
         def __call__(self, w):
+            w = tf.clip_by_value(w, self.qmin, self.qmax)
+            mask = tf.abs(w) < 1/Q_SCALE
+            w = tf.where(mask, tf.sign(w) / Q_SCALE, w)
+
             if self.quantize_round:
                 w = tf.round(w * Q_SCALE) / Q_SCALE
 
-            # Create dead zone: push values in (-1/Q_SCALE, 1/ Q_SCALE) to 0
-            # w = tf.where(tf.abs(w) < 1.0 / Q_SCALE, 0.0, w)
-
-            return tf.clip_by_value(w, self.qmin, self.qmax)
+            return w
 
     @tf.function
     def soft_clip(x, clip_value, alpha=0.1):
@@ -164,7 +165,7 @@ def make_model(args, strategy):
 
         concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
 
-        constr_a = CustomConstraint(Q_MIN_A, Q_MAX_A)
+        constr_a = QConstraint(Q_MIN_A, Q_MAX_A)
         hidden_1a = Dense(
             ACCUMULATOR_SIZE,
             activation=ACTIVATION,
@@ -174,7 +175,7 @@ def make_model(args, strategy):
             bias_constraint=constr_a,
         )(concat)
 
-        constr_b = CustomConstraint(Q_MIN_B, Q_MAX_B)
+        constr_b = QConstraint(Q_MIN_B, Q_MAX_B)
         # constr_b = constr_a  # use same weight ranges as accumulator
 
         # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
@@ -205,9 +206,9 @@ def make_model(args, strategy):
         modulation = Multiply(name='modulation')([pooled, attn_reshape_layer(spatial_attn)])
 
         # Add residual connection: pooled + pooled * attention_weights
-        weighted = Add(name='weighted')([pooled, modulation])
+        residual = Add(name='residual')([pooled, modulation])
 
-        hidden_2 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_2')(weighted)
+        hidden_2 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_2')(residual)
         hidden_3 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_3')(hidden_2)
 
         # Define the position evaluation output
@@ -763,14 +764,14 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
         parser.add_argument('-a', '--adaptive', action='store_true', help='use adaptive loss (otherwise use default: weighted loss)')
-        parser.add_argument('-b', '--batch-size', type=int, default=8192, help='batch size')
-        parser.add_argument('-c', '--clip', type=float, default=3.0, help='position eval gradient soft clip')
+        parser.add_argument('-b', '--batch-size', type=int, default=16384, help='batch size')
+        parser.add_argument('-c', '--clip', type=float, default=10.0, help='position eval gradient soft clip')
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
         parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
-        parser.add_argument('-F', '--filter', type=int, default=15000, help='filter out positions with absolute score higher than this')
+        parser.add_argument('-F', '--filter', type=int, default=2400, help='filter out positions with absolute score higher than this')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-4, help='learning rate')
@@ -780,8 +781,8 @@ if __name__ == '__main__':
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
         parser.add_argument('--hex', action='store_true', help='export weights in hex format')
 
-        parser.add_argument('--huber-delta', type=float, default=2.0)
-        parser.add_argument('--loss-weight', type=float, default=0.95, help='weight for outcome loss vs eval loss (0=eval only, 1=outcome only)')
+        parser.add_argument('--huber-delta', type=float, default=5.0)
+        parser.add_argument('--loss-weight', type=float, default=0.9, help='weight for outcome loss vs eval loss (0=eval only, 1=outcome only)')
         parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
 
         # Move prediction related arguments
@@ -789,7 +790,7 @@ if __name__ == '__main__':
         parser.add_argument('--move-weight', type=float, default=0.3, help='blending weight for move prediction loss')
 
         # Arguments for move prediction stability
-        parser.add_argument('--move-temperature', type=float, default=2.0, help='temperature scaling for move logits')
+        parser.add_argument('--move-temperature', type=float, default=1.0, help='temperature scaling for move logits')
         parser.add_argument('--move-logit-clip', type=float, default=10.0, help='clip move logits to prevent extreme values')
         parser.add_argument('--move-loss-scale', type=float, default=0.1, help='scale factor for move prediction loss')
         parser.add_argument('--clip-norm', type=float, default=1.0, help='gradient clipping norm')
