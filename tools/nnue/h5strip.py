@@ -3,6 +3,7 @@ import argparse
 import h5py
 import numpy as np
 import os
+import shutil
 import tempfile
 from tqdm import tqdm
 
@@ -99,7 +100,7 @@ def main():
         temp_file.close()
         try:
             if truncate_h5_file(args.input, temp_file.name, args.verbose):
-                os.replace(temp_file.name, args.input)
+                shutil.move(temp_file.name, args.input)
                 print(f"Original file successfully replaced with truncated version")
             else:
                  os.unlink(temp_file.name)
