@@ -10,7 +10,6 @@ import argparse
 import logging
 import math
 import os
-import re
 import sys
 from contextlib import redirect_stdout
 
@@ -59,72 +58,44 @@ def make_model(args, strategy):
 
         def __call__(self, w):
             w = tf.clip_by_value(w, self.qmin, self.qmax)
-            mask = tf.abs(w) < 1/Q_SCALE
-            w = tf.where(mask, tf.sign(w) / Q_SCALE, w)
 
             if self.quantize_round:
+                mask = tf.abs(w) < 1 / Q_SCALE
+                w = tf.where(mask, tf.sign(w) / Q_SCALE, w)
                 w = tf.round(w * Q_SCALE) / Q_SCALE
 
             return w
 
     @tf.function
     def soft_clip(x, clip_value, alpha=0.1):
-        return (2 * tf.math.sigmoid(.5 * x) - 1) * clip_value + x * alpha
-
-    @tf.function
-    def compute_huber_loss(eval_target, y_pred):
-        error = soft_clip(eval_target - y_pred, args.clip)
-        delta = tf.constant(args.huber_delta, dtype=tf.float32)
-        squared_loss = 0.5 * tf.square(error)
-        linear_loss = delta * tf.abs(error) - 0.5 * delta**2
-        return tf.where(tf.abs(error) < delta, squared_loss, linear_loss)
-
-    @tf.function
-    def compute_prob_loss(outcome_target, y_pred):
-        centipawns = y_pred * SCALE
-        scale = tf.constant(args.outcome_scale, dtype=tf.float32)
-        logits = centipawns / scale
-        focal_loss = tf.keras.losses.binary_focal_crossentropy(
-            outcome_target, logits, alpha=0.45, gamma=2.5, from_logits=True
-        )
-        return focal_loss
+        return (2 * tf.sigmoid(.5 * x) - 1) * clip_value + x * alpha
 
     @tf.function
     def combined_loss(y_true, y_pred):
-        """
-        Combined loss function that takes both eval and outcome as targets.
-        y_true: [eval_target, outcome_target] - shape (batch_size, 2)
-        y_pred: network output - shape (batch_size, 1)
-        """
+        """Combine eval with game outcome (WDL) losses"""
         eval_target = y_true[:, 0:1]
         outcome_target = y_true[:, 1:2]
+        sigmoid_scale = tf.constant(args.outcome_scale, dtype=tf.float32)
 
-        # Shortcuts for pure loss cases
-        if args.loss_weight == 0.0:
-            # Pure eval training - only Huber loss
-            return compute_huber_loss(eval_target, y_pred)
-        elif args.loss_weight == 1.0:
-            # Pure outcome training - only focal loss
-            return compute_prob_loss(outcome_target, y_pred)
-        else:
-            # Combined training - compute both
-            huber_loss = compute_huber_loss(eval_target, y_pred)
-            prob_loss = compute_prob_loss(outcome_target, y_pred)
+        # convert predicted and expected (target) eval scores to Win/Draw/Loss prob. scores
+        wdl_eval_pred = tf.sigmoid(y_pred * SCALE / sigmoid_scale)
+        wdl_eval_target = tf.sigmoid(eval_target * SCALE / sigmoid_scale)
 
-            eval_weight = tf.constant(1.0 - args.loss_weight, dtype=tf.float32)
-            outcome_weight = args.loss_weight
-            return eval_weight * huber_loss + outcome_weight * prob_loss
+        # loss_eval = tf.reduce_mean(tf.square(wdl_eval_pred - wdl_eval_target))
+        # loss_outcome = tf.reduce_mean(tf.square(wdl_eval_pred - outcome_target))
 
+        loss_eval = tf.reduce_mean(tf.abs(wdl_eval_pred - wdl_eval_target))
+        # loss_outcome = tf.reduce_mean(tf.abs(wdl_eval_pred - outcome_target))
 
-    @tf.function
-    def adaptive_loss(y_true, y_pred):
-        """ Experiment """
-        eval_target = y_true[:, 0:1]
-        outcome_target = y_true[:, 1:2]
-        is_draw = tf.equal(outcome_target, 0.5)
-        huber_loss = compute_huber_loss(eval_target, y_pred)
-        focal_loss = compute_prob_loss(outcome_target, y_pred)
-        return tf.where(is_draw, huber_loss, focal_loss)
+        # loss_eval = tf.keras.losses.binary_crossentropy(wdl_eval_target, wdl_eval_pred)
+        loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)
+
+        # blend the losses
+        eval_weight = tf.constant(1.0 - args.outcome_weight, dtype=tf.float32)
+        outcome_weight = tf.constant(args.outcome_weight, dtype=tf.float32)
+
+        loss = loss_eval * eval_weight + loss_outcome * outcome_weight
+        return loss
 
 
     class UnpackLayer(tf.keras.layers.Layer):
@@ -176,9 +147,8 @@ def make_model(args, strategy):
         )(concat)
 
         constr_b = QConstraint(Q_MIN_B, Q_MAX_B)
-        # constr_b = constr_a  # use same weight ranges as accumulator
 
-        # Define hidden layer 1b (use kings and pawns to compute dynamic weights)
+        # Define hidden layer 1b (use kings and pawns to modulate "main" network path)
         # hidden_1b_layer: selects the pawns and kings features.
         input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
         hidden_1b = Dense(
@@ -267,8 +237,7 @@ def make_model(args, strategy):
             centipawns = y_pred * SCALE
             scale = tf.constant(args.outcome_scale, dtype=tf.float32)
             logits = centipawns / scale
-            probs = tf.nn.sigmoid(logits)
-            # tf.print(tf.reshape(outcome_target, [-1]), tf.reshape(probs, [-1]))
+            probs = tf.sigmoid(logits)
             mae = tf.reduce_mean(tf.abs(probs - outcome_target))
             accuracy_score = 1.0 - mae  # Convert to accuracy (higher is better)
             return accuracy_score
@@ -276,13 +245,14 @@ def make_model(args, strategy):
         @tf.function
         def mae(y_true, y_pred):
             eval_target = y_true[:, 0:1]  # Extract eval component
-            return tf.keras.metrics.mean_absolute_error(eval_target, y_pred)
+            return tf.keras.metrics.mean_absolute_error(eval_target, y_pred) * SCALE / 100
 
-        losses = {'out': adaptive_loss if args.adaptive else combined_loss}
+        losses = {'out': combined_loss}
         metrics = {'out': [accuracy, mae]}
         loss_weights = {'out': 1.0}
 
         if args.predict_moves:
+            """Experimental"""
             @tf.function
             def scaled_sparse_categorical_crossentropy(y_true, y_pred):
                 """
@@ -420,7 +390,7 @@ def tf_unpack_bits(bitboards):
     return tf.reshape(isolated_bits, [-1, 12 * 64])
 
 
-def dataset_from_file(args, filepath, clip, strategy, callbacks):
+def dataset_from_file(args, filepath, strategy, callbacks):
     # Features are packed as np.uint64
     packed_feature_count = int(np.ceil(args.hot_encoding / 64))
 
@@ -465,6 +435,9 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             y_eval = self.data[start:end, self.feature_count:self.feature_count+1]
             y_eval = tf.cast(y_eval, tf.int64)  # Cast from unsigned to signed
             y_eval = tf.cast(y_eval, tf.float32) / SCALE  # Convert to float, and scale
+            if args.clip_eval:
+                y_eval = tf.clip_by_value(y_eval, -args.clip_eval/SCALE, args.clip_eval/SCALE)
+
             y_eval = tf.where(white_to_move, y_eval, -y_eval)  # Convert to White's perspective
 
             y_outcome = self.data[start:end, self.feature_count+1:self.feature_count+2]
@@ -474,11 +447,34 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
             # Convert to win probability: -1->0.0, 0->0.5, 1->1.0
             y_outcome = (y_outcome + 1.0) / 2.0
 
-            smoothing = 0.05
-            y_outcome = y_outcome * (1 - smoothing) + 0.5 * smoothing
+            y_outcome = y_outcome * (1 - args.outcome_smoothing) + 0.5 * args.outcome_smoothing
 
             # Combine both targets into a single tensor
             y_combined = tf.concat([y_eval, y_outcome], axis=1)  # Shape: (batch_size, 2)
+
+            mask = None
+
+            if args.no_capture and self.data.shape[1] > self.feature_count + 1:
+                to_square = self.data[start:end, self.feature_count+3]
+
+                # Compute occupied bitboards
+                black_occupied = np.bitwise_or.reduce(x[:, 0:12:2], axis=1)
+                white_occupied = np.bitwise_or.reduce(x[:, 1:12:2], axis=1)
+
+                # Select opponent based on side to move
+                stm = x[:, -1]
+                # tf.assert_equal(stm, tf.cast(tf.squeeze(white_to_move, axis=1), tf.uint64))
+                opponent_occupied = np.where(stm == 1, black_occupied, white_occupied)
+
+                # Check if to_square is occupied by opponent
+                to_square_mask = np.left_shift(np.uint64(1), to_square)
+                is_capture = (np.bitwise_and(opponent_occupied, to_square_mask) != 0)
+
+                mask = ~is_capture
+
+            if mask is not None:
+                x = tf.boolean_mask(x, mask)
+                y_combined = tf.boolean_mask(y_combined, mask)
 
             # Prepare outputs based on whether move prediction is enabled
             if args.predict_moves and self.data.shape[1] > self.feature_count + 1:
@@ -488,6 +484,9 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
                 # Convert from/to squares to move index (from_square * 64 + to_square)
                 move_indices = from_square * 64 + to_square
+
+                if mask is not None:
+                    move_indices = tf.boolean_mask(move_indices, mask)
 
                 # Reshape to match expected output shape
                 move_indices = tf.reshape(move_indices, (-1, 1))
@@ -528,12 +527,11 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
                     # Log hyper-parameters
                     hyperparam = {
                         'batch size': args.batch_size,
-                        'clip': args.clip,
                         'clip_norm': args.clip_norm,
                         'dataset size': f'{generator.rows():,}',
                         'filter': args.filter,
                         'learn rate': f'{self.model.optimizer.lr.read_value():.2e}',
-                        'loss_weight': args.loss_weight,
+                        'outcome_weight': args.outcome_weight,
                         'model': self.model.name,
                         'outcome_scale': args.outcome_scale,
                         'sampling ratio': args.sample,
@@ -629,9 +627,7 @@ def dataset_from_file(args, filepath, clip, strategy, callbacks):
 
 def load_model(path):
     custom_objects = {
-        'adaptive_loss': None,
         'combined_loss': None,
-        'chess_move_loss': None,
         'scaled_sparse_categorical_crossentropy': None,
         'top': None,
         'top_3': None,
@@ -694,11 +690,15 @@ def main(args):
         export_weights(args, model)
     else:
         callbacks = []
-        dataset, steps_per_epoch = dataset_from_file(args, args.input[0], args.clip, strategy, callbacks)
+        dataset, steps_per_epoch = dataset_from_file(args, args.input[0], strategy, callbacks)
 
         if args.schedule:
             from keras.callbacks import ReduceLROnPlateau
-            lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=1, min_lr=1e-9)
+            if args.outcome_weight >= 0.5:
+                monitor = 'loss'
+            else:
+                monitor = 'out_mae' if args.predict_moves else 'mae'
+            lr = ReduceLROnPlateau(monitor=monitor, factor=0.5, patience=1, min_lr=1e-9)
             callbacks.append(lr)
 
         if args.model is not None:
@@ -731,7 +731,7 @@ def main(args):
             callbacks.append(tensorboard_callback)
 
         if args.validation:
-            validation_data, _ = dataset_from_file(args, args.validation, None, strategy, None)
+            validation_data, _ = dataset_from_file(args, args.validation, strategy, None)
             model.fit(
                 dataset,
                 callbacks=callbacks,
@@ -763,26 +763,28 @@ if __name__ == '__main__':
 
         parser = argparse.ArgumentParser(formatter_class=CustomFormatter)
         parser.add_argument('input', nargs=1, help='memmap-ed numpy, or h5, input data file path')
-        parser.add_argument('-a', '--adaptive', action='store_true', help='use adaptive loss (otherwise use default: weighted loss)')
         parser.add_argument('-b', '--batch-size', type=int, default=16384, help='batch size')
-        parser.add_argument('-c', '--clip', type=float, default=10.0, help='position eval gradient soft clip')
+        parser.add_argument('-c', '--clip-eval', type=int, help='clip eval target values [-CLIP,CLIP]')
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
         parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
-        parser.add_argument('-F', '--filter', type=int, default=2400, help='filter out positions with absolute score higher than this')
+        parser.add_argument('-F', '--filter', type=int, default=10000, help='filter out positions with absolute score higher than this')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
-        parser.add_argument('-r', '--learn-rate', type=float, default=1e-4, help='learning rate')
+        parser.add_argument('-r', '--learn-rate', type=float, default=1e-3, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to (in C++ header file format)')
         parser.add_argument('-q', '--quantize-round', action='store_true')
-        parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
+        parser.add_argument('-s', '--outcome-smoothing', default=0.025)
+
         parser.add_argument('--hex', action='store_true', help='export weights in hex format')
 
-        parser.add_argument('--huber-delta', type=float, default=5.0)
-        parser.add_argument('--loss-weight', type=float, default=0.9, help='weight for outcome loss vs eval loss (0=eval only, 1=outcome only)')
+        parser.add_argument('--no-capture', action='store_true', help='exclude captures from training')
+        parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
+
+        parser.add_argument('--outcome-weight', type=float, default=0.15, help='weight for outcome loss vs eval loss')
         parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
 
         # Move prediction related arguments
@@ -821,14 +823,13 @@ if __name__ == '__main__':
         parser.add_argument('--schedule', action='store_true', help='use learning rate schedule')
         parser.add_argument('--validation', help='validation data filepath')
         parser.add_argument('--vfreq', type=int, default=1, help='validation frequency')
-        parser.add_argument('--use-multiprocessing', action='store_true', help='(experimental)')
-        parser.add_argument('--workers', '-w', type=int, default=4, help='(experimental)')
+        parser.add_argument('--use-multiprocessing', action='store_true', help='enable multiprocessing for data loading')
+        parser.add_argument('--workers', '-w', type=int, default=4, help='the number of worker threads for data loading')
 
         args = parser.parse_args()
 
-        # Validate loss_weight
-        if args.loss_weight < 0 or args.loss_weight > 1:
-            parser.error("--loss-weight must be between 0 and 1 (inclusive)")
+        if args.outcome_weight < 0 or args.outcome_weight > 1:
+            parser.error("--outcome-weight must be between 0 and 1 (inclusive)")
 
         # Validate move_weight
         if args.predict_moves and (args.move_weight <= 0 or args.move_weight >= 1):
