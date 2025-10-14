@@ -158,6 +158,10 @@ def format(num):
 
 def output_path(args):
     base_name = os.path.splitext(os.path.basename(args.input[0]))[0]
+
+    if args.begin is None and args.row_count is None:
+        return base_name + ".h5"
+
     return f"{base_name}-{format(args.begin) if args.begin else 0}-{format(args.row_count) if args.row_count else 'all'}.h5"
 
 
@@ -174,7 +178,6 @@ if __name__ == '__main__':
         args = parser.parse_args()
 
         if args.output is None:
-            base_name = os.path.splitext(os.path.basename(args.input[0]))[0]
             args.output = output_path(args)
 
         main(args)

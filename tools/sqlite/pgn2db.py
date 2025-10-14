@@ -14,6 +14,7 @@ class Statistics:
         self.positions_filtered_check = 0
         self.positions_filtered_capture = 0
         self.positions_filtered_limit = 0
+        self.positions_inserted = 0
         self.white_wins = 0
         self.black_wins = 0
         self.draws = 0
@@ -23,7 +24,7 @@ class Statistics:
     def log_summary(self):
         total_filtered = self.positions_filtered_check + self.positions_filtered_capture + self.positions_filtered_limit
         total_games = self.white_wins + self.black_wins + self.draws
-        positions_inserted = self.positions_parsed - total_filtered
+        positions_inserted = self.positions_inserted
 
         logging.info("=" * 70)
         logging.info("Processing Summary:")
@@ -38,6 +39,8 @@ class Statistics:
         logging.info(f"Total positions parsed: {self.positions_parsed:,}")
 
         if self.positions_parsed > 0:
+            duplicates = self.positions_parsed - self.positions_inserted - total_filtered
+            logging.info(f"Duplicates: {duplicates:,} ({duplicates/self.positions_parsed*100:.2f}%)")
             logging.info(f"Total positions filtered: {total_filtered:,} ({total_filtered/self.positions_parsed*100:.2f}%)")
             logging.info(f"  - Filtered (check): {self.positions_filtered_check:,} ({self.positions_filtered_check/self.positions_parsed*100:.2f}%)")
             logging.info(f"  - Filtered (capture): {self.positions_filtered_capture:,} ({self.positions_filtered_capture/self.positions_parsed*100:.2f}%)")
@@ -203,7 +206,7 @@ def main(args):
 
         # Estimate total number of games based on file size
         file_size = os.path.getsize(args.pgn_file)
-        avg_game_size = 3500  # bytes
+        avg_game_size = args.game_size  # bytes
         num_games = file_size // avg_game_size
 
         # Store for statistics
@@ -231,9 +234,11 @@ def main(args):
                     if args.limit is not None:
                         assert abs(cp_score) <= args.limit
 
-                    sqlconn.exec('''INSERT OR IGNORE INTO position(epd, score, best_move_uci, best_move_san, best_move_from, best_move_to, outcome)
+                    csr = sqlconn.exec('''INSERT OR IGNORE INTO position(epd, score, best_move_uci, best_move_san, best_move_from, best_move_to, outcome)
                                     VALUES(?, ?, ?, ?, ?, ?, ?)''',
                                     (epd, int(cp_score), best_move_uci, best_move_san, best_move_from, best_move_to, outcome))
+
+                    stats.positions_inserted += csr.rowcount
 
                 game_count += 1
                 if game_count % 10000 == 0:
@@ -258,6 +263,7 @@ def configure_logging(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Parse PGN file and output SQLite database of evaluated positions')
     parser.add_argument('pgn_file', help='PGN input file')
+    parser.add_argument('-g', '--game-size', default=2950, type=int, help='estimated bytes per game in PGN file (default: 2950)')
     parser.add_argument('-o', '--output', help='SQLite output file (default: input filename with .db extension)')
     parser.add_argument('-v', '--debug', action='store_true')
     parser.add_argument('--limit', type=int, help='absolute eval limit')
@@ -269,13 +275,15 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Infer output filenames from input if not provided
+    def infer_output_name(extension):
+        base_name = os.path.splitext(os.path.basename(args.pgn_file))[0]
+        return base_name + extension
+
     if args.output is None:
-        base_name = os.path.splitext(args.pgn_file)[0]
-        args.output = base_name + '.db'
+        args.output = infer_output_name('.db')
 
     if args.logfile is None:
-        base_name = os.path.splitext(args.pgn_file)[0]
-        args.logfile = base_name + '.log'
+        args.logfile = infer_output_name('.log')
 
     configure_logging(args)
 
