@@ -5,9 +5,30 @@ Virtually concatenate h5 files.
 
 import argparse
 import os
+from pathlib import Path
 
 import h5py
 import numpy as np
+
+
+def find_h5_files(folder_path):
+    """
+    Generator that recursively finds all .h5 files in a folder.
+
+    Args:
+        folder_path: Path to the folder to search
+
+    Yields:
+        Absolute path strings of .h5 files
+    """
+    folder = Path(folder_path)
+
+    if not folder.exists():
+        raise ValueError(f"Folder '{folder_path}' does not exist")
+
+    # Recursively find all .h5 files and yield their absolute paths as strings
+    for h5_file in sorted(folder.rglob('*.h5')):
+        yield str(h5_file.resolve())
 
 
 def check_shapes_and_dtypes(input_files, dataset_name):
@@ -15,6 +36,8 @@ def check_shapes_and_dtypes(input_files, dataset_name):
     column_counts = []
     for file_path in input_files:
         with h5py.File(file_path, 'r') as f:
+            if dataset_name not in f:
+                raise ValueError(f"Dataset '{dataset_name}' not found in {file_path}")
             column_counts.append(f[dataset_name].shape[1])
             dtypes.append(f[dataset_name].dtype)
 
@@ -23,6 +46,14 @@ def check_shapes_and_dtypes(input_files, dataset_name):
 
 
 def concatenate(input_files, output_file, dataset_name):
+    if not isinstance(input_files, list):
+        input_files = list(input_files)
+
+    if len(input_files) == 0:
+        raise ValueError("No input files found")
+
+    print(f"Found {len(input_files)} files.")
+
     check_shapes_and_dtypes(input_files, dataset_name)
 
     with h5py.File(input_files[0], 'r') as f:
@@ -47,13 +78,25 @@ def concatenate(input_files, output_file, dataset_name):
 
 def main():
     # Parse the command-line arguments
-    parser = argparse.ArgumentParser(description='Virtually concatenate multiple H5 files with the same dataset and datatype')
-    parser.add_argument('input_files', nargs='+', help='List of input H5 file paths')
+    parser = argparse.ArgumentParser(
+        description='Virtually concatenate multiple H5 files with the same dataset and datatype',
+        epilog='If input_files is not specified, all .h5 files in the current directory (recursively) will be used.'
+    )
+    parser.add_argument('input_files', nargs='*', help='List of input H5 file paths (or omit to auto-discover)')
     parser.add_argument('-o', '--output', required=True, help='Output H5 file path')
     parser.add_argument('--dataset', default='data', help='Name of the dataset to concatenate')
+    parser.add_argument('--folder', default='.', help='Folder to search for .h5 files (default: current directory)')
     args = parser.parse_args()
 
-    concatenate(args.input_files, args.output, args.dataset)
+    # If no input files specified, find all .h5 files in the folder
+    if not args.input_files:
+        print(f"No input files specified, searching for .h5 files in '{args.folder}'...")
+        input_files = find_h5_files(args.folder)
+    else:
+        input_files = args.input_files
+
+    concatenate(input_files, args.output, args.dataset)
+    print(f"Successfully created virtual dataset in {args.output}")
 
 
 if __name__ == '__main__':

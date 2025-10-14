@@ -19,6 +19,8 @@ import numpy as np
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+os.environ['TF_USE_LEGACY_KERAS'] = '1'
+
 ACCUMULATOR_SIZE = 1280
 ATTN_FAN_OUT = 32
 POOL_SIZE = 8
@@ -407,7 +409,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
 
             self.feature_count = feature_count
             self.batch_size = batch_size
-            self.num_batches = int(np.floor(len(self.data) / self.batch_size))  # drop incomplete batch
+            self._num_batches = int(np.floor(len(self.data) / self.batch_size))  # drop incomplete batch
             if args.sample:
                 self.sample_batches()
             else:
@@ -415,6 +417,10 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 np.random.shuffle(self.indices)
 
             logging.info(f'using {len(self.indices)} batches.')
+
+        @property
+        def num_batches(self):
+            return self._num_batches
 
         def __call__(self):
             return self

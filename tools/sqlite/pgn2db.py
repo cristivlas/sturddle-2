@@ -2,6 +2,7 @@
 # Construct training DBs from PGNs that contain evaluations.
 import argparse
 import os
+import re
 import chess.pgn as pgn
 import logging
 from dbutils.sqlite import SQLConn
@@ -156,7 +157,10 @@ def pgn_to_epd(args, game, stats):
 
         # Parse score in centipawns from side-to-move perspective
         # Format: { +0.26/3 0.044s } or { -0.20/3 0.048s }
+        comment = re.sub(r'\([^)]*\)', '', comment).strip()
         parts = comment.strip('{}').split()
+        if not parts:
+            continue
         score_str = parts[0]
 
         if score_str.startswith('M') or score_str.startswith('+M') or score_str.startswith('-M'):
