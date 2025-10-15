@@ -219,7 +219,7 @@ def check_minimum_elo(args, game):
     for player in ['White', 'Black']:
         elo_header = f'{player}Elo'
         elo = int(game.headers.get(elo_header, '0'))
-        if elo < min_elo:
+        if elo and elo < min_elo:
             logging.debug(f'{elo_header}: {elo} < {min_elo}')
             return False
 
