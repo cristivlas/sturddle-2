@@ -700,10 +700,12 @@ def main(args):
 
         if args.schedule:
             from keras.callbacks import ReduceLROnPlateau
-            if args.outcome_weight >= 0.5:
-                monitor = 'loss'
-            else:
-                monitor = 'out_mae' if args.predict_moves else 'mae'
+
+            #if args.outcome_weight >= 0.5:
+            #    monitor = 'loss'
+            #else:
+            #    monitor = 'out_mae' if args.predict_moves else 'mae'
+            monitor='loss'
             lr = ReduceLROnPlateau(monitor=monitor, factor=0.5, patience=1, min_lr=1e-9)
             callbacks.append(lr)
 
@@ -776,7 +778,7 @@ if __name__ == '__main__':
         parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
-        parser.add_argument('-F', '--filter', type=int, default=10000, help='filter out positions with absolute score higher than this')
+        parser.add_argument('-F', '--filter', type=int, help='filter out positions with absolute score above this value')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-3, help='learning rate')
