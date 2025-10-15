@@ -66,102 +66,104 @@ class Statistics:
         logging.info("=" * 70)
 
 
-def get_game_outcome(game):
-    '''
-    Extract game outcome from PGN headers
-    Returns outcome from side-to-move perspective: 1 for win, 0 for draw, -1 for loss
-    '''
+def get_game_outcome(game, stats):
+    """Extract game outcome from PGN headers"""
     result = game.headers.get('Result', '*')
 
     if result == '1/2-1/2':
+        stats.draws += 1
         return 0, 0  # Draw
     elif result == '1-0':
+        stats.white_wins += 1
         return 1, -1  # White wins, Black loses
     elif result == '0-1':
+        stats.black_wins += 1
         return -1, 1  # White loses, Black wins
     else:
         return None, None  # Game in progress or unknown result
 
 
 def pgn_to_epd(args, game, stats):
-    '''
+    """
     Extracts positions with evaluations and their corresponding next move (best response)
-    Returns a list of (epd, score, next_move_uci, next_move_san, next_move_from, next_move_to, outcome) tuples
-    '''
+    Returns a list of (epd, score, move_uci, move_san, move_from, move_to, outcome) tuples
+    """
     board = game.board()
     epd_list = []
 
     mate_score = args.mate_score
 
     # Get game outcome
-    white_outcome, black_outcome = get_game_outcome(game)
+    white_outcome, black_outcome = get_game_outcome(game, stats)
     if white_outcome is None:
         return epd_list  # Skip games without clear outcomes
-
-    # Track game outcomes
-    result = game.headers.get('Result', '*')
-    if result == '1-0':
-        stats.white_wins += 1
-    elif result == '0-1':
-        stats.black_wins += 1
-    elif result == '1/2-1/2':
-        stats.draws += 1
 
     # We need to look at pairs of nodes to connect an evaluated position with the next move
     nodes = list(game.mainline())
 
-    for i in range(len(nodes) - 1):  # Stop one before the end to ensure there's a next move
-        current_node = nodes[i]
-        next_node = nodes[i + 1]
+    for i in range(len(nodes)):
+        stats.positions_parsed += 1
 
-        # Get the move from current position and make it
+        # Current board position
+        epd = board.epd()
+
+        # Get the move from current position
+        current_node = nodes[i]
         current_move = current_node.move
-        board.push(current_move)
 
         # Check if this position has an evaluation
         comment = current_node.comment.split('/')[0].strip()
         if not comment:
             # If no evaluation, skip the rest of the game
+            logging.info(f'skip game [{game.headers.get("GameStartTime", "")}')
             break
 
-        stats.positions_parsed += 1
-
-        # Current position after the move has been made
-        epd = board.epd()
-
-        # Get the next move (best response to the current position)
-        next_move = next_node.move
+        if comment.lower().startswith('book'):
+            board.push(current_move)
+            continue
 
         if args.no_check:
             if board.is_check():
-                logging.debug(f'skip in-check position: {board.fen()}')
+                logging.debug(f'skip in-check position: {epd}')
                 stats.positions_filtered_check += 1
+                board.push(current_move)
                 continue
-            if board.gives_check(next_move):
-                logging.debug(f'skip check: {board.fen()} {next_move}')
+            if board.gives_check(current_move):
+                logging.debug(f'skip check: {epd}, {current_move}')
                 stats.positions_filtered_check += 1
+                board.push(current_move)
                 continue
 
-        if args.no_capture and board.is_capture(next_move):
-            logging.debug(f'skip capture: {board.fen()} {next_move}')
+        if args.no_capture and board.is_capture(current_move):
+            logging.debug(f'skip capture: {epd}, {current_move}')
             stats.positions_filtered_capture += 1
+            board.push(current_move)
             continue
 
-        next_move_san = board.san(next_move)
-        next_move_uci = next_move.uci()
-        next_move_from = next_move.from_square
-        next_move_to = next_move.to_square
-
-        # Current side to move (for whom the evaluation applies)
+        # Side for whom the evaluation applies
         side_to_move = board.turn
 
+        move_san = board.san(current_move)
+
+        # Make the move
+        board.push(current_move)
+
+        move_uci = current_move.uci()
+        move_from = current_move.from_square
+        move_to = current_move.to_square
+
+        # logging.debug(comment)
         # Parse score in centipawns from side-to-move perspective
         # Format: { +0.26/3 0.044s } or { -0.20/3 0.048s }
         comment = re.sub(r'\([^)]*\)', '', comment).strip()
+        # logging.debug(comment)
+
         parts = comment.strip('{}').split()
         if not parts:
             continue
         score_str = parts[0]
+
+        logging.debug(f'{epd}, {current_move}, {move_san}, {score_str}')
 
         if score_str.startswith('M') or score_str.startswith('+M') or score_str.startswith('-M'):
             if not mate_score:
@@ -173,12 +175,9 @@ def pgn_to_epd(args, game, stats):
             # Preserve the sign from the original score
             sign = -1 if score_str.startswith('-') else 1
             score = int(sign * (mate_score - abs(mate_in)))
-            # logging.debug(f'mate score: {score}')
+            logging.debug(f'mate score: {score}')
         else:
             score = int(float(score_str) * 100)
-
-        # color = ['white', 'black']
-        # logging.debug(f'{color[side_to_move]}: {score}')
 
         if args.limit is not None and abs(score) > args.limit:
             stats.positions_filtered_limit += 1
@@ -186,15 +185,14 @@ def pgn_to_epd(args, game, stats):
 
         # Get outcome from side-to-move perspective
         outcome = white_outcome if side_to_move else black_outcome
+        logging.debug(f"{['black', 'white'][side_to_move]} score: {score}, result: {outcome} ({game.headers.get('Result', '*')})")
 
-        epd_list.append((epd, score, next_move_uci, next_move_san, next_move_from, next_move_to, outcome))
+        epd_list.append((epd, score, move_uci, move_san, move_from, move_to, outcome))
 
     return epd_list
 
 
-def main(args):
-    stats = Statistics()
-
+def main(args, stats):
     with SQLConn(args.output) as sqlconn:
         # Update the table schema to include move information and game outcome.
         # Use EPD as primary key to eliminate duplicates.
@@ -251,7 +249,6 @@ def main(args):
             # Final commit for any remaining games
             sqlconn.commit()
 
-    # Log statistics summary
     stats.log_summary()
 
 
@@ -291,7 +288,11 @@ if __name__ == '__main__':
 
     configure_logging(args)
 
+    stats = Statistics()
+
     try:
-        main(args)
+        main(args, stats)
     except KeyboardInterrupt:
         print("\nInterrupted.")
+        logging.warning("User interrupted")
+        stats.log_summary()
