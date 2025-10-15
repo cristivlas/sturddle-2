@@ -21,10 +21,13 @@ class Statistics:
         self.draws = 0
         self.file_size = 0
         self.estimated_avg_game_size = 0
+        self.games = 0
+        self.games_with_no_eval = 0
+        self.games_below_min_elo = 0
 
     def log_summary(self):
         total_filtered = self.positions_filtered_check + self.positions_filtered_capture + self.positions_filtered_limit
-        total_games = self.white_wins + self.black_wins + self.draws
+        total_games = self.games
         positions_inserted = self.positions_inserted
 
         logging.info("=" * 70)
@@ -53,6 +56,8 @@ class Statistics:
 
         logging.info("-" * 70)
         logging.info(f"Total games processed: {total_games:,}")
+        logging.info(f"Games without eval: {self.games_with_no_eval:,}")
+        logging.info(f"Games below minimum ELO: {self.games_below_min_elo:,}")
 
         if total_games > 0:
             logging.info(f"  - White wins: {self.white_wins:,} ({self.white_wins/total_games*100:.2f}%)")
@@ -88,6 +93,11 @@ def pgn_to_epd(args, game, stats):
     Extracts positions with evaluations and their corresponding next move (best response)
     Returns a list of (epd, score, move_uci, move_san, move_from, move_to, outcome) tuples
     """
+    lichess = args.lichess
+    if game.headers.get('Site', '').lower().startswith('https://lichess.org/'):
+        logging.debug('using lichess.org eval format')
+        lichess = True
+
     board = game.board()
     epd_list = []
 
@@ -98,24 +108,26 @@ def pgn_to_epd(args, game, stats):
     if white_outcome is None:
         return epd_list  # Skip games without clear outcomes
 
-    # We need to look at pairs of nodes to connect an evaluated position with the next move
-    nodes = list(game.mainline())
-
-    for i in range(len(nodes)):
+    for current_node in game.mainline():
         stats.positions_parsed += 1
 
         # Current board position
         epd = board.epd()
 
         # Get the move from current position
-        current_node = nodes[i]
         current_move = current_node.move
 
         # Check if this position has an evaluation
-        comment = current_node.comment.split('/')[0].strip()
+        if lichess:
+            comment = current_node.comment.strip()
+            if not comment.startswith('[%eval'):
+                comment = None
+        else:
+            comment = current_node.comment.split('/')[0].strip()
         if not comment:
             # If no evaluation, skip the rest of the game
-            logging.info(f'skip game [{game.headers.get("GameStartTime", "")}')
+            stats.games_with_no_eval += 1
+            logging.debug(f'no eval, skipping game {game.headers.get("GameStartTime", "")}')
             break
 
         if comment.lower().startswith('book'):
@@ -158,30 +170,39 @@ def pgn_to_epd(args, game, stats):
         comment = re.sub(r'\([^)]*\)', '', comment).strip()
         # logging.debug(comment)
 
-        parts = comment.strip('{}').split()
-        if not parts:
-            continue
-        score_str = parts[0]
+        if lichess:
+             score_str = comment.split()[1][:-1]
+        else:
+            parts = comment.strip('{}').split()
+            if not parts:
+                continue
+            score_str = parts[0]
 
         logging.debug(f'{epd}, {current_move}, {move_san}, {score_str}')
 
-        if score_str.startswith('M') or score_str.startswith('+M') or score_str.startswith('-M'):
+        if score_str.startswith('#') or score_str.startswith('M') or score_str.startswith('+M') or score_str.startswith('-M'):
             if not mate_score:
                 continue
 
             # Remove leading +/- and # to get mate in moves
-            mate_str = score_str.lstrip('+-M')
+            mate_str = score_str.lstrip('+-M#')
             mate_in = int(mate_str)
             # Preserve the sign from the original score
             sign = -1 if score_str.startswith('-') else 1
             score = int(sign * (mate_score - abs(mate_in)))
-            logging.debug(f'mate score: {score}')
+            # logging.debug(f'mate score: {score}')
         else:
             score = int(float(score_str) * 100)
 
         if args.limit is not None and abs(score) > args.limit:
             stats.positions_filtered_limit += 1
             continue
+
+        # Lichess evaluation is from white's perspective in the PGN
+        # If side-to-move is black, we need to negate the score to get black's perspective
+        if lichess and not side_to_move:
+            # logging.debug("flip score to black's perspective")
+            score = -score
 
         # Get outcome from side-to-move perspective
         outcome = white_outcome if side_to_move else black_outcome
@@ -190,6 +211,19 @@ def pgn_to_epd(args, game, stats):
         epd_list.append((epd, score, move_uci, move_san, move_from, move_to, outcome))
 
     return epd_list
+
+
+def check_minimum_elo(args, game):
+    min_elo = args.min_elo or 0
+
+    for player in ['White', 'Black']:
+        elo_header = f'{player}Elo'
+        elo = int(game.headers.get(elo_header, '0'))
+        if elo < min_elo:
+            logging.debug(f'{elo_header}: {elo} < {min_elo}')
+            return False
+
+    return True
 
 
 def main(args, stats):
@@ -222,9 +256,15 @@ def main(args, stats):
         # Open PGN file
         with open(args.pgn_file, 'r') as pgn_data:
             game_iter = iter(lambda: pgn.read_game(pgn_data), None)
-            game_count = 0
+
             for game in tqdm(game_iter, total=num_games):
                 if game is None:
+                    continue
+
+                stats.games += 1
+
+                if not check_minimum_elo(args, game):
+                    stats.games_below_min_elo += 1
                     continue
 
                 epd_list = pgn_to_epd(args, game, stats)
@@ -242,8 +282,7 @@ def main(args, stats):
 
                     stats.positions_inserted += csr.rowcount
 
-                game_count += 1
-                if game_count % 10000 == 0:
+                if stats.positions_inserted % args.commit_threshold == 0:
                     sqlconn.commit()
 
             # Final commit for any remaining games
@@ -264,14 +303,17 @@ def configure_logging(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Parse PGN file and output SQLite database of evaluated positions')
     parser.add_argument('pgn_file', help='PGN input file')
+    parser.add_argument('-c', '--commit-threshold', type=int, default=10000, help='commit when number of inserted positions exceeds this value')
     parser.add_argument('-g', '--game-size', default=2950, type=int, help='estimated bytes per game in PGN file (default: 2950)')
-    parser.add_argument('-o', '--output', help='SQLite output file (default: input filename with .db extension)')
+    parser.add_argument('-o', '--output', help='sqlite3 output file (default: input filename with .db extension)')
     parser.add_argument('-v', '--debug', action='store_true')
-    parser.add_argument('--limit', type=int, help='absolute eval limit')
-    parser.add_argument('--logfile', type=str, help='Log file (default: input filename with .log extension)')
-    parser.add_argument('--mate-score', type=int, default=15000, help='Mate score in centipawns (default: 15000, 0 ignores mate scores)')
-    parser.add_argument('--no-capture', action='store_true')
-    parser.add_argument('--no-check', action='store_true')
+    parser.add_argument('--lichess', action='store_true', help='parse lichess eval format (https://database.lichess.org/)')
+    parser.add_argument('--limit', type=int, help='absolute eval limit, in centipawns')
+    parser.add_argument('--logfile', type=str, help='log file (default: input filename with .log extension)')
+    parser.add_argument('--mate-score', type=int, default=15000, help='mate score in centipawns (default: 15000, 0 skips close-to-mate positions)')
+    parser.add_argument('--min-elo', type=int, help='if specified, only include games with minimum player ELO')
+    parser.add_argument('--no-capture', action='store_true', help='exclude capturing moves')
+    parser.add_argument('--no-check', action='store_true', help='exclude in-check position and checking moves')
 
     args = parser.parse_args()
 
