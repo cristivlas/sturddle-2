@@ -24,6 +24,7 @@ class Statistics:
         self.games = 0
         self.games_with_no_eval = 0
         self.games_below_min_elo = 0
+        self.games_lost_on_time = 0
 
     def log_summary(self):
         total_filtered = self.positions_filtered_check + self.positions_filtered_capture + self.positions_filtered_limit
@@ -58,6 +59,7 @@ class Statistics:
         logging.info(f"Total games processed: {total_games:,}")
         logging.info(f"Games without eval: {self.games_with_no_eval:,}")
         logging.info(f"Games below minimum ELO: {self.games_below_min_elo:,}")
+        logging.info(f"Games lost on time: {self.games_lost_on_time:,}")
 
         if total_games > 0:
             logging.info(f"  - White wins: {self.white_wins:,} ({self.white_wins/total_games*100:.2f}%)")
@@ -267,6 +269,10 @@ def main(args, stats):
 
                 if not check_minimum_elo(args, game):
                     stats.games_below_min_elo += 1
+                    continue
+
+                if game.headers.get('Termination', '') == 'time forfeit':
+                    stats.games_lost_on_time += 1
                     continue
 
                 epd_list = pgn_to_epd(args, game, stats)
