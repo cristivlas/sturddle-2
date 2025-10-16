@@ -182,6 +182,9 @@ def pgn_to_epd(args, game, stats):
 
         logging.debug(f'{epd}, {current_move}, {move_san}, {score_str}')
 
+        if args.convert_comma:
+            score_str = score_str.replace(',', '.')
+
         if score_str.startswith('#') or score_str.startswith('M') or score_str.startswith('+M') or score_str.startswith('-M'):
             if not mate_score:
                 continue
@@ -315,6 +318,7 @@ if __name__ == '__main__':
     parser.add_argument('-g', '--game-size', default=2950, type=int, help='estimated bytes per game in PGN file (default: 2950)')
     parser.add_argument('-o', '--output', help='sqlite3 output file (default: input filename with .db extension)')
     parser.add_argument('-v', '--debug', action='store_true')
+    parser.add_argument('--convert-comma', action='store_true', help='replace comma with decimal point in score')
     parser.add_argument('--lichess', action='store_true', help='parse lichess eval format (https://database.lichess.org/)')
     parser.add_argument('--limit', type=int, help='absolute eval limit, in centipawns')
     parser.add_argument('--logfile', type=str, help='log file (default: input filename with .log extension)')
