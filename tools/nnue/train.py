@@ -785,7 +785,7 @@ if __name__ == '__main__':
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to (in C++ header file format)')
         parser.add_argument('-q', '--quantize-round', action='store_true')
-        parser.add_argument('-s', '--outcome-smoothing', default=0.025)
+        parser.add_argument('-s', '--outcome-smoothing', type=float, default=0.025)
 
         parser.add_argument('--hex', action='store_true', help='export weights in hex format')
 
