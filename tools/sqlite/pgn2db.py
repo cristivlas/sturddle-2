@@ -228,17 +228,19 @@ def check_minimum_elo(args, game):
 
 def main(args, stats):
     with SQLConn(args.output) as sqlconn:
-        # Update the table schema to include move information and game outcome.
         # Use EPD as primary key to eliminate duplicates.
-        sqlconn.exec('''CREATE TABLE IF NOT EXISTS position(
-                        epd text PRIMARY KEY,
-                        score integer,
-                        best_move_uci text,
-                        best_move_san text,
-                        best_move_from integer,
-                        best_move_to integer,
-                        outcome integer
-                        )''')
+        pk = 'PRIMARY KEY' if args.unique else ''
+
+        sqlconn.exec(f'''
+            CREATE TABLE IF NOT EXISTS position(
+                epd text {pk},
+                score integer,
+                best_move_uci text,
+                best_move_san text,
+                best_move_from integer,
+                best_move_to integer,
+                outcome integer
+            )''')
 
         # Estimate total number of games based on file size
         file_size = os.path.getsize(args.pgn_file)
@@ -314,6 +316,8 @@ if __name__ == '__main__':
     parser.add_argument('--min-elo', type=int, help='if specified, only include games with minimum player ELO')
     parser.add_argument('--no-capture', action='store_true', help='exclude capturing moves')
     parser.add_argument('--no-check', action='store_true', help='exclude in-check position and checking moves')
+    parser.add_argument('--unique', action='store_true', dest='unique', default=True, help="store unique positions (use EPD as primary key, default: True)")
+    parser.add_argument('--no-unique', action='store_false', dest='unique', help="allow multiple entries for a position (no EPD primary key)")
 
     args = parser.parse_args()
 
