@@ -23,6 +23,7 @@ class Statistics:
         self.estimated_avg_game_size = 0
         self.games = 0
         self.games_with_no_eval = 0
+        self.games_with_no_result = 0
         self.games_below_min_elo = 0
         self.games_lost_on_time = 0
 
@@ -58,6 +59,7 @@ class Statistics:
         logging.info("-" * 70)
         logging.info(f"Total games processed: {total_games:,}")
         logging.info(f"Games without eval: {self.games_with_no_eval:,}")
+        logging.info(f"Games with no result: {self.games_with_no_result:,}")
         logging.info(f"Games below minimum ELO: {self.games_below_min_elo:,}")
         logging.info(f"Games lost on time: {self.games_lost_on_time:,}")
 
@@ -87,6 +89,7 @@ def get_game_outcome(game, stats):
         stats.black_wins += 1
         return -1, 1  # White loses, Black wins
     else:
+        stats.games_with_no_result += 1
         return None, None  # Game in progress or unknown result
 
 
@@ -287,9 +290,10 @@ def main(args, stats):
                     if args.limit is not None:
                         assert abs(cp_score) <= args.limit
 
-                    csr = sqlconn.exec('''INSERT OR IGNORE INTO position(epd, score, best_move_uci, best_move_san, best_move_from, best_move_to, outcome)
-                                    VALUES(?, ?, ?, ?, ?, ?, ?)''',
-                                    (epd, int(cp_score), best_move_uci, best_move_san, best_move_from, best_move_to, outcome))
+                    csr = sqlconn.exec('''
+                        INSERT OR IGNORE INTO position(epd, score, best_move_uci, best_move_san, best_move_from, best_move_to, outcome)
+                        VALUES(?, ?, ?, ?, ?, ?, ?)''',
+                        (epd, int(cp_score), best_move_uci, best_move_san, best_move_from, best_move_to, outcome))
 
                     stats.positions_inserted += csr.rowcount
 
@@ -332,15 +336,15 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Infer output filenames from input if not provided
-    def infer_output_name(extension):
-        base_name = os.path.splitext(os.path.basename(args.pgn_file))[0]
+    def infer_output_name(filename, extension):
+        base_name = os.path.splitext(filename)[0]
         return base_name + extension
 
     if args.output is None:
-        args.output = infer_output_name('.db')
+        args.output = infer_output_name(os.path.basename(args.pgn_file), '.db')
 
     if args.logfile is None:
-        args.logfile = infer_output_name('.log')
+        args.logfile = infer_output_name(args.output, '.log')
 
     configure_logging(args)
 
