@@ -19,17 +19,18 @@ import numpy as np
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-os.environ['TF_USE_LEGACY_KERAS'] = '1'
+# uncomment (or set in environment) for newer TF versions (> 2.15.1 ?) that use Keras 3
+# os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
 ACCUMULATOR_SIZE = 1280
 ATTN_FAN_OUT = 32
 POOL_SIZE = 8
 
 Q_SCALE = 1024
-# Quantization range: use int16_t with Q_SCALE, prevent overflow
-# 64 squares + (16 + 16) occupancy + 1 side-to-move + 1 bias == 98
 
-Q_MAX_A = 32767 / Q_SCALE / 98
+# Quantization range: use int16_t with Q_SCALE, prevent overflow
+# 32 pieces + (16 + 16) occupancy + 1 side-to-move + 1 bias == 66
+Q_MAX_A = 32767 / Q_SCALE / 66
 Q_MIN_A = -Q_MAX_A
 
 # (8 pawns + 1 king) x 2 + 1 bias == 19
@@ -81,15 +82,16 @@ def make_model(args, strategy):
 
         # convert predicted and expected (target) eval scores to Win/Draw/Loss prob. scores
         wdl_eval_pred = tf.sigmoid(y_pred * SCALE / sigmoid_scale)
-        wdl_eval_target = tf.sigmoid(eval_target * SCALE / sigmoid_scale)
+        # wdl_eval_target = tf.sigmoid(eval_target * SCALE / sigmoid_scale)
 
         # loss_eval = tf.reduce_mean(tf.square(wdl_eval_pred - wdl_eval_target))
         # loss_outcome = tf.reduce_mean(tf.square(wdl_eval_pred - outcome_target))
 
-        loss_eval = tf.reduce_mean(tf.abs(wdl_eval_pred - wdl_eval_target))
+        # loss_eval = tf.reduce_mean(tf.abs(wdl_eval_pred - wdl_eval_target))
         # loss_outcome = tf.reduce_mean(tf.abs(wdl_eval_pred - outcome_target))
 
         # loss_eval = tf.keras.losses.binary_crossentropy(wdl_eval_target, wdl_eval_pred)
+        loss_eval = tf.reduce_mean(tf.abs(y_pred - eval_target))
         loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)
 
         # blend the losses
@@ -701,12 +703,7 @@ def main(args):
         if args.schedule:
             from keras.callbacks import ReduceLROnPlateau
 
-            #if args.outcome_weight >= 0.5:
-            #    monitor = 'loss'
-            #else:
-            #    monitor = 'out_mae' if args.predict_moves else 'mae'
-            monitor='loss'
-            lr = ReduceLROnPlateau(monitor=monitor, factor=0.5, patience=1, min_lr=1e-9)
+            lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=1, min_lr=1e-9)
             callbacks.append(lr)
 
         if args.model is not None:
@@ -775,13 +772,13 @@ if __name__ == '__main__':
         parser.add_argument('-c', '--clip-eval', type=int, help='clip eval target values [-CLIP,CLIP]')
         parser.add_argument('-d', '--decay', type=float, help='weight decay')
         parser.add_argument('-D', '--distribute', action='store_true', help='distribute dataset across GPUs')
-        parser.add_argument('-e', '--epochs', type=int, default=10000, help='number of epochs')
+        parser.add_argument('-e', '--epochs', type=int, default=100, help='number of epochs')
         parser.add_argument('-E', '--ema', action='store_true', help='use Exponential Moving Average')
         parser.add_argument('-f', '--save-freq', type=int, help='frequency for saving model')
         parser.add_argument('-F', '--filter', type=int, help='filter out positions with absolute score above this value')
         parser.add_argument('-L', '--logfile', default='train.log', help='log filename')
         parser.add_argument('-m', '--model', help='model checkpoint path')
-        parser.add_argument('-r', '--learn-rate', type=float, default=1e-3, help='learning rate')
+        parser.add_argument('-r', '--learn-rate', type=float, default=1e-4, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to (in C++ header file format)')
         parser.add_argument('-q', '--quantize-round', action='store_true')
@@ -792,7 +789,7 @@ if __name__ == '__main__':
         parser.add_argument('--no-capture', action='store_true', help='exclude captures from training')
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
 
-        parser.add_argument('--outcome-weight', type=float, default=0.15, help='weight for outcome loss vs eval loss')
+        parser.add_argument('--outcome-weight', type=float, default=0.85, help='weight for outcome loss vs eval loss')
         parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
 
         # Move prediction related arguments
