@@ -2,6 +2,7 @@
 import argparse
 import mmap
 import os
+import random
 import re
 import signal
 import time
@@ -239,7 +240,7 @@ def parse_and_process(map_file, queue, batch_size, clip, test, progress_bar, rec
                     queue.put(None)
                     break
 
-def write_to_h5(h5_file, queue, progress_bar, total_records, batch_size):
+def write_to_h5(h5_file, queue, progress_bar, total_records, batch_size, shuffle):
     dtype = np.uint64
     dataset = h5_file.create_dataset('data', shape=(total_records, 17), dtype=dtype)
 
@@ -252,6 +253,9 @@ def write_to_h5(h5_file, queue, progress_bar, total_records, batch_size):
         if record is None:
             # Write remaining batch
             if batch_idx > 0:
+                if shuffle:
+                    # Shuffle the filled portion of the batch
+                    np.random.shuffle(batch_buffer[:batch_idx])
                 dataset[index:index+batch_idx] = batch_buffer[:batch_idx]
             break
 
@@ -269,6 +273,9 @@ def write_to_h5(h5_file, queue, progress_bar, total_records, batch_size):
 
         # Write when batch is full
         if batch_idx == batch_size:
+            if shuffle:
+                # Shuffle the batch before writing
+                np.random.shuffle(batch_buffer)
             dataset[index:index+batch_size] = batch_buffer
             index += batch_size
             batch_idx = 0
@@ -350,6 +357,10 @@ def process_file(args):
         if args.output is None:
             args.output = output_path(args)
         print(f'\nWriting out: {args.output}')
+
+        if args.shuffle:
+            print('Shuffle mode: ENABLED')
+
         h5_file = h5py.File(args.output, 'w')
 
         read_progress = tqdm(desc='Reading', total=records_to_process, colour='cyan')
@@ -363,7 +374,7 @@ def process_file(args):
 
         writer_thread = Thread(
             target=write_to_h5,
-            args=(h5_file, queue, write_progress, records_to_process, args.batch)
+            args=(h5_file, queue, write_progress, records_to_process, args.batch, args.shuffle)
         )
 
         parser_thread.start()
@@ -387,6 +398,7 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--row-count', type=int, help='Number of records to process')
     parser.add_argument('-t', '--test', action='store_true', help='Run encode/decode tests')
     parser.add_argument('--batch-size', type=int, default=10000, help='Processing batch size')
+    parser.add_argument('--shuffle', action='store_true', help='shuffle each batch before writing to H5 file')
     args = parser.parse_args()
 
     def signal_handler(signal, frame):
