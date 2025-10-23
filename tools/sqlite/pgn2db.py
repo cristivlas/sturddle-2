@@ -6,6 +6,7 @@ import re
 import chess
 import chess.pgn as pgn
 import logging
+import random
 from dbutils.sqlite import SQLConn
 from tqdm import tqdm
 
@@ -278,7 +279,10 @@ def main(args, stats):
         logging.info(f"Output database: {args.output}")
         logging.info(f"Estimated games: {num_games}")
 
-        # Open PGN file
+        if args.shuffle:
+            logging.info("Shuffle mode: ENABLED (shuffling positions within each game)")
+
+        # Open PGN file and process games sequentially
         with open(args.pgn_file, 'r') as pgn_data:
             game_iter = iter(lambda: pgn.read_game(pgn_data), None)
 
@@ -300,6 +304,10 @@ def main(args, stats):
 
                 if not epd_list:
                     continue
+
+                # Shuffle positions within this game if requested
+                if args.shuffle:
+                    random.shuffle(epd_list)
 
                 for epd, cp_score, best_move_uci, best_move_san, best_move_from, best_move_to, outcome in epd_list:
                     if args.limit is not None:
@@ -346,6 +354,7 @@ if __name__ == '__main__':
     parser.add_argument('--min-elo', type=int, help='if specified, only include games with minimum player ELO')
     parser.add_argument('--no-capture', action='store_true', help='exclude capturing moves')
     parser.add_argument('--no-check', action='store_true', help='exclude in-check position and checking moves')
+    parser.add_argument('--shuffle', action='store_true', help='shuffle positions within each game before inserting into database')
     parser.add_argument('--unique', action='store_true', dest='unique', default=True, help="store unique positions (use EPD as primary key, default: True)")
     parser.add_argument('--no-unique', action='store_false', dest='unique', help="allow multiple entries for a position (no EPD primary key)")
 
