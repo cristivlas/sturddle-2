@@ -3,6 +3,7 @@
 import argparse
 import os
 import re
+import chess
 import chess.pgn as pgn
 import logging
 from dbutils.sqlite import SQLConn
@@ -10,10 +11,12 @@ from tqdm import tqdm
 
 
 class Statistics:
-    def __init__(self):
+    def __init__(self, args):
+        self.color = args.color
         self.positions_parsed = 0
         self.positions_filtered_check = 0
         self.positions_filtered_capture = 0
+        self.positions_filtered_color = 0
         self.positions_filtered_limit = 0
         self.positions_inserted = 0
         self.white_wins = 0
@@ -36,6 +39,9 @@ class Statistics:
         logging.info("Processing Summary:")
         logging.info("=" * 70)
 
+        if self.color is not None:
+            logging.info(f"Filtered by color: {self.color}")
+
         # Report actual vs estimated game size
         if total_games > 0 and self.file_size > 0:
             actual_avg_game_size = self.file_size / total_games
@@ -50,6 +56,7 @@ class Statistics:
             logging.info(f"Total positions filtered: {total_filtered:,} ({total_filtered/self.positions_parsed*100:.2f}%)")
             logging.info(f"  - Filtered (check): {self.positions_filtered_check:,} ({self.positions_filtered_check/self.positions_parsed*100:.2f}%)")
             logging.info(f"  - Filtered (capture): {self.positions_filtered_capture:,} ({self.positions_filtered_capture/self.positions_parsed*100:.2f}%)")
+            logging.info(f"  - Filtered (color): {self.positions_filtered_color:,} ({self.positions_filtered_color/self.positions_parsed*100:.2f}%)")
             logging.info(f"  - Filtered (eval limit): {self.positions_filtered_limit:,} ({self.positions_filtered_limit/self.positions_parsed*100:.2f}%)")
             logging.info(f"Positions inserted: {positions_inserted:,} ({positions_inserted/self.positions_parsed*100:.2f}%)")
         else:
@@ -119,8 +126,17 @@ def pgn_to_epd(args, game, stats):
         # Current board position
         epd = board.epd()
 
+        # Side for whom the evaluation applies
+        side_to_move = board.turn
+
         # Get the move from current position
         current_move = current_node.move
+
+        if (args.color == 'white' and board.turn != chess.WHITE) or (args.color == 'black' and board.turn != chess.BLACK):
+            board.push(current_move)
+            stats.positions_filtered_color += 1
+            logging.debug(f'filtered out: {epd}')
+            continue
 
         # Check if this position has an evaluation
         if lichess:
@@ -157,8 +173,7 @@ def pgn_to_epd(args, game, stats):
             board.push(current_move)
             continue
 
-        # Side for whom the evaluation applies
-        side_to_move = board.turn
+        # assert side_to_move == board.turn
 
         move_san = board.san(current_move)
 
@@ -322,10 +337,11 @@ if __name__ == '__main__':
     parser.add_argument('-g', '--game-size', default=2950, type=int, help='estimated bytes per game in PGN file (default: 2950)')
     parser.add_argument('-o', '--output', help='sqlite3 output file (default: input filename with .db extension)')
     parser.add_argument('-v', '--debug', action='store_true')
+    parser.add_argument('--color', choices=['black', 'white'], help="add only moves from the specified side to the database")
     parser.add_argument('--convert-comma', action='store_true', help='replace comma with decimal point in score')
     parser.add_argument('--lichess', action='store_true', help='parse lichess eval format (https://database.lichess.org/)')
     parser.add_argument('--limit', type=int, help='absolute eval limit, in centipawns')
-    parser.add_argument('--logfile', type=str, help='log file (default: input filename with .log extension)')
+    parser.add_argument('--logfile', type=str, help='log file (default: output filename with .log extension)')
     parser.add_argument('--mate-score', type=int, default=15000, help='mate score in centipawns (default: 15000, 0 skips close-to-mate positions)')
     parser.add_argument('--min-elo', type=int, help='if specified, only include games with minimum player ELO')
     parser.add_argument('--no-capture', action='store_true', help='exclude capturing moves')
@@ -348,7 +364,7 @@ if __name__ == '__main__':
 
     configure_logging(args)
 
-    stats = Statistics()
+    stats = Statistics(args)
 
     try:
         main(args, stats)
