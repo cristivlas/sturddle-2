@@ -160,6 +160,17 @@ if platform.startswith('win'):
         if not environ.get('BUILD_DEBUG', None):
             args += [ '-O3', '-Ofast' ]
 
+    else:
+        # assume Microsoft compiler
+        args += [
+            '-D_CRT_SECURE_NO_WARNINGS',
+            '/wd4068',
+            '/wd4305', # warning C4305: '=': truncation from 'int' to 'bool'
+            '/wd4101', # warning C4101: '__pyx_t_1': unreferenced local variable
+            '/wd4551', # warning C4551: function call missing argument list
+            '/wd4244', # warning C4244: '=': conversion from 'Py_ssize_t' to 'long', possible loss of data
+        ]
+
     link += ['/LTCG:OFF']  # MSFT linker args
 else:
     # Linux, Mac

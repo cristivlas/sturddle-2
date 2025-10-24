@@ -473,7 +473,7 @@ static bool probe_endtables(Context& ctxt, TranspositionTable& table)
 }
 
 
-static void probe_root(Context& ctxt)
+static void probe_root(Context& ctxt, TranspositionTable& table)
 {
     ASSERT(ctxt.is_root());
 
@@ -511,14 +511,22 @@ static void probe_root(Context& ctxt)
             ctxt._best_move = chess::BaseMove(
                 Square(TB_GET_FROM(result)), Square(TB_GET_TO(result)), PROMO_TABLE[promo]
             );
-            // std::cout << "info string " << ctxt._best_move << std::endl;
+
+            ++table._tb_hits;
+
+            const auto wdl = TB_GET_WDL(result);
+            // const auto dtz = TB_GET_DTZ(result);
+            // std::cout << "info string move " << ctxt._best_move << " wdl " << wdl << " dtz " << dtz << std::endl;
+
+            if (wdl >= TB_BLESSED_LOSS && wdl <= TB_CURSED_WIN)
+                ctxt._score = 0;
         }
     }
 }
 #else
 
 static inline bool probe_endtables(Context&, TranspositionTable&) { return false; }
-static inline void probe_root(Context&) { }
+static inline void probe_root(Context&, TranspositionTable&) { }
 
 #endif /* USE_ENDTABLES */
 
@@ -543,7 +551,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
     if (ctxt.is_root())
     {
-        probe_root(ctxt);
+        probe_root(ctxt, table);
     }
     else
     {
