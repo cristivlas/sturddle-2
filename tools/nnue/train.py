@@ -451,9 +451,9 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             y_outcome = self.data[start:end, self.feature_count+1:self.feature_count+2]
             y_outcome = tf.cast(y_outcome, tf.float32) - 1.0  # Convert 0,1,2 -> -1,0,1
             # Convert from STM perspective to white's perspective
-            y_outcome = tf.where(white_to_move, y_outcome, -y_outcome)
+            y_outcome_white_pov = tf.where(white_to_move, y_outcome, -y_outcome)
             # Convert to win probability: -1->0.0, 0->0.5, 1->1.0
-            y_outcome = (y_outcome + 1.0) / 2.0
+            y_outcome = (y_outcome_white_pov + 1.0) / 2.0
 
             y_outcome = y_outcome * (1 - args.outcome_smoothing) + 0.5 * args.outcome_smoothing
 
@@ -461,6 +461,23 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             y_combined = tf.concat([y_eval, y_outcome], axis=1)  # Shape: (batch_size, 2)
 
             mask = None
+            if args.balance:
+                white_wins = np.where(y_outcome_white_pov > 0.5)[0]
+                black_wins = np.where(y_outcome_white_pov < -0.5)[0]
+
+                min_wins = min(len(white_wins), len(black_wins))
+
+                mask = np.ones(end - start, dtype=bool)
+
+                if len(white_wins) > min_wins:
+                    keep = np.random.choice(white_wins, min_wins, replace=False)
+                    drop = np.setdiff1d(white_wins, keep)
+                    mask[drop] = False
+
+                if len(black_wins) > min_wins:
+                   keep = np.random.choice(black_wins, min_wins, replace=False)
+                   drop = np.setdiff1d(black_wins, keep)
+                   mask[drop] = False
 
             if args.no_capture and self.data.shape[1] > self.feature_count + 1:
                 to_square = self.data[start:end, self.feature_count+3]
@@ -478,7 +495,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 to_square_mask = np.left_shift(np.uint64(1), to_square)
                 is_capture = (np.bitwise_and(opponent_occupied, to_square_mask) != 0)
 
-                mask = ~is_capture
+                mask = ~is_capture if mask is None else (mask & ~is_capture)
 
             if mask is not None:
                 x = tf.boolean_mask(x, mask)
@@ -784,8 +801,8 @@ if __name__ == '__main__':
         parser.add_argument('-q', '--quantize-round', action='store_true')
         parser.add_argument('-s', '--outcome-smoothing', type=float, default=0.025)
 
+        parser.add_argument('--balance', action='store_true', help='balance white / black wins inside batches')
         parser.add_argument('--hex', action='store_true', help='export weights in hex format')
-
         parser.add_argument('--no-capture', action='store_true', help='exclude captures from training')
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
 

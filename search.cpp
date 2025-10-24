@@ -561,7 +561,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         /* Update the Zobrist hash incrementally. */
         zobrist_update(ctxt._parent->state(), ctxt._move, *ctxt._state);
 
-        if (ctxt.is_repeated() > 0)
+        if (ctxt.is_repeated())
             return 0;
         /*
          * Mating distance pruning: skip the search if a shorter mate was found.

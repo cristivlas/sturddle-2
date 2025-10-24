@@ -32,7 +32,7 @@ class Statistics:
         self.games_lost_on_time = 0
 
     def log_summary(self):
-        total_filtered = self.positions_filtered_check + self.positions_filtered_capture + self.positions_filtered_limit
+        total_filtered = self.positions_filtered_check + self.positions_filtered_capture + self.positions_filtered_color + self.positions_filtered_limit
         total_games = self.games
         positions_inserted = self.positions_inserted
 
@@ -105,6 +105,10 @@ def pgn_to_epd(args, game, stats):
     """
     Extracts positions with evaluations and their corresponding next move (best response)
     Returns a list of (epd, score, move_uci, move_san, move_from, move_to, outcome) tuples
+
+    IMPORTANT: This code assumes the eval in the comment is for the position BEFORE the
+    move is made (based on the cutechess-cli output which matches the UCI engine response)
+    but THIS COULD BE A WRONG ASSUMPTION (especially for lichess-annotated games).
     """
     lichess = args.lichess
     if game.headers.get('Site', '').lower().startswith('https://lichess.org/'):
@@ -192,7 +196,7 @@ def pgn_to_epd(args, game, stats):
         # logging.debug(comment)
 
         if lichess:
-             score_str = comment.split()[1][:-1]
+            score_str = comment.split()[1][:-1]
         else:
             parts = comment.strip('{}').split()
             if not parts:
