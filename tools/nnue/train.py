@@ -475,9 +475,9 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                     mask[drop] = False
 
                 if len(black_wins) > min_wins:
-                   keep = np.random.choice(black_wins, min_wins, replace=False)
-                   drop = np.setdiff1d(black_wins, keep)
-                   mask[drop] = False
+                    keep = np.random.choice(black_wins, min_wins, replace=False)
+                    drop = np.setdiff1d(black_wins, keep)
+                    mask[drop] = False
 
             if args.no_capture and self.data.shape[1] > self.feature_count + 1:
                 to_square = self.data[start:end, self.feature_count+3]
