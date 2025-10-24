@@ -15,6 +15,7 @@ class Statistics:
     def __init__(self, args):
         self.color = args.color
         self.positions_parsed = 0
+        self.positions_filtered_book = 0
         self.positions_filtered_check = 0
         self.positions_filtered_capture = 0
         self.positions_filtered_color = 0
@@ -32,7 +33,13 @@ class Statistics:
         self.games_lost_on_time = 0
 
     def log_summary(self):
-        total_filtered = self.positions_filtered_check + self.positions_filtered_capture + self.positions_filtered_color + self.positions_filtered_limit
+        total_filtered = (
+            self.positions_filtered_book +
+            self.positions_filtered_check +
+            self.positions_filtered_capture +
+            self.positions_filtered_color +
+            self.positions_filtered_limit
+        )
         total_games = self.games
         positions_inserted = self.positions_inserted
 
@@ -55,6 +62,7 @@ class Statistics:
             duplicates = self.positions_parsed - self.positions_inserted - total_filtered
             logging.info(f"Duplicates: {duplicates:,} ({duplicates/self.positions_parsed*100:.2f}%)")
             logging.info(f"Total positions filtered: {total_filtered:,} ({total_filtered/self.positions_parsed*100:.2f}%)")
+            logging.info(f"  - Filtered (book): {self.positions_filtered_book:,} ({self.positions_filtered_book/self.positions_parsed*100:.2f}%)")
             logging.info(f"  - Filtered (check): {self.positions_filtered_check:,} ({self.positions_filtered_check/self.positions_parsed*100:.2f}%)")
             logging.info(f"  - Filtered (capture): {self.positions_filtered_capture:,} ({self.positions_filtered_capture/self.positions_parsed*100:.2f}%)")
             logging.info(f"  - Filtered (color): {self.positions_filtered_color:,} ({self.positions_filtered_color/self.positions_parsed*100:.2f}%)")
@@ -106,13 +114,14 @@ def pgn_to_epd(args, game, stats):
     Extracts positions with evaluations and their corresponding next move (best response)
     Returns a list of (epd, score, move_uci, move_san, move_from, move_to, outcome) tuples
 
-    IMPORTANT: This code assumes the eval in the comment is for the position BEFORE the
-    move is made (based on the cutechess-cli output which matches the UCI engine response)
-    but THIS COULD BE A WRONG ASSUMPTION (especially for lichess-annotated games).
+    IMPORTANT:
+    The evaluation score is interpreted to be from the current node position, BEFORE the move
+    is made -- for "normal" PGNs, assumed to be created by cutechess-cli from UCI responses,
+    and AFTER the move is made -- for lichess evaluated/annotated games.
     """
     lichess = args.lichess
     if game.headers.get('Site', '').lower().startswith('https://lichess.org/'):
-        logging.debug('using lichess.org eval format')
+        # logging.debug('using lichess.org eval format')
         lichess = True
 
     board = game.board()
@@ -125,7 +134,10 @@ def pgn_to_epd(args, game, stats):
     if white_outcome is None:
         return epd_list  # Skip games without clear outcomes
 
-    for current_node in game.mainline():
+    mainline = list(game.mainline())
+    ply_count = len(mainline)
+    for node_index in range(ply_count):
+        current_node = mainline[node_index]
         stats.positions_parsed += 1
 
         # Current board position
@@ -137,12 +149,6 @@ def pgn_to_epd(args, game, stats):
         # Get the move from current position
         current_move = current_node.move
 
-        if (args.color == 'white' and board.turn != chess.WHITE) or (args.color == 'black' and board.turn != chess.BLACK):
-            board.push(current_move)
-            stats.positions_filtered_color += 1
-            logging.debug(f'filtered out: {epd}')
-            continue
-
         # Check if this position has an evaluation
         if lichess:
             comment = current_node.comment.strip()
@@ -153,41 +159,45 @@ def pgn_to_epd(args, game, stats):
         if not comment:
             # If no evaluation, skip the rest of the game
             stats.games_with_no_eval += 1
-            logging.debug(f'no eval, skipping game {game.headers.get("GameStartTime", "")}')
+            # logging.debug(f'no eval, skipping game {game.headers.get("GameStartTime", "")}')
             break
 
-        if comment.lower().startswith('book'):
+        logging.debug(f'{node_index}: {epd}, {current_move}')
+
+        if (args.color == 'white' and board.turn != chess.WHITE) or (args.color == 'black' and board.turn != chess.BLACK):
+            logging.debug('--- color\n')
+            stats.positions_filtered_color += 1
             board.push(current_move)
             continue
 
+        if comment.lower().startswith('book'):
+            logging.debug('--- book\n')
+            stats.positions_filtered_book += 1
+            board.push(current_move)
+            continue  # skip book moves
+
         if args.no_check:
             if board.is_check():
-                logging.debug(f'skip in-check position: {epd}')
+                logging.debug('--- in-check\n')
                 stats.positions_filtered_check += 1
                 board.push(current_move)
                 continue
             if board.gives_check(current_move):
-                logging.debug(f'skip check: {epd}, {current_move}')
+                logging.debug('--- check\n')
                 stats.positions_filtered_check += 1
                 board.push(current_move)
                 continue
 
         if args.no_capture and board.is_capture(current_move):
-            logging.debug(f'skip capture: {epd}, {current_move}')
+            logging.debug('--- capture\n')
             stats.positions_filtered_capture += 1
             board.push(current_move)
             continue
-
-        # assert side_to_move == board.turn
 
         move_san = board.san(current_move)
 
         # Make the move
         board.push(current_move)
-
-        move_uci = current_move.uci()
-        move_from = current_move.from_square
-        move_to = current_move.to_square
 
         # logging.debug(comment)
         # Parse score in centipawns from side-to-move perspective
@@ -226,17 +236,33 @@ def pgn_to_epd(args, game, stats):
             stats.positions_filtered_limit += 1
             continue
 
-        # Lichess evaluation is from white's perspective in the PGN
-        # If side-to-move is black, we need to negate the score to get black's perspective
-        if lichess and not side_to_move:
-            # logging.debug("flip score to black's perspective")
-            score = -score
+        if lichess:
+            if args.eval_before_always:
+                pass
+            else:
+                if node_index + 1 >= ply_count:
+                    break
+
+                epd = board.epd()  # the position after applying current move
+                side_to_move = board.turn
+                # Get the move following the EPD
+                next_node = mainline[node_index + 1]
+                current_move = next_node.move
+                move_san = board.san(current_move)
+
+            # Lichess evaluation is always from white's perspective in the PGN.
+            # If side-to-move is black, negate the score to get black's perspective.
+            if not side_to_move:
+                score = -score
+
+        move_from = current_move.from_square
+        move_to = current_move.to_square
 
         # Get outcome from side-to-move perspective
         outcome = white_outcome if side_to_move else black_outcome
         logging.debug(f"{['black', 'white'][side_to_move]} score: {score}, result: {outcome} ({game.headers.get('Result', '*')})")
-
-        epd_list.append((epd, score, move_uci, move_san, move_from, move_to, outcome))
+        logging.debug(f"+++ {epd}, {score}, {current_move.uci()}, {move_san}, {outcome}\n")
+        epd_list.append((epd, score, current_move.uci(), move_san, move_from, move_to, outcome))
 
     return epd_list
 
@@ -244,12 +270,16 @@ def pgn_to_epd(args, game, stats):
 def check_minimum_elo(args, game):
     min_elo = args.min_elo or 0
 
-    for player in ['White', 'Black']:
-        elo_header = f'{player}Elo'
-        elo = int(game.headers.get(elo_header, '0'))
+    elos = { color: int(game.headers.get(f'{color}Elo', '0')) for color in ['Black', 'White'] }
+    for color, elo in elos.items():
         if elo and elo < min_elo:
-            logging.debug(f'{elo_header}: {elo} < {min_elo}')
+            logging.debug(f'{elos}: {color} {elo} < {min_elo}')
             return False
+
+        if args.elo_diff is not None:
+            if abs(elos['White'] - elos['Black']) > args.elo_diff:
+                logging.debug(f'{elos}: unbalanced game, ELO diff > {args.elo_diff}')
+                return False
 
     return True
 
@@ -281,7 +311,7 @@ def main(args, stats):
 
         logging.info(f"Processing PGN file: {args.pgn_file}")
         logging.info(f"Output database: {args.output}")
-        logging.info(f"Estimated games: {num_games}")
+        logging.info(f"Estimated games: {num_games}\n")
 
         if args.shuffle:
             logging.info("Shuffle mode: ENABLED (shuffling positions within each game)")
@@ -346,18 +376,22 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Parse PGN file and output SQLite database of evaluated positions')
     parser.add_argument('pgn_file', help='PGN input file')
     parser.add_argument('-c', '--commit-threshold', type=int, default=10000, help='commit when number of inserted positions exceeds this value')
-    parser.add_argument('-g', '--game-size', default=2950, type=int, help='estimated bytes per game in PGN file (default: 2950)')
+    parser.add_argument('-g', '--game-size', default=2300, type=int, help='estimated bytes per game in PGN file (default: 2300)')
     parser.add_argument('-o', '--output', help='sqlite3 output file (default: input filename with .db extension)')
     parser.add_argument('-v', '--debug', action='store_true')
     parser.add_argument('--color', choices=['black', 'white'], help="add only moves from the specified side to the database")
     parser.add_argument('--convert-comma', action='store_true', help='replace comma with decimal point in score')
+    parser.add_argument('--elo-diff', type=int)
+    parser.add_argument('--eval-before-always', action='store_true', help='Always apply eval score to position BEFORE making the move')
     parser.add_argument('--lichess', action='store_true', help='parse lichess eval format (https://database.lichess.org/)')
     parser.add_argument('--limit', type=int, help='absolute eval limit, in centipawns')
     parser.add_argument('--logfile', type=str, help='log file (default: output filename with .log extension)')
     parser.add_argument('--mate-score', type=int, default=15000, help='mate score in centipawns (default: 15000, 0 skips close-to-mate positions)')
     parser.add_argument('--min-elo', type=int, help='if specified, only include games with minimum player ELO')
-    parser.add_argument('--no-capture', action='store_true', help='exclude capturing moves')
-    parser.add_argument('--no-check', action='store_true', help='exclude in-check position and checking moves')
+    parser.add_argument('--capture', action='store_false', dest='no_capture', help='include capturing moves (default: False)')
+    parser.add_argument('--no-capture', action='store_true', default=True, help='exclude capturing moves (default: True)')
+    parser.add_argument('--check', action='store_false', dest='no_check', help='include in-check position and checking moves (default: False)')
+    parser.add_argument('--no-check', action='store_true', help='exclude in-check position and checking moves (default: True)')
     parser.add_argument('--shuffle', action='store_true', help='shuffle positions within each game before inserting into database')
     parser.add_argument('--unique', action='store_true', dest='unique', default=True, help="store unique positions (use EPD as primary key, default: True)")
     parser.add_argument('--no-unique', action='store_false', dest='unique', help="allow multiple entries for a position (no EPD primary key)")
