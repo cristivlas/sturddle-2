@@ -314,7 +314,7 @@ def main(args, stats):
         logging.info(f"Estimated games: {num_games}\n")
 
         if args.shuffle:
-            logging.info("Shuffle mode: ENABLED (shuffling positions within each game)")
+            logging.info("Shuffle mode: ENABLED (shuffling positions within each game)\n")
 
         # Open PGN file and process games sequentially
         with open(args.pgn_file, 'r') as pgn_data:
@@ -343,22 +343,15 @@ def main(args, stats):
                 if args.shuffle:
                     random.shuffle(epd_list)
 
-                for epd, cp_score, best_move_uci, best_move_san, best_move_from, best_move_to, outcome in epd_list:
-                    if args.limit is not None:
-                        assert abs(cp_score) <= args.limit
+                csr = sqlconn.executemany('''
+                    INSERT OR IGNORE INTO position(epd, score, best_move_uci, best_move_san, best_move_from, best_move_to, outcome)
+                    VALUES(?, ?, ?, ?, ?, ?, ?)''',
+                    epd_list)
 
-                    csr = sqlconn.exec('''
-                        INSERT OR IGNORE INTO position(epd, score, best_move_uci, best_move_san, best_move_from, best_move_to, outcome)
-                        VALUES(?, ?, ?, ?, ?, ?, ?)''',
-                        (epd, int(cp_score), best_move_uci, best_move_san, best_move_from, best_move_to, outcome))
-
-                    stats.positions_inserted += csr.rowcount
+                stats.positions_inserted += csr.rowcount
 
                 if stats.positions_inserted % args.commit_threshold == 0:
                     sqlconn.commit()
-
-            # Final commit for any remaining games
-            sqlconn.commit()
 
     stats.log_summary()
 
@@ -392,7 +385,8 @@ if __name__ == '__main__':
     parser.add_argument('--no-capture', action='store_true', default=True, help='exclude capturing moves (default: True)')
     parser.add_argument('--check', action='store_false', dest='no_check', help='include in-check position and checking moves (default: False)')
     parser.add_argument('--no-check', action='store_true', help='exclude in-check position and checking moves (default: True)')
-    parser.add_argument('--shuffle', action='store_true', help='shuffle positions within each game before inserting into database')
+    parser.add_argument('--shuffle', action='store_true', default=True, help='shuffle positions within each game before inserting into database (default: True)')
+    parser.add_argument('--no-shuffle', action='store_false', dest='shuffle')
     parser.add_argument('--unique', action='store_true', dest='unique', default=True, help="store unique positions (use EPD as primary key, default: True)")
     parser.add_argument('--no-unique', action='store_false', dest='unique', help="allow multiple entries for a position (no EPD primary key)")
 

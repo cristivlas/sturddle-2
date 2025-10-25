@@ -115,7 +115,6 @@ def main(args):
         print(f'\nWriting out: {args.output}')
 
         with h5py.File(args.output, 'x') as f:
-            chunk_size = min(10000, count)
             out = f.create_dataset('data', shape=(count, output_shape[1]), dtype=dtype)
 
             query = add_range_to_query(args, f'SELECT {query_fields} from position')
