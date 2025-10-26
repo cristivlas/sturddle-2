@@ -76,7 +76,7 @@ class Statistics:
         logging.info(f"Total games processed: {total_games:,}")
         logging.info(f"Games without eval: {self.games_with_no_eval:,}")
         logging.info(f"Games with no result: {self.games_with_no_result:,}")
-        logging.info(f"Games below minimum ELO: {self.games_below_min_elo:,}")
+        logging.info(f"Games below ELO requirements: {self.games_below_min_elo:,}")
         logging.info(f"Games lost on time: {self.games_lost_on_time:,}")
 
         if total_games > 0:
@@ -160,6 +160,8 @@ def pgn_to_epd(args, game, stats):
             # If no evaluation, skip the rest of the game
             stats.games_with_no_eval += 1
             # logging.debug(f'no eval, skipping game {game.headers.get("GameStartTime", "")}')
+            assert stats.positions_parsed > 0
+            stats.positions_parsed -= 1  # hack: keep stats straight
             break
 
         logging.debug(f'{node_index}: {epd}, {current_move}')
@@ -220,6 +222,7 @@ def pgn_to_epd(args, game, stats):
 
         if score_str.startswith('#') or score_str.startswith('M') or score_str.startswith('+M') or score_str.startswith('-M'):
             if not mate_score:
+                stats.positions_filtered_limit += 1
                 continue
 
             # Remove leading +/- and # to get mate in moves
@@ -241,6 +244,8 @@ def pgn_to_epd(args, game, stats):
                 pass
             else:
                 if node_index + 1 >= ply_count:
+                    assert stats.positions_parsed > 0
+                    stats.positions_parsed -= 1  # hack: keep stats straight
                     break
 
                 epd = board.epd()  # the position after applying current move
@@ -280,6 +285,10 @@ def check_minimum_elo(args, game):
             if abs(elos['White'] - elos['Black']) > args.elo_diff:
                 logging.debug(f'{elos}: unbalanced game, ELO diff > {args.elo_diff}')
                 return False
+
+        if args.strong_black and elos['Black'] < elos['White']:
+            logging.debug(f'{elos}: weaker black player')
+            return False
 
     return True
 
@@ -348,6 +357,7 @@ def main(args, stats):
                     VALUES(?, ?, ?, ?, ?, ?, ?)''',
                     epd_list)
 
+                assert args.unique or csr.rowcount == len(epd_list)
                 stats.positions_inserted += csr.rowcount
 
                 if stats.positions_inserted % args.commit_threshold == 0:
@@ -389,6 +399,7 @@ if __name__ == '__main__':
     parser.add_argument('--no-shuffle', action='store_false', dest='shuffle')
     parser.add_argument('--unique', action='store_true', dest='unique', default=True, help="store unique positions (use EPD as primary key, default: True)")
     parser.add_argument('--no-unique', action='store_false', dest='unique', help="allow multiple entries for a position (no EPD primary key)")
+    parser.add_argument('--strong-black', action='store_true', help='discard games where black player is weaker than white')
 
     args = parser.parse_args()
 
