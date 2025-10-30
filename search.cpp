@@ -221,7 +221,20 @@ void TranspositionTable::update_stats(const Context& ctxt)
 }
 
 
-void TranspositionTable::store(Context& ctxt, TT_Entry& entry, TT_Type type, int depth)
+bool TranspositionTable::update_and_store(Context& ctxt, TT_Type tt_type)
+{
+    if (ctxt.depth() > 0 && ctxt.tt_result()._replacement_slot >= 0)
+    {
+        update_entry(ctxt, ctxt.tt_entry(), tt_type, ctxt.depth());
+        _table.store(ctxt.tt_result());
+        return true;
+    }
+
+    return false;
+}
+
+
+void TranspositionTable::update_entry(Context& ctxt, TT_Entry& entry, TT_Type type, int depth)
 {
     ASSERT(ctxt._score > SCORE_MIN);
     ASSERT(ctxt._score < SCORE_MAX);
@@ -454,22 +467,36 @@ static bool probe_endtables(Context& ctxt, TranspositionTable& table)
 
             if ((tt_type == TT_Type::EXACT) || (tt_type == TT_Type::LOWER ? score >= ctxt._beta : score <= ctxt._alpha))
             {
-                if (ctxt.depth() > 0 && ctxt.tt_result()._replacement_slot >= 0)
-                {
-                    ctxt._score = score;
-                    table.store(ctxt, ctxt.tt_entry(), tt_type, ctxt.depth());
-                    return true;
-                }
-            }
-            if (ctxt.is_pv_node() && tt_type == TT_Type::LOWER)
-            {
                 ctxt._score = score;
-                ctxt._alpha = std::max<score_t>(ctxt._alpha, score);
-                ctxt._beta = SCORE_MAX;
+
+            /* Storing to TT may be a bad idea with MTD(f) -- based on some 2min+2sec empirical play-test evidence. */
+            /* Null-window searches pollute TT with artificial bounds, re-probing TB could be cheaper than TT thrashing? */
+            #if 0
+                table.update_and_store(ctxt, tt_type);
+            #endif
+                return true;
             }
         }
     }
     return false;
+}
+
+
+static BaseMove best_move_from_tb_result(unsigned result)
+{
+    ASSERT(result != TB_RESULT_FAILED);
+    static constexpr PieceType PROMO_TABLE[5] = {
+        PieceType::NONE,
+        PieceType::QUEEN,
+        PieceType::ROOK,
+        PieceType::BISHOP,
+        PieceType::KNIGHT,
+    };
+
+    const auto promo = TB_GET_PROMOTES(result);
+    ASSERT(promo >= 0 && promo < 5);
+
+    return chess::BaseMove(Square(TB_GET_FROM(result)), Square(TB_GET_TO(result)), PROMO_TABLE[promo]);
 }
 
 
@@ -498,28 +525,39 @@ static void probe_root(Context& ctxt, TranspositionTable& table)
 
         if (result != TB_RESULT_FAILED)
         {
-             static constexpr PieceType PROMO_TABLE[5] = {
-                PieceType::NONE,
-                PieceType::QUEEN,
-                PieceType::ROOK,
-                PieceType::BISHOP,
-                PieceType::KNIGHT,
-            };
-            const auto promo = TB_GET_PROMOTES(result);
-            ASSERT(promo >= 0 && promo < 5);
-
-            ctxt._best_move = chess::BaseMove(
-                Square(TB_GET_FROM(result)), Square(TB_GET_TO(result)), PROMO_TABLE[promo]
-            );
-
             ++table._tb_hits;
 
             const auto wdl = TB_GET_WDL(result);
-            // const auto dtz = TB_GET_DTZ(result);
-            // std::cout << "info string move " << ctxt._best_move << " wdl " << wdl << " dtz " << dtz << std::endl;
+            const auto dtz = TB_GET_DTZ(result);
 
-            if (wdl >= TB_BLESSED_LOSS && wdl <= TB_CURSED_WIN)
-                ctxt._score = 0;
+            switch (wdl)
+            {
+                case TB_LOSS:
+                    ctxt._score = MATE_LOW + dtz;
+                    ctxt._beta = ctxt._score;
+                    ctxt._alpha = SCORE_MIN;
+                   /* Do not use move from probe result - search will find the
+                    * move that maximizes resistance (longest mate) among
+                    * equivalent losing moves -- don't make it easy for the opponent.
+                    */
+                    break;
+
+                case TB_BLESSED_LOSS:
+                case TB_DRAW:
+                case TB_CURSED_WIN:
+                    ctxt._score = 0;
+                    ASSERT(ctxt._alpha <= ctxt._score);
+                    ASSERT(ctxt._beta >= ctxt._score);
+                    ctxt._best_move = best_move_from_tb_result(result);
+                    break;
+
+                case TB_WIN:
+                    ctxt._score = MATE_HIGH - dtz;
+                    ctxt._alpha = ctxt._score;
+                    ctxt._beta = SCORE_MAX;
+                    ctxt._best_move = best_move_from_tb_result(result);
+                    break;
+            }
         }
     }
 }

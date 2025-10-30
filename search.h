@@ -310,7 +310,8 @@ namespace search
         template<TT_Type=TT_Type::NONE, typename C=struct Context>
         void store(C& ctxt, int depth);
 
-        void store(Context&, TT_Entry&, TT_Type, int depth);
+        void update_entry(Context&, TT_Entry&, TT_Type, int depth);
+        bool update_and_store(Context&, TT_Type);
 
         template<typename C> void store_countermove(C& ctxt);
         void store_killer_move(const Context&);
@@ -503,8 +504,8 @@ namespace search
                 }
             }
 
-            store(ctxt, ctxt.tt_entry(), type, depth);
-            _table.update(ctxt.tt_result());
+            update_entry(ctxt, ctxt.tt_entry(), type, depth);
+            _table.store(ctxt.tt_result());
         }
     }
 

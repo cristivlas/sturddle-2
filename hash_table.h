@@ -533,7 +533,7 @@ namespace search
             return result;
         }
 
-        INLINE void update(Result& r)
+        INLINE void store(const Result& r)
         {
             ASSERT(r._replacement_slot >= 0 && r._entry.is_valid());
             ASSERT(r._bucket);
