@@ -106,7 +106,7 @@ namespace nnue
 
     static const Vector v_zero(0.0);
     static const Vec8s  v8_zero(0);
-    static const Vec16s v16_zero(0);
+    // static const Vec16s v16_zero(0);
 
 
     template <typename V>
@@ -242,8 +242,8 @@ namespace nnue
     template <>
     INLINE Vec8s relu<Vec8s>(Vec8s v) { return max(v, v8_zero); }
 
-    template <>
-    INLINE Vec16s relu<Vec16s>(Vec16s v) { return max(v, v16_zero); }
+    // template <>
+    // INLINE Vec16s relu<Vec16s>(Vec16s v) { return max(v, v16_zero); }
 
     template <int N>
     INLINE void activate(const int16_t (&input)[N], float (&output)[N])
@@ -276,6 +276,31 @@ namespace nnue
 #endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
     }
 
+#if INSTRSET >= 9 /* AVX-512 */
+    /* Overflow is prevented at training time */
+    INLINE Vec32s mul_add(Vec32s a, Vec32s b, Vec32s acc)
+    {
+        return acc + a * b;
+    }
+#endif /* INSTRSET >= 9 */
+
+    INLINE Vec8i mul_add(Vec16s a, Vec16s b, Vec8i acc)
+    {
+    #if __AVXVNNI
+        return _mm256_dpwssd_epi32(acc, a, b);
+    #elif INSTRSET < 8
+        /* SSE2 */
+        // Multiply a * b and accumulate neighbouring outputs into int32 values
+        __m128i product_lo = _mm_madd_epi16(a.get_low(), b.get_low());
+        __m128i product_hi = _mm_madd_epi16(a.get_high(), b.get_high());
+        // Add to the main int32 accumulator
+        return Vec8i(_mm_add_epi32(acc.get_low(), product_lo), _mm_add_epi32(acc.get_high(), product_hi));
+    #else
+        /* AVX2 */
+        __m256i product = _mm256_madd_epi16(a, b);
+        return _mm256_add_epi32(acc, product);
+    #endif
+    }
 
     template <int I, int O, typename T, int Scale, bool Incremental>
     struct BaseLayer
@@ -366,19 +391,12 @@ namespace nnue
         {
             static_assert(S >= INPUTS);
 
-        #define MUL_ADD(a, b, s) s += a * b
         #if INSTRSET >= 9 /* AVX 512 */
             using VecShort = Vec32s;
             using VSum = Vec32s;
         #else
             using VecShort = Vec16s;
-            #if __AVXVNNI__
-                #undef MUL_ADD
-                #define MUL_ADD(a, b, s) s = _mm256_dpwssd_epi32(s, a, b)
                 using VSum = Vec8i;
-            #else
-                using VSum = Vec16s;
-            #endif /* __AVXVNNI__ */
         #endif /* INSTRSET */
 
             constexpr auto N = VecShort::size();
@@ -406,7 +424,7 @@ namespace nnue
                     for (int k = 0; k != N; ++k)
                     {
                         vw.load_a(&wt[j + k][i]);
-                        MUL_ADD(in, vw, sum[k]);
+                        sum[k] = mul_add(in, vw, sum[k]);
                     }
                 }
 
@@ -414,7 +432,6 @@ namespace nnue
                 vw.load_a(&b[j]);
                 (vw + sums).store_a(&output[j]);
             }
-            #undef MUL_ADD
         }
 
         /* hidden, output */
