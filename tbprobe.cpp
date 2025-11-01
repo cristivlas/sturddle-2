@@ -1,7 +1,7 @@
 #include "config.h"
 #if USE_ENDTABLES
 #define atomic_init(x,y) (x)->store(y)
-#ifndef INFINITE
+#if _WIN32 and !defined(INFINITE)
     constexpr DWORD INFINITE = 0xFFFFFFFF;
 #endif
 #include "tbprobe.c"

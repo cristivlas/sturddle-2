@@ -276,14 +276,19 @@ namespace nnue
 #endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
     }
 
+
 #if INSTRSET >= 9 /* AVX-512 */
     /* Overflow is prevented at training time */
     INLINE Vec32s mul_add(Vec32s a, Vec32s b, Vec32s acc)
     {
         return acc + a * b;
     }
-#endif /* INSTRSET >= 9 */
-
+#elif __ARM__
+    INLINE Vec16s mul_add(Vec16s a, Vec16s b, Vec16s acc)
+    {
+        return acc + a * b;
+    }
+#else
     INLINE Vec8i mul_add(Vec16s a, Vec16s b, Vec8i acc)
     {
     #if __AVXVNNI
@@ -301,6 +306,8 @@ namespace nnue
         return _mm256_add_epi32(acc, product);
     #endif
     }
+#endif /* INSTRSET >= 9 */
+
 
     template <int I, int O, typename T, int Scale, bool Incremental>
     struct BaseLayer
@@ -394,9 +401,12 @@ namespace nnue
         #if INSTRSET >= 9 /* AVX 512 */
             using VecShort = Vec32s;
             using VSum = Vec32s;
+        #elif __ARM__
+            using VecShort = Vec16s;
+            using VSum = Vec16s;
         #else
             using VecShort = Vec16s;
-                using VSum = Vec8i;
+            using VSum = Vec8i;
         #endif /* INSTRSET */
 
             constexpr auto N = VecShort::size();
