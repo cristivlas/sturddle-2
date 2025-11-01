@@ -500,7 +500,7 @@ static BaseMove best_move_from_tb_result(unsigned result)
 }
 
 
-static void probe_root(Context& ctxt, TranspositionTable& table)
+static bool probe_root(Context& ctxt, TranspositionTable& table)
 {
     ASSERT(ctxt.is_root());
 
@@ -534,8 +534,11 @@ static void probe_root(Context& ctxt, TranspositionTable& table)
             {
                 case TB_LOSS:
                     ctxt._score = MATE_LOW + dtz;
-                    ctxt._beta = ctxt._score;
-                    ctxt._alpha = SCORE_MIN;
+                    ctxt._alpha = ctxt._score;
+                    ctxt._beta = SCORE_MAX;
+
+                    table._w_alpha = ctxt._alpha; // keep Context::reset ASSERT from firing
+
                    /* Do not use move from probe result - search will find the
                     * move that maximizes resistance (longest mate) among
                     * equivalent losing moves -- don't make it easy for the opponent.
@@ -546,25 +549,22 @@ static void probe_root(Context& ctxt, TranspositionTable& table)
                 case TB_DRAW:
                 case TB_CURSED_WIN:
                     ctxt._score = 0;
-                    ASSERT(ctxt._alpha <= ctxt._score);
-                    ASSERT(ctxt._beta >= ctxt._score);
                     ctxt._best_move = best_move_from_tb_result(result);
-                    break;
+                    return true;
 
                 case TB_WIN:
                     ctxt._score = MATE_HIGH - dtz;
-                    ctxt._alpha = ctxt._score;
-                    ctxt._beta = SCORE_MAX;
                     ctxt._best_move = best_move_from_tb_result(result);
-                    break;
+                    return true;
             }
         }
     }
+    return false;
 }
 #else
 
 static inline bool probe_endtables(Context&, TranspositionTable&) { return false; }
-static inline void probe_root(Context&, TranspositionTable&) { }
+static inline bool probe_root(Context&, TranspositionTable&) { return false; }
 
 #endif /* USE_ENDTABLES */
 
@@ -589,7 +589,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
     if (ctxt.is_root())
     {
-        probe_root(ctxt, table);
+        if (probe_root(ctxt, table))
+            return ctxt._score;
     }
     else
     {
