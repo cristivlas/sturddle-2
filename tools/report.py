@@ -7,9 +7,10 @@ Generates cutechess-cli style tournament statistics from PGN files
 import chess.pgn
 import sys
 import math
+import argparse
 from collections import defaultdict
-# from typing import Dict, Tuple
 from scipy.stats import norm
+
 
 def calculate_elo_rating(wins, losses, draws):
     """
@@ -23,7 +24,6 @@ def calculate_elo_rating(wins, losses, draws):
     Returns:
     dict: A dictionary containing ELO rating calculations
     """
-    # Calculate total games and performance ratio
     total_games = losses + wins + draws
 
     if total_games == 0:
@@ -61,6 +61,56 @@ def calculate_elo_rating(wins, losses, draws):
     }
 
 
+class OpeningStats:
+    """Track statistics for a specific opening"""
+    def __init__(self):
+        self.white_wins = 0
+        self.white_draws = 0
+        self.white_losses = 0
+        self.black_wins = 0
+        self.black_draws = 0
+        self.black_losses = 0
+
+    def add_game(self, color, result):
+        if color == 'white':
+            if result == 1:
+                self.white_wins += 1
+            elif result == 0.5:
+                self.white_draws += 1
+            else:
+                self.white_losses += 1
+        else:  # black
+            if result == 1:
+                self.black_wins += 1
+            elif result == 0.5:
+                self.black_draws += 1
+            else:
+                self.black_losses += 1
+
+    def white_games(self):
+        return self.white_wins + self.white_draws + self.white_losses
+
+    def black_games(self):
+        return self.black_wins + self.black_draws + self.black_losses
+
+    def total_games(self):
+        return self.white_games() + self.black_games()
+
+    def white_score(self):
+        return self.white_wins + 0.5 * self.white_draws
+
+    def black_score(self):
+        return self.black_wins + 0.5 * self.black_draws
+
+    def white_performance(self):
+        games = self.white_games()
+        return (self.white_score() / games * 100) if games > 0 else 0
+
+    def black_performance(self):
+        games = self.black_games()
+        return (self.black_score() / games * 100) if games > 0 else 0
+
+
 class PlayerStats:
     def __init__(self):
         self.total_games = 0
@@ -75,8 +125,9 @@ class PlayerStats:
         self.black_wins = 0
         self.black_draws = 0
         self.black_losses = 0
+        self.opening_stats = defaultdict(OpeningStats)
 
-    def add_game(self, color, result):
+    def add_game(self, color, result, opening=None):
         """Add a game result for a player"""
         self.total_games += 1
 
@@ -103,6 +154,10 @@ class PlayerStats:
                 self.losses += 1
                 self.black_losses += 1
 
+        # Track opening stats
+        if opening:
+            self.opening_stats[opening].add_game(color, result)
+
     def score(self):
         return self.wins + 0.5 * self.draws
 
@@ -122,6 +177,7 @@ class PlayerStats:
             return 0.0
         return (self.draws / self.total_games) * 100
 
+
 def parse_pgn(filename):
     """Parse PGN file and collect statistics"""
     stats = defaultdict(PlayerStats)
@@ -136,6 +192,7 @@ def parse_pgn(filename):
             white = game.headers.get("White", "Unknown")
             black = game.headers.get("Black", "Unknown")
             result = game.headers.get("Result", "*")
+            opening = game.headers.get("Opening", "Unknown Opening")
 
             if result == "*":
                 continue  # Skip unfinished games
@@ -155,10 +212,11 @@ def parse_pgn(filename):
             else:
                 continue  # Skip unknown results
 
-            stats[white].add_game('white', white_result)
-            stats[black].add_game('black', black_result)
+            stats[white].add_game('white', white_result, opening)
+            stats[black].add_game('black', black_result, opening)
 
     return stats, total_games
+
 
 def print_report(stats, total_games):
     """Print tournament report similar to cutechess-cli"""
@@ -166,22 +224,14 @@ def print_report(stats, total_games):
     # Sort players by score
     sorted_players = sorted(stats.items(), key=lambda x: x[1].score(), reverse=True)
 
-    print("=" * 100)
-    print("TOURNAMENT REPORT")
-    print("=" * 100)
-    print(f"\nTotal games: {total_games}\n")
+    print(f"\nTotal games: {total_games}")
 
-    # Overall standings
-    print("-" * 100)
-    print(f"{'Rank':<6} {'Player':<25} {'Score':<10} {'Games':<8} {'W':<6} {'D':<6} {'L':<6} {'Win%':<8} {'Draw%':<8}")
-    print("-" * 100)
+    print(f"\n{'Rank':<6} {'Player':<25} {'Score':<10} {'Games':<8} {'W':<6} {'D':<6} {'L':<6} {'Win%':<8} {'Draw%':<8}")
 
     for rank, (player, stat) in enumerate(sorted_players, 1):
         print(f"{rank:<6} {player:<25} {stat.score():<10.1f} {stat.total_games:<8} "
               f"{stat.wins:<6} {stat.draws:<6} {stat.losses:<6} "
               f"{stat.win_rate():<8.1f} {stat.draw_rate():<8.1f}")
-
-    print("-" * 100)
 
     # Head-to-head Elo if exactly 2 players
     if len(sorted_players) == 2:
@@ -191,18 +241,14 @@ def print_report(stats, total_games):
         elo_data = calculate_elo_rating(stats1.wins, stats1.losses, stats1.draws)
 
         if elo_data and elo_data['elo_rating'] is not None:
-            print(f"\n{'HEAD-TO-HEAD ELO DIFFERENCE':^100}")
-            print("-" * 100)
+            print(f"\nHEAD-TO-HEAD\n")
             print(f"{player1} vs {player2}:")
             print(f"  Elo difference: {elo_data['elo_rating']:+.2f} ± {elo_data['confidence_interval']:.2f}")
             print(f"  95% confidence: [{elo_data['elo_range_low']:+.2f}, {elo_data['elo_range_high']:+.2f}]")
-            print(f"  LOS (Likelihood of Superiority): {elo_data['los']:.2f}%")
-            print("-" * 100)
+            print(f"  LOS: {elo_data['los']:.2f}%")
 
     # White vs Black breakdown
-    print("\n" + "=" * 100)
-    print("WHITE vs BLACK STATISTICS")
-    print("=" * 100)
+    print("\nWHITE vs BLACK")
 
     for rank, (player, stat) in enumerate(sorted_players, 1):
         print(f"\n{rank}. {player}")
@@ -232,8 +278,6 @@ def print_report(stats, total_games):
                 print(f"      Elo: {black_elo['elo_rating']:+.2f} ± {black_elo['confidence_interval']:.2f} "
                       f"(LOS: {black_elo['los']:.1f}%)")
 
-    print("\n" + "=" * 100)
-
     # Summary statistics
     total_white_score = sum(s.white_score() for s in stats.values())
     total_white_games = sum(s.white_games for s in stats.values())
@@ -248,26 +292,116 @@ def print_report(stats, total_games):
         black_avg = (total_black_score / total_black_games) * 100
         print(f"Black overall performance: {black_avg:.2f}%")
 
-    print("=" * 100)
+
+def print_player_details(player_name, stats):
+    """Print detailed opening breakdown for a specific player"""
+    if player_name not in stats:
+        print(f"Error: Player '{player_name}' not found in tournament")
+        available = ', '.join(stats.keys())
+        print(f"Available players: {available}")
+        return
+
+    player_stats = stats[player_name]
+
+    print(f"\nDETAILED REPORT FOR: {player_name}")
+    print(f"\nOverall Performance: {player_stats.score():.1f}/{player_stats.total_games} "
+          f"({player_stats.win_rate():.1f}% wins, {player_stats.draw_rate():.1f}% draws)")
+
+    if not player_stats.opening_stats:
+        print("\nNo opening information available in PGN file.")
+        return
+
+    # Sort openings by total games (most played first)
+    sorted_openings = sorted(
+        player_stats.opening_stats.items(),
+        key=lambda x: x[1].total_games(),
+        reverse=True
+    )
+
+    print(f"\nPERFORMANCE BY OPENING ({len(sorted_openings)} unique openings)")
+
+    for opening, ostats in sorted_openings:
+        total = ostats.total_games()
+        print(f"\n{opening} ({total} games)")
+
+        # White performance
+        if ostats.white_games() > 0:
+            w_games = ostats.white_games()
+            w_score = ostats.white_score()
+            w_perf = ostats.white_performance()
+            print(f"  As White: {w_score:.1f}/{w_games} "
+                  f"(+{ostats.white_wins} ={ostats.white_draws} -{ostats.white_losses}) "
+                  f"[{w_perf:.1f}%]")
+
+            # Elo for this opening as white
+            w_elo = calculate_elo_rating(ostats.white_wins, ostats.white_losses, ostats.white_draws)
+            if w_elo and w_elo['elo_rating'] is not None:
+                print(f"     Elo: {w_elo['elo_rating']:+.2f} ± {w_elo['confidence_interval']:.2f} "
+                      f"(LOS: {w_elo['los']:.1f}%)")
+
+        # Black performance
+        if ostats.black_games() > 0:
+            b_games = ostats.black_games()
+            b_score = ostats.black_score()
+            b_perf = ostats.black_performance()
+            print(f"  As Black: {b_score:.1f}/{b_games} "
+                  f"(+{ostats.black_wins} ={ostats.black_draws} -{ostats.black_losses}) "
+                  f"[{b_perf:.1f}%]")
+
+            # Elo for this opening as black
+            b_elo = calculate_elo_rating(ostats.black_wins, ostats.black_losses, ostats.black_draws)
+            if b_elo and b_elo['elo_rating'] is not None:
+                print(f"     Elo: {b_elo['elo_rating']:+.2f} ± {b_elo['confidence_interval']:.2f} "
+                      f"(LOS: {b_elo['los']:.1f}%)")
+
+    # Summary: weakest openings
+    print("\nWEAKEST OPENINGS (by performance, min 3 games)")
+
+    weak_openings = []
+    for opening, ostats in sorted_openings:
+        if ostats.total_games() >= 3:
+            total_score = ostats.white_score() + ostats.black_score()
+            total_games = ostats.total_games()
+            perf = (total_score / total_games * 100) if total_games > 0 else 0
+            weak_openings.append((opening, perf, total_games, ostats))
+
+    weak_openings.sort(key=lambda x: x[1])  # Sort by performance ascending
+
+    for opening, perf, games, ostats in weak_openings[:5]:
+        print(f"  {opening}: {perf:.1f}% ({games} games)")
+        if ostats.white_games() >= 2:
+            print(f"    White: {ostats.white_performance():.1f}% ({ostats.white_games()} games)")
+        if ostats.black_games() >= 2:
+            print(f"    Black: {ostats.black_performance():.1f}% ({ostats.black_games()} games)")
+
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python3 pgn_tournament_report.py <pgn_file>")
-        print("\nThis script generates a tournament report with white vs black statistics")
-        print("from a PGN file, similar to cutechess-cli output.")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description='Generate tournament report with white vs black statistics from PGN files'
+    )
+    parser.add_argument('pgn_file', help='Path to PGN file')
+    parser.add_argument('--details', metavar='PLAYER',
+                        help='Show detailed opening breakdown for specific player')
 
-    pgn_file = sys.argv[1]
+    args = parser.parse_args()
 
     try:
-        stats, total_games = parse_pgn(pgn_file)
-        print_report(stats, total_games)
+        stats, total_games = parse_pgn(args.pgn_file)
+
+        if args.details:
+            print_player_details(args.details, stats)
+        else:
+            print_report(stats, total_games)
+
     except FileNotFoundError:
-        print(f"Error: File '{pgn_file}' not found")
+        print(f"Error: File '{args.pgn_file}' not found")
         sys.exit(1)
     except Exception as e:
         print(f"Error processing PGN file: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
