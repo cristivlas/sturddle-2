@@ -201,6 +201,7 @@ std::map<std::string, Param> _get_param_info()
         info.emplace(elem.first,
             Param {
                 *elem.second._val,
+                elem.second._default_val,
                 elem.second._min,
                 elem.second._max,
                 elem.second._group,
@@ -210,6 +211,7 @@ std::map<std::string, Param> _get_param_info()
 
     info.emplace("Hash", Param {
         int(TranspositionTable::get_hash_size()),
+        DEFAULT_HASH_TABLE_SIZE,
         HASH_MIN,
         int(TranspositionTable::max_hash_size()),
         "Settings",

@@ -78,6 +78,7 @@ struct Config
     struct Param /* meta param info */
     {
         Val* const  _val = nullptr;
+        const Val   _default_val;
         const int   _min = 0;
         const int   _max = 0;
         const std::string _group;
@@ -92,7 +93,7 @@ struct Config
     /* Register parameter names with Config::_namespace */
     Config(const char* n, Val* v, int v_min, int v_max, bool normalized = false)
     {
-        _namespace.emplace(n, Config::Param{ v, v_min, v_max, Config::_group, normalized });
+        _namespace.emplace(n, Config::Param{ v, *v, v_min, v_max, Config::_group, normalized });
     }
 
     struct Group

@@ -37,6 +37,7 @@ constexpr auto FIRST_EXCHANGE_PLY = PLY_MAX;
 /* Configuration API */
 struct Param {
     int val = 0;
+    int default_val = 0;
     int min_val = std::numeric_limits<int>::min();
     int max_val = std::numeric_limits<int>::max();
     std::string group;

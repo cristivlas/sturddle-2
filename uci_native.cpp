@@ -146,14 +146,6 @@ namespace
         throw std::invalid_argument(std::format(fmt, std::forward<Args>(args)...));
     }
 
-    /*
-    https://stackoverflow.com/questions/27866909/get-function-arity-from-template-parameter
-    */
-    template <typename T> struct arity {};
-
-    template <typename R, typename C, typename... Args>
-    struct arity<R (C::*)(Args...)> : std::integral_constant<unsigned, sizeof...(Args)> {};
-
     template <typename T> INLINE int to_int(T v)
     {
         try
@@ -191,7 +183,9 @@ namespace
     struct Option
     {
         virtual ~Option() = default;
-        virtual void print(std::ostream &) const = 0;
+
+        /* if show_default is true, print the default, otherwise show the = value */
+        virtual void print(std::ostream &, bool show_default = true) const = 0;
         virtual void set(std::string_view value) = 0;
     };
 
@@ -199,7 +193,7 @@ namespace
     {
         const std::string _name;
         explicit OptionBase(const std::string &name) : _name(name) {}
-        void print(std::ostream &out) const override { out << _name << " "; }
+        void print(std::ostream &out, bool) const override { out << _name << " "; }
     };
 
     struct OptionAlgo : public OptionBase
@@ -207,10 +201,13 @@ namespace
         search::Algorithm &_algo;
 
         explicit OptionAlgo(search::Algorithm& algo) : OptionBase("Algorithm"), _algo(algo) {}
-        void print(std::ostream &out) const override
+        void print(std::ostream &out, bool show_default) const override
         {
-            OptionBase::print(out);
-            out << "type combo default " << name(_algo) << " var mtdf var negascout var negamax";
+            OptionBase::print(out, show_default);
+            if (show_default)
+                out << "type combo default mtdf var mtdf var negascout var negamax";
+            else
+                out << "type combo = " << name(_algo) << " var mtdf var negascout var negamax";
         }
         std::string_view name(search::Algorithm algo) const
         {
@@ -232,16 +229,20 @@ namespace
 
     struct OptionBool : public OptionBase
     {
+        const bool _default_val;
         bool &_b;
 
-        OptionBool(const std::string &name, bool &b) : OptionBase(name), _b(b)
+        OptionBool(const std::string &name, bool &b) : OptionBase(name), _default_val(b), _b(b)
         {
         }
 
-        void print(std::ostream &out) const override
+        void print(std::ostream &out, bool show_default) const override
         {
-            OptionBase::print(out);
-            out << "type check default " << std::boolalpha << _b;
+            OptionBase::print(out, show_default);
+            if (show_default)
+                out << "type check default " << std::boolalpha << _default_val;
+            else
+                out << "type check = " << std::boolalpha << _b;
         }
 
         void set(std::string_view value) override
@@ -259,21 +260,41 @@ namespace
 
         OptionParam(const std::string &name, const Param &param) : OptionBase(name), _p(param) {}
 
-        void print(std::ostream &out) const override
+        void print(std::ostream &out, bool show_default) const override
         {
-            OptionBase::print(out);
-            if (_p.min_val == 0 && _p.max_val == 1)
+            OptionBase::print(out, show_default);
+
+            if (show_default)
             {
-                out << "type check default " << std::boolalpha << bool(_p.val);
-            }
-            else if (_p.normal)
-            {
-                const auto scaled_val = 2.0 * (_p.val - _p.min_val) / (_p.max_val - _p.min_val) - 1;
-                out << "type string default " << scaled_val;
+                if (_p.min_val == 0 && _p.max_val == 1)
+                {
+                    out << "type check default " << std::boolalpha << bool(_p.default_val);
+                }
+                else if (_p.normal)
+                {
+                    const auto scaled_val = 2.0 * (_p.default_val - _p.min_val) / (_p.max_val - _p.min_val) - 1;
+                    out << "type string default " << scaled_val;
+                }
+                else
+                {
+                    out << "type spin default " << _p.default_val << " min " << _p.min_val << " max " << _p.max_val;
+                }
             }
             else
             {
-                out << "type spin default " << _p.val << " min " << _p.min_val << " max " << _p.max_val;
+                if (_p.min_val == 0 && _p.max_val == 1)
+                {
+                    out << "type check = " << std::boolalpha << bool(_p.val);
+                }
+                else if (_p.normal)
+                {
+                    const auto scaled_val = 2.0 * (_p.val - _p.min_val) / (_p.max_val - _p.min_val) - 1;
+                    out << "type string = " << scaled_val;
+                }
+                else
+                {
+                    out << "type spin = " << _p.val << " min " << _p.min_val << " max " << _p.max_val;
+                }
             }
         }
 
@@ -297,13 +318,20 @@ namespace
     {
         OptionSyzygy() : OptionBase("SyzygyPath") {}
 
-        void print(std::ostream& out) const override
+        void print(std::ostream& out, bool show_default) const override
         {
-            OptionBase::print(out);
+            OptionBase::print(out, show_default);
             out << "type string";
-            const auto &path = search::Context::syzygy_path();
-            if (!path.empty())
-                out << " default " << path;
+
+            if (show_default)
+            {
+                /* default setting is empty */
+            }
+            else
+            {
+                const auto &path = search::Context::syzygy_path();
+                if (!path.empty()) out << " = " << path;
+            }
         }
 
         void set(std::string_view value) override
@@ -472,7 +500,9 @@ public:
         if (_ponder)
             ensure_background_thread();
 
+    #if 0 /* experimentation only */
         _options.emplace("algorithm", std::make_unique<OptionAlgo>(_algorithm));
+    #endif
         _options.emplace("bestbookmove", std::make_unique<OptionBool>("BestBookMove", _best_book_move));
         _options.emplace("debug", std::make_unique<OptionBool>("Debug", _debug));
         _options.emplace("ownbook", std::make_unique<OptionBool>("OwnBook", _use_opening_book));
@@ -480,7 +510,7 @@ public:
 
     #if USE_ENDTABLES
         _options.emplace("syzygypath", std::make_unique<OptionSyzygy>());
-    #endif /*USE_ENDTABLES */
+    #endif /* USE_ENDTABLES */
 
         if (can_change_priority())
             _options.emplace("highpriority", std::make_unique<OptionBool>("HighPriority", _high_priority));
@@ -504,6 +534,7 @@ private:
     void newgame();
 
     void set_high_priority(bool);
+    void show_settings();
 
     /** Context callbacks */
     static void on_iteration(PyObject *, search::Context *, const search::IterationInfo *);
@@ -893,6 +924,11 @@ INLINE void UCI::dispatch(std::string &cmd, const Arguments &args)
             setoption(args);
             return;
         }
+        if (tok == "settings")
+        {
+            show_settings();
+            return;
+        }
         if (tok == "stop")
         {
             stop();
@@ -1128,6 +1164,20 @@ void UCI::set_high_priority(bool high_priority)
     }
 }
 
+void UCI::show_settings()
+{
+    std::cout << "*** Current Settings ***\n";
+
+    refresh_options();
+
+    for (const auto &opt : _options)
+    {
+        std::ostringstream opts;
+        opt.second->print(opts << "option name ", false /* show current, not default*/);
+        output<false>(opts.str());
+    }
+}
+
 /**
  * Runs on a background thread with infinite time, and expects that:
  * either STOP is received; or
@@ -1289,8 +1339,6 @@ void UCI::uci()
 {
     output<false>(std::format("id name {} {}", _name, _version));
     output<false>("id author Cristian Vlasceanu");
-
-    refresh_options();
 
     /* show available options */
     for (const auto &opt : _options)
