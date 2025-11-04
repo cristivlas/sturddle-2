@@ -31,6 +31,7 @@ class Statistics:
         self.games_with_no_result = 0
         self.games_below_min_elo = 0
         self.games_lost_on_time = 0
+        self.games_filtered_opening = 0
 
     def log_summary(self):
         total_filtered = (
@@ -78,6 +79,7 @@ class Statistics:
         logging.info(f"Games with no result: {self.games_with_no_result:,}")
         logging.info(f"Games below ELO requirements: {self.games_below_min_elo:,}")
         logging.info(f"Games lost on time: {self.games_lost_on_time:,}")
+        logging.info(f"Games filtered by opening: {self.games_filtered_opening:,}")
 
         if total_games > 0:
             logging.info(f"  - White wins: {self.white_wins:,} ({self.white_wins/total_games*100:.2f}%)")
@@ -293,7 +295,56 @@ def check_minimum_elo(args, game):
     return True
 
 
+def check_opening(allowed_openings, game):
+    """Check if game opening is in the allowed list"""
+    if allowed_openings is None:
+        return True
+
+    opening = game.headers.get('Opening', '').strip()
+    if not opening:
+        logging.debug(f'No opening header found, filtering out game')
+        return False
+
+    # Strip everything after colon to get base opening name
+    # e.g., "Sicilian: Najdorf Variation" -> "Sicilian"
+    base_opening = opening.split(':')[0].strip()
+
+    # Normalize opening name for comparison (case-insensitive)
+    opening_lower = opening.lower()
+    base_opening_lower = base_opening.lower()
+
+    # Check if either full opening or base opening matches
+    match = opening_lower in allowed_openings or base_opening_lower in allowed_openings
+
+    if match:
+        logging.debug(f'Opening matched: "{opening}" (base: "{base_opening}")')
+    # else:
+    #     logging.debug(f'Opening not in allowed list: "{opening}" (base: "{base_opening}")')
+
+    return match
+
+
+def load_openings(filename):
+    """Load opening names from a text file, one per line"""
+    if filename is None:
+        return None
+
+    openings = set()
+    with open(filename, 'r', encoding='utf-8') as f:
+        for line in f:
+            opening = line.strip()
+            if opening:
+                # Store in lowercase for case-insensitive matching
+                openings.add(opening.lower())
+
+    logging.info(f"Loaded {len(openings)} opening(s) from {filename}")
+    return openings
+
+
 def main(args, stats):
+    # Load allowed openings if specified
+    allowed_openings = load_openings(args.openings)
+
     with SQLConn(args.output) as sqlconn:
         # Use EPD as primary key to eliminate duplicates.
         pk = 'PRIMARY KEY' if args.unique else ''
@@ -334,6 +385,10 @@ def main(args, stats):
                     continue
 
                 stats.games += 1
+
+                if not check_opening(allowed_openings, game):
+                    stats.games_filtered_opening += 1
+                    continue
 
                 if not check_minimum_elo(args, game):
                     stats.games_below_min_elo += 1
@@ -391,6 +446,7 @@ if __name__ == '__main__':
     parser.add_argument('--logfile', type=str, help='log file (default: output filename with .log extension)')
     parser.add_argument('--mate-score', type=int, default=15000, help='mate score in centipawns (default: 15000, 0 skips close-to-mate positions)')
     parser.add_argument('--min-elo', type=int, help='if specified, only include games with minimum player ELO')
+    parser.add_argument('--openings', type=str, help='text file containing allowed opening names (one per line, case-insensitive)')
     parser.add_argument('--capture', action='store_false', dest='no_capture', help='include capturing moves (default: False)')
     parser.add_argument('--no-capture', action='store_true', default=True, help='exclude capturing moves (default: True)')
     parser.add_argument('--check', action='store_false', dest='no_check', help='include in-check position and checking moves (default: False)')

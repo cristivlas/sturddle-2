@@ -322,7 +322,7 @@ def make_model(args, strategy):
 '''
 Export weights as C++ code snippet.
 '''
-def write_weigths(args, model, indent):
+def write_weigths(args, model, indent=2):
     for layer in model.layers:
         params = layer.get_weights()
         if not params:
@@ -362,15 +362,56 @@ def write_weigths(args, model, indent):
         print('\n};')
 
 
-def export_weights(args, model, indent=2):
-    if args.export == sys.stdout:
-        write_weigths(args, model, indent)
+def write_binary_weights(args, model, file):
+    for layer in model.layers:
+        weights = layer.get_weights()
+        if len(weights) == 2:
+            kernel, bias = weights
+            print(layer.name, kernel.shape, bias.shape)
+            kernel.astype(np.float32).tofile(file)
+            bias.astype(np.float32).tofile(file)
+
+
+def export_weights(args, model):
+    if args.bin:
+        if args.export == sys.stdout:
+            filename = f'{model.name}.bin'
+        else:
+            filename = args.export
+        print(f'Exporting weights to: {filename}')
+        with open(filename, 'wb') as file:
+            write_binary_weights(args, model, file)
+
+    elif args.export == sys.stdout:
+        write_weigths(args, model)
     else:
         with open(args.export, 'w+') as f:
             with redirect_stdout(f):
                 print('#pragma once')
                 print(f'// Generated from {args.model}')
-                write_weigths(args, model, indent)
+                write_weigths(args, model)
+
+
+def load_binary_weights(args, model, file):
+    """Load weights from a binary file into the model."""
+    for layer in model.layers:
+        weights = layer.get_weights()
+        if len(weights) == 2:
+            kernel, bias = weights
+            print(f"Loading {layer.name}: kernel {kernel.shape}, bias {bias.shape}")
+
+            # Read kernel weights
+            kernel_size = np.prod(kernel.shape)
+            kernel_data = np.fromfile(file, dtype=np.float32, count=kernel_size)
+            kernel_data = kernel_data.reshape(kernel.shape)
+
+            # Read bias weights
+            bias_size = np.prod(bias.shape)
+            bias_data = np.fromfile(file, dtype=np.float32, count=bias_size)
+            bias_data = bias_data.reshape(bias.shape)
+
+            # Set the weights back to the layer
+            layer.set_weights([kernel_data, bias_data])
 
 
 def tf_unpack_bits(bitboards):
@@ -699,6 +740,10 @@ def main(args):
     else:
         model = make_model(args, strategy)
 
+    if args.import_file:
+        with open(args.import_file, 'rb') as file:
+            load_binary_weights(args, model, file)
+
     if alt_model:
         set_weights(alt_model, model)
         print(f'Applied alternate weights from {os.path.abspath(args.alt_model)}.')
@@ -802,7 +847,11 @@ if __name__ == '__main__':
         parser.add_argument('-s', '--outcome-smoothing', type=float, default=0.025)
 
         parser.add_argument('--balance', action='store_true', help='balance white / black wins inside batches')
+
+        parser.add_argument('--bin', action='store_true', help='export weights in binary format')
         parser.add_argument('--hex', action='store_true', help='export weights in hex format')
+        parser.add_argument('--import-file', help='import weights from binary file')
+
         parser.add_argument('--no-capture', action='store_true', help='exclude captures from training')
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
 
