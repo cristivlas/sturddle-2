@@ -243,7 +243,7 @@ def print_report(stats, total_games):
         if elo_data and elo_data['elo_rating'] is not None:
             print(f"\nHEAD-TO-HEAD\n")
             print(f"{player1} vs {player2}:")
-            print(f"  Elo difference: {elo_data['elo_rating']:+.2f} ± {elo_data['confidence_interval']:.2f}")
+            print(f"  Elo difference: {elo_data['elo_rating']:+.2f} +/- {elo_data['confidence_interval']:.2f}")
             print(f"  95% confidence: [{elo_data['elo_range_low']:+.2f}, {elo_data['elo_range_high']:+.2f}]")
             print(f"  LOS: {elo_data['los']:.2f}%")
 
@@ -263,7 +263,7 @@ def print_report(stats, total_games):
             # Calculate Elo for white performance
             white_elo = calculate_elo_rating(stat.white_wins, stat.white_losses, stat.white_draws)
             if white_elo and white_elo['elo_rating'] is not None:
-                print(f"      Elo: {white_elo['elo_rating']:+.2f} ± {white_elo['confidence_interval']:.2f} "
+                print(f"      Elo: {white_elo['elo_rating']:+.2f} +/- {white_elo['confidence_interval']:.2f} "
                       f"(LOS: {white_elo['los']:.1f}%)")
 
         if stat.black_games > 0:
@@ -275,7 +275,7 @@ def print_report(stats, total_games):
             # Calculate Elo for black performance
             black_elo = calculate_elo_rating(stat.black_wins, stat.black_losses, stat.black_draws)
             if black_elo and black_elo['elo_rating'] is not None:
-                print(f"      Elo: {black_elo['elo_rating']:+.2f} ± {black_elo['confidence_interval']:.2f} "
+                print(f"      Elo: {black_elo['elo_rating']:+.2f} +/- {black_elo['confidence_interval']:.2f} "
                       f"(LOS: {black_elo['los']:.1f}%)")
 
     # Summary statistics
@@ -293,7 +293,7 @@ def print_report(stats, total_games):
         print(f"Black overall performance: {black_avg:.2f}%")
 
 
-def print_player_details(player_name, stats):
+def print_player_details(player_name, stats, sort_by='combined'):
     """Print detailed opening breakdown for a specific player"""
     if player_name not in stats:
         print(f"Error: Player '{player_name}' not found in tournament")
@@ -311,18 +311,57 @@ def print_player_details(player_name, stats):
         print("\nNo opening information available in PGN file.")
         return
 
-    # Sort openings by total games (most played first)
-    sorted_openings = sorted(
-        player_stats.opening_stats.items(),
-        key=lambda x: x[1].total_games(),
-        reverse=True
-    )
+    # Calculate ELO for each opening based on sort preference
+    openings_with_elo = []
+    for opening, ostats in player_stats.opening_stats.items():
+        if sort_by == 'combined':
+            # Calculate combined ELO across white and black games
+            total_wins = ostats.white_wins + ostats.black_wins
+            total_draws = ostats.white_draws + ostats.black_draws
+            total_losses = ostats.white_losses + ostats.black_losses
+            elo_data = calculate_elo_rating(total_wins, total_losses, total_draws)
+        elif sort_by == 'white':
+            # Calculate white-only ELO
+            elo_data = calculate_elo_rating(ostats.white_wins, ostats.white_losses, ostats.white_draws)
+        else:  # black
+            # Calculate black-only ELO
+            elo_data = calculate_elo_rating(ostats.black_wins, ostats.black_losses, ostats.black_draws)
 
-    print(f"\nPERFORMANCE BY OPENING ({len(sorted_openings)} unique openings)")
+        # Use infinity for perfect scores so they sort to the top
+        elo_value = elo_data['elo_rating'] if elo_data and elo_data['elo_rating'] is not None else float('inf')
 
-    for opening, ostats in sorted_openings:
+        openings_with_elo.append((opening, ostats, elo_value))
+
+    # Sort by ELO (highest first)
+    sorted_openings = sorted(openings_with_elo, key=lambda x: x[2], reverse=True)
+
+    sort_description = {
+        'combined': 'combined ELO',
+        'white': 'white-side ELO',
+        'black': 'black-side ELO'
+    }
+    print(f"\nPERFORMANCE BY OPENING ({len(sorted_openings)} unique openings, sorted by {sort_description[sort_by]})")
+
+    for opening, ostats, sort_elo_value in sorted_openings:
         total = ostats.total_games()
-        print(f"\n{opening} ({total} games)")
+
+        # Calculate combined ELO for display
+        total_wins = ostats.white_wins + ostats.black_wins
+        total_draws = ostats.white_draws + ostats.black_draws
+        total_losses = ostats.white_losses + ostats.black_losses
+        combined_elo = calculate_elo_rating(total_wins, total_losses, total_draws)
+        combined_elo_value = combined_elo['elo_rating'] if combined_elo and combined_elo['elo_rating'] is not None else None
+
+        # Show the sorting ELO in the header
+        if sort_elo_value != float('inf'):
+            sort_label = {
+                'combined': 'Combined',
+                'white': 'White',
+                'black': 'Black'
+            }[sort_by]
+            print(f"\n{opening} ({total} games) - {sort_label} ELO: {sort_elo_value:+.2f}")
+        else:
+            print(f"\n{opening} ({total} games) - ELO: N/A (perfect score)")
 
         # White performance
         if ostats.white_games() > 0:
@@ -336,7 +375,7 @@ def print_player_details(player_name, stats):
             # Elo for this opening as white
             w_elo = calculate_elo_rating(ostats.white_wins, ostats.white_losses, ostats.white_draws)
             if w_elo and w_elo['elo_rating'] is not None:
-                print(f"     Elo: {w_elo['elo_rating']:+.2f} ± {w_elo['confidence_interval']:.2f} "
+                print(f"     Elo: {w_elo['elo_rating']:+.2f} +/- {w_elo['confidence_interval']:.2f} "
                       f"(LOS: {w_elo['los']:.1f}%)")
 
         # Black performance
@@ -351,28 +390,8 @@ def print_player_details(player_name, stats):
             # Elo for this opening as black
             b_elo = calculate_elo_rating(ostats.black_wins, ostats.black_losses, ostats.black_draws)
             if b_elo and b_elo['elo_rating'] is not None:
-                print(f"     Elo: {b_elo['elo_rating']:+.2f} ± {b_elo['confidence_interval']:.2f} "
+                print(f"     Elo: {b_elo['elo_rating']:+.2f} +/- {b_elo['confidence_interval']:.2f} "
                       f"(LOS: {b_elo['los']:.1f}%)")
-
-    # Summary: weakest openings
-    print("\nWEAKEST OPENINGS (by performance, min 3 games)")
-
-    weak_openings = []
-    for opening, ostats in sorted_openings:
-        if ostats.total_games() >= 3:
-            total_score = ostats.white_score() + ostats.black_score()
-            total_games = ostats.total_games()
-            perf = (total_score / total_games * 100) if total_games > 0 else 0
-            weak_openings.append((opening, perf, total_games, ostats))
-
-    weak_openings.sort(key=lambda x: x[1])  # Sort by performance ascending
-
-    for opening, perf, games, ostats in weak_openings[:5]:
-        print(f"  {opening}: {perf:.1f}% ({games} games)")
-        if ostats.white_games() >= 2:
-            print(f"    White: {ostats.white_performance():.1f}% ({ostats.white_games()} games)")
-        if ostats.black_games() >= 2:
-            print(f"    Black: {ostats.black_performance():.1f}% ({ostats.black_games()} games)")
 
 
 def main():
@@ -382,6 +401,8 @@ def main():
     parser.add_argument('pgn_file', help='Path to PGN file')
     parser.add_argument('--details', metavar='PLAYER',
                         help='Show detailed opening breakdown for specific player')
+    parser.add_argument('--sort', choices=['combined', 'white', 'black'], default='combined',
+                        help='Sort openings by: combined ELO (default), white-side ELO, or black-side ELO')
 
     args = parser.parse_args()
 
@@ -389,7 +410,7 @@ def main():
         stats, total_games = parse_pgn(args.pgn_file)
 
         if args.details:
-            print_player_details(args.details, stats)
+            print_player_details(args.details, stats, args.sort)
         else:
             print_report(stats, total_games)
 
