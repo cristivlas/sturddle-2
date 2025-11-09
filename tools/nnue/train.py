@@ -63,8 +63,8 @@ def make_model(args, strategy):
             w = tf.clip_by_value(w, self.qmin, self.qmax)
 
             if self.quantize_round:
-                mask = tf.abs(w) < 1 / Q_SCALE
-                w = tf.where(mask, tf.sign(w) / Q_SCALE, w)
+                # mask = tf.abs(w) < 1 / Q_SCALE
+                # w = tf.where(mask, tf.sign(w) / Q_SCALE, w)
                 w = tf.round(w * Q_SCALE) / Q_SCALE
 
             return w
