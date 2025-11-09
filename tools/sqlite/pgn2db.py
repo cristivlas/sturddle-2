@@ -10,6 +10,7 @@ import random
 from dbutils.sqlite import SQLConn
 from tqdm import tqdm
 
+CCRL_TRANSLATE_EVAL = str.maketrans(',', '.', '#]')
 
 class Statistics:
     def __init__(self, args):
@@ -215,7 +216,12 @@ def pgn_to_epd(args, game, stats):
             parts = comment.strip('{}').split()
             if not parts:
                 continue
-            score_str = parts[0]
+
+            if parts[0].startswith('[%eval'):
+                score_str = parts[1].translate(CCRL_TRANSLATE_EVAL)
+                logging.debug(f'ccrl eval: {parts} {score_str}')
+            else:
+                score_str = parts[0]
 
         logging.debug(f'{epd}, {current_move}, {move_san}, {score_str}')
 
@@ -235,7 +241,11 @@ def pgn_to_epd(args, game, stats):
             score = int(sign * (mate_score - abs(mate_in)))
             # logging.debug(f'mate score: {score}')
         else:
-            score = int(float(score_str) * 100)
+            try:
+                score = int(float(score_str) * 100)
+            except:
+                logging.exception(comment)
+                continue
 
         if args.limit is not None and abs(score) > args.limit:
             stats.positions_filtered_limit += 1
