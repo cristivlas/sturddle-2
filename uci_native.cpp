@@ -86,7 +86,7 @@ namespace
 
     template <typename T> static void log_debug(T msg)
     {
-        search::Context::log_message(LogLevel::DEBUG, std::to_string(msg));
+        search::Context::log_message(LogLevel::DEBUG, std::to_string(msg), true);
     }
 
     template <typename T> static void log_info(T info)
@@ -486,10 +486,10 @@ public:
 
         search::Context::_history = std::make_unique<search::History>();
 
-        log_debug(std::format("Context size: {}", sizeof(search::Context)));
-        log_debug(std::format("ContextBuffer size: {}", sizeof(search::ContextBuffer)));
-        log_debug(std::format("State size: {}", sizeof(chess::State)));
-        log_debug(std::format("TT_Entry size: {}", sizeof(search::TT_Entry)));
+        LOG_DEBUG(std::format("Context size: {}", sizeof(search::Context)));
+        LOG_DEBUG(std::format("ContextBuffer size: {}", sizeof(search::ContextBuffer)));
+        LOG_DEBUG(std::format("State size: {}", sizeof(chess::State)));
+        LOG_DEBUG(std::format("TT_Entry size: {}", sizeof(search::TT_Entry)));
 
         set_start_position();
 
