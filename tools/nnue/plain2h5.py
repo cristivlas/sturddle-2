@@ -2,7 +2,6 @@
 import argparse
 import mmap
 import os
-import random
 import re
 import signal
 import time
@@ -68,6 +67,7 @@ def decode(array):
     board.rooks = bitboards[8] | bitboards[9]
     board.queens = bitboards[10] | bitboards[11]
     board.turn = turn
+    assert board.is_valid()
     return board
 
 def uci_to_square_indices(uci_move):
