@@ -398,6 +398,7 @@ namespace search
         INLINE int  iteration() const { ASSERT(_tt); return _tt->_iteration; }
 
         LMRAction   late_move_reduce(int move_count, int64_t time_left);
+        static void load_weights(const std::string& file_path);
 
         static void log_message(LogLevel, const std::string&, bool force = false);
 

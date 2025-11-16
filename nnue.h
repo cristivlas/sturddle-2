@@ -21,6 +21,7 @@
  */
 #include "common.h"
 #include "chess.h"
+#include <fstream>
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
@@ -384,6 +385,17 @@ namespace nnue
                     _wt[j][i] = 0;
                 }
             }
+        }
+
+        void load_weights(std::ifstream& file)
+        {
+            auto w = std::make_unique<float[]>(I * OUTPUTS);
+            auto b = std::make_unique<float[]>(OUTPUTS);
+
+            file.read(reinterpret_cast<char*>(w.get()), I * OUTPUTS * sizeof(float));
+            file.read(reinterpret_cast<char*>(b.get()), OUTPUTS * sizeof(float));
+
+            set_weights(reinterpret_cast<float(&)[I][OUTPUTS]>(*(w.get())), reinterpret_cast<float(&)[OUTPUTS]>(*(b.get())));
         }
 
         /* input */

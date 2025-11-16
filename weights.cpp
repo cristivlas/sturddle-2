@@ -89,8 +89,8 @@ static PyMethodDef weights_methods[] = {
     {"get_hidden_2_b", get_hidden_2_b, METH_NOARGS, "Get hidden_2 biases"},
     {"get_hidden_3_w", get_hidden_3_w, METH_NOARGS, "Get hidden_3 weights"},
     {"get_hidden_3_b", get_hidden_3_b, METH_NOARGS, "Get hidden_3 biases"},
-    {"get_eval_w", get_eval_w, METH_NOARGS, "Get eval weights"},
-    {"get_eval_b", get_eval_b, METH_NOARGS, "Get eval biases"},
+    {"get_out_w", get_eval_w, METH_NOARGS, "Get eval weights"},
+    {"get_out_b", get_eval_b, METH_NOARGS, "Get eval biases"},
 #if USE_MOVE_PREDICTION
     {"get_move_w", get_move_w, METH_NOARGS, "Get move weights"},
     {"get_move_b", get_move_b, METH_NOARGS, "Get move biases"},

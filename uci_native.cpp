@@ -339,6 +339,38 @@ namespace
             search::Context::set_syzygy_path(std::string(value));
         }
     };
+
+    class OptionWeights : public OptionBase
+    {
+        std::string _current_path; /* empty == built-in */
+
+    public:
+        OptionWeights() : OptionBase("WeightsFile") {}
+
+        void print(std::ostream& out, bool show_default) const override
+        {
+            OptionBase::print(out, show_default);
+            out << "type string";
+
+            if (show_default)
+            {
+                /* default is empty (use built-ins) */
+            }
+            else if (!_current_path.empty())
+            {
+                out << " = " << _current_path;
+            }
+        }
+
+        void set(std::string_view value) override
+        {
+            if (value != _current_path)
+            {
+                _current_path = value;
+                search::Context::load_weights(_current_path);
+            }
+        }
+    };
 } /* namespace */
 
 
@@ -511,6 +543,8 @@ public:
     #if USE_ENDTABLES
         _options.emplace("syzygypath", std::make_unique<OptionSyzygy>());
     #endif /* USE_ENDTABLES */
+
+        _options.emplace("weightsfile", std::make_unique<OptionWeights>());
 
         if (can_change_priority())
             _options.emplace("highpriority", std::make_unique<OptionBool>("HighPriority", _high_priority));

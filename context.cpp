@@ -27,8 +27,9 @@
 //#include <format>
 #include <iomanip>
 #include <iterator>
-#include <map>
+#include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include "chess.h"
 
@@ -50,7 +51,6 @@
 #include "eval.h"
 
 #if USE_ENDTABLES
-  #include <filesystem>
   #include "tbprobe.h"
 #endif
 
@@ -312,23 +312,60 @@ using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
 /* Each thread uses its own stack */
 static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
 
-#if !SHARED_WEIGHTS
-static struct
+static struct Model
 {
-    void init() {}
+    void init();
 
-    LAttnType L_ATTN{spatial_attn_w, spatial_attn_b};
-    L1AType L1A{hidden_1a_w, hidden_1a_b};
-    L1BType L1B{hidden_1b_w, hidden_1b_b};
-    L2Type L2{hidden_2_w, hidden_2_b};
-    L3Type L3{hidden_3_w, hidden_3_b};
-    EVALType EVAL{out_w, out_b};
+    void load_weights(const std::filesystem::path& weights_path)
+    {
+        std::ifstream file(weights_path, std::ios::binary);
+        if (!file)
+            throw std::runtime_error("Could not open weights file: " + weights_path.string());
+
+        /* Load layers in the same order that the trainer exports them. */
+        L1B.load_weights(file);
+        L1A.load_weights(file);
+        LATTN.load_weights(file);
+        L2.load_weights(file);
+        L3.load_weights(file);
+        EVAL.load_weights(file);
+
+    #if USE_MOVE_PREDICTION
+        LMOVES.load_weights(file);
+    #endif
+    }
+
+    LAttnType LATTN;
+    L1AType L1A;
+    L1BType L1B;
+    L2Type L2;
+    L3Type L3;
+    EVALType EVAL;
 
 #if USE_MOVE_PREDICTION
-    LMOVEType L_M{move_w, move_b};
+    LMOVEType LMOVES;
 #endif
+
 } model;
 
+
+#if !SHARED_WEIGHTS
+/* weights are compiled-in */
+#define INIT_LAYER(layer, name) layer.set_weights(name ## _w, name ## _b)
+
+void Model::init()
+{
+    INIT_LAYER(LATTN, spatial_attn);
+    INIT_LAYER(L1A, hidden_1a);
+    INIT_LAYER(L1B, hidden_1b);
+    INIT_LAYER(L2, hidden_2);
+    INIT_LAYER(L3, hidden_3);
+    INIT_LAYER(EVAL, out);
+
+#if USE_MOVE_PREDICTION
+    INIT_LAYER(LMOVES, move);
+#endif
+}
 #else
 /* Weights are built as separate module and shared between all engine flavors. */
 class WeightLoader
@@ -392,42 +429,43 @@ INLINE void init_layer(WeightLoader& loader, L& layer, const char* get_w, const 
 
 #define INIT_LAYER(layer, name) init_layer(loader, layer, "get_" #name "_w", "get_" #name "_b")
 
-static struct
+void Model::init()
 {
-    LAttnType L_ATTN;
-    L1AType L1A;
-    L1BType L1B;
-    L2Type L2;
-    L3Type L3;
-    EVALType EVAL;
+    WeightLoader loader;
+
+    INIT_LAYER(LATTN, spatial_attn);
+    INIT_LAYER(L1A, hidden_1a);
+    INIT_LAYER(L1B, hidden_1b);
+    INIT_LAYER(L2, hidden_2);
+    INIT_LAYER(L3, hidden_3);
+    INIT_LAYER(EVAL, out);
 
 #if USE_MOVE_PREDICTION
-    LMOVEType L_M;
+    INIT_LAYER(LMOVES, move);
 #endif
-
-    void init()
-    {
-        WeightLoader loader;
-
-        INIT_LAYER(L_ATTN, spatial_attn);
-        INIT_LAYER(L1A, hidden_1a);
-        INIT_LAYER(L1B, hidden_1b);
-        INIT_LAYER(L2, hidden_2);
-        INIT_LAYER(L3, hidden_3);
-        INIT_LAYER(EVAL, eval);
-
-    #if USE_MOVE_PREDICTION
-        INIT_LAYER(L_M, move);
-    #endif
-    }
-} model;
+}
 #endif /* SHARED_WEIGHTS */
+
+
+static void _load_weights(const std::string& file_path)
+{
+    if (file_path.empty())
+        model.init();
+    else
+        model.load_weights(file_path);
+}
+
+
+void Context::load_weights(const std::string& file_path)
+{
+    cython_wrapper::call_nogil(_load_weights, file_path); // catch exception and translate to Python
+}
 
 
 static INLINE void update(Accumulator& accumulator, const Context* ctxt)
 {
 #if USE_MOVE_PREDICTION
-    accumulator.update(model.L1A, model.L1B, model.L_M, ctxt->state());
+    accumulator.update(model.L1A, model.L1B, model.LMOVES, ctxt->state());
 #else
     accumulator.update(model.L1A, model.L1B, ctxt->state());
 #endif
@@ -438,7 +476,7 @@ static INLINE void update(Accumulator& accumulator, const Context* ctxt)
 static INLINE void update(Accumulator& accumulator, const Context* ctxt, const Accumulator& prev_acc)
 {
 #if USE_MOVE_PREDICTION
-    accumulator.update(model.L1A, model.L1B, model.L_M, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
+    accumulator.update(model.L1A, model.L1B, model.LMOVES, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
 #else
     accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
 #endif
@@ -496,7 +534,7 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     auto& acc = NNUE_data[tid()][_ply];
     ASSERT(!acc.needs_update(state()));
 
-    _eval_raw = nnue::eval(acc, model.L_ATTN, model.L2, model.L3, model.EVAL);
+    _eval_raw = nnue::eval(acc, model.LATTN, model.L2, model.L3, model.EVAL);
 
     if (stm_perspective)
     {
