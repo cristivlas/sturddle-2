@@ -180,7 +180,7 @@ def parse_fen_to_packed(fen_str):
 
    return array
 
-def parse_and_process(map_file, queue, batch_size, clip, test, progress_bar, record_limit, max_score):
+def parse_and_process(map_file, queue, batch_size, clip, test, progress_bar, record_limit, max_score, filter):
     fen = b''
     score = 0
     move = b''
@@ -211,13 +211,22 @@ def parse_and_process(map_file, queue, batch_size, clip, test, progress_bar, rec
 
             # Process the chess position
             fen_str = fen.decode('utf-8')
-            if test:
+            if test or filter:
                 expected = chess.Board(fen_str)
+                move = chess.Move.from_uci(move_str)
+                if not expected.is_legal(move):
+                    # TODO: logging
+                    # print (fen, expected.epd(), move)
+                    continue
+                # assert expected.is_legal(move)
                 expected.castling_rights = 0
                 expected.ep_square = None
                 encoded_board = parse_fen_to_packed(fen_str)
                 actual = decode(encoded_board).epd()
                 assert expected.epd() == actual, (expected, actual)
+
+                if filter and (expected.is_capture(move) or expected.is_check() or expected.gives_check(move)):
+                    continue
             else:
                 encoded_board = parse_fen_to_packed(fen_str)
 
@@ -369,12 +378,12 @@ def process_file(args):
         # Start the processing threads
         parser_thread = Thread(
             target=parse_and_process,
-            args=(map_file, queue, args.batch_size, args.clip, args.test, read_progress, records_to_process, args.max_score)
+            args=(map_file, queue, args.batch_size, args.clip, args.test, read_progress, records_to_process, args.max_score, args.filter_moves)
         )
 
         writer_thread = Thread(
             target=write_to_h5,
-            args=(h5_file, queue, write_progress, records_to_process, args.batch, args.shuffle)
+            args=(h5_file, queue, write_progress, records_to_process, args.batch_size, args.shuffle)
         )
 
         parser_thread.start()
@@ -391,14 +400,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Convert chess position data from plain text to H5 format')
     parser.add_argument('input', help='Input plain text file path')
     parser.add_argument('-b', '--begin', type=int, help='Index of first record to process')
-    parser.add_argument('-B', '--batch', type=int, default=65536, help='Write out batch size')
-    parser.add_argument('-c', '--clip', type=int, default=15000, help='Clip score values to this range (-clip to +clip)')
-    parser.add_argument('-m', '--max-score', type=int, default=15000, help='Max score limit')
+    parser.add_argument('-B', '--batch-size', type=int, default=10000, help='Processing batch size')
+    parser.add_argument('-c', '--clip', type=int, default=15000, help='Clip score values [-clip, +clip]')
+    parser.add_argument('-f', '--filter-moves', action='store_true', help='Filter out checks and captures')
+    parser.add_argument('-m', '--max-score', type=int, default=15000, help='Filter out positions with score above limit')
     parser.add_argument('-o', '--output', help='Output H5 file path')
     parser.add_argument('-r', '--row-count', type=int, help='Number of records to process')
-    parser.add_argument('-t', '--test', action='store_true', help='Run encode/decode tests')
-    parser.add_argument('--batch-size', type=int, default=10000, help='Processing batch size')
-    parser.add_argument('--shuffle', action='store_true', help='shuffle each batch before writing to H5 file')
+    parser.add_argument('-s', '--shuffle', action='store_true', help='shuffle each batch before writing to H5 file')
+    parser.add_argument('-t', '--test', action='store_true', help='Run encode/decode verification tests')
     args = parser.parse_args()
 
     def signal_handler(signal, frame):
