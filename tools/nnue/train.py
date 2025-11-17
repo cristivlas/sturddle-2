@@ -82,17 +82,17 @@ def make_model(args, strategy):
 
         # convert predicted and expected (target) eval scores to Win/Draw/Loss prob. scores
         wdl_eval_pred = tf.sigmoid(y_pred * SCALE / sigmoid_scale)
-        # wdl_eval_target = tf.sigmoid(eval_target * SCALE / sigmoid_scale)
+        wdl_eval_target = tf.sigmoid(eval_target * SCALE / sigmoid_scale)
 
-        # loss_eval = tf.reduce_mean(tf.square(wdl_eval_pred - wdl_eval_target))
-        # loss_outcome = tf.reduce_mean(tf.square(wdl_eval_pred - outcome_target))
+        loss_eval = tf.reduce_mean(tf.square(wdl_eval_pred - wdl_eval_target))
+        loss_outcome = tf.reduce_mean(tf.square(wdl_eval_pred - outcome_target))
 
         # loss_eval = tf.reduce_mean(tf.abs(wdl_eval_pred - wdl_eval_target))
         # loss_outcome = tf.reduce_mean(tf.abs(wdl_eval_pred - outcome_target))
 
+        # loss_eval = tf.reduce_mean(tf.abs(y_pred - eval_target))
         # loss_eval = tf.keras.losses.binary_crossentropy(wdl_eval_target, wdl_eval_pred)
-        loss_eval = tf.reduce_mean(tf.abs(y_pred - eval_target))
-        loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)
+        # loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)
 
         # blend the losses
         eval_weight = tf.constant(1.0 - args.outcome_weight, dtype=tf.float32)
@@ -148,6 +148,7 @@ def make_model(args, strategy):
             kernel_initializer=K_INIT,
             kernel_constraint=constr_a,
             bias_constraint=constr_a,
+            trainable=not args.freeze_eval,
         )(concat)
 
         constr_b = QConstraint(Q_MIN_B, Q_MAX_B)
@@ -162,9 +163,10 @@ def make_model(args, strategy):
             kernel_initializer=K_INIT,
             kernel_constraint=constr_b,
             bias_constraint=constr_b,
+            trainable=not args.freeze_eval,
         )(input_1b)
 
-        spatial_attn = Dense(ATTN_FAN_OUT, activation=None, name='spatial_attn')(hidden_1b)
+        spatial_attn = Dense(ATTN_FAN_OUT, activation=None, name='spatial_attn', trainable=not args.freeze_eval)(hidden_1b)
 
         def custom_pooling(x):
             reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
@@ -182,11 +184,24 @@ def make_model(args, strategy):
         # Add residual connection: pooled + pooled * attention_weights
         residual = Add(name='residual')([pooled, modulation])
 
-        hidden_2 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_2')(residual)
-        hidden_3 = Dense(16, activation=ACTIVATION, kernel_initializer=K_INIT, name='hidden_3')(hidden_2)
+        hidden_2 = Dense(
+            16,
+            activation=ACTIVATION,
+            kernel_initializer=K_INIT,
+            name='hidden_2',
+            trainable=not args.freeze_eval,
+        )(residual)
+
+        hidden_3 = Dense(
+            16,
+            activation=ACTIVATION,
+            kernel_initializer=K_INIT,
+            name='hidden_3',
+            trainable=not args.freeze_eval,
+        )(hidden_2)
 
         # Define the position evaluation output
-        eval_output = Dense(1, name='out', dtype='float32')(hidden_3)
+        eval_output = Dense(1, name='out', dtype='float32', trainable=not args.freeze_eval)(hidden_3)
 
         # Add move prediction heads if enabled
         outputs = [eval_output]
@@ -850,6 +865,7 @@ if __name__ == '__main__':
         parser.add_argument('--balance', action='store_true', help='balance white / black wins inside batches')
 
         parser.add_argument('--bin', action='store_true', help='export weights in binary format')
+        parser.add_argument('--freeze-eval', action='store_true')
         parser.add_argument('--hex', action='store_true', help='export weights in hex format')
         parser.add_argument('--import-file', help='import weights from binary file')
 
