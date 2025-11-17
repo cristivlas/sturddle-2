@@ -370,7 +370,8 @@ namespace search
         float       history_score(const Move&) const;
 
         score_t     improvement() const;
-        static void init();
+        static void init(const std::string& exe_dir);
+
         bool        is_beta_cutoff(Context*, score_t);
         static bool is_cancelled() { return _cancel.load(std::memory_order_relaxed); }
         INLINE bool is_capture() const { return state().is_capture(); }

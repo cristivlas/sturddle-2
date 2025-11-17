@@ -478,7 +478,8 @@ cdef extern from 'context.h' namespace 'search':
         const Move*     first_valid_move() nogil
 
         @staticmethod
-        void            init()
+        void            init(const string&)
+
         bool            is_repeated() const
         int             iteration() const
         int             rewind(int where, bool reorder)
@@ -632,6 +633,17 @@ cdef BaseMove book_lookup(const State& state, bool best_move) except*:
     return BaseMove()
 
 
+cdef init_static_callbacks():
+    cdef Context ctxt
+    ctxt._book_init = <bool (*)(const string&)> book_init
+    ctxt._book_lookup = <BaseMove (*)(const State&, bool)> book_lookup
+    ctxt._epd = <string (*)(const State&)> epd
+    ctxt._log_message = <void (*)(int, const string&, bool)> log_message
+    ctxt._pgn = <string (*)(Context*)> pgn
+    ctxt._print_state = <void (*)(const State&, bool)> print_state
+    ctxt._vmem_avail = <size_t (*)()> vmem_avail
+
+
 # ---------------------------------------------------------------------
 # Python wrappers for C++ Context
 # ---------------------------------------------------------------------
@@ -663,14 +675,6 @@ cdef class NodeContext:
     cdef void create_from(self, board: chess.Board):
         self._value = ContextValue()
         self._ctxt = address(self._value._ctxt)
-
-        self._ctxt._book_init = <bool (*)(const string&)> book_init
-        self._ctxt._book_lookup = <BaseMove (*)(const State&, bool)> book_lookup
-        self._ctxt._epd = <string (*)(const State&)> epd
-        self._ctxt._log_message = <void (*)(int, const string&, bool)> log_message
-        self._ctxt._pgn = <string (*)(Context*)> pgn
-        self._ctxt._print_state = <void (*)(const State&, bool)> print_state
-        self._ctxt._vmem_avail = <size_t (*)()> vmem_avail
 
         self._ctxt._history.reset(new History())
         self.sync_to_board(board)
@@ -1253,10 +1257,8 @@ def syzygy_path():
 # ---------------------------------------------------------------------
 # initialize c++ global data structures
 # ---------------------------------------------------------------------
-Context.init()
-
-NodeContext(chess.Board()) # dummy context initializes static cpython methods
-
+init_static_callbacks()
+Context.init(os.path.dirname(__file__).encode())
 
 __major__   = 2
 __minor__   = 4

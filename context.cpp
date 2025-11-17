@@ -335,6 +335,8 @@ static struct Model
     #endif
     }
 
+    std::string default_weights_path;
+
     LAttnType LATTN;
     L1AType L1A;
     L1BType L1B;
@@ -367,82 +369,13 @@ void Model::init()
 #endif
 }
 #else
-/* Weights are built as separate module and shared between all engine flavors. */
-class WeightLoader
-{
-    PyObject* module = nullptr;
-
-public:
-    WeightLoader()
-    {
-        module = PyImport_ImportModule("weights");
-        if (!module)
-        {
-            PyErr_Print();
-            throw std::runtime_error("Failed to load weights module");
-        }
-    }
-
-    ~WeightLoader()
-    {
-        if (module)
-        {
-            Py_DECREF(module);
-            module = nullptr;
-        }
-    }
-
-    template<typename T>
-    T* get_weights(const char* name)
-    {
-        PyObject* func = PyObject_GetAttrString(module, name);
-        ASSERT_MESSAGE(func, std::string(name));
-
-        PyObject* capsule = PyObject_CallObject(func, nullptr);
-
-        Py_DECREF(func);
-        T* result = static_cast<T*>(PyCapsule_GetPointer(capsule, PyCapsule_GetName(capsule)));
-        Py_DECREF(capsule);
-        return result;
-    }
-};
-
-template <typename T, size_t ROWS, size_t COLS>
-class WeightAdapter
-{
-    const T* raw_ptr;
-
-public:
-    WeightAdapter(WeightLoader& loader, const char* name) : raw_ptr(loader.get_weights<T>(name)) {}
-
-    const T (&as_2d() const)[ROWS][COLS] { return *reinterpret_cast<const T(*)[ROWS][COLS]>(raw_ptr); }
-    const T (&as_1d() const)[COLS] { return *reinterpret_cast<const T(*)[COLS]>(raw_ptr); }
-};
-
-template <typename L>
-INLINE void init_layer(WeightLoader& loader, L& layer, const char* get_w, const char* get_b)
-{
-    WeightAdapter<float, L::ROWS, L::COLS> w(loader, get_w);
-    WeightAdapter<float, 1, L::COLS> b(loader, get_b);
-    layer.set_weights(w.as_2d(), b.as_1d());
-}
-
-#define INIT_LAYER(layer, name) init_layer(loader, layer, "get_" #name "_w", "get_" #name "_b")
 
 void Model::init()
 {
-    WeightLoader loader;
-
-    INIT_LAYER(LATTN, spatial_attn);
-    INIT_LAYER(L1A, hidden_1a);
-    INIT_LAYER(L1B, hidden_1b);
-    INIT_LAYER(L2, hidden_2);
-    INIT_LAYER(L3, hidden_3);
-    INIT_LAYER(EVAL, out);
-
-#if USE_MOVE_PREDICTION
-    INIT_LAYER(LMOVES, move);
-#endif
+    if (!default_weights_path.empty())
+    {
+        load_weights(default_weights_path);
+    }
 }
 #endif /* SHARED_WEIGHTS */
 
@@ -722,14 +655,29 @@ namespace search
     }
 
 
-    /* static */ void Context::init()
+    /* static */ void Context::init(const std::string& exe_dir)
     {
         setup_crash_handler();
         _init(); /* Init attack masks and other magic bitboards in chess.cpp */
 
     #if WITH_NNUE
+    #if SHARED_WEIGHTS
+        try
+        {
+            const auto weights_path = std::filesystem::absolute(std::filesystem::path(exe_dir) / "weights.bin");
+
+            model.load_weights(weights_path);
+            model.default_weights_path = weights_path.string();
+        }
+        catch(const std::exception& e)
+        {
+            std::cerr << e.what() << std::endl;
+            _exit(-1);
+        }
+    #else
         model.init();
-    #endif
+    #endif /* SHARED_WEIGHTS */
+    #endif /* WITH_NNUE */
     }
 
 

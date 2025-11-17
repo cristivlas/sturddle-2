@@ -14,6 +14,7 @@ import sys
 
 BOOK = 'book.bin'
 OUT_DIR = 'dist'
+WEIGHTS = 'weights.bin'
 
 def find_editbin():
     """Find editbin using distutils MSVC detection"""
@@ -91,7 +92,7 @@ if __name__ == '__main__':
         elif platform.machine() == 'aarch64':
             ARCHS = ['ARMv8_2', '']
 
-    for i, arch in enumerate(ARCHS):
+    for arch in ARCHS:
         delete(['uci.cpp', '__init__.cpp']) # force re-cythonize
         print('*********************************************************')
         print(f'Building {arch if arch else "generic"} module')
@@ -118,12 +119,6 @@ if __name__ == '__main__':
 
         # os.environ['CXXFLAGS'] = f'{arch_flags} -DUSE_MMAP_HASH_TABLE -DSHARED_WEIGHTS'
         os.environ['CXXFLAGS'] = f'{arch_flags} -DSHARED_WEIGHTS'
-
-        # Build the shared weights on the 1st flavor only
-        if i == 0:
-            os.environ['SHARED_WEIGHTS'] = 'true'
-        else:
-            os.environ.pop('SHARED_WEIGHTS', None)
 
         arch = arch.lower()
         os.environ['TARGET'] = f'chess_engine_{arch}' if arch else 'chess_engine'
@@ -153,7 +148,7 @@ if __name__ == '__main__':
             if os.path.exists(libcxx):
                 libs.append(f'--add-binary={libcxx}{os.path.pathsep}.')
 
-    data = f'--add-data={BOOK}{os.path.pathsep}.'
+    data = f'--add-data={BOOK}{os.path.pathsep}. --add-data={WEIGHTS}{os.path.pathsep}.'
 
     exclude_modules = [
         'setuptools', 'setuptools._vendor', 'setuptools._distutils', 'jaraco',
