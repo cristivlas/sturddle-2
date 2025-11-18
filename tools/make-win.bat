@@ -1,8 +1,7 @@
 python setup.py clean --all
 @setlocal
 set CL_EXE=C:\Program Files\LLVM\bin\clang-cl.exe
-@REM set CXXFLAGS=-march=native -DUSE_MMAP_HASH_TABLE
-set CXXFLAGS=-march=native -Wmissing-field-initializers -Werror
-set NATIVE_UCI=1
+set CXXFLAGS=-march=native -DSHARED_WEIGHTS -Wmissing-field-initializers -Werror
+@REM set CXXFLAGS=%CXXFLAGS% -DUSE_MMAP_HASH_TABLE
 python setup.py build_ext --inplace
 @endlocal

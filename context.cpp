@@ -24,7 +24,6 @@
  * pertaining to the Context of the node being searched.
  */
 #include <cerrno>
-//#include <format>
 #include <iomanip>
 #include <iterator>
 #include <filesystem>
@@ -333,6 +332,7 @@ static struct Model
     #if USE_MOVE_PREDICTION
         LMOVES.load_weights(file);
     #endif
+        Context::log_message(LogLevel::INFO, "Loaded " + weights_path.string());
     }
 
     std::string default_weights_path;
@@ -1571,7 +1571,6 @@ namespace search
             _tb_initialized = ::tb_init(_syzygy_path.c_str());
             _tb_cardinality = TB_LARGEST;
         }
-        //log_message(LogLevel::INFO, std::format("tb_init({}): {}, cardinality: {}", _syzygy_path, _tb_initialized, _tb_cardinality));
         std::cout << "info string " << _syzygy_path << " cardinality " << _tb_cardinality << "\n";
 #endif /* USE_ENDTABLES */
     }
@@ -1830,7 +1829,7 @@ namespace search
                     ctxt.update_accumulators();
                     const auto index = move.from_square() * 64 + move.to_square();
                     const auto& acc = NNUE_data[ctxt.tid()][ctxt._ply];
-                    move._score = acc._move_logits[index];
+                    move._score = acc._move_logits[index] / 100.0 + ctxt.history_score(move) * 10.0;
                 #else
                     incremental_update(move, ctxt);
                     const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
@@ -1891,7 +1890,7 @@ namespace search
     #endif /* NO_ASSERT */
 
     #if 0 && USE_MOVE_PREDICTION /* debug */
-        if (_phase == 4 && ctxt.is_root())
+        if (_phase == 4)
         {
             for (const auto& m : moves_list)
             {
