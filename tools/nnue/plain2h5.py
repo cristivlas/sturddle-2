@@ -251,7 +251,7 @@ def parse_and_process(map_file, queue, batch_size, clip, test, progress_bar, rec
 
 def write_to_h5(h5_file, queue, progress_bar, total_records, batch_size, shuffle):
     dtype = np.uint64
-    dataset = h5_file.create_dataset('data', shape=(total_records, 17), dtype=dtype)
+    dataset = h5_file.create_dataset('data', shape=(total_records, 17), dtype=dtype, maxshape=(None, 17))
 
     batch_buffer = np.zeros((batch_size, 17), dtype=np.uint64)
     batch_idx = 0
