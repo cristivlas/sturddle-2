@@ -84,15 +84,16 @@ def make_model(args, strategy):
         wdl_eval_pred = tf.sigmoid(y_pred * SCALE / sigmoid_scale)
         wdl_eval_target = tf.sigmoid(eval_target * SCALE / sigmoid_scale)
 
-        loss_eval = tf.reduce_mean(tf.square(wdl_eval_pred - wdl_eval_target))
-        loss_outcome = tf.reduce_mean(tf.square(wdl_eval_pred - outcome_target))
-
-        # loss_eval = tf.reduce_mean(tf.abs(wdl_eval_pred - wdl_eval_target))
-        # loss_outcome = tf.reduce_mean(tf.abs(wdl_eval_pred - outcome_target))
-
-        # loss_eval = tf.reduce_mean(tf.abs(y_pred - eval_target))
-        # loss_eval = tf.keras.losses.binary_crossentropy(wdl_eval_target, wdl_eval_pred)
-        # loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)
+        if args.loss_mae:
+            loss_eval = tf.reduce_mean(tf.abs(wdl_eval_pred - wdl_eval_target))
+            loss_outcome = tf.reduce_mean(tf.abs(wdl_eval_pred - outcome_target))
+        elif args.loss_bce:
+            loss_eval = tf.keras.losses.binary_crossentropy(wdl_eval_target, wdl_eval_pred)
+            loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)
+        else:
+            # default: mean square error
+            loss_eval = tf.reduce_mean(tf.square(wdl_eval_pred - wdl_eval_target))
+            loss_outcome = tf.reduce_mean(tf.square(wdl_eval_pred - outcome_target))
 
         # blend the losses
         eval_weight = tf.constant(1.0 - args.outcome_weight, dtype=tf.float32)
@@ -252,13 +253,17 @@ def make_model(args, strategy):
 
         @tf.function
         def accuracy(y_true, y_pred):
-            outcome_target = y_true[:, 1:2]  # Extract outcome component
+            outcome_target = y_true[:, 1:2]
+
+            # tf.debugging.assert_all_finite(outcome_target, "outcome_target has nan/inf")
+            # tf.debugging.assert_all_finite(y_pred, "y_pred has nan/inf")
+
             centipawns = y_pred * SCALE
             scale = tf.constant(args.outcome_scale, dtype=tf.float32)
             logits = centipawns / scale
             probs = tf.sigmoid(logits)
             mae = tf.reduce_mean(tf.abs(probs - outcome_target))
-            accuracy_score = 1.0 - mae  # Convert to accuracy (higher is better)
+            accuracy_score = 1.0 - mae
             return accuracy_score
 
         @tf.function
@@ -454,6 +459,42 @@ def dataset_from_file(args, filepath, strategy, callbacks):
     # Features are packed as np.uint64
     packed_feature_count = int(np.ceil(args.hot_encoding / 64))
 
+    def vertical_mirror(bitboards):
+        """
+        Mirror bitboard vertically (rank 1 <-> rank 8, etc.)
+        Works on arrays of uint64.
+        """
+        b = bitboards.astype(np.uint64)
+        b = ((b >> 56) & 0x00000000000000FF) | \
+            ((b >> 40) & 0x000000000000FF00) | \
+            ((b >> 24) & 0x0000000000FF0000) | \
+            ((b >>  8) & 0x00000000FF000000) | \
+            ((b <<  8) & 0x000000FF00000000) | \
+            ((b << 24) & 0x0000FF0000000000) | \
+            ((b << 40) & 0x00FF000000000000) | \
+            ((b << 56) & 0xFF00000000000000)
+        return b
+
+    def flip_position(x):
+        """
+        Flip position colors: swap piece colors, mirror vertically, flip STM.
+        Input x: shape (batch_size, 13) - 12 bitboards + side-to-move
+        """
+        flipped = np.empty_like(x)
+
+        # Swap color pairs and vertical mirror
+        for i in range(6):
+            black_idx = i * 2
+            white_idx = i * 2 + 1
+            # Swap colors and mirror vertically
+            flipped[:, black_idx] = vertical_mirror(x[:, white_idx])
+            flipped[:, white_idx] = vertical_mirror(x[:, black_idx])
+
+        # Flip side-to-move
+        flipped[:, 12] = x[:, 12] ^ 1
+
+        return flipped
+
     class BatchGenerator(tf.keras.utils.Sequence):
         def __init__(self, filepath, feature_count, batch_size):
             self.hf = h5py.File(filepath, 'r')
@@ -517,25 +558,6 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             y_combined = tf.concat([y_eval, y_outcome], axis=1)  # Shape: (batch_size, 2)
 
             mask = None
-            if args.balance:
-                white_wins = np.where(y_outcome_white_pov > 0.5)[0]
-                black_wins = np.where(y_outcome_white_pov < -0.5)[0]
-
-                min_wins = min(len(white_wins), len(black_wins))
-
-                if min_wins > 0:
-                    mask = np.ones(end - start, dtype=bool)
-
-                    if len(white_wins) > min_wins:
-                        keep = np.random.choice(white_wins, min_wins, replace=False)
-                        drop = np.setdiff1d(white_wins, keep)
-                        mask[drop] = False
-
-                    if len(black_wins) > min_wins:
-                        keep = np.random.choice(black_wins, min_wins, replace=False)
-                        drop = np.setdiff1d(black_wins, keep)
-                        mask[drop] = False
-
             if args.no_capture and self.data.shape[1] > self.feature_count + 1:
                 to_square = self.data[start:end, self.feature_count+3]
 
@@ -554,7 +576,26 @@ def dataset_from_file(args, filepath, strategy, callbacks):
 
                 mask = ~is_capture if mask is None else (mask & ~is_capture)
 
-            if mask is not None:
+            if mask is None:
+                if args.balance:
+                    # Create balanced white/black batches by synthesizing symmetrical possitions
+                    assert not args.predict_moves, "balance and predict_moves cannot be used at the same time"
+                    # Flip positions
+                    x_flipped = flip_position(x)
+                    x = np.concatenate([x, x_flipped], axis=0)
+
+                    # Flip evals (negate)
+                    y_eval_flipped = -y_eval
+                    y_eval = tf.concat([y_eval, y_eval_flipped], axis=0)
+
+                    # Flip outcomes (1.0 - outcome swaps win/loss, keeps 0.5 draws)
+                    y_outcome_flipped = 1.0 - y_outcome
+                    y_outcome = tf.concat([y_outcome, y_outcome_flipped], axis=0)
+
+                    # Update combined targets
+                    y_combined = tf.concat([y_eval, y_outcome], axis=1)
+
+            else: # mask is not None
                 x = tf.boolean_mask(x, mask)
                 y_combined = tf.boolean_mask(y_combined, mask)
 
@@ -763,6 +804,7 @@ def main(args):
     if alt_model:
         set_weights(alt_model, model)
         print(f'Applied alternate weights from {os.path.abspath(args.alt_model)}.')
+        tf.keras.models.save_model(model, args.model)
 
     if args.plot_file:  # Display the model architecture
         tf.keras.utils.plot_model(
@@ -869,6 +911,9 @@ if __name__ == '__main__':
         parser.add_argument('--hex', action='store_true', help='export weights in hex format')
         parser.add_argument('--import-file', help='import weights from binary file')
 
+        parser.add_argument('--loss-bce', action='store_true', help='use binary cross-entropy loss (default is MSE)')
+        parser.add_argument('--loss-mae', action='store_true', help='use mean absolute error loss (defaule is MSE)')
+
         parser.add_argument('--no-capture', action='store_true', help='exclude captures from training')
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
 
@@ -885,7 +930,7 @@ if __name__ == '__main__':
         parser.add_argument('--move-loss-scale', type=float, default=0.1, help='scale factor for move prediction loss')
         parser.add_argument('--clip-norm', type=float, default=1.0, help='gradient clipping norm')
 
-        parser.add_argument('--alt-model', help='Path to another model to load weights from')
+        parser.add_argument('--alt-model', help='Path to another model to load/merge weights from')
 
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')

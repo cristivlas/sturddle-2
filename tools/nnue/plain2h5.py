@@ -230,9 +230,9 @@ def parse_and_process(map_file, queue, batch_size, clip, test, progress_bar, rec
             else:
                 encoded_board = parse_fen_to_packed(fen_str)
 
-            if abs(score) <= max_score:
+            if max_score is None or abs(score) <= max_score:
                 # Put the processed data in the queue
-                clipped_score = np.clip(score, -clip, clip)
+                clipped_score = score if clip is None else np.clip(score, -clip, clip)
                 queue.put((
                     encoded_board,
                     clipped_score,
@@ -271,7 +271,7 @@ def write_to_h5(h5_file, queue, progress_bar, total_records, batch_size, shuffle
         # Fill batch buffer
         encoded_board, score, result, from_square, to_square = record
         batch_buffer[batch_idx, :13] = encoded_board
-        batch_buffer[batch_idx, 13] = score
+        batch_buffer[batch_idx, 13] = score & 0xFFFFFFFFFFFFFFFF
         assert result in [-1, 0, 1]
         batch_buffer[batch_idx, 14] = result + 1
         batch_buffer[batch_idx, 15] = from_square
@@ -401,9 +401,9 @@ if __name__ == '__main__':
     parser.add_argument('input', help='Input plain text file path')
     parser.add_argument('-b', '--begin', type=int, help='Index of first record to process')
     parser.add_argument('-B', '--batch-size', type=int, default=10000, help='Processing batch size')
-    parser.add_argument('-c', '--clip', type=int, default=15000, help='Clip score values [-clip, +clip]')
+    parser.add_argument('-c', '--clip', type=int, help='Clip score values [-clip, +clip]')
     parser.add_argument('-f', '--filter-moves', action='store_true', help='Filter out checks and captures')
-    parser.add_argument('-m', '--max-score', type=int, default=15000, help='Filter out positions with score above limit')
+    parser.add_argument('-m', '--max-score', type=int, help='Filter out positions with score above limit')
     parser.add_argument('-o', '--output', help='Output H5 file path')
     parser.add_argument('-r', '--row-count', type=int, help='Number of records to process')
     parser.add_argument('-s', '--shuffle', action='store_true', help='shuffle each batch before writing to H5 file')
