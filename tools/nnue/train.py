@@ -69,13 +69,22 @@ def make_model(args, strategy):
             return w
 
     @tf.function
-    def soft_clip(x, clip_value, alpha=0.1):
-        return (2 * tf.sigmoid(.5 * x) - 1) * clip_value + x * alpha
+    def soft_clip(x, clip_value):
+        ALPHA = 0.1
+        clipped = tf.clip_by_value(x, -clip_value, clip_value)
+        overflow = x - clipped
+        return clipped + ALPHA * overflow
 
     @tf.function
     def combined_loss(y_true, y_pred):
         """Combine eval with game outcome (WDL) losses"""
         eval_target = y_true[:, 0:1]
+
+        if args.clip_eval:
+            clipped = soft_clip(eval_target, args.clip_eval / SCALE);
+            # tf.print("\nEval:", eval_target, "\nClipped:", clipped)
+            eval_target = clipped
+
         outcome_target = y_true[:, 1:2]
         sigmoid_scale = tf.constant(args.outcome_scale, dtype=tf.float32)
 
@@ -324,7 +333,7 @@ def make_model(args, strategy):
 
                 # Clip to logits to prevent extreme values
                 max_logit = tf.constant(args.move_logit_clip, dtype=tf.float32)
-                clipped_logits = soft_clip(scaled_logits, -max_logit, max_logit)
+                clipped_logits = soft_clip(scaled_logits, max_logit)
 
                 # Compute cross-entropy with label smoothing
                 loss = tf.keras.losses.sparse_categorical_crossentropy(y_true, clipped_logits, from_logits=True)
@@ -573,9 +582,6 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             y_eval = self.data[start:end, self.feature_count:self.feature_count+1]
             y_eval = tf.cast(y_eval, tf.int64)  # Cast from unsigned to signed
             y_eval = tf.cast(y_eval, tf.float32) / SCALE  # Convert to float, and scale
-            if args.clip_eval:
-                y_eval = tf.clip_by_value(y_eval, -args.clip_eval/SCALE, args.clip_eval/SCALE)
-
             y_eval = tf.where(white_to_move, y_eval, -y_eval)  # Convert to White's perspective
 
             y_outcome = self.data[start:end, self.feature_count+1:self.feature_count+2]
