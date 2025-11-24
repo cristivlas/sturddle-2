@@ -554,10 +554,8 @@ def dataset_from_file(args, filepath, strategy, callbacks):
 
             y_outcome = y_outcome * (1 - args.outcome_smoothing) + 0.5 * args.outcome_smoothing
 
-            # Combine both targets into a single tensor
-            y_combined = tf.concat([y_eval, y_outcome], axis=1)  # Shape: (batch_size, 2)
-
             mask = None
+
             if args.no_capture and self.data.shape[1] > self.feature_count + 1:
                 to_square = self.data[start:end, self.feature_count+3]
 
@@ -574,30 +572,29 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 to_square_mask = np.left_shift(np.uint64(1), to_square)
                 is_capture = (np.bitwise_and(opponent_occupied, to_square_mask) != 0)
 
-                mask = ~is_capture if mask is None else (mask & ~is_capture)
+                mask = ~is_capture
 
-            if mask is None:
-                if args.balance:
-                    # Create balanced white/black batches by synthesizing symmetrical possitions
-                    assert not args.predict_moves, "balance and predict_moves cannot be used at the same time"
-                    # Flip positions
-                    x_flipped = flip_position(x)
-                    x = np.concatenate([x, x_flipped], axis=0)
+                x = x[mask]
+                y_eval = y_eval[mask]
+                y_outcome = y_outcome[mask]
 
-                    # Flip evals (negate)
-                    y_eval_flipped = -y_eval
-                    y_eval = tf.concat([y_eval, y_eval_flipped], axis=0)
+            if args.balance:
+                # Create balanced white/black batches by synthesizing symmetrical possitions
+                assert not args.predict_moves, "balance and predict_moves cannot be used at the same time"
+                # Flip positions
+                x_flipped = flip_position(x)
+                x = np.concatenate([x, x_flipped], axis=0)
 
-                    # Flip outcomes (1.0 - outcome swaps win/loss, keeps 0.5 draws)
-                    y_outcome_flipped = 1.0 - y_outcome
-                    y_outcome = tf.concat([y_outcome, y_outcome_flipped], axis=0)
+                # Flip evals (negate)
+                y_eval_flipped = -y_eval
+                y_eval = tf.concat([y_eval, y_eval_flipped], axis=0)
 
-                    # Update combined targets
-                    y_combined = tf.concat([y_eval, y_outcome], axis=1)
+                # Flip outcomes (1.0 - outcome swaps win/loss, keeps 0.5 draws)
+                y_outcome_flipped = 1.0 - y_outcome
+                y_outcome = tf.concat([y_outcome, y_outcome_flipped], axis=0)
 
-            else: # mask is not None
-                x = tf.boolean_mask(x, mask)
-                y_combined = tf.boolean_mask(y_combined, mask)
+            # Combine both targets into a single tensor
+            y_combined = tf.concat([y_eval, y_outcome], axis=1)  # Shape: (batch_size, 2)
 
             # Prepare outputs based on whether move prediction is enabled
             if args.predict_moves and self.data.shape[1] > self.feature_count + 1:
