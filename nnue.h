@@ -64,6 +64,9 @@ namespace nnue
     using namespace chess;
     using input_t = int16_t;
 
+    constexpr int ACTIVE_INPUTS = 897;
+    constexpr int EVAL_SCALE = 100;
+
     constexpr auto POOL_STRIDE = Vec8s::size();
     constexpr int QSCALE = 1024;
 
@@ -201,7 +204,7 @@ namespace nnue
     }
 
     template <typename T>
-    INLINE void one_hot_encode(const State& board, T (&encoding)[round_up<INPUT_STRIDE>(897)])
+    INLINE void one_hot_encode(const State& board, T (&encoding)[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)])
     {
         const auto& color_masks = board._occupied_co;
         int i = 63;
@@ -399,17 +402,9 @@ namespace nnue
         }
 
         /* input */
-        template <size_t S, typename NO_ACTIVATION>
-        static INLINE void dot(
-            const input_t (&input)[S],
-            int16_t (&output)[OUTPUTS],
-            const int16_t(&b)[OUTPUTS],
-            const int16_t(&wt)[OUTPUTS][INPUTS],
-            NO_ACTIVATION /* activation applied separately */
-        )
+        template <size_t INPUT_SIZE>
+        INLINE void dot(const input_t (&input)[INPUT_SIZE], int16_t (&output)[OUTPUTS], size_t base = 0) const
         {
-            static_assert(S >= INPUTS);
-
         #if INSTRSET >= 9 /* AVX 512 */
             using VecShort = Vec32s;
             using VSum = Vec32s;
@@ -425,11 +420,10 @@ namespace nnue
             static_assert(N == INPUT_STRIDE);
             static_assert(OUTPUTS % N == 0);
 
-            constexpr auto R = round_down<N>(INPUTS);
-            static_assert(R == INPUTS); /* expect padded inputs */
-
             VecShort in, vw;
             VSum sum[N]; /* accumulate partial sums */
+
+            constexpr auto MAX_INPUT = std::min<int>(INPUTS, INPUT_SIZE);
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
@@ -437,7 +431,7 @@ namespace nnue
                 for (int k = 0; k != N; ++k)
                     sum[k] = VSum(0);
 
-                for (int i = 0; i != R; i += N)
+                for (int i = 0; i < MAX_INPUT; i += N)
                 {
                     in.load_a(input + i);
                     if (all_zero(in))
@@ -445,13 +439,13 @@ namespace nnue
 
                     for (int k = 0; k != N; ++k)
                     {
-                        vw.load_a(&wt[j + k][i]);
+                        vw.load(&_wt[j + k][i + base]);
                         sum[k] = mul_add(in, vw, sum[k]);
                     }
                 }
 
                 const auto sums = horizontal_add(sum);
-                vw.load_a(&b[j]);
+                vw.load_a(&_b[j]);
                 (vw + sums).store_a(&output[j]);
             }
         }
@@ -550,14 +544,20 @@ namespace nnue
 
     template <int M, int N, int O> struct Accumulator
     {
+        static_assert(ACTIVE_INPUTS * 4 == M);
+
         static constexpr int INPUTS = round_up<INPUT_STRIDE>(M);
         static constexpr int OUTPUTS_A = N;
         static constexpr int OUTPUTS_B = O;
 
+        static constexpr size_t MAX_DELTA = 32; /* total pieces */
+
         uint64_t _hash = 0;
+        int _bucket = -1;
 
     #if DEBUG_INCREMENTAL
-        ALIGN input_t _input[INPUTS] = { }; /* one-hot encoding */
+        /* remember previous inputs, for debugging */
+        ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { }; /* one-hot encoding */
     #endif
         ALIGN int16_t _output_a[OUTPUTS_A] = { };
         ALIGN int16_t _output_b[OUTPUTS_B] = { };
@@ -566,37 +566,76 @@ namespace nnue
         ALIGN int16_t _move_logits[4096] = { };
     #endif
 
+
+        static INLINE int get_bucket(const State& state)
+        {
+            return std::min<int>(chess::popcount(state.pawns) / 4, 3);
+        }
+
+
         /** Compute 1st layer output from scratch at root */
+     #if USE_MOVE_PREDICTION
+        template <typename LA, typename LB, typename LM>
+        INLINE void full_update(const LA& layer_1a, const LB& layer_1b, const LM& layer_m, const State& state, int bucket)
+    #else
+        template <typename LA, typename LB>
+        INLINE void full_update(const LA& layer_1a, const LB& layer_1b, const State& state, int bucket)
+    #endif
+        {
+            memset(_output_a, 0, sizeof(_output_a));
+            memset(_output_b, 0, sizeof(_output_b));
+
+        #if DEBUG_INCREMENTAL
+            memset(&_input, 0, sizeof(_input));
+        #else
+            ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
+        #endif /* DEBUG_INCREMENTAL */
+
+            one_hot_encode(state, _input);
+
+            const size_t base = bucket * ACTIVE_INPUTS;
+
+            layer_1a.dot(_input, _output_a, base);
+            layer_1b.dot(_input, _output_b);
+
+        #if USE_MOVE_PREDICTION
+            layer_m.dot(_input, _move_logits);
+        #endif
+
+            _bucket = bucket;
+            _hash = state.hash();
+        }
+
     #if USE_MOVE_PREDICTION
         template <typename LA, typename LB, typename LM>
         INLINE void update(const LA& layer_1a, const LB& layer_1b, const LM& layer_m, const State& state)
-    #else
-        template <typename LA, typename LB>
-        INLINE void update(const LA& layer_1a, const LB& layer_1b, const State& state)
-    #endif
         {
             if (needs_update(state))
             {
-            #if DEBUG_INCREMENTAL
-                memset(&_input, 0, sizeof(_input));
-            #else
-                ALIGN input_t _input[INPUTS] = { };
-            #endif
-                one_hot_encode(state, _input);
-
-                layer_1a.dot(_input, _output_a);
-                layer_1b.dot(_input, _output_b);
-
-            #if USE_MOVE_PREDICTION
-                layer_m.dot(_input, _move_logits);
-            #endif
-
-                _hash = state.hash();
+                full_update(layer_1a, layer_1b, layer_m, state, get_bucket(state));
+            }
+            else
+            {
+                ASSERT(get_bucket(state) == _bucket);
             }
         }
+    #else
+        template <typename LA, typename LB>
+        INLINE void update(const LA& layer_1a, const LB& layer_1b, const State& state)
+        {
+            if (needs_update(state))
+            {
+                full_update(layer_1a, layer_1b, state, get_bucket(state));
+            }
+            else
+            {
+                ASSERT(get_bucket(state) == _bucket);
+            }
+        }
+    #endif /* USE_MOVE_PREDICTION */
 
         /** Utility for incremental updates */
-        static INLINE void delta(int (&d)[INPUTS], int& idx, PieceType pt, Color col, Square sq)
+        static INLINE void delta(int (&d)[MAX_DELTA], int& idx, PieceType pt, Color col, Square sq)
         {
             d[idx++] = piece_square_index(pt, col, sq);
             d[idx++] = mask_index(col, sq);
@@ -629,8 +668,19 @@ namespace nnue
             A& ancestor)
     #endif
         {
-            if (needs_update(state))
+            const int bucket = get_bucket(state);
+
+            if (bucket != _bucket || bucket != ancestor._bucket)
             {
+    #if USE_MOVE_PREDICTION
+                full_update(layer_a, layer_b, layer_m, state, bucket);
+    #else
+                full_update(layer_a, layer_b, state, bucket);
+    #endif
+            }
+            else if (needs_update(state))
+            {
+                ASSERT(ancestor._bucket == _bucket);
                 _hash = state.hash();
 
                 /* compute delta based on ancestor state */
@@ -646,19 +696,20 @@ namespace nnue
             #if DEBUG_INCREMENTAL
                 memcpy(_input, ancestor._input, sizeof(_input));
             #endif
-                int remove_inputs[INPUTS];
-                int add_inputs[INPUTS];
+                int remove_inputs[MAX_DELTA];
+                int add_inputs[MAX_DELTA];
                 int r_idx = 0, a_idx = 0;
 
                 if (move)
                 {
-                    update(prev, state, move, prev.turn, remove_inputs, add_inputs, r_idx, a_idx);
+                    get_deltas(prev, state, move, prev.turn, remove_inputs, add_inputs, r_idx, a_idx);
 
-                    ASSERT(a_idx < INPUTS);
-                    ASSERT(r_idx < INPUTS);
+                    ASSERT(a_idx < MAX_DELTA);
+                    ASSERT(r_idx < MAX_DELTA);
                 }
 
             #if DEBUG_INCREMENTAL
+                // Validate get_deltas
                 for (int i = 0; i != r_idx; ++i)
                     _input[remove_inputs[i]] = 0;
                 for (int i = 0; i != a_idx; ++i)
@@ -666,10 +717,10 @@ namespace nnue
 
                 _input[TURN_INDEX] ^= 1;
 
-                input_t temp[INPUTS] = { };
+                ALIGN input_t temp[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
                 one_hot_encode(state, temp);
 
-                for (int i = 0; i != INPUTS; ++i)
+                for (int i = 0; i != ACTIVE_INPUTS; ++i)
                     ASSERT_ALWAYS(_input[i] == temp[i]);
 
             #endif /* DEBUG_INCREMENTAL */
@@ -679,19 +730,24 @@ namespace nnue
                 else
                     remove_inputs[r_idx++] = TURN_INDEX;
 
+                const size_t base = bucket * ACTIVE_INPUTS;
+
             #if USE_MOVE_PREDICTION
-                recompute(layer_a, layer_b, layer_m, remove_inputs, add_inputs, r_idx, a_idx);
+                incremental_update(layer_a, layer_b, layer_m, remove_inputs, add_inputs, r_idx, a_idx, base);
             #else
-                recompute(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx);
+                incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base);
             #endif
 
             #if DEBUG_INCREMENTAL
-                int16_t output_a[OUTPUTS_A] = { };
-                layer_a.dot(_input, output_a);
+                // Validate that incremental_update produces same result as full dot products
+                // layer A
+                ALIGN int16_t output_a[OUTPUTS_A] = { };
+                layer_a.dot(temp, output_a, base);
                 for (int i = 0; i != OUTPUTS_A; ++i)
                     ASSERT_ALWAYS(abs(output_a[i] - _output_a[i]) < 0.0001);
 
-                int16_t output_b[OUTPUTS_B] = { };
+                // layer B
+                ALIGN int16_t output_b[OUTPUTS_B] = { };
                 layer_b.dot(_input, output_b);
                 for (int i = 0; i != OUTPUTS_B; ++i)
                     ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
@@ -702,23 +758,25 @@ namespace nnue
         /** Recompute incrementally */
     #if USE_MOVE_PREDICTION
         template <typename LA, typename LB, typename LM>
-        INLINE void recompute(
+        INLINE void incremental_update(
             const LA& layer_a,
             const LB& layer_b,
             const LM& layer_m,
-            const int (&remove_inputs)[INPUTS],
-            const int (&add_inputs)[INPUTS],
+            const int (&remove_inputs)[MAX_DELTA],
+            const int (&add_inputs)[MAX_DELTA],
             const int r_idx,
-            const int a_idx)
+            const int a_idx,
+            size_t base)
     #else
         template <typename LA, typename LB>
-        INLINE void recompute(
+        INLINE void incremental_update(
             const LA& layer_a,
             const LB& layer_b,
-            const int (&remove_inputs)[INPUTS],
-            const int (&add_inputs)[INPUTS],
+            const int (&remove_inputs)[MAX_DELTA],
+            const int (&add_inputs)[MAX_DELTA],
             const int r_idx,
-            const int a_idx)
+            const int a_idx,
+            size_t base)
     #endif
         {
         #if __ARM__
@@ -771,7 +829,7 @@ namespace nnue
 
                 for (int i = 0; i < r_idx; ++i)
                 {
-                    const auto index = remove_inputs[i];
+                    const auto index = base + remove_inputs[i];
                     ASSERT(index < LA::INPUTS);
                     vw.load_a(&layer_a._w[index][j]);
                     vo -= vw;
@@ -779,7 +837,7 @@ namespace nnue
 
                 for (int i = 0; i < a_idx; ++i)
                 {
-                    const auto index = add_inputs[i];
+                    const auto index = base + add_inputs[i];
                     ASSERT(index < LA::INPUTS);
                     vw.load_a(&layer_a._w[index][j]);
                     vo += vw;
@@ -816,14 +874,14 @@ namespace nnue
             }
         }
 
-        /** Incremental update of one-hot encoding */
-        INLINE void update(
+        /** Get the indices of pieces to add / remove */
+        INLINE void get_deltas(
             const State& from_pos,
             const State& to_pos,
             const Move& move,
             Color color, /* color of side that moved */
-            int (&remove)[INPUTS],
-            int (&add)[INPUTS],
+            int (&remove)[MAX_DELTA],
+            int (&add)[MAX_DELTA],
             int& r_idx,
             int& a_idx)
         {
@@ -901,6 +959,6 @@ namespace nnue
         l3.dot(l2_out, l3_out, [](const Vector& v) { return max(v, v_zero); });
 
         out.dot(l3_out, output);
-        return 100 * output[0];
+        return EVAL_SCALE * output[0];
     }
 } /* namespace nnue */

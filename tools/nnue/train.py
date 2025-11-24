@@ -2,7 +2,6 @@
 '''
 **********************************************************************
 Trainer for the Sturddle Chess 2.X engine's neural net.
-
 Copyright (c) 2023 - 2025 Cristian Vlasceanu.
 **********************************************************************
 '''
@@ -114,6 +113,37 @@ def make_model(args, strategy):
             f = tf.concat([tf_unpack_bits(bitboards), turn], axis=1)
             return tf.cast(f, tf.float32)
 
+    class BucketShiftLayer(tf.keras.layers.Layer):
+        def call(self, features):
+            # Extract already-unpacked pawn bits from features
+            # Pawns are pieces index 2 (white) and 3 (black) in the 12 bitboards
+            # Each bitboard unpacks to 64 bits, so:
+            # - Piece 0 (black king): features[:, 0:64]
+            # - Piece 1 (white king): features[:, 64:128]
+            # - Piece 2 (white pawns): features[:, 128:192]
+            # - Piece 3 (black pawns): features[:, 192:256]
+            pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
+
+            # Count total pawns on the board
+            pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
+
+            # Assign bucket based on pawn count
+            # Bucket 0: 0-3 pawns, Bucket 1: 4-7 pawns
+            # Bucket 2: 8-11 pawns, Bucket 3: 12-16 pawns
+            bucket_id = tf.cast(tf.minimum(pawn_count // 4, 3), tf.int32)
+
+            # tf.print("\nPawn count:", pawn_count, "\nBucket id:", bucket_id)
+
+            # Shift features into 4 buckets
+            num_features = tf.shape(features)[1]
+            bucket_mask = tf.one_hot(bucket_id, 4)
+            bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
+
+            features_tiled = tf.tile(tf.expand_dims(features, 1), [1, 4, 1])
+            sparse = features_tiled * bucket_mask
+
+            return tf.reshape(sparse, [-1, 4 * num_features])
+
     with strategy.scope():
         ACTIVATION = tf.keras.activations.relu
         K_INIT = tf.keras.initializers.HeNormal
@@ -141,6 +171,9 @@ def make_model(args, strategy):
 
         concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
 
+        # Apply bucketing
+        bucketed = BucketShiftLayer(name='bucket_shift')(concat)
+
         constr_a = QConstraint(Q_MIN_A, Q_MAX_A)
         hidden_1a = Dense(
             ACCUMULATOR_SIZE,
@@ -150,7 +183,7 @@ def make_model(args, strategy):
             kernel_constraint=constr_a,
             bias_constraint=constr_a,
             trainable=not args.freeze_eval,
-        )(concat)
+        )(bucketed)
 
         constr_b = QConstraint(Q_MIN_B, Q_MAX_B)
 
@@ -914,7 +947,7 @@ if __name__ == '__main__':
         parser.add_argument('--no-capture', action='store_true', help='exclude captures from training')
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
 
-        parser.add_argument('--outcome-weight', type=float, default=0.85, help='weight for outcome loss vs eval loss')
+        parser.add_argument('--outcome-weight', type=float, default=0.1, help='weight for outcome loss vs eval loss')
         parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
 
         # Move prediction related arguments

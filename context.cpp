@@ -283,7 +283,7 @@ std::map<std::string, int> _get_params()
 
 #if WITH_NNUE
 
-constexpr int INPUTS_A = 897;
+constexpr int INPUTS_A = 3588;
 constexpr int INPUTS_B = 256;
 constexpr int HIDDEN_1A = 1280;
 constexpr int HIDDEN_1A_POOLED = HIDDEN_1A / nnue::POOL_STRIDE;
