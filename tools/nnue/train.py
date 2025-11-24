@@ -136,7 +136,7 @@ def make_model(args, strategy):
 
             # Shift features into 4 buckets
             num_features = tf.shape(features)[1]
-            bucket_mask = tf.one_hot(bucket_id, 4)
+            bucket_mask = tf.one_hot(bucket_id, 4, dtype=features.dtype)
             bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
 
             features_tiled = tf.tile(tf.expand_dims(features, 1), [1, 4, 1])
