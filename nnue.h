@@ -553,7 +553,6 @@ namespace nnue
         static constexpr size_t MAX_DELTA = 32; /* total pieces */
 
         uint64_t _hash = 0;
-        int _bucket = -1;
 
     #if DEBUG_INCREMENTAL
         /* remember previous inputs, for debugging */
@@ -582,8 +581,8 @@ namespace nnue
         INLINE void full_update(const LA& layer_1a, const LB& layer_1b, const State& state, int bucket)
     #endif
         {
-            memset(_output_a, 0, sizeof(_output_a));
-            memset(_output_b, 0, sizeof(_output_b));
+            // memset(_output_a, 0, sizeof(_output_a));
+            // memset(_output_b, 0, sizeof(_output_b));
 
         #if DEBUG_INCREMENTAL
             memset(&_input, 0, sizeof(_input));
@@ -602,7 +601,6 @@ namespace nnue
             layer_m.dot(_input, _move_logits);
         #endif
 
-            _bucket = bucket;
             _hash = state.hash();
         }
 
@@ -614,10 +612,6 @@ namespace nnue
             {
                 full_update(layer_1a, layer_1b, layer_m, state, get_bucket(state));
             }
-            else
-            {
-                ASSERT(get_bucket(state) == _bucket);
-            }
         }
     #else
         template <typename LA, typename LB>
@@ -626,10 +620,6 @@ namespace nnue
             if (needs_update(state))
             {
                 full_update(layer_1a, layer_1b, state, get_bucket(state));
-            }
-            else
-            {
-                ASSERT(get_bucket(state) == _bucket);
             }
         }
     #endif /* USE_MOVE_PREDICTION */
@@ -670,7 +660,7 @@ namespace nnue
         {
             const int bucket = get_bucket(state);
 
-            if (bucket != _bucket || bucket != ancestor._bucket)
+            if (bucket != get_bucket(prev))
             {
     #if USE_MOVE_PREDICTION
                 full_update(layer_a, layer_b, layer_m, state, bucket);
@@ -680,7 +670,6 @@ namespace nnue
             }
             else if (needs_update(state))
             {
-                ASSERT(ancestor._bucket == _bucket);
                 _hash = state.hash();
 
                 /* compute delta based on ancestor state */
