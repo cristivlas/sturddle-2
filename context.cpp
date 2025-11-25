@@ -531,18 +531,7 @@ void search::Context::update_root_accumulators()
 
     for (int i = 1; i != SMP_CORES; ++i)
     {
-        auto& acc = NNUE_data[i][0];
-        acc._hash = root._hash;
-        memcpy(acc._output_a, root._output_a, sizeof(acc._output_a));
-        memcpy(acc._output_b, root._output_b, sizeof(acc._output_b));
-
-    #if USE_MOVE_PREDICTION
-        memcpy(acc._move_logits, root._move_logits, sizeof(acc._move_logits));
-    #endif
-
-    #if DEBUG_INCREMENTAL
-        memcpy(acc._input, root._input, sizeof(acc._input));
-    #endif
+        NNUE_data[i][0] = root;
     }
 }
 

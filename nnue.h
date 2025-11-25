@@ -551,16 +551,22 @@ namespace nnue
         static constexpr int OUTPUTS_B = O;
 
         static constexpr size_t MAX_DELTA = 32; /* total pieces */
+        static constexpr int NUM_BUCKETS = 4;
 
-        uint64_t _hash = 0;
+        struct Bucket
+        {
+            ALIGN int16_t output[OUTPUTS_A] = { };
+            uint64_t hash = 0;
+        };
+
+        Bucket _bucket[NUM_BUCKETS];
+        int _current_bucket = 0;
+        ALIGN int16_t _output_b[OUTPUTS_B] = { };
 
     #if DEBUG_INCREMENTAL
         /* remember previous inputs, for debugging */
         ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { }; /* one-hot encoding */
     #endif
-        ALIGN int16_t _output_a[OUTPUTS_A] = { };
-        ALIGN int16_t _output_b[OUTPUTS_B] = { };
-
     #if USE_MOVE_PREDICTION
         ALIGN int16_t _move_logits[4096] = { };
     #endif
@@ -572,8 +578,14 @@ namespace nnue
         }
 
 
+        INLINE bool needs_update(const State& state) const
+        {
+            return state.hash() != _bucket[_current_bucket].hash;
+        }
+
+
         /** Compute 1st layer output from scratch at root */
-     #if USE_MOVE_PREDICTION
+    #if USE_MOVE_PREDICTION
         template <typename LA, typename LB, typename LM>
         INLINE void full_update(const LA& layer_1a, const LB& layer_1b, const LM& layer_m, const State& state, int bucket)
     #else
@@ -581,9 +593,6 @@ namespace nnue
         INLINE void full_update(const LA& layer_1a, const LB& layer_1b, const State& state, int bucket)
     #endif
         {
-            // memset(_output_a, 0, sizeof(_output_a));
-            // memset(_output_b, 0, sizeof(_output_b));
-
         #if DEBUG_INCREMENTAL
             memset(&_input, 0, sizeof(_input));
         #else
@@ -594,14 +603,15 @@ namespace nnue
 
             const size_t base = bucket * ACTIVE_INPUTS;
 
-            layer_1a.dot(_input, _output_a, base);
+            layer_1a.dot(_input, _bucket[bucket].output, base);
             layer_1b.dot(_input, _output_b);
 
         #if USE_MOVE_PREDICTION
             layer_m.dot(_input, _move_logits);
         #endif
 
-            _hash = state.hash();
+            _bucket[bucket].hash = state.hash();
+            _current_bucket = bucket;
         }
 
     #if USE_MOVE_PREDICTION
@@ -631,11 +641,6 @@ namespace nnue
             d[idx++] = mask_index(col, sq);
         }
 
-        INLINE bool needs_update(const State& state) const
-        {
-            return state.hash() != _hash;
-        }
-
         /** Update 1st layer output incrementally, based on a previous state */
     #if USE_MOVE_PREDICTION
         template <typename LA, typename LB, typename LM, typename A>
@@ -656,95 +661,100 @@ namespace nnue
             const State& state,
             const Move& move,
             A& ancestor)
-    #endif
+    #endif /* USE_MOVE_PREDICTION */
         {
+            ASSERT_ALWAYS(needs_update(state));
+
             const int bucket = get_bucket(state);
+            const bool can_incremental_a = (ancestor._bucket[bucket].hash == prev.hash());
 
-            if (bucket != get_bucket(prev))
+            /* compute delta based on ancestor state */
+            ASSERT(prev.turn != state.turn);
+
+            int remove_inputs[MAX_DELTA];
+            int add_inputs[MAX_DELTA];
+            int r_idx = 0, a_idx = 0;
+
+            if (move)
             {
-    #if USE_MOVE_PREDICTION
-                full_update(layer_a, layer_b, layer_m, state, bucket);
-    #else
-                full_update(layer_a, layer_b, state, bucket);
-    #endif
+                get_deltas(prev, state, move, prev.turn, remove_inputs, add_inputs, r_idx, a_idx);
+
+                ASSERT(a_idx < MAX_DELTA);
+                ASSERT(r_idx < MAX_DELTA);
             }
-            else if (needs_update(state))
+
+        #if DEBUG_INCREMENTAL
+            memcpy(_input, ancestor._input, sizeof(_input));
+
+            // Validate get_deltas
+            for (int i = 0; i != r_idx; ++i)
+                _input[remove_inputs[i]] = 0;
+            for (int i = 0; i != a_idx; ++i)
+                _input[add_inputs[i]] = 1;
+
+            _input[TURN_INDEX] ^= 1;
+
+            ALIGN input_t temp[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
+            one_hot_encode(state, temp);
+
+            for (int i = 0; i != ACTIVE_INPUTS; ++i)
+                ASSERT_ALWAYS(_input[i] == temp[i]);
+
+        #endif /* DEBUG_INCREMENTAL */
+
+            if (state.turn)
+                add_inputs[a_idx++] = TURN_INDEX;
+            else
+                remove_inputs[r_idx++] = TURN_INDEX;
+
+            const size_t base = bucket * ACTIVE_INPUTS;
+
+            if (can_incremental_a)
             {
-                _hash = state.hash();
-
-                /* compute delta based on ancestor state */
-                ASSERT(prev.turn != state.turn);
-
-                memcpy(_output_a, ancestor._output_a, sizeof(_output_a));
-                memcpy(_output_b, ancestor._output_b, sizeof(_output_b));
-
-            #if USE_MOVE_PREDICTION
-                memcpy(_move_logits, ancestor._move_logits, sizeof(_move_logits));
-            #endif
-
+                memcpy(_bucket[bucket].output, ancestor._bucket[bucket].output, sizeof(_bucket[bucket].output));
+            }
+            else
+            {
+                /* Full update for layer A only */
             #if DEBUG_INCREMENTAL
-                memcpy(_input, ancestor._input, sizeof(_input));
-            #endif
-                int remove_inputs[MAX_DELTA];
-                int add_inputs[MAX_DELTA];
-                int r_idx = 0, a_idx = 0;
-
-                if (move)
-                {
-                    get_deltas(prev, state, move, prev.turn, remove_inputs, add_inputs, r_idx, a_idx);
-
-                    ASSERT(a_idx < MAX_DELTA);
-                    ASSERT(r_idx < MAX_DELTA);
-                }
-
-            #if DEBUG_INCREMENTAL
-                // Validate get_deltas
-                for (int i = 0; i != r_idx; ++i)
-                    _input[remove_inputs[i]] = 0;
-                for (int i = 0; i != a_idx; ++i)
-                    _input[add_inputs[i]] = 1;
-
-                _input[TURN_INDEX] ^= 1;
-
-                ALIGN input_t temp[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
-                one_hot_encode(state, temp);
-
-                for (int i = 0; i != ACTIVE_INPUTS; ++i)
-                    ASSERT_ALWAYS(_input[i] == temp[i]);
-
-            #endif /* DEBUG_INCREMENTAL */
-
-                if (state.turn)
-                    add_inputs[a_idx++] = TURN_INDEX;
-                else
-                    remove_inputs[r_idx++] = TURN_INDEX;
-
-                const size_t base = bucket * ACTIVE_INPUTS;
-
-            #if USE_MOVE_PREDICTION
-                incremental_update(layer_a, layer_b, layer_m, remove_inputs, add_inputs, r_idx, a_idx, base);
+                layer_a.dot(_input, _bucket[bucket].output, base);
             #else
-                incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base);
+                ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
+                one_hot_encode(state, _input);
+                layer_a.dot(_input, _bucket[bucket].output, base);
             #endif
-
-            #if DEBUG_INCREMENTAL
-                // Validate that incremental_update produces same result as full dot products
-                // layer A
-                ALIGN int16_t output_a[OUTPUTS_A] = { };
-                layer_a.dot(temp, output_a, base);
-                for (int i = 0; i != OUTPUTS_A; ++i)
-                    ASSERT_ALWAYS(abs(output_a[i] - _output_a[i]) < 0.0001);
-
-                // layer B
-                ALIGN int16_t output_b[OUTPUTS_B] = { };
-                layer_b.dot(_input, output_b);
-                for (int i = 0; i != OUTPUTS_B; ++i)
-                    ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
-            #endif /* DEBUG_INCREMENTAL */
             }
+
+            /* Layer B and M: always incremental from ancestor */
+            memcpy(_output_b, ancestor._output_b, sizeof(_output_b));
+        #if USE_MOVE_PREDICTION
+            memcpy(_move_logits, ancestor._move_logits, sizeof(_move_logits));
+        #endif
+        #if USE_MOVE_PREDICTION
+            incremental_update(layer_a, layer_b, layer_m, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, can_incremental_a);
+        #else
+            incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, can_incremental_a);
+        #endif
+            _bucket[bucket].hash = state.hash();
+            _current_bucket = bucket;
+
+        #if DEBUG_INCREMENTAL
+            // Validate that incremental_update produces same result as full dot products
+            // layer A
+            ALIGN int16_t output_a[OUTPUTS_A] = { };
+            layer_a.dot(temp, output_a, base);
+            for (int i = 0; i != OUTPUTS_A; ++i)
+                ASSERT_ALWAYS(abs(output_a[i] - _bucket[bucket].output[i]) < 0.0001);
+
+            // layer B
+            ALIGN int16_t output_b[OUTPUTS_B] = { };
+            layer_b.dot(temp, output_b);
+            for (int i = 0; i != OUTPUTS_B; ++i)
+                ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
+        #endif /* DEBUG_INCREMENTAL */
         }
 
-        /** Recompute incrementally */
+    /** Recompute incrementally */
     #if USE_MOVE_PREDICTION
         template <typename LA, typename LB, typename LM>
         INLINE void incremental_update(
@@ -755,7 +765,9 @@ namespace nnue
             const int (&add_inputs)[MAX_DELTA],
             const int r_idx,
             const int a_idx,
-            size_t base)
+            size_t base,
+            int bucket,
+            bool update_layer_a)
     #else
         template <typename LA, typename LB>
         INLINE void incremental_update(
@@ -765,7 +777,9 @@ namespace nnue
             const int (&add_inputs)[MAX_DELTA],
             const int r_idx,
             const int a_idx,
-            size_t base)
+            size_t base,
+            int bucket,
+            bool update_layer_a)
     #endif
         {
         #if __ARM__
@@ -812,26 +826,29 @@ namespace nnue
         #endif /* USE_MOVE_PREDICTION */
 
             /* Layer A */
-            for (int j = 0; j != OUTPUTS_A; j += VecShort::size())
+            if (update_layer_a)
             {
-                vo.load_a(&_output_a[j]);
-
-                for (int i = 0; i < r_idx; ++i)
+                for (int j = 0; j != OUTPUTS_A; j += VecShort::size())
                 {
-                    const auto index = base + remove_inputs[i];
-                    ASSERT(index < LA::INPUTS);
-                    vw.load_a(&layer_a._w[index][j]);
-                    vo -= vw;
-                }
+                    vo.load_a(&_bucket[bucket].output[j]);
 
-                for (int i = 0; i < a_idx; ++i)
-                {
-                    const auto index = base + add_inputs[i];
-                    ASSERT(index < LA::INPUTS);
-                    vw.load_a(&layer_a._w[index][j]);
-                    vo += vw;
+                    for (int i = 0; i < r_idx; ++i)
+                    {
+                        const auto index = base + remove_inputs[i];
+                        ASSERT(index < LA::INPUTS);
+                        vw.load_a(&layer_a._w[index][j]);
+                        vo -= vw;
+                    }
+
+                    for (int i = 0; i < a_idx; ++i)
+                    {
+                        const auto index = base + add_inputs[i];
+                        ASSERT(index < LA::INPUTS);
+                        vw.load_a(&layer_a._w[index][j]);
+                        vo += vw;
+                    }
+                    vo.store_a(&_bucket[bucket].output[j]);
                 }
-                vo.store_a(&_output_a[j]);
             }
 
             if (update_layer_b)
@@ -926,7 +943,7 @@ namespace nnue
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
 
-        pool(a._output_a, l2_in);
+        pool(a._bucket[a._current_bucket].output, l2_in);
 
         /* The "spatial attention" layer modulates L2. */
         activate(a._output_b, attn_in);
