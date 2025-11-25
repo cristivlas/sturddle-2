@@ -663,7 +663,7 @@ namespace nnue
             A& ancestor)
     #endif /* USE_MOVE_PREDICTION */
         {
-            ASSERT_ALWAYS(needs_update(state));
+            ASSERT(needs_update(state));
 
             const int bucket = get_bucket(state);
             const bool can_incremental_a = (ancestor._bucket[bucket].hash == prev.hash());
@@ -713,7 +713,7 @@ namespace nnue
             {
                 memcpy(_bucket[bucket].output, ancestor._bucket[bucket].output, sizeof(_bucket[bucket].output));
             }
-            else
+            else if (_bucket[bucket].hash != state.hash())
             {
                 /* Full update for layer A only */
             #if DEBUG_INCREMENTAL

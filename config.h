@@ -264,8 +264,8 @@ DECLARE_CONST(  MULTICUT,                             1,    0,       1)
 
 /* Time management */
 DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              36,   20,     100)
-DECLARE_PARAM(  MaxTimeMargin,                       20,    0,     100)
-DECLARE_PARAM(  MinTimeMargin,                        5,    0,     100)
+DECLARE_PARAM(  MaxTimeMargin,                       50,    0,     100)
+DECLARE_PARAM(  MinTimeMargin,                       15,    0,     100)
 
 GROUP(Search)
 
