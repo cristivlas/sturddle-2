@@ -423,7 +423,7 @@ namespace nnue
             VecShort in, vw;
             VSum sum[N]; /* accumulate partial sums */
 
-            constexpr auto MAX_INPUT = std::min<int>(INPUTS, INPUT_SIZE);
+            constexpr auto INPUT_MAX = std::min<int>(INPUTS, INPUT_SIZE);
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
@@ -431,7 +431,7 @@ namespace nnue
                 for (int k = 0; k != N; ++k)
                     sum[k] = VSum(0);
 
-                for (int i = 0; i < MAX_INPUT; i += N)
+                for (int i = 0; i < INPUT_MAX; i += N)
                 {
                     in.load_a(input + i);
                     if (all_zero(in))
