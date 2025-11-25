@@ -591,7 +591,7 @@ namespace nnue
     #else
         template <typename LA, typename LB>
         INLINE void full_update(const LA& layer_1a, const LB& layer_1b, const State& state, int bucket)
-    #endif
+    #endif /* USE_MOVE_PREDICTION */
         {
         #if DEBUG_INCREMENTAL
             memset(&_input, 0, sizeof(_input));
@@ -699,7 +699,6 @@ namespace nnue
 
             for (int i = 0; i != ACTIVE_INPUTS; ++i)
                 ASSERT_ALWAYS(_input[i] == temp[i]);
-
         #endif /* DEBUG_INCREMENTAL */
 
             if (state.turn)
@@ -716,21 +715,15 @@ namespace nnue
             else if (_bucket[bucket].hash != state.hash())
             {
                 /* Full update for layer A only */
-            #if DEBUG_INCREMENTAL
-                layer_a.dot(_input, _bucket[bucket].output, base);
-            #else
                 ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
                 one_hot_encode(state, _input);
                 layer_a.dot(_input, _bucket[bucket].output, base);
-            #endif
             }
 
             /* Layer B and M: always incremental from ancestor */
             memcpy(_output_b, ancestor._output_b, sizeof(_output_b));
         #if USE_MOVE_PREDICTION
             memcpy(_move_logits, ancestor._move_logits, sizeof(_move_logits));
-        #endif
-        #if USE_MOVE_PREDICTION
             incremental_update(layer_a, layer_b, layer_m, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, can_incremental_a);
         #else
             incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, can_incremental_a);
