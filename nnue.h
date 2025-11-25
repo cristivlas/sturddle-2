@@ -664,9 +664,10 @@ namespace nnue
     #endif /* USE_MOVE_PREDICTION */
         {
             ASSERT(needs_update(state));
+            ASSERT(ancestor._bucket[ancestor._current_bucket].hash == prev.hash());
 
             const int bucket = get_bucket(state);
-            const bool can_incremental_a = (ancestor._bucket[bucket].hash == prev.hash());
+            const bool can_incremental_a = (ancestor._current_bucket == bucket);
 
             /* compute delta based on ancestor state */
             ASSERT(prev.turn != state.turn);
