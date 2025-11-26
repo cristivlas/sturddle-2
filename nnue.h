@@ -110,7 +110,6 @@ namespace nnue
 
     static const Vector v_zero(0.0);
     static const Vec8s  v8_zero(0);
-    // static const Vec16s v16_zero(0);
 
 
     template <typename V>
@@ -208,10 +207,9 @@ namespace nnue
     {
         const auto& color_masks = board._occupied_co;
         int i = 63;
-        #pragma unroll 6
+
         for (const auto bb : {board.kings, board.pawns, board.knights, board.bishops, board.rooks, board.queens})
         {
-            #pragma unroll 2
             for (const auto mask : color_masks)
             {
                 for_each_square_r((bb & mask), [&](Square j) { encoding[i - j] = 1; });
@@ -222,6 +220,45 @@ namespace nnue
 
         for_each_square_r(color_masks[0], [&](Square j) { encoding[832 - j] = 1; });
         for_each_square_r(color_masks[1], [&](Square j) { encoding[896 - j] = 1; });
+    }
+
+    template <typename F>
+    static INLINE void for_each_active_input(const State& state, F&& func)
+    {
+        const auto& color_masks = state._occupied_co;
+        int i = 63;
+
+        for (const auto bb : {state.kings, state.pawns, state.knights, state.bishops, state.rooks, state.queens})
+        {
+            for (const auto mask : color_masks)
+            {
+                for_each_square_r((bb & mask), [&](Square sq) { func(i - sq); });
+                i += 64;
+            }
+        }
+
+        if (state.turn)
+            func(TURN_INDEX);
+
+        // Occupancy masks
+        for_each_square_r(color_masks[0], [&](Square sq) { func(832 - sq); });
+        for_each_square_r(color_masks[1], [&](Square sq) { func(896 - sq); });
+    }
+
+    template <typename F>
+    static INLINE void for_each_active_king_or_pawn(const State& state, F&& func)
+    {
+        const auto& color_masks = state._occupied_co;
+        int i = 63;
+
+        for (const auto bb : {state.kings, state.pawns})
+        {
+            for (const auto mask : color_masks)
+            {
+                for_each_square_r((bb & mask), [&](Square sq) { func(i - sq); });
+                i += 64;
+            }
+        }
     }
 
     /** Calculate the piece-square index into the one-hot encoding. */
@@ -236,6 +273,7 @@ namespace nnue
         return (color ? 833 : 769) + 63 - square;
     }
 
+
     /** Rectified Linear Unit (reLU) activation */
     template <typename V> INLINE V relu(V v) { return max(v, 0); }
 
@@ -245,8 +283,6 @@ namespace nnue
     template <>
     INLINE Vec8s relu<Vec8s>(Vec8s v) { return max(v, v8_zero); }
 
-    // template <>
-    // INLINE Vec16s relu<Vec16s>(Vec16s v) { return max(v, v16_zero); }
 
     template <int N>
     INLINE void activate(const int16_t (&input)[N], float (&output)[N])
@@ -449,6 +485,39 @@ namespace nnue
             }
         }
 
+        template <typename F>
+        INLINE void dot_sparse(int16_t (&output)[OUTPUTS], size_t base, F&& for_each_active) const
+        {
+        #if __ARM__
+            using VecShort = Vec16s;
+        #else
+            using VecShort = Vec32s;
+        #endif
+
+            VecShort vo, vw;
+
+            // Initialize with biases
+            for (int j = 0; j < OUTPUTS; j += VecShort::size())
+            {
+                vw.load_a(&_b[j]);
+                vw.store_a(&output[j]);
+            }
+
+            // Add weights for active inputs
+            auto add_weight = [&](int idx)
+            {
+                for (int j = 0; j < OUTPUTS; j += VecShort::size())
+                {
+                    vo.load_a(&output[j]);
+                    vw.load_a(&this->_w[base + idx][j]);
+                    vo += vw;
+                    vo.store_a(&output[j]);
+                }
+            };
+
+            for_each_active(add_weight);
+        }
+
         /* hidden, output */
         template <typename ACTIVATION>
         static INLINE void dot(
@@ -592,22 +661,35 @@ namespace nnue
         INLINE void full_update(const LA& layer_1a, const LB& layer_1b, const State& state, int bucket)
     #endif /* USE_MOVE_PREDICTION */
         {
-        #if DEBUG_INCREMENTAL
-            memset(&_input, 0, sizeof(_input));
-        #else
-            ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
-        #endif /* DEBUG_INCREMENTAL */
-
-            one_hot_encode(state, _input);
-
             const size_t base = bucket * ACTIVE_INPUTS;
 
-            layer_1a.dot(_input, _bucket[bucket].output, base);
-            layer_1b.dot(_input, _output_b);
-
-        #if USE_MOVE_PREDICTION
-            layer_m.dot(_input, _move_logits);
+        #if DEBUG_INCREMENTAL
+            memset(&_input, 0, sizeof(_input));
+            one_hot_encode(state, _input);
         #endif
+            layer_1a.dot_sparse(_bucket[bucket].output, base, [&](auto&& add_weight) {
+                for_each_active_input(state, add_weight);
+            });
+            layer_1b.dot_sparse(_output_b, 0, [&](auto&& add_weight) {
+                for_each_active_king_or_pawn(state, add_weight);
+            });
+        #if USE_MOVE_PREDICTION
+            layer_m.dot_sparse(_move_logits, 0, [&](auto&& add_weight) {
+                for_each_active_input(state, add_weight);
+            });
+        #endif /* USE_MOVE_PREDICTION */
+        #if DEBUG_INCREMENTAL
+            // Validate sparse produces same result as dense
+            ALIGN int16_t output_a[OUTPUTS_A] = { };
+            ALIGN int16_t output_b[OUTPUTS_B] = { };
+            layer_1a.dot(_input, output_a, base);
+            layer_1b.dot(_input, output_b);
+
+            for (int i = 0; i != OUTPUTS_A; ++i)
+                ASSERT_ALWAYS(_bucket[bucket].output[i] == output_a[i]);
+            for (int i = 0; i != OUTPUTS_B; ++i)
+                ASSERT_ALWAYS(_output_b[i] == output_b[i]);
+        #endif /* DEBUG_INCREMENTAL */
 
             _bucket[bucket].hash = state.hash();
             _current_bucket = bucket;
@@ -742,28 +824,7 @@ namespace nnue
                     }
                 };
 
-                // Iterate over all active pieces in PREV position
-                const auto& color_masks = prev._occupied_co;
-                int i = 63;
-
-                for (const auto bb : {prev.kings, prev.pawns, prev.knights, prev.bishops, prev.rooks, prev.queens})
-                {
-                    for (const auto mask : color_masks)
-                    {
-                        for_each_square_r((bb & mask), [&](Square sq) {
-                            apply_delta(i - sq);
-                        });
-                        i += 64;
-                    }
-                }
-
-                // Side to move
-                if (prev.turn)
-                    apply_delta(TURN_INDEX);
-
-                // Occupancy masks
-                for_each_square_r(color_masks[0], [&](Square sq) { apply_delta(832 - sq); });
-                for_each_square_r(color_masks[1], [&](Square sq) { apply_delta(896 - sq); });
+                for_each_active_input(prev, apply_delta);
 
                 // Now _bucket[bucket].output has correct output for prev position with bucket weights
                 // Set flag so move deltas get applied
