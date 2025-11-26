@@ -643,7 +643,7 @@ namespace nnue
 
         /** Update 1st layer output incrementally, based on a previous state */
     #if USE_MOVE_PREDICTION
-        template <typename LA, typename LB, typename LM, typename A>
+        template <typename LA, typename LB, typename LM>
         INLINE void update(
             const LA& layer_a,
             const LB& layer_b,
@@ -651,23 +651,23 @@ namespace nnue
             const State& prev,
             const State& state,
             const Move& move,
-            A& ancestor)
+            Accumulator& ancestor)
     #else
-        template <typename LA, typename LB, typename A>
+        template <typename LA, typename LB>
         INLINE void update(
             const LA& layer_a,
             const LB& layer_b,
             const State& prev,
             const State& state,
             const Move& move,
-            A& ancestor)
+            Accumulator& ancestor)
     #endif /* USE_MOVE_PREDICTION */
         {
             ASSERT(needs_update(state));
             ASSERT(ancestor._bucket[ancestor._current_bucket].hash == prev.hash());
 
             const int bucket = get_bucket(state);
-            const bool can_incremental_a = (ancestor._bucket[bucket].hash == prev.hash());
+            bool incremental_a = (ancestor._bucket[bucket].hash == prev.hash());
 
             /* compute delta based on ancestor state */
             ASSERT(prev.turn != state.turn);
@@ -709,25 +709,29 @@ namespace nnue
 
             const size_t base = bucket * ACTIVE_INPUTS;
 
-            if (can_incremental_a)
+            if (incremental_a)
             {
                 memcpy(_bucket[bucket].output, ancestor._bucket[bucket].output, sizeof(_bucket[bucket].output));
             }
             else if (_bucket[bucket].hash != state.hash())
             {
-                /* Full update for layer A only */
-                ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
-                one_hot_encode(state, _input);
-                layer_a.dot(_input, _bucket[bucket].output, base);
+                ALIGN input_t input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
+                one_hot_encode(prev, input);
+                layer_a.dot(input, ancestor._bucket[bucket].output, base);
+
+                ancestor._bucket[bucket].hash = prev.hash();
+
+                incremental_a = true;
+                memcpy(_bucket[bucket].output, ancestor._bucket[bucket].output, sizeof(_bucket[bucket].output));
             }
 
-            /* Layer B and M: always incremental from ancestor */
+            /* Other layers than A: update incrementally from ancestor state */
             memcpy(_output_b, ancestor._output_b, sizeof(_output_b));
         #if USE_MOVE_PREDICTION
             memcpy(_move_logits, ancestor._move_logits, sizeof(_move_logits));
-            incremental_update(layer_a, layer_b, layer_m, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, can_incremental_a);
+            incremental_update(layer_a, layer_b, layer_m, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, incremental_a);
         #else
-            incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, can_incremental_a);
+            incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, incremental_a);
         #endif
             _bucket[bucket].hash = state.hash();
             _current_bucket = bucket;

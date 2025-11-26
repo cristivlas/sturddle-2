@@ -406,7 +406,7 @@ static INLINE void update(Accumulator& accumulator, const Context* ctxt)
 
 
 /* incremental version */
-static INLINE void update(Accumulator& accumulator, const Context* ctxt, const Accumulator& prev_acc)
+static INLINE void update(Accumulator& accumulator, const Context* ctxt, Accumulator& prev_acc)
 {
 #if USE_MOVE_PREDICTION
     accumulator.update(model.L1A, model.L1B, model.LMOVES, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
