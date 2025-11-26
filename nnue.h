@@ -667,7 +667,7 @@ namespace nnue
             ASSERT(ancestor._bucket[ancestor._current_bucket].hash == prev.hash());
 
             const int bucket = get_bucket(state);
-            const bool can_incremental_a = (ancestor._current_bucket == bucket);
+            const bool can_incremental_a = (ancestor._bucket[bucket].hash == prev.hash());
 
             /* compute delta based on ancestor state */
             ASSERT(prev.turn != state.turn);
