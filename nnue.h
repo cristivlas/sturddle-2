@@ -209,8 +209,7 @@ namespace nnue
         const auto& color_masks = board._occupied_co;
         int i = 63;
         #pragma unroll 6
-        for (const auto bb : {
-            board.kings, board.pawns, board.knights, board.bishops, board.rooks, board.queens })
+        for (const auto bb : {board.kings, board.pawns, board.knights, board.bishops, board.rooks, board.queens})
         {
             #pragma unroll 2
             for (const auto mask : color_masks)
@@ -715,14 +714,60 @@ namespace nnue
             }
             else if (_bucket[bucket].hash != state.hash())
             {
-                ALIGN input_t input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
-                one_hot_encode(prev, input);
-                layer_a.dot(input, ancestor._bucket[bucket].output, base);
+                const int prev_bucket = ancestor._current_bucket;
+                const size_t base_old = prev_bucket * ACTIVE_INPUTS;
+                const size_t base_new = bucket * ACTIVE_INPUTS;
 
-                ancestor._bucket[bucket].hash = prev.hash();
+                // Start from ancestor's output (computed with prev_bucket weights for prev position)
+                memcpy(_bucket[bucket].output, ancestor._bucket[prev_bucket].output, sizeof(_bucket[bucket].output));
 
+            #if __ARM__
+                using VecShort = Vec16s;
+            #else
+                using VecShort = Vec32s;
+            #endif
+
+                VecShort vo, vw_old, vw_new;
+
+                // Correct for weight differences on active inputs (using prev state, not state!)
+                auto apply_delta = [&](int idx)
+                {
+                    for (int j = 0; j < OUTPUTS_A; j += VecShort::size())
+                    {
+                        vo.load_a(&_bucket[bucket].output[j]);
+                        vw_old.load_a(&layer_a._w[base_old + idx][j]);
+                        vw_new.load_a(&layer_a._w[base_new + idx][j]);
+                        vo = vo - vw_old + vw_new;
+                        vo.store_a(&_bucket[bucket].output[j]);
+                    }
+                };
+
+                // Iterate over all active pieces in PREV position
+                const auto& color_masks = prev._occupied_co;
+                int i = 63;
+
+                for (const auto bb : {prev.kings, prev.pawns, prev.knights, prev.bishops, prev.rooks, prev.queens})
+                {
+                    for (const auto mask : color_masks)
+                    {
+                        for_each_square_r((bb & mask), [&](Square sq) {
+                            apply_delta(i - sq);
+                        });
+                        i += 64;
+                    }
+                }
+
+                // Side to move
+                if (prev.turn)
+                    apply_delta(TURN_INDEX);
+
+                // Occupancy masks
+                for_each_square_r(color_masks[0], [&](Square sq) { apply_delta(832 - sq); });
+                for_each_square_r(color_masks[1], [&](Square sq) { apply_delta(896 - sq); });
+
+                // Now _bucket[bucket].output has correct output for prev position with bucket weights
+                // Set flag so move deltas get applied
                 incremental_a = true;
-                memcpy(_bucket[bucket].output, ancestor._bucket[bucket].output, sizeof(_bucket[bucket].output));
             }
 
             /* Other layers than A: update incrementally from ancestor state */
