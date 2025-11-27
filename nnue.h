@@ -56,8 +56,9 @@
     constexpr int INPUT_STRIDE = 16;
 #endif
 
+#ifndef DEBUG_INCREMENTAL
 #define DEBUG_INCREMENTAL false
-
+#endif
 
 namespace nnue
 {
@@ -503,19 +504,24 @@ namespace nnue
                 vw.store_a(&output[j]);
             }
 
-            // Add weights for active inputs
-            auto add_weight = [&](int idx)
-            {
-                for (int j = 0; j < OUTPUTS; j += VecShort::size())
-                {
-                    vo.load_a(&output[j]);
-                    vw.load_a(&this->_w[base + idx][j]);
-                    vo += vw;
-                    vo.store_a(&output[j]);
-                }
-            };
+            // Collect active indices
+            int active[64];
+            int count = 0;
+            for_each_active([&](int idx) { ASSERT(count < 63); active[count++] = idx; });
 
-            for_each_active(add_weight);
+            // Add weights, looping over outputs once
+            for (int j = 0; j < OUTPUTS; j += VecShort::size())
+            {
+                vo.load_a(&output[j]);
+
+                for (int k = 0; k < count; ++k)
+                {
+                    vw.load_a(&this->_w[base + active[k]][j]);
+                    vo += vw;
+                }
+
+                vo.store_a(&output[j]);
+            }
         }
 
         /* hidden, output */
@@ -667,6 +673,8 @@ namespace nnue
             memset(&_input, 0, sizeof(_input));
             one_hot_encode(state, _input);
         #endif
+
+        #if DOT_SPARSE
             layer_1a.dot_sparse(_bucket[bucket].output, base, [&](auto&& add_weight) {
                 for_each_active_input(state, add_weight);
             });
@@ -678,18 +686,20 @@ namespace nnue
                 for_each_active_input(state, add_weight);
             });
         #endif /* USE_MOVE_PREDICTION */
-        #if DEBUG_INCREMENTAL
-            // Validate sparse produces same result as dense
-            ALIGN int16_t output_a[OUTPUTS_A] = { };
-            ALIGN int16_t output_b[OUTPUTS_B] = { };
-            layer_1a.dot(_input, output_a, base);
-            layer_1b.dot(_input, output_b);
 
-            for (int i = 0; i != OUTPUTS_A; ++i)
-                ASSERT_ALWAYS(_bucket[bucket].output[i] == output_a[i]);
-            for (int i = 0; i != OUTPUTS_B; ++i)
-                ASSERT_ALWAYS(_output_b[i] == output_b[i]);
-        #endif /* DEBUG_INCREMENTAL */
+        #else
+        #if !DEBUG_INCREMENTAL
+            ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
+        #endif
+            one_hot_encode(state, _input);
+
+            layer_1a.dot(_input, _bucket[bucket].output, base);
+            layer_1b.dot(_input, _output_b);
+
+        #if USE_MOVE_PREDICTION
+            layer_m.dot(_input, _move_logits);
+        #endif /* USE_MOVE_PREDICTION */
+        #endif /* DOT_SPARSE */
 
             _bucket[bucket].hash = state.hash();
             _current_bucket = bucket;

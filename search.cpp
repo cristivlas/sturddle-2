@@ -1301,7 +1301,7 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
         }   /* SMP scope end */
 
-        ASSERT(ctxt.iteration() == ctxt._max_depth);
+        ASSERT(ctxt.iteration() + !ctxt.turn() == ctxt._max_depth);
 
         /* post iteration info if there's a registered callback */
         if (Context::_on_iter)

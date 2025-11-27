@@ -1254,7 +1254,7 @@ namespace search
         _cutoff_move = Move();
         _has_singleton = false;
 
-        _max_depth = iteration();
+        _max_depth = iteration() + (turn() == chess::BLACK);
 
         _mate_detected = 0;
 
