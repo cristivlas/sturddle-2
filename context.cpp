@@ -293,11 +293,11 @@ constexpr int HIDDEN_3 = 16;
 
 using LAttnType = nnue::Layer<HIDDEN_1B, 32>;
 using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
-using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true>;
+using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
 using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2>;
 using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
 using EVALType = nnue::Layer<HIDDEN_3, 1>;
-using LMOVEType = nnue::Layer<INPUTS_A, 4096, int16_t, nnue::QSCALE, true /* incremental */>;
+using LMOVEType = nnue::Layer<INPUTS_A, 4096, int16_t, nnue::QSCALE>;
 
 /*
  * The accumulator takes the inputs and processes them into two outputs,
@@ -397,22 +397,14 @@ void Context::load_weights(const std::string& file_path)
 
 static INLINE void update(Accumulator& accumulator, const Context* ctxt)
 {
-#if USE_MOVE_PREDICTION
-    accumulator.update(model.L1A, model.L1B, model.LMOVES, ctxt->state());
-#else
     accumulator.update(model.L1A, model.L1B, ctxt->state());
-#endif
 }
 
 
 /* incremental version */
 static INLINE void update(Accumulator& accumulator, const Context* ctxt, Accumulator& prev_acc)
 {
-#if USE_MOVE_PREDICTION
-    accumulator.update(model.L1A, model.L1B, model.LMOVES, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
-#else
     accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
-#endif
 }
 
 
@@ -1716,6 +1708,11 @@ namespace search
         /* Confidence bar for historical scores */
         const double hist_high = (Phase == 3) ? hist_thresholds[ctxt.iteration()] : 0;
 
+    #if USE_MOVE_PREDICTION
+        int active[65];  // 32 pieces + 1 stm + 16 + 16 occupancy
+        int active_count = 0;
+    #endif /* USE_MOVE_PREDICTION */
+
         /********************************************************************/
         /* Iterate over pseudo-legal moves                                  */
         /********************************************************************/
@@ -1811,19 +1808,28 @@ namespace search
                     remake_move(ctxt, move);
                     continue;
                 }
+
                 if (make_move<true>(ctxt, move, futility))
                 {
                     move._group = MoveOrder::LATE_MOVES;
                 #if USE_MOVE_PREDICTION
-                    ctxt.update_accumulators();
-                    const auto index = move.from_square() * 64 + move.to_square();
-                    const auto& acc = NNUE_data[ctxt.tid()][ctxt._ply];
-                    move._score = acc._move_logits[index] / 100.0 + ctxt.history_score(move) * 10.0;
-                #else
-                    incremental_update(move, ctxt);
-                    const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
-                    move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
-                #endif
+                    if (ctxt.iteration() <= 5)
+                    {
+                        if (active_count == 0)
+                            nnue::for_each_active_input(ctxt.state(), [&](int idx) {
+                                ASSERT(active_count < 64);
+                                active[active_count++] = idx;
+                            });
+
+                        nnue::score_move(model.LMOVES, active, active_count, move);
+                    }
+                    else
+                #endif /* USE_MOVE_PREDICTION */
+                    {
+                        incremental_update(move, ctxt);
+                        const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
+                        move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
+                    }
                 }
             }
         }

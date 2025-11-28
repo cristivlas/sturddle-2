@@ -505,9 +505,9 @@ namespace nnue
             }
 
             // Collect active indices
-            int active[64];
+            int active[65];
             int count = 0;
-            for_each_active([&](int idx) { ASSERT(count < 63); active[count++] = idx; });
+            for_each_active([&](int idx) { ASSERT(count < 64); active[count++] = idx; });
 
             // Add weights, looping over outputs once
             for (int j = 0; j < OUTPUTS; j += VecShort::size())
@@ -641,9 +641,6 @@ namespace nnue
         /* remember previous inputs, for debugging */
         ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { }; /* one-hot encoding */
     #endif
-    #if USE_MOVE_PREDICTION
-        ALIGN int16_t _move_logits[4096] = { };
-    #endif
 
 
         static INLINE int get_bucket(const State& state)
@@ -659,13 +656,8 @@ namespace nnue
 
 
         /** Compute 1st layer output from scratch at root */
-    #if USE_MOVE_PREDICTION
-        template <typename LA, typename LB, typename LM>
-        INLINE void full_update(const LA& layer_1a, const LB& layer_1b, const LM& layer_m, const State& state, int bucket)
-    #else
         template <typename LA, typename LB>
         INLINE void full_update(const LA& layer_1a, const LB& layer_1b, const State& state, int bucket)
-    #endif /* USE_MOVE_PREDICTION */
         {
             const size_t base = bucket * ACTIVE_INPUTS;
 
@@ -681,12 +673,6 @@ namespace nnue
             layer_1b.dot_sparse(_output_b, 0, [&](auto&& add_weight) {
                 for_each_active_king_or_pawn(state, add_weight);
             });
-        #if USE_MOVE_PREDICTION
-            layer_m.dot_sparse(_move_logits, 0, [&](auto&& add_weight) {
-                for_each_active_input(state, add_weight);
-            });
-        #endif /* USE_MOVE_PREDICTION */
-
         #else
         #if !DEBUG_INCREMENTAL
             ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
@@ -696,25 +682,12 @@ namespace nnue
             layer_1a.dot(_input, _bucket[bucket].output, base);
             layer_1b.dot(_input, _output_b);
 
-        #if USE_MOVE_PREDICTION
-            layer_m.dot(_input, _move_logits);
-        #endif /* USE_MOVE_PREDICTION */
         #endif /* DOT_SPARSE */
 
             _bucket[bucket].hash = state.hash();
             _current_bucket = bucket;
         }
 
-    #if USE_MOVE_PREDICTION
-        template <typename LA, typename LB, typename LM>
-        INLINE void update(const LA& layer_1a, const LB& layer_1b, const LM& layer_m, const State& state)
-        {
-            if (needs_update(state))
-            {
-                full_update(layer_1a, layer_1b, layer_m, state, get_bucket(state));
-            }
-        }
-    #else
         template <typename LA, typename LB>
         INLINE void update(const LA& layer_1a, const LB& layer_1b, const State& state)
         {
@@ -723,7 +696,6 @@ namespace nnue
                 full_update(layer_1a, layer_1b, state, get_bucket(state));
             }
         }
-    #endif /* USE_MOVE_PREDICTION */
 
         /** Utility for incremental updates */
         static INLINE void delta(int (&d)[MAX_DELTA], int& idx, PieceType pt, Color col, Square sq)
@@ -733,17 +705,6 @@ namespace nnue
         }
 
         /** Update 1st layer output incrementally, based on a previous state */
-    #if USE_MOVE_PREDICTION
-        template <typename LA, typename LB, typename LM>
-        INLINE void update(
-            const LA& layer_a,
-            const LB& layer_b,
-            const LM& layer_m,
-            const State& prev,
-            const State& state,
-            const Move& move,
-            Accumulator& ancestor)
-    #else
         template <typename LA, typename LB>
         INLINE void update(
             const LA& layer_a,
@@ -752,7 +713,6 @@ namespace nnue
             const State& state,
             const Move& move,
             Accumulator& ancestor)
-    #endif /* USE_MOVE_PREDICTION */
         {
             ASSERT(needs_update(state));
             ASSERT(ancestor._bucket[ancestor._current_bucket].hash == prev.hash());
@@ -841,14 +801,10 @@ namespace nnue
                 incremental_a = true;
             }
 
-            /* Other layers than A: update incrementally from ancestor state */
+            /* layer B: update incrementally from ancestor state */
             memcpy(_output_b, ancestor._output_b, sizeof(_output_b));
-        #if USE_MOVE_PREDICTION
-            memcpy(_move_logits, ancestor._move_logits, sizeof(_move_logits));
-            incremental_update(layer_a, layer_b, layer_m, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, incremental_a);
-        #else
             incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, incremental_a);
-        #endif
+
             _bucket[bucket].hash = state.hash();
             _current_bucket = bucket;
 
@@ -868,21 +824,7 @@ namespace nnue
         #endif /* DEBUG_INCREMENTAL */
         }
 
-    /** Recompute incrementally */
-    #if USE_MOVE_PREDICTION
-        template <typename LA, typename LB, typename LM>
-        INLINE void incremental_update(
-            const LA& layer_a,
-            const LB& layer_b,
-            const LM& layer_m,
-            const int (&remove_inputs)[MAX_DELTA],
-            const int (&add_inputs)[MAX_DELTA],
-            const int r_idx,
-            const int a_idx,
-            size_t base,
-            int bucket,
-            bool update_layer_a)
-    #else
+        /** Recompute incrementally */
         template <typename LA, typename LB>
         INLINE void incremental_update(
             const LA& layer_a,
@@ -894,7 +836,6 @@ namespace nnue
             size_t base,
             int bucket,
             bool update_layer_a)
-    #endif
         {
         #if __ARM__
             using VecShort = Vec16s;
@@ -914,30 +855,6 @@ namespace nnue
                 update_layer_b += add_inputs[i] < LB::INPUTS;
 
             VecShort vo, vw;
-
-        #if USE_MOVE_PREDICTION
-            for (int j = 0; j != 4096; j += VecShort::size())
-            {
-                vo.load_a(&_move_logits[j]);
-
-                for (int i = 0; i < r_idx; ++i)
-                {
-                    const auto index = remove_inputs[i];
-                    ASSERT(index < LM::INPUTS);
-                    vw.load_a(&layer_m._w[index][j]);
-                    vo -= vw;
-                }
-
-                for (int i = 0; i < a_idx; ++i)
-                {
-                    const auto index = add_inputs[i];
-                    ASSERT(index < LM::INPUTS);
-                    vw.load_a(&layer_m._w[index][j]);
-                    vo += vw;
-                }
-                vo.store_a(&_move_logits[j]);
-            }
-        #endif /* USE_MOVE_PREDICTION */
 
             /* Layer A */
             if (update_layer_a)
@@ -1080,5 +997,24 @@ namespace nnue
 
         out.dot(l3_out, output);
         return EVAL_SCALE * output[0];
+    }
+
+
+    template <typename LM>
+    INLINE void score_move(const LM& layer_m, const int (&active)[65], int count, Move& move)
+    {
+        const auto index = move.from_square() * 64 + move.to_square();
+
+        // Start with bias
+        auto score = layer_m._b[index];
+
+        // Add contribution from each active feature
+        for (int k = 0; k < count; ++k)
+        {
+            score += layer_m._wt[index][active[k]];
+        }
+
+        using move_score_t = decltype(move._score);
+        move._score = std::min(std::numeric_limits<move_score_t>::max(), score);
     }
 } /* namespace nnue */
