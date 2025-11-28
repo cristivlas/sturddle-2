@@ -507,7 +507,7 @@ namespace nnue
             // Collect active indices
             int active[65];
             int count = 0;
-            for_each_active([&](int idx) { ASSERT(count < 64); active[count++] = idx; });
+            for_each_active([&](int idx) { ASSERT(count < 65); active[count++] = idx; });
 
             // Add weights, looping over outputs once
             for (int j = 0; j < OUTPUTS; j += VecShort::size())

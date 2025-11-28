@@ -1817,7 +1817,7 @@ namespace search
                     {
                         if (active_count == 0)
                             nnue::for_each_active_input(ctxt.state(), [&](int idx) {
-                                ASSERT(active_count < 64);
+                                ASSERT(active_count < 65);
                                 active[active_count++] = idx;
                             });
 
