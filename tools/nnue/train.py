@@ -809,8 +809,11 @@ def set_weights(from_model, to_model):
             logging.warning(f"Layer {name} not found in target model, skipping")
             continue
 
-        if len(to_layer.get_weights()):
-            to_layer.set_weights(params)
+        if len(to_layer.get_weights()):  # Trainable?
+            try:
+                to_layer.set_weights(params)
+            except:
+                logging.exception(name)
 
 
 def main(args):
