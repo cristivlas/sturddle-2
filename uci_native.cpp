@@ -532,7 +532,7 @@ public:
         if (_ponder)
             ensure_background_thread();
 
-    #if 0 /* experimentation only */
+    #if DEV_MODE
         _options.emplace("algorithm", std::make_unique<OptionAlgo>(_algorithm));
     #endif
         _options.emplace("bestbookmove", std::make_unique<OptionBool>("BestBookMove", _best_book_move));
@@ -544,8 +544,9 @@ public:
         _options.emplace("syzygypath", std::make_unique<OptionSyzygy>());
     #endif /* USE_ENDTABLES */
 
+    #if DEV_MODE
         _options.emplace("weightsfile", std::make_unique<OptionWeights>());
-
+    #endif
         if (can_change_priority())
             _options.emplace("highpriority", std::make_unique<OptionBool>("HighPriority", _high_priority));
     }

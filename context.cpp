@@ -1813,7 +1813,7 @@ namespace search
                 {
                     move._group = MoveOrder::LATE_MOVES;
                 #if USE_MOVE_PREDICTION
-                    if (ctxt.iteration() <= 5)
+                    if (ctxt.iteration() <= MOVE_PREDICTION_MAX_ITER)
                     {
                         if (active_count == 0)
                             nnue::for_each_active_input(ctxt.state(), [&](int idx) {
@@ -1885,7 +1885,7 @@ namespace search
     #endif /* NO_ASSERT */
 
     #if 0 && USE_MOVE_PREDICTION /* debug */
-        if (_phase == 4)
+        if (_phase == 4 && ctxt.iteration() <= MOVE_PREDICTION_MAX_ITER)
         {
             for (const auto& m : moves_list)
             {

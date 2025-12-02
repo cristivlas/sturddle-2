@@ -283,6 +283,10 @@ DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,       7)
 DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,      15)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    124,   20,     200)
 
+#if USE_MOVE_PREDICTION
+DECLARE_VALUE(  MOVE_PREDICTION_MAX_ITER,             3,    0,      10)
+#endif
+
 #if WITH_NNUE
 DECLARE_VALUE(  NNUE_BLEND_PERCENT,                  82,   50,     100)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      459,  400,     600)
