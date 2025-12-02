@@ -139,7 +139,6 @@ namespace
             std::cout.flush();
     }
 
-    /** Raise ValueError exception, and exit with error (see dtor of GIL_State) */
     template <typename... Args>
     [[noreturn]] void raise_value_error(std::format_string<Args...> fmt, Args&&... args)
     {
@@ -536,7 +535,7 @@ public:
         {
             _options.emplace("algorithm", std::make_unique<OptionAlgo>(_algorithm));
             _options.emplace("debug", std::make_unique<OptionBool>("Debug", _debug));
-             _options.emplace("weightsfile", std::make_unique<OptionWeights>());
+            _options.emplace("weightsfile", std::make_unique<OptionWeights>());
         }
         _options.emplace("bestbookmove", std::make_unique<OptionBool>("BestBookMove", _best_book_move));
         _options.emplace("ownbook", std::make_unique<OptionBool>("OwnBook", _use_opening_book));
@@ -1134,7 +1133,7 @@ void UCI::go(const Arguments &args)
                 ctxt->set_time_ctrl(ctrl);
             }
         };
-        /* search synchronously */
+
         _score = search(set_time_limit);
         /* Do not request to ponder below 100 ms per move. */
         output_best_move(movetime >= 100);
