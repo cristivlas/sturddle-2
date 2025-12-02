@@ -1273,7 +1273,7 @@ def version():
 # ---------------------------------------------------------------------
 # Call native C++ UCI implementation
 # ---------------------------------------------------------------------
-def uci(name: str, debug: bool=False):
+def uci(name: str, debug: bool, dev_mode: bool):
     cdef unordered_map[string, string] c_param
     param = {
         'dir': os.path.dirname(__file__),
@@ -1282,6 +1282,9 @@ def uci(name: str, debug: bool=False):
     }
     if debug:
         param['debug'] = 'true'
+
+    if dev_mode:
+        param['dev_mode'] = 'true'
 
     for k,v in param.items():
         c_param[k.encode()] = v.encode()

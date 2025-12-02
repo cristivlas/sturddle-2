@@ -100,6 +100,7 @@ def _configure_logging(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Sturddle Chess Engine')
+    parser.add_argument('-D', '--dev-mode', action='store_true', help='enable developer-mode features')
     parser.add_argument('-l', '--logfile', default='sturddle.log')
     parser.add_argument('-s', '--separate-logs', action='store_true')
     parser.add_argument('-v', '--verbose', action='store_true', help='enable verbose logging')
@@ -110,7 +111,7 @@ if __name__ == '__main__':
     engine = load_engine()
     assert engine, 'Failed to load engine.'
     try:
-        engine.uci('Sturddle', debug=args.verbose)
+        engine.uci('Sturddle', debug=args.verbose, dev_mode=args.dev_mode)
     except KeyboardInterrupt:
         pass
     except Exception as e:

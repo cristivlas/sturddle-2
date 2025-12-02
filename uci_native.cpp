@@ -532,11 +532,13 @@ public:
         if (_ponder)
             ensure_background_thread();
 
-    #if DEV_MODE
-        _options.emplace("algorithm", std::make_unique<OptionAlgo>(_algorithm));
-    #endif
+        if (params["dev_mode"] == "true")
+        {
+            _options.emplace("algorithm", std::make_unique<OptionAlgo>(_algorithm));
+            _options.emplace("debug", std::make_unique<OptionBool>("Debug", _debug));
+             _options.emplace("weightsfile", std::make_unique<OptionWeights>());
+        }
         _options.emplace("bestbookmove", std::make_unique<OptionBool>("BestBookMove", _best_book_move));
-        _options.emplace("debug", std::make_unique<OptionBool>("Debug", _debug));
         _options.emplace("ownbook", std::make_unique<OptionBool>("OwnBook", _use_opening_book));
         _options.emplace("ponder", std::make_unique<OptionBool>("Ponder", _ponder));
 
@@ -544,9 +546,6 @@ public:
         _options.emplace("syzygypath", std::make_unique<OptionSyzygy>());
     #endif /* USE_ENDTABLES */
 
-    #if DEV_MODE
-        _options.emplace("weightsfile", std::make_unique<OptionWeights>());
-    #endif
         if (can_change_priority())
             _options.emplace("highpriority", std::make_unique<OptionBool>("HighPriority", _high_priority));
     }
