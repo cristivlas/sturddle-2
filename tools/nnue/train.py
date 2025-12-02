@@ -111,9 +111,9 @@ def make_model(args, strategy):
         return loss
 
 
-    class UnpackLayer(tf.keras.layers.Layer):
+    class Unpack(tf.keras.layers.Layer):
         def __init__(self, num_outputs, **kwargs):
-            super(UnpackLayer, self).__init__(**kwargs)
+            super(Unpack, self).__init__(**kwargs)
             self.num_outputs = num_outputs
 
         def call(self, packed):
@@ -122,7 +122,7 @@ def make_model(args, strategy):
             f = tf.concat([tf_unpack_bits(bitboards), turn], axis=1)
             return tf.cast(f, tf.float32)
 
-    class BucketShiftLayer(tf.keras.layers.Layer):
+    class BucketShift(tf.keras.layers.Layer):
         def call(self, features):
             # Extract already-unpacked pawn bits from features
             # Pawns are pieces index 2 (white) and 3 (black) in the 12 bitboards
@@ -159,7 +159,7 @@ def make_model(args, strategy):
 
         # Define the input layer
         input_layer = Input(shape=(13,), dtype=tf.uint64, name='input')
-        unpack_layer = UnpackLayer(args.hot_encoding, name='unpack')(input_layer)
+        unpack_layer = Unpack(args.hot_encoding, name='unpack')(input_layer)
 
         def black_occupied_mask(x):
             mask = tf.zeros_like(x[:, :64])
@@ -181,7 +181,7 @@ def make_model(args, strategy):
         concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
 
         # Apply bucketing
-        bucketed = BucketShiftLayer(name='bucket_shift')(concat)
+        bucketed = BucketShift(name='bucket_shift')(concat)
 
         constr_a = QConstraint(Q_MIN_A, Q_MAX_A)
         hidden_1a = Dense(
