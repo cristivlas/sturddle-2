@@ -329,10 +329,10 @@ static struct Model
             + LMOVES.param_count()
         #endif
             ;
-            constexpr auto expected_size = param_count * sizeof(float);
-            const auto file_size = std::filesystem::file_size(weights_path);
-            if (file_size != expected_size)
-                throw std::runtime_error(weights_path.string() + ": expected " + std::to_string(expected_size) + " bytes, got " + std::to_string(file_size));
+        constexpr auto expected_size = param_count * sizeof(float);
+        const auto file_size = std::filesystem::file_size(weights_path);
+        if (file_size != expected_size)
+            throw std::runtime_error(weights_path.string() + ": expected " + std::to_string(expected_size) + " bytes, got " + std::to_string(file_size));
     }
 
     void load_weights(const std::filesystem::path& weights_path)
