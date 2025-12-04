@@ -393,6 +393,11 @@ namespace nnue
             set_weights(w, b);
         }
 
+        static constexpr size_t param_count()
+        {
+            return (I + 1) * O;
+        }
+
         void set_weights(const float(&w)[I][OUTPUTS], const float(&b)[OUTPUTS])
         {
             for (int j = 0; j != OUTPUTS; ++j)

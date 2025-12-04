@@ -297,7 +297,6 @@ using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* 
 using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2>;
 using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
 using EVALType = nnue::Layer<HIDDEN_3, 1>;
-using LMOVEType = nnue::Layer<INPUTS_A, 4096, int16_t, nnue::QSCALE>;
 
 /*
  * The accumulator takes the inputs and processes them into two outputs,
@@ -308,6 +307,8 @@ using LMOVEType = nnue::Layer<INPUTS_A, 4096, int16_t, nnue::QSCALE>;
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
 using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
 
+using LMOVEType = nnue::Layer<INPUTS_A / Accumulator::NUM_BUCKETS, 4096, int16_t, nnue::QSCALE>;
+
 /* Each thread uses its own stack */
 static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
 
@@ -315,23 +316,53 @@ static struct Model
 {
     void init();
 
+    void validate_weights_file(const std::filesystem::path& weights_path)
+    {
+        constexpr auto param_count =
+            L1A.param_count()
+            + L1B.param_count()
+            + LATTN.param_count()
+            + L2.param_count()
+            + L3.param_count()
+            + EVAL.param_count()
+        #if USE_MOVE_PREDICTION
+            + LMOVES.param_count()
+        #endif
+            ;
+            constexpr auto expected_size = param_count * sizeof(float);
+            const auto file_size = std::filesystem::file_size(weights_path);
+            if (file_size != expected_size)
+                throw std::runtime_error(weights_path.string() + ": expected " + std::to_string(expected_size) + " bytes, got " + std::to_string(file_size));
+    }
+
     void load_weights(const std::filesystem::path& weights_path)
     {
+        validate_weights_file(weights_path);
+
         std::ifstream file(weights_path, std::ios::binary);
         if (!file)
             throw std::runtime_error("Could not open weights file: " + weights_path.string());
 
-        /* Load layers in the same order that the trainer exports them. */
-        L1B.load_weights(file);
-        L1A.load_weights(file);
-        LATTN.load_weights(file);
-        L2.load_weights(file);
-        L3.load_weights(file);
-        EVAL.load_weights(file);
+        file.exceptions(std::ios::failbit | std::ios::badbit);
 
-    #if USE_MOVE_PREDICTION
-        LMOVES.load_weights(file);
-    #endif
+        try
+        {
+            /* Load layers in the same order that the trainer exports them. */
+            L1B.load_weights(file);
+            L1A.load_weights(file);
+            LATTN.load_weights(file);
+            L2.load_weights(file);
+            L3.load_weights(file);
+            EVAL.load_weights(file);
+
+        #if USE_MOVE_PREDICTION
+            LMOVES.load_weights(file);
+        #endif
+        }
+        catch (const std::exception&)
+        {
+            throw std::runtime_error("Error reading weights from: " + weights_path.string());
+        }
         Context::log_message(LogLevel::INFO, "Loaded " + weights_path.string());
     }
 
