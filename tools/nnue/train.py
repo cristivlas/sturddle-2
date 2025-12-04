@@ -78,6 +78,10 @@ def make_model(args, strategy):
     @tf.function
     def combined_loss(y_true, y_pred):
         """Combine eval with game outcome (WDL) losses"""
+
+        y_true = tf.cast(y_true, tf.float32)
+        y_pred = tf.cast(y_pred, tf.float32)
+
         eval_target = y_true[:, 0:1]
 
         if args.clip_eval:
@@ -209,6 +213,14 @@ def make_model(args, strategy):
             trainable=not args.freeze_eval,
         )(input_1b)
 
+        # Experiment: pawns "reconstruction" auto-encoder
+        if args.pawn_reconstruction:
+            pawn_bits = Lambda(lambda x: x[:, 128:256], name='pawn_target')(unpack_layer)
+            pawn_bits = tf.cast(pawn_bits, tf.float32)
+            pawn_recon = Dense(128, activation='sigmoid', name='pawn_recon', trainable=not args.freeze_eval)(hidden_1b)
+            pawn_recon = tf.cast(pawn_recon, tf.float32)
+            recon_loss = tf.reduce_mean(tf.keras.losses.binary_crossentropy(pawn_bits, pawn_recon))
+
         spatial_attn = Dense(ATTN_FAN_OUT, activation=None, name='spatial_attn', trainable=not args.freeze_eval)(hidden_1b)
 
         def custom_pooling(x):
@@ -270,6 +282,10 @@ def make_model(args, strategy):
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=outputs, name=args.name)
 
+        if args.pawn_reconstruction:
+            model.add_loss(args.pawn_weight * recon_loss)
+            model.add_metric(recon_loss, name='pawns')
+
         if args.optimizer in ['adam', 'amsgrad']:
             optimizer=tf.keras.optimizers.Adam(
                 amsgrad=args.optimizer=='amsgrad',
@@ -326,6 +342,8 @@ def make_model(args, strategy):
                 Uses label smoothing and temperature scaling.
                 """
                 # y_true: move_indices
+                y_true = tf.cast(y_true, tf.int32)
+                y_pred = tf.cast(y_pred, tf.float32)
 
                 # Apply temperature scaling to logits to reduce magnitude
                 temperature = tf.constant(args.move_temperature, dtype=tf.float32)
@@ -426,6 +444,9 @@ def write_weigths(args, model, indent=2):
 
 def write_binary_weights(args, model, file):
     for layer in model.layers:
+        if layer.name == 'pawn_recon':
+            continue
+
         weights = layer.get_weights()
         if len(weights) == 2:
             kernel, bias = weights
@@ -465,6 +486,9 @@ def load_binary_weights(args, model, file):
             # Read kernel weights
             kernel_size = np.prod(kernel.shape)
             kernel_data = np.fromfile(file, dtype=np.float32, count=kernel_size)
+            if kernel_data.size == 0:
+                print(f"{layer.name}: skipped empty data")
+                continue
             kernel_data = kernel_data.reshape(kernel.shape)
 
             # Read bias weights
@@ -843,6 +867,8 @@ def main(args):
     if alt_model:
         set_weights(alt_model, model)
         print(f'Applied alternate weights from {os.path.abspath(args.alt_model)}.')
+
+    if args.save_model:
         tf.keras.models.save_model(model, args.model)
 
     if args.plot_file:  # Display the model architecture
@@ -949,6 +975,7 @@ if __name__ == '__main__':
         parser.add_argument('--freeze-eval', action='store_true')
         parser.add_argument('--hex', action='store_true', help='export weights in hex format')
         parser.add_argument('--import-file', help='import weights from binary file')
+        parser.add_argument('--save-model', action='store_true', help='save model immediately, use with --import and/or --alt-model')
 
         parser.add_argument('--loss-bce', action='store_true', help='use binary cross-entropy loss (default is MSE)')
         parser.add_argument('--loss-mae', action='store_true', help='use mean absolute error loss (defaule is MSE)')
@@ -958,6 +985,10 @@ if __name__ == '__main__':
 
         parser.add_argument('--outcome-weight', type=float, default=0.1, help='weight for outcome loss vs eval loss')
         parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
+
+        # Experimental, pawn structure
+        parser.add_argument('--pawn-reconstruction', action='store_true')
+        parser.add_argument('--pawn-weight', type=float, default=0.025)
 
         # Move prediction related arguments
         parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')
