@@ -319,14 +319,14 @@ static struct Model
     void validate_weights_file(const std::filesystem::path& weights_path)
     {
         constexpr auto param_count =
-            L1A.param_count()
-            + L1B.param_count()
-            + LATTN.param_count()
-            + L2.param_count()
-            + L3.param_count()
-            + EVAL.param_count()
+            L1AType::param_count()
+            + L1BType::param_count()
+            + LAttnType::param_count()
+            + L2Type::param_count()
+            + L3Type::param_count()
+            + EVALType::param_count()
         #if USE_MOVE_PREDICTION
-            + LMOVES.param_count()
+            + LMOVEType::param_count()
         #endif
             ;
         constexpr auto expected_size = param_count * sizeof(float);
