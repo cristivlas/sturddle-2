@@ -629,7 +629,7 @@ namespace nnue
         static constexpr int OUTPUTS_A = N;
         static constexpr int OUTPUTS_B = O;
 
-        static constexpr size_t MAX_DELTA = 32; /* total pieces */
+        static constexpr int MAX_DELTA = 32; /* total pieces */
         static constexpr int NUM_BUCKETS = 4;
 
         struct Bucket
