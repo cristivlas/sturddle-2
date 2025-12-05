@@ -67,7 +67,7 @@ namespace nnue
 
     constexpr int ACTIVE_INPUTS = 897;
     constexpr int EVAL_SCALE = 100;
-
+    constexpr int MAX_ACTIVE_INPUTS = 65; // 32 pieces + 32 occupancy mask + turn
     constexpr auto POOL_STRIDE = Vec8s::size();
     constexpr int QSCALE = 1024;
 
@@ -209,8 +209,10 @@ namespace nnue
         const auto& color_masks = board._occupied_co;
         int i = 63;
 
+        #pragma unroll 6
         for (const auto bb : {board.kings, board.pawns, board.knights, board.bishops, board.rooks, board.queens})
         {
+            #pragma unroll 2
             for (const auto mask : color_masks)
             {
                 for_each_square_r((bb & mask), [&](Square j) { encoding[i - j] = 1; });
@@ -510,9 +512,9 @@ namespace nnue
             }
 
             // Collect active indices
-            int active[65];
+            int active[MAX_ACTIVE_INPUTS];
             int count = 0;
-            for_each_active([&](int idx) { ASSERT(count < 65); active[count++] = idx; });
+            for_each_active([&](int idx) { ASSERT(count < MAX_ACTIVE_INPUTS); active[count++] = idx; });
 
             // Add weights, looping over outputs once
             for (int j = 0; j < OUTPUTS; j += VecShort::size())
@@ -628,8 +630,6 @@ namespace nnue
         static constexpr int INPUTS = round_up<INPUT_STRIDE>(M);
         static constexpr int OUTPUTS_A = N;
         static constexpr int OUTPUTS_B = O;
-
-        static constexpr int MAX_DELTA = 32; /* total pieces */
         static constexpr int NUM_BUCKETS = 4;
 
         struct Bucket
@@ -703,7 +703,7 @@ namespace nnue
         }
 
         /** Utility for incremental updates */
-        static INLINE void delta(int (&d)[MAX_DELTA], int& idx, PieceType pt, Color col, Square sq)
+        static INLINE void delta(int (&d)[MAX_ACTIVE_INPUTS], int& idx, PieceType pt, Color col, Square sq)
         {
             d[idx++] = piece_square_index(pt, col, sq);
             d[idx++] = mask_index(col, sq);
@@ -728,16 +728,16 @@ namespace nnue
             /* compute delta based on ancestor state */
             ASSERT(prev.turn != state.turn);
 
-            int remove_inputs[MAX_DELTA];
-            int add_inputs[MAX_DELTA];
+            int remove_inputs[MAX_ACTIVE_INPUTS];
+            int add_inputs[MAX_ACTIVE_INPUTS];
             int r_idx = 0, a_idx = 0;
 
             if (move)
             {
                 get_deltas(prev, state, move, prev.turn, remove_inputs, add_inputs, r_idx, a_idx);
 
-                ASSERT(a_idx < MAX_DELTA);
-                ASSERT(r_idx < MAX_DELTA);
+                ASSERT(a_idx < MAX_ACTIVE_INPUTS);
+                ASSERT(r_idx < MAX_ACTIVE_INPUTS);
             }
 
         #if DEBUG_INCREMENTAL
@@ -783,12 +783,12 @@ namespace nnue
             #else
                 using VecShort = Vec32s;
             #endif
+                static_assert(OUTPUTS_A % VecShort::size() == 0);
 
-                VecShort vo, vw_old, vw_new;
-
-                // Correct for weight differences on active inputs (using prev state, not state!)
                 auto apply_delta = [&](int idx)
                 {
+                    VecShort vo, vw_old, vw_new;
+
                     for (int j = 0; j < OUTPUTS_A; j += VecShort::size())
                     {
                         vo.load_a(&_bucket[bucket].output[j]);
@@ -798,7 +798,6 @@ namespace nnue
                         vo.store_a(&_bucket[bucket].output[j]);
                     }
                 };
-
                 for_each_active_input(prev, apply_delta);
 
                 // Now _bucket[bucket].output has correct output for prev position with bucket weights
@@ -834,8 +833,8 @@ namespace nnue
         INLINE void incremental_update(
             const LA& layer_a,
             const LB& layer_b,
-            const int (&remove_inputs)[MAX_DELTA],
-            const int (&add_inputs)[MAX_DELTA],
+            const int (&remove_inputs)[MAX_ACTIVE_INPUTS],
+            const int (&add_inputs)[MAX_ACTIVE_INPUTS],
             const int r_idx,
             const int a_idx,
             size_t base,
@@ -922,8 +921,8 @@ namespace nnue
             const State& to_pos,
             const Move& move,
             Color color, /* color of side that moved */
-            int (&remove)[MAX_DELTA],
-            int (&add)[MAX_DELTA],
+            int (&remove)[MAX_ACTIVE_INPUTS],
+            int (&add)[MAX_ACTIVE_INPUTS],
             int& r_idx,
             int& a_idx)
         {
@@ -1006,7 +1005,7 @@ namespace nnue
 
 
     template <typename LM>
-    INLINE void score_move(const LM& layer_m, const int (&active)[65], int count, Move& move)
+    INLINE void score_move(const LM& layer_m, const int (&active)[MAX_ACTIVE_INPUTS], int count, Move& move)
     {
         const auto index = move.from_square() * 64 + move.to_square();
 
