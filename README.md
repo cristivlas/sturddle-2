@@ -4,6 +4,7 @@ Sturddle 2 is a fork of my Sturddle Chess Engine (https://github.com/cristivlas/
 with many bug fixes and a rewritten (and trained from scratch) neural network.
 
 ## Building the Engine
+
 Python (3.9 or higher) and a working C++ compiler are required. The compiler must support
 the C++ 20 standard. Clang 16 or higher is recommended (clang-cl.exe on Windows).
 The GNU C++ compiler and the Microsoft Compiler may work but are not well tested.
@@ -20,19 +21,15 @@ To build just a python module:
 <code>python3 setup.py build_ext --inplace</code>
 or:
 <code>CC=clang++ CFLAGS=-march=native python3 setup.py build_ext --inplace</code>
-or:
-<code>CC=clang++ CFLAGS=-march=native NATIVE_UCI=1 python3 setup.py build_ext --inplace</code>
-
-
-
-If built with the `NATIVE_UCI` flag, invoke `main.py` to run the UCI engine.
-Without the `NATIVE_UCI` flag, run `sturddle.py` instead.
 
 # Neural Net Architecture
 ![plot](./model.png)
 
 Inference runs on the CPU using vectorized instructions.
-The Intel, ARM v7 / ARM64 with NEON architectures are supported.
+The x86_64 and ARM64 with NEON architectures are supported.
+To enable half precision on ARM processors that support it, set CXXFLAGS or CFLAGS:
+CFLAGS="march=armv8.2-a+fp16"
+
 
 ## Tuning the Engine
 
