@@ -23,13 +23,13 @@ def extract_metrics(file_path):
                 hyperparams.append(hyperparam_str)
 
             # Try to match MAE
-            mae_match = re.search(r'epoch=\d+ mae=([\d.]+)', line)
+            mae_match = re.search(r'epoch=\d+ .*mae=([\d.]+)', line)
             if mae_match:
                 mae = mae_match.groups()[0]
                 mae_values.append(float(mae))
 
             # Try to match accuracy
-            accuracy_match = re.search(r'epoch=\d+ accuracy=([\d.]+)', line)
+            accuracy_match = re.search(r'epoch=\d+ .*accuracy=([\d.]+)', line)
             if accuracy_match:
                 accuracy = accuracy_match.groups()[0]
                 accuracy_values.append(float(accuracy))
