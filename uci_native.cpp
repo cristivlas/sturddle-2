@@ -10,14 +10,6 @@
 namespace fs = std::filesystem;
 using Params = std::unordered_map<std::string, std::string>;
 
-/** Raise RuntimeError, and let Python handle it... */
-static void raise_runtime_error(const char* err)
-{
-    PyGILState_STATE with_gil(PyGILState_Ensure());
-    PyErr_SetString(PyExc_RuntimeError, err);
-    PyGILState_Release(with_gil);
-}
-
 #if NATIVE_UCI /* requires compiler with C++20 support */
 #include <cmath>
 #include <format>
@@ -30,7 +22,9 @@ static void raise_runtime_error(const char* err)
 #include <string_view>
 #include <sstream>
 #include <vector>
-#if !_WIN32
+#if _WIN32
+  #include <tlhelp32.h>
+#else
   #include <unistd.h>
   #include <sys/resource.h>
 #endif /* !_WIN32 */
@@ -92,7 +86,7 @@ namespace
 
     template <typename T> static void log_debug(T msg)
     {
-        search::Context::log_message(LogLevel::DEBUG, std::to_string(msg));
+        search::Context::log_message(LogLevel::DEBUG, std::to_string(msg), true);
     }
 
     template <typename T> static void log_info(T info)
@@ -145,23 +139,11 @@ namespace
             std::cout.flush();
     }
 
-    /** Raise ValueError exception, and exit with error (see dtor of GIL_State) */
     template <typename... Args>
-    void raise_value_error(std::format_string<Args...> fmt, Args&&... args)
+    [[noreturn]] void raise_value_error(std::format_string<Args...> fmt, Args&&... args)
     {
-        const auto err = std::format(fmt, std::forward<Args>(args)...);
-        cython_wrapper::GIL_State with_gil;
-        log_error(err);
-        PyErr_SetString(PyExc_ValueError, err.c_str());
+        throw std::invalid_argument(std::format(fmt, std::forward<Args>(args)...));
     }
-
-    /*
-    https://stackoverflow.com/questions/27866909/get-function-arity-from-template-parameter
-    */
-    template <typename T> struct arity {};
-
-    template <typename R, typename C, typename... Args>
-    struct arity<R (C::*)(Args...)> : std::integral_constant<unsigned, sizeof...(Args)> {};
 
     template <typename T> INLINE int to_int(T v)
     {
@@ -169,13 +151,13 @@ namespace
         {
             return std::stoi(std::string(v));
         }
-        catch(const std::exception&)
+        catch(const std::exception& e)
         {
             if (v == "false")
                 return 0;
             if (v == "true")
                 return 1;
-            throw;
+            raise_value_error("to_int({}): {}", v, e.what());
         }
     }
 
@@ -200,7 +182,9 @@ namespace
     struct Option
     {
         virtual ~Option() = default;
-        virtual void print(std::ostream &) const = 0;
+
+        /* if show_default is true, print the default, otherwise show the = value */
+        virtual void print(std::ostream &, bool show_default = true) const = 0;
         virtual void set(std::string_view value) = 0;
     };
 
@@ -208,7 +192,7 @@ namespace
     {
         const std::string _name;
         explicit OptionBase(const std::string &name) : _name(name) {}
-        void print(std::ostream &out) const override { out << _name << " "; }
+        void print(std::ostream &out, bool) const override { out << _name << " "; }
     };
 
     struct OptionAlgo : public OptionBase
@@ -216,10 +200,13 @@ namespace
         search::Algorithm &_algo;
 
         explicit OptionAlgo(search::Algorithm& algo) : OptionBase("Algorithm"), _algo(algo) {}
-        void print(std::ostream &out) const override
+        void print(std::ostream &out, bool show_default) const override
         {
-            OptionBase::print(out);
-            out << "type combo default " << name(_algo) << " var mtdf var negascout var negamax";
+            OptionBase::print(out, show_default);
+            if (show_default)
+                out << "type combo default mtdf var mtdf var negascout var negamax";
+            else
+                out << "type combo = " << name(_algo) << " var mtdf var negascout var negamax";
         }
         std::string_view name(search::Algorithm algo) const
         {
@@ -241,16 +228,20 @@ namespace
 
     struct OptionBool : public OptionBase
     {
+        const bool _default_val;
         bool &_b;
 
-        OptionBool(const std::string &name, bool &b) : OptionBase(name), _b(b)
+        OptionBool(const std::string &name, bool &b) : OptionBase(name), _default_val(b), _b(b)
         {
         }
 
-        void print(std::ostream &out) const override
+        void print(std::ostream &out, bool show_default) const override
         {
-            OptionBase::print(out);
-            out << "type check default " << std::boolalpha << _b;
+            OptionBase::print(out, show_default);
+            if (show_default)
+                out << "type check default " << std::boolalpha << _default_val;
+            else
+                out << "type check = " << std::boolalpha << _b;
         }
 
         void set(std::string_view value) override
@@ -268,21 +259,41 @@ namespace
 
         OptionParam(const std::string &name, const Param &param) : OptionBase(name), _p(param) {}
 
-        void print(std::ostream &out) const override
+        void print(std::ostream &out, bool show_default) const override
         {
-            OptionBase::print(out);
-            if (_p.min_val == 0 && _p.max_val == 1)
+            OptionBase::print(out, show_default);
+
+            if (show_default)
             {
-                out << "type check default " << std::boolalpha << bool(_p.val);
-            }
-            else if (_p.normal)
-            {
-                const auto scaled_val = 2.0 * (_p.val - _p.min_val) / (_p.max_val - _p.min_val) - 1;
-                out << "type string default " << scaled_val;
+                if (_p.min_val == 0 && _p.max_val == 1)
+                {
+                    out << "type check default " << std::boolalpha << bool(_p.default_val);
+                }
+                else if (_p.normal)
+                {
+                    const auto scaled_val = 2.0 * (_p.default_val - _p.min_val) / (_p.max_val - _p.min_val) - 1;
+                    out << "type string default " << scaled_val;
+                }
+                else
+                {
+                    out << "type spin default " << _p.default_val << " min " << _p.min_val << " max " << _p.max_val;
+                }
             }
             else
             {
-                out << "type spin default " << _p.val << " min " << _p.min_val << " max " << _p.max_val;
+                if (_p.min_val == 0 && _p.max_val == 1)
+                {
+                    out << "type check = " << std::boolalpha << bool(_p.val);
+                }
+                else if (_p.normal)
+                {
+                    const auto scaled_val = 2.0 * (_p.val - _p.min_val) / (_p.max_val - _p.min_val) - 1;
+                    out << "type string = " << scaled_val;
+                }
+                else
+                {
+                    out << "type spin = " << _p.val << " min " << _p.min_val << " max " << _p.max_val;
+                }
             }
         }
 
@@ -306,27 +317,100 @@ namespace
     {
         OptionSyzygy() : OptionBase("SyzygyPath") {}
 
-        void print(std::ostream& out) const override
+        void print(std::ostream& out, bool show_default) const override
         {
-            OptionBase::print(out);
+            OptionBase::print(out, show_default);
             out << "type string";
-            const auto &path = search::Context::syzygy_path();
-            if (!path.empty())
-                out << " default " << path;
+
+            if (show_default)
+            {
+                /* default setting is empty */
+            }
+            else
+            {
+                const auto &path = search::Context::syzygy_path();
+                if (!path.empty()) out << " = " << path;
+            }
         }
 
         void set(std::string_view value) override
         {
-            cython_wrapper::call(search::Context::_set_syzygy_path, std::string(value));
+            search::Context::set_syzygy_path(std::string(value));
+        }
+    };
+
+    class OptionWeights : public OptionBase
+    {
+        std::string _current_path; /* empty == built-in */
+
+    public:
+        OptionWeights() : OptionBase("WeightsFile") {}
+
+        void print(std::ostream& out, bool show_default) const override
+        {
+            OptionBase::print(out, show_default);
+            out << "type string";
+
+            if (show_default)
+            {
+                /* default is empty (use built-ins) */
+            }
+            else if (!_current_path.empty())
+            {
+                out << " = " << _current_path;
+            }
+        }
+
+        void set(std::string_view value) override
+        {
+            if (value != _current_path)
+            {
+                _current_path = value;
+                search::Context::load_weights(_current_path);
+            }
         }
     };
 } /* namespace */
 
 
-/* Return true if a console is allocated. */
-bool _ensure_console()
-{
 #if _WIN32
+/*
+ * Helpers for manage_console (see below).
+ */
+static DWORD get_parent_pid(DWORD processId)
+{
+    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnapshot == INVALID_HANDLE_VALUE)
+        return 0;
+
+    auto cleanup = on_scope_exit([hSnapshot]() {
+        CloseHandle(hSnapshot);
+    });
+
+    PROCESSENTRY32 pe32 = {};
+    pe32.dwSize = sizeof(PROCESSENTRY32);
+
+    if (!Process32First(hSnapshot, &pe32))
+        return 0;
+
+    do {
+        if (pe32.th32ProcessID == processId)
+        {
+            std::string name(pe32.szExeFile);
+
+            // Running as a python script? bail
+            if (lowercase(name).starts_with("python"))
+                return 0;
+
+            return pe32.th32ParentProcessID;
+        }
+    } while (Process32Next(hSnapshot, &pe32));
+
+    return 0;
+}
+
+static bool ensure_console()
+{
     if (!GetConsoleWindow())
     {
         if (!AllocConsole())
@@ -344,9 +428,70 @@ bool _ensure_console()
             return true;
         }
     }
-#endif /* _WIN32 */
     return false;
 }
+
+
+/*
+ * An improved solution for: https://github.com/cristivlas/sturddle-2/issues/11
+ *
+ * Currently the engine runs from under the PyInstaller bootloader, and, under some
+ * GUIs such as Shredder, an extra console pops up. The solution for recent Windows 11
+ * builds is to use the "detached" setting in a manifest file at build time
+ * (https://learn.microsoft.com/en-us/windows/console/console-allocation-policy).
+ *
+ * On older Windows versions: call FreeConsole if console detected in chess GUI mode.
+ *
+ * Return true if a console was allocated.
+ */
+static bool manage_console()
+{
+    /* Use STDIN handle to detect how the engine is being run. */
+    const HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+
+    DWORD mode = 0;
+
+    if (GetConsoleMode(h, &mode))
+    {
+        if (auto wnd = GetConsoleWindow())
+        {
+            DWORD consolePID = 0;
+            GetWindowThreadProcessId(wnd, &consolePID);
+
+            const auto ourPID = GetProcessId(GetCurrentProcess());
+            return (ourPID == consolePID) || get_parent_pid(ourPID) == consolePID;
+        }
+    }
+    else if (GetFileType(h) == FILE_TYPE_PIPE)
+    {
+        /* STDIN is attached to a pipe, assume it is running under a chess GUI. */
+        /* GUIs connect pipes to the engine's standard input and output to send */
+        /* UCI command and to read back responses. */
+
+        /* Do away with console window if detected. */
+        if (GetConsoleWindow())
+        {
+            FreeConsole();
+        }
+    }
+    else
+    {
+        /* The engine was likely started by the user double clicking in explorer.exe */
+        /* or in some other file manager. The user likely wants to test the engine by */
+        /* entering UCI commands manually, so make sure that there is a console. */
+        return ensure_console();
+    }
+    return false;
+}
+
+#else
+
+/* No action needed on POSIX. TODO: Test on Mac */
+static bool manage_console()
+{
+    return false;
+}
+#endif /* _WIN32 */
 
 
 class UCI
@@ -372,10 +517,10 @@ public:
 
         search::Context::_history = std::make_unique<search::History>();
 
-        log_debug(std::format("Context size: {}", sizeof(search::Context)));
-        log_debug(std::format("ContextBuffer size: {}", sizeof(search::ContextBuffer)));
-        log_debug(std::format("State size: {}", sizeof(chess::State)));
-        log_debug(std::format("TT_Entry size: {}", sizeof(search::TT_Entry)));
+        LOG_DEBUG(std::format("Context size: {}", sizeof(search::Context)));
+        LOG_DEBUG(std::format("ContextBuffer size: {}", sizeof(search::ContextBuffer)));
+        LOG_DEBUG(std::format("State size: {}", sizeof(chess::State)));
+        LOG_DEBUG(std::format("TT_Entry size: {}", sizeof(search::TT_Entry)));
 
         set_start_position();
 
@@ -386,15 +531,19 @@ public:
         if (_ponder)
             ensure_background_thread();
 
-        _options.emplace("algorithm", std::make_unique<OptionAlgo>(_algorithm));
+        if (params["dev_mode"] == "true")
+        {
+            _options.emplace("algorithm", std::make_unique<OptionAlgo>(_algorithm));
+            _options.emplace("debug", std::make_unique<OptionBool>("Debug", _debug));
+            _options.emplace("weightsfile", std::make_unique<OptionWeights>());
+        }
         _options.emplace("bestbookmove", std::make_unique<OptionBool>("BestBookMove", _best_book_move));
-        _options.emplace("debug", std::make_unique<OptionBool>("Debug", _debug));
         _options.emplace("ownbook", std::make_unique<OptionBool>("OwnBook", _use_opening_book));
         _options.emplace("ponder", std::make_unique<OptionBool>("Ponder", _ponder));
 
     #if USE_ENDTABLES
         _options.emplace("syzygypath", std::make_unique<OptionSyzygy>());
-    #endif /*USE_ENDTABLES */
+    #endif /* USE_ENDTABLES */
 
         if (can_change_priority())
             _options.emplace("highpriority", std::make_unique<OptionBool>("HighPriority", _high_priority));
@@ -418,6 +567,7 @@ private:
     void newgame();
 
     void set_high_priority(bool);
+    void show_settings();
 
     /** Context callbacks */
     static void on_iteration(PyObject *, search::Context *, const search::IterationInfo *);
@@ -633,7 +783,7 @@ struct Info : public search::IterationInfo
         , hashfull(search::TranspositionTable::usage() * 10)
         , iteration(ctxt.iteration())
         , brief(milliseconds < TIME_LOW || !ctxt._best_move)
-        , pv(brief ? &no_pv : pv = &ctxt.get_pv())
+        , pv(brief ? &no_pv : &ctxt.get_pv())
     {}
 };
 
@@ -659,15 +809,23 @@ static void INLINE format_info(const Info& info)
         }
         std::format_to(
             std::back_inserter(g_out),
-            "info score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} pv",
-            score_unit,
-            score,
-            info.iteration,
-            info.eval_depth,
-            info.milliseconds,
-            info.nodes,
-            int(info.knps * 1000),
-            info.hashfull);
+        #if USE_ENDTABLES
+            "info score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} tbhits {} pv"
+        #else
+            "info score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} pv"
+        #endif
+            , score_unit
+            , score
+            , info.iteration
+            , info.eval_depth
+            , info.milliseconds
+            , info.nodes
+            , int(info.knps * 1000)
+            , info.hashfull
+        #if USE_ENDTABLES
+            , info.tbhits
+        #endif
+            );
 
         /* output PV */
         for (size_t i = 1; i < info.pv->size(); ++i)
@@ -799,6 +957,11 @@ INLINE void UCI::dispatch(std::string &cmd, const Arguments &args)
             setoption(args);
             return;
         }
+        if (tok == "settings")
+        {
+            show_settings();
+            return;
+        }
         if (tok == "stop")
         {
             stop();
@@ -831,11 +994,11 @@ INLINE const auto &next(const T &v, size_t &i)
 void UCI::debug()
 {
 #if _WIN32
-    bool use_unicode = false; /* cmd does not support unicode */
+    const bool use_unicode = (_isatty(_fileno(stdout)) && GetConsoleOutputCP() == CP_UTF8);
 #else
-    bool use_unicode = true;
+    const bool use_unicode = true;
 #endif
-    cython_wrapper::call(search::Context::_print_state, _buf._state, use_unicode);
+    search::Context::print_board(std::cout, _buf._state, use_unicode);
     output(std::format("fen: {}", search::Context::epd(_buf._state)));
     output(std::format("hash: {}", _buf._state._hash));
     size_t history_size = 0;
@@ -970,7 +1133,7 @@ void UCI::go(const Arguments &args)
                 ctxt->set_time_ctrl(ctrl);
             }
         };
-        /* search synchronously */
+
         _score = search(set_time_limit);
         /* Do not request to ponder below 100 ms per move. */
         output_best_move(movetime >= 100);
@@ -1031,6 +1194,20 @@ void UCI::set_high_priority(bool high_priority)
             _current_priority = _high_priority = false; /* prevent future calls */
         }
 #endif /* !_WIN32 */
+    }
+}
+
+void UCI::show_settings()
+{
+    std::cout << "*** Current Settings ***\n";
+
+    refresh_options();
+
+    for (const auto &opt : _options)
+    {
+        std::ostringstream opts;
+        opt.second->print(opts << "option name ", false /* show current, not default*/);
+        output<false>(opts.str());
     }
 }
 
@@ -1196,8 +1373,6 @@ void UCI::uci()
     output<false>(std::format("id name {} {}", _name, _version));
     output<false>("id author Cristian Vlasceanu");
 
-    refresh_options();
-
     /* show available options */
     for (const auto &opt : _options)
     {
@@ -1210,6 +1385,8 @@ void UCI::uci()
 
 void uci_loop(Params params)
 {
+    const auto console_allocated = manage_console();
+
     const auto name = params["name"];
     const auto version = params["version"];
     const auto debug = params["debug"];
@@ -1238,7 +1415,13 @@ void uci_loop(Params params)
     if (!err.empty())
     {
         search::Context::log_message(LogLevel::ERROR, err);
-        raise_runtime_error(err.c_str());
+        std::cerr << err << std::endl;
+
+        if (console_allocated)
+        {
+            std::cerr << "Press Enter to close this console... ";
+            std::cin.get();
+        }
     }
 }
 
@@ -1246,6 +1429,6 @@ void uci_loop(Params params)
 
 void uci_loop(Params params)
 {
-    raise_runtime_error("Native UCI implementation is not enabled.");
+    throw std::runtime_error("Native UCI implementation is not enabled.");
 }
 #endif /* NATIVE_UCI */

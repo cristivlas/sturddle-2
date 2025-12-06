@@ -30,6 +30,10 @@
 #include "thread_pool.hpp"
 #include "utility.h"
 
+#if USE_ENDTABLES
+#include "tbprobe.h"
+#endif
+
 #if __linux__
 #include <sys/sysinfo.h>
 #elif __APPLE__
@@ -158,6 +162,7 @@ void TranspositionTable::clear()
     _null_move_not_ok = 0;
     _reductions = 0;
     _retry_reductions = 0;
+    _tb_hits = 0;
 
     clear_history();
 }
@@ -216,7 +221,20 @@ void TranspositionTable::update_stats(const Context& ctxt)
 }
 
 
-void TranspositionTable::store(Context& ctxt, TT_Entry& entry, TT_Type type, int depth)
+bool TranspositionTable::update_and_store(Context& ctxt, TT_Type tt_type)
+{
+    if (ctxt.depth() > 0 && ctxt.tt_result()._replacement_slot >= 0)
+    {
+        update_entry(ctxt, ctxt.tt_entry(), tt_type, ctxt.depth());
+        _table.store(ctxt.tt_result());
+        return true;
+    }
+
+    return false;
+}
+
+
+void TranspositionTable::update_entry(Context& ctxt, TT_Entry& entry, TT_Type type, int depth)
 {
     ASSERT(ctxt._score > SCORE_MIN);
     ASSERT(ctxt._score < SCORE_MAX);
@@ -408,30 +426,148 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
 #if USE_ENDTABLES
 /*
  * Syzygy endgame tablebase probing (https://www.chessprogramming.org/Syzygy_Bases).
- * This implementation simply calls back into the python-chess library.
  */
-static INLINE bool probe_endtables(Context& ctxt)
+static bool probe_endtables(Context& ctxt, TranspositionTable& table)
 {
-    int v;
-
-    if (  !ctxt.is_root()
-        && ctxt._fifty == 0
-        && ctxt.state().is_endgame()
-        && Context::tb_cardinality() > 0
-        && popcount(ctxt.state().occupied()) <= Context::tb_cardinality()
-        && cython_wrapper::call(Context::_tb_probe_wdl, ctxt.state(), &v))
+    if (!ctxt.is_root() && !ctxt._excluded && ctxt.can_probe_endtables())
     {
-        if (v < -1)
-            ctxt._score = MATE_LOW + ctxt._ply;
-        else if (v > 1)
-            ctxt._score = MATE_HIGH - ctxt._ply;
-        else
-            ctxt._score = v;
-        return true;
+        const auto& board = ctxt.state();
+        const auto result = ::tb_probe_wdl(
+            board.occupied_co(WHITE),
+            board.occupied_co(BLACK),
+            board.kings,
+            board.queens,
+            board.rooks,
+            board.bishops,
+            board.knights,
+            board.pawns,
+            ctxt._fifty,
+            board.castling_rights,
+            board.en_passant_square == Square::UNDEFINED ? 0 : board.en_passant_square,
+            board.turn == WHITE
+        );
+
+        if (result != TB_RESULT_FAILED)
+        {
+            ++table._tb_hits;
+
+            score_t score = 0;
+            TT_Type tt_type = TT_Type::EXACT;
+
+            if (result == TB_WIN)
+            {
+                score = MATE_HIGH - 1 - ctxt._ply;
+                tt_type = TT_Type::LOWER;
+            }
+            else if (result == TB_LOSS)
+            {
+                score = MATE_LOW + 1 + ctxt._ply;
+                tt_type = TT_Type::UPPER;
+            }
+
+            if ((tt_type == TT_Type::EXACT) || (tt_type == TT_Type::LOWER ? score >= ctxt._beta : score <= ctxt._alpha))
+            {
+                ctxt._score = score;
+
+            /* Storing to TT may be a bad idea with MTD(f) -- based on some 2min+2sec empirical play-test evidence. */
+            /* Null-window searches pollute TT with artificial bounds, re-probing TB could be cheaper than TT thrashing? */
+            #if 0
+                table.update_and_store(ctxt, tt_type);
+            #endif
+                return true;
+            }
+        }
     }
     return false;
 }
+
+
+static BaseMove best_move_from_tb_result(unsigned result)
+{
+    ASSERT(result != TB_RESULT_FAILED);
+    static constexpr PieceType PROMO_TABLE[5] = {
+        PieceType::NONE,
+        PieceType::QUEEN,
+        PieceType::ROOK,
+        PieceType::BISHOP,
+        PieceType::KNIGHT,
+    };
+
+    const auto promo = TB_GET_PROMOTES(result);
+    ASSERT(promo >= 0 && promo < 5);
+
+    return chess::BaseMove(Square(TB_GET_FROM(result)), Square(TB_GET_TO(result)), PROMO_TABLE[promo]);
+}
+
+
+static bool probe_root(Context& ctxt, TranspositionTable& table)
+{
+    ASSERT(ctxt.is_root());
+
+    /* tb_probe_root not thread-safe, main-thread only */
+    if (ctxt.tid() == 0 && ctxt.can_probe_endtables())
+    {
+        const auto& board = ctxt.state();
+        const auto result = tb_probe_root(
+            board.occupied_co(WHITE),
+            board.occupied_co(BLACK),
+            board.kings,
+            board.queens,
+            board.rooks,
+            board.bishops,
+            board.knights,
+            board.pawns,
+            ctxt._fifty,
+            board.castling_rights,
+            board.en_passant_square == Square::UNDEFINED ? 0 : board.en_passant_square,
+            board.turn,
+            nullptr);
+
+        if (result != TB_RESULT_FAILED)
+        {
+            ++table._tb_hits;
+
+            const auto wdl = TB_GET_WDL(result);
+            const auto dtz = TB_GET_DTZ(result);
+
+            switch (wdl)
+            {
+                case TB_LOSS:
+                    ctxt._score = MATE_LOW + dtz;
+                    ctxt._alpha = ctxt._score;
+                    ctxt._beta = SCORE_MAX;
+
+                    table._w_alpha = ctxt._alpha; // keep Context::reset ASSERT from firing
+
+                   /* Do not use move from probe result - search will find the
+                    * move that maximizes resistance (longest mate) among
+                    * equivalent losing moves -- don't make it easy for the opponent.
+                    */
+                    break;
+
+                case TB_BLESSED_LOSS:
+                case TB_DRAW:
+                case TB_CURSED_WIN:
+                    ctxt._score = 0;
+                    ctxt._best_move = best_move_from_tb_result(result);
+                    return true;
+
+                case TB_WIN:
+                    ctxt._score = MATE_HIGH - dtz;
+                    ctxt._best_move = best_move_from_tb_result(result);
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+#else
+
+static inline bool probe_endtables(Context&, TranspositionTable&) { return false; }
+static inline bool probe_root(Context&, TranspositionTable&) { return false; }
+
 #endif /* USE_ENDTABLES */
+
 
 static INLINE void update_pruned(Context& ctxt, const Context& next, size_t& count)
 {
@@ -453,26 +589,18 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
     if (ctxt.is_root())
     {
-    #if USE_ENDTABLES
-        /* Do not probe end tables if the number of pieces at root
-         * position has dropped below the end tables cardinality
-         * (the root of the search may already be in the tables).
-         */
-        table._probe_endtables =
-            table._iteration > 3
-            && Context::tb_cardinality() > 0
-            && popcount(ctxt.state().occupied()) > Context::tb_cardinality();
-    #endif /* USE_ENDTABLES */
+        if (probe_root(ctxt, table))
+            return ctxt._score;
     }
     else
     {
-        if (ctxt._fifty >= 100)
-            return 0; /* draw by fifty moves rule */
+        if (ctxt.is_fifty_move_rule_draw())
+            return 0;
 
         /* Update the Zobrist hash incrementally. */
         zobrist_update(ctxt._parent->state(), ctxt._move, *ctxt._state);
 
-        if (ctxt.is_repeated() > 0)
+        if (ctxt.is_repeated())
             return 0;
         /*
          * Mating distance pruning: skip the search if a shorter mate was found.
@@ -534,15 +662,11 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
     }
-#if USE_ENDTABLES
-    else if (table._probe_endtables && probe_endtables(ctxt))
+    else if (probe_endtables(ctxt, table))
     {
-        table.store<TT_Type::EXACT>(ctxt, ctxt.depth() + 2 * ctxt.tb_cardinality());
-        ctxt._eval_raw = ctxt._score;
         ctxt._prune_reason = PruneReason::PRUNE_END_TABLES;
         return ctxt._score;
     }
-#endif /* USE_ENDTABLES */
     else
     {
         ASSERT(ctxt._alpha < ctxt._beta);
@@ -1177,17 +1301,19 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
         }   /* SMP scope end */
 
-        ASSERT(ctxt.iteration() == ctxt._max_depth);
+        ASSERT(ctxt.iteration() + !ctxt.turn() == ctxt._max_depth);
 
-        /* post iteration info to Cython if there's a registered callback */
+        /* post iteration info if there's a registered callback */
         if (Context::_on_iter)
         {
-            IterationInfo info = { score, table.nodes(), 0, 0 };
+            IterationInfo info = { score, table.nodes(), 0, 0, table.tb_hits() };
             for (auto& t : SMPTasks::_tables)
+            {
                 info.nodes += t._tt.nodes();
-
+                info.tbhits += t._tt.tb_hits();
+            }
             const auto ms = Context::elapsed_milliseconds();
-            info.knps = ms ? info.nodes / ms : info.nodes;
+            info.knps = ms ? decltype(info.knps)(info.nodes) / ms : info.nodes;
             info.milliseconds = ms;
 
             (*Context::_on_iter)(Context::_engine, &ctxt, &info);

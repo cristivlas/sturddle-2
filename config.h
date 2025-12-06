@@ -78,6 +78,7 @@ struct Config
     struct Param /* meta param info */
     {
         Val* const  _val = nullptr;
+        const Val   _default_val;
         const int   _min = 0;
         const int   _max = 0;
         const std::string _group;
@@ -92,7 +93,7 @@ struct Config
     /* Register parameter names with Config::_namespace */
     Config(const char* n, Val* v, int v_min, int v_max, bool normalized = false)
     {
-        _namespace.emplace(n, Config::Param{ v, v_min, v_max, Config::_group, normalized });
+        _namespace.emplace(n, Config::Param{ v, *v, v_min, v_max, Config::_group, normalized });
     }
 
     struct Group
@@ -232,7 +233,11 @@ static constexpr int HASH_MIN = 16; /* MB */
 #if SMP
     #if defined(CONFIG_IMPL)
         static const auto THREAD_MAX = std::thread::hardware_concurrency();
+      #if 0
         static const auto THREAD_VAL = std::min<int>(4, THREAD_MAX);
+      #else
+        static const auto THREAD_VAL = 1;   // be nice to CCRL testers
+      #endif
     #endif
 #else
     static constexpr int SMP_CORES = 1;
@@ -259,8 +264,8 @@ DECLARE_CONST(  MULTICUT,                             1,    0,       1)
 
 /* Time management */
 DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              36,   20,     100)
-DECLARE_PARAM(  MaxTimeMargin,                       20,    0,     100)
-DECLARE_PARAM(  MinTimeMargin,                        5,    0,     100)
+DECLARE_PARAM(  MaxTimeMargin,                       50,    0,     100)
+DECLARE_PARAM(  MinTimeMargin,                       15,    0,     100)
 
 GROUP(Search)
 
@@ -278,9 +283,12 @@ DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,       7)
 DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,      15)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    124,   20,     200)
 
+#if USE_MOVE_PREDICTION
+DECLARE_VALUE(  MOVE_PREDICTION_MAX_ITER,             3,    0,      10)
+#endif
+
 #if WITH_NNUE
 DECLARE_VALUE(  NNUE_BLEND_PERCENT,                  82,   50,     100)
-DECLARE_VALUE(  NNUE_EVAL_TERM,                     502,  450,     600)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      459,  400,     600)
 #endif /* WITH_NNUE */
 
@@ -305,11 +313,6 @@ DECLARE_VALUE(  RAZOR_INTERCEPT,                    224,  150,     250)
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
 DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     150)
 DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             33,    0,     150)
-
-#if USE_ROOT_MOVES
-DECLARE_VALUE(  ROOT_MAX_MOVES,                       5,    0,      10)
-DECLARE_VALUE(  ROOT_MOVES_MIN_TIME,                  3,    0,      10)
-#endif /* USE_ROOT_MOVES */
 
 /* SEE */
 DECLARE_VALUE(  SEE_PRUNING,                          1,    0,       1)

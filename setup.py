@@ -69,13 +69,18 @@ sourcefiles = [
     'context.cpp',
     'search.cpp',
     'uci_native.cpp',
+    'tbprobe.cpp',
 ]
 
 
 cxx = environ.get('CXX')
-if cxx and cxx.startswith('clang++') and 'CC' not in environ:
-    cc = cxx.replace('clang++', 'clang')
-    environ['CC'] = cc
+if cxx and 'CC' not in environ:
+    if cxx.startswith('clang++'):
+        cc = cxx.replace('clang++', 'clang')
+        environ['CC'] = cc
+    elif cxx.startswith('g++'):
+        cc = cxx.replace('g++', 'gcc')
+        environ['CC'] = cc
 
 """
 Compiler args.
@@ -84,6 +89,8 @@ inc_dirs = [
     '-I./libpopcnt',
     '-I./magic-bits/include',
     '-I./version2',
+    '-I.',
+    '-I./Fathom/src',
 ]
 
 link = []
@@ -95,8 +102,7 @@ else:
 
 platform = sysconfig.get_platform()
 
-NATIVE_UCI = environ.get('NATIVE_UCI', '').lower() in ['1', 'true', 'yes']
-SHARED_WEIGHTS = environ.get('SHARED_WEIGHTS', '').lower() in ['1', 'true', 'yes']
+NATIVE_UCI = environ.get('NATIVE_UCI', '1').lower() in ['1', 'true', 'yes']
 
 # Debug build
 if environ.get('BUILD_DEBUG', None):
@@ -105,10 +111,6 @@ if environ.get('BUILD_DEBUG', None):
         link = [ '/DEBUG' ]
     else:
         args = [ '-O0', '-D_DEBUG' ]
-
-
-if SHARED_WEIGHTS:
-    args.append('-DSHARED_WEIGHTS')
 
 args.append('-DBUILD_STAMP=' + build_stamp)
 args += environ.get("CXXFLAGS", '').split()
@@ -140,23 +142,35 @@ if platform.startswith('win'):
         args += [ '/D_FORTIFY_SOURCE=0', '/GS-' ]
         link += [ '/GUARD:NO' ]
 
-    if NATIVE_UCI:
-        args.append('/DNATIVE_UCI=true')
+    args.append(f'/DNATIVE_UCI={int(NATIVE_UCI)}')
 
     # clang specific
     if cl_exe.lower().endswith('clang-cl.exe'):
         args += [
+            '-Wno-deprecated-declarations',
             '-Wno-unused-command-line-argument',
             '-Wno-unused-variable',
             '-Wno-nan-infinity-disabled',
         ]
         if not environ.get('BUILD_DEBUG', None):
-            args += [ '-Ofast']
+            args += [ '-O3', '-Ofast' ]
+
+    else:
+        # assume Microsoft compiler
+        args += [
+            '-D_CRT_SECURE_NO_WARNINGS',
+            '/wd4068',
+            '/wd4305', # warning C4305: '=': truncation from 'int' to 'bool'
+            '/wd4101', # warning C4101: '__pyx_t_1': unreferenced local variable
+            '/wd4551', # warning C4551: function call missing argument list
+            '/wd4244', # warning C4244: '=': conversion from 'Py_ssize_t' to 'long', possible loss of data
+        ]
 
     link += ['/LTCG:OFF']  # MSFT linker args
 else:
     # Linux, Mac
-    STDCPP=20 if NATIVE_UCI else 17
+    # STDCPP=20 if NATIVE_UCI else 17
+    STDCPP=20
 
     # Linux and Mac
     if '-O0' not in args:
@@ -187,12 +201,12 @@ else:
             '-fvisibility=hidden',
             '-DPyMODINIT_FUNC=__attribute__((visibility("default"))) extern "C" PyObject*',
         ]
-        if NATIVE_UCI:
+        args.append(f'-DNATIVE_UCI={int(NATIVE_UCI)}')
+
+        if STDCPP >= 20:
             cc_ver = get_compiler_major_version(cc)
             if cc_ver < MIN_CLANG_VER:
-                raise RuntimeError(f'{cc} ver={cc_ver}. NATIVE_UCI requires clang {MIN_CLANG_VER} or higher')
-
-            args.append('-DNATIVE_UCI=true')
+                raise RuntimeError(f'{cc} ver={cc_ver}. clang {MIN_CLANG_VER} or higher required.')
 
             if '-arch arm64' in environ.get('ARCHFLAGS', ''):
                 print('ARM64 Target, skipping extra compiler and linker flags.')
@@ -213,7 +227,7 @@ else:
         # Not Clang
         if NATIVE_UCI:
             if get_compiler_major_version() < MIN_GCC_VER:
-                raise RuntimeError(f'NATIVE_UCI uses C++20 and requires GCC {MIN_GCC_VER} or later')
+                raise RuntimeError(f'NATIVE_UCI uses C++20 and requires GCC >= {MIN_GCC_VER} or Clang >= {MIN_CLANG_VER}')
 
             args.append('-DNATIVE_UCI=true')
         else:
@@ -242,14 +256,5 @@ if not NATIVE_UCI:
     ))
 
 ext_modules = cythonize(extensions)
-
-if SHARED_WEIGHTS:
-    weights = Extension(
-        name='weights',
-        sources=['weights.cpp'],
-        extra_compile_args=args + inc_dirs,
-        extra_link_args=link
-    )
-    ext_modules.append(weights)
 
 setup(ext_modules=ext_modules, cmdclass={'build_ext': BuildExt})

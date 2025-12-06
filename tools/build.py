@@ -1,7 +1,8 @@
+#!/usr/bin/env python3
 '''
 Build all-in-one executable using pyinstaller.
 
-Part of Sturddle Chess 2.0
+Part of Sturddle Chess 2
 Copyright (c) 2023 - 2025 Cristian Vlasceanu.
 '''
 import argparse
@@ -13,6 +14,7 @@ import sys
 
 BOOK = 'book.bin'
 OUT_DIR = 'dist'
+WEIGHTS = 'weights.bin'
 
 def find_editbin():
     """Find editbin using distutils MSVC detection"""
@@ -62,6 +64,7 @@ def run_cmd(command):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='build all-in-one executable')
+    parser.add_argument('-a', '--arch', help='Build only the specified architecture')  # and the generic module
     parser.add_argument('-n', '--name', default='sturddle', help='Executable base name (default: "sturddle")')
     parser.add_argument('-v', '--venv')
     parser.add_argument('--native-uci', dest='native_uci', action='store_true', default=True)
@@ -69,8 +72,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    if args.native_uci:
-        os.environ['NATIVE_UCI'] = '1'
+    os.environ['NATIVE_UCI'] = '1' if args.native_uci else '0'
 
     mods = '*.pyd' if is_windows() else '*.so'
     editbin = find_editbin() if is_windows() else None
@@ -82,22 +84,25 @@ if __name__ == '__main__':
 
     ARCHS = [''] # default
 
-    if args.native_uci:
+    if args.arch:
+        ARCHS = [args.arch, '']
+    elif args.native_uci:
         if platform.machine() in ['x86_64', 'AMD64']:
             ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', 'AVX', '']
         elif platform.machine() == 'aarch64':
             ARCHS = ['ARMv8_2', '']
 
-    for i, arch in enumerate(ARCHS):
+    for arch in ARCHS:
         delete(['uci.cpp', '__init__.cpp']) # force re-cythonize
         print('*********************************************************')
         print(f'Building {arch if arch else "generic"} module')
         print('*********************************************************')
 
         arch_flags = ''
-        if is_windows() and not cl_exe.lower().startswith('clang-cl'):
+        if is_windows() and 'clang-cl.exe' not in cl_exe.lower():
             if arch:
                 if arch.endswith('_VNNI'):
+                    print('Skipping. Compiler is NOT clang!')
                     continue
                 arch_flags = f'/arch:{arch}'
         # otherwise assume Clang or GCC on POSIX
@@ -114,12 +119,6 @@ if __name__ == '__main__':
 
         # os.environ['CXXFLAGS'] = f'{arch_flags} -DUSE_MMAP_HASH_TABLE -DSHARED_WEIGHTS'
         os.environ['CXXFLAGS'] = f'{arch_flags} -DSHARED_WEIGHTS'
-
-        # Build the shared weights on the 1st flavor only
-        if i == 0:
-            os.environ['SHARED_WEIGHTS'] = 'true'
-        else:
-            os.environ.pop('SHARED_WEIGHTS', None)
 
         arch = arch.lower()
         os.environ['TARGET'] = f'chess_engine_{arch}' if arch else 'chess_engine'
@@ -149,7 +148,7 @@ if __name__ == '__main__':
             if os.path.exists(libcxx):
                 libs.append(f'--add-binary={libcxx}{os.path.pathsep}.')
 
-    data = f'--add-data={BOOK}{os.path.pathsep}.'
+    data = f'--add-data={BOOK}{os.path.pathsep}. --add-data={WEIGHTS}{os.path.pathsep}.'
 
     exclude_modules = [
         'setuptools', 'setuptools._vendor', 'setuptools._distutils', 'jaraco',

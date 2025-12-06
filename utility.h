@@ -155,16 +155,6 @@ namespace
     };
 
 
-    template<typename T, typename H = std::size_t> struct Hasher
-    {
-        using hash_type = H;
-
-        constexpr hash_type operator()(const T& key) const
-        {
-            return key.hash();
-        }
-    };
-
     namespace profile
     {
         struct Overhead
@@ -241,3 +231,17 @@ namespace
         }
     };
 } /* namespace */
+
+
+namespace search
+{
+    template<typename T, typename H = std::size_t> struct Hasher
+    {
+        using hash_type = H;
+
+        constexpr hash_type operator()(const T& key) const
+        {
+            return key.hash();
+        }
+    };
+}

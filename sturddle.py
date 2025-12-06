@@ -12,7 +12,6 @@ import time
 import chess
 import chess.pgn
 import chess.polyglot
-import chess.syzygy
 
 #try:
 #    import cpufeature

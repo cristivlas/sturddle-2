@@ -172,7 +172,7 @@ def patch_header(header_file, best_params):
         return
 
     logging.info(f"Reading header file: {header_file}")
-    with open(header_file, 'r') as f:
+    with open(header_file, 'r', encoding='utf-8') as f:
         text = f.read()
 
     new_text = re.sub(r"#define PIECE_VALUES .*", weights, text)
@@ -184,7 +184,7 @@ def patch_header(header_file, best_params):
     if new_text == text:
         logging.info(f'Unmodified: {header_file}')
     else:
-        with open(header_file, 'w') as f:
+        with open(header_file, 'w', encoding='utf-8') as f:
             f.write(new_text)
         logging.info(f'Patched: {header_file}')
 

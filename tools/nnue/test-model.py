@@ -63,7 +63,7 @@ def run_tests(args, model):
         eval = model.predict(encoding)
         print(board.epd(), *eval)
         res = eval[0][0][0] if len(eval) > 1 else eval[0][0]
-        evals.append(res * 100)
+        evals.append(float(res) * 100)
     print(evals)
 
 

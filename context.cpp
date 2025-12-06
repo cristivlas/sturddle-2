@@ -26,8 +26,9 @@
 #include <cerrno>
 #include <iomanip>
 #include <iterator>
-#include <map>
+#include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include "chess.h"
 
@@ -47,6 +48,10 @@
 #endif
 
 #include "eval.h"
+
+#if USE_ENDTABLES
+  #include "tbprobe.h"
+#endif
 
 using namespace chess;
 using search::TranspositionTable;
@@ -195,6 +200,7 @@ std::map<std::string, Param> _get_param_info()
         info.emplace(elem.first,
             Param {
                 *elem.second._val,
+                elem.second._default_val,
                 elem.second._min,
                 elem.second._max,
                 elem.second._group,
@@ -204,6 +210,7 @@ std::map<std::string, Param> _get_param_info()
 
     info.emplace("Hash", Param {
         int(TranspositionTable::get_hash_size()),
+        DEFAULT_HASH_TABLE_SIZE,
         HASH_MIN,
         int(TranspositionTable::max_hash_size()),
         "Settings",
@@ -276,7 +283,7 @@ std::map<std::string, int> _get_params()
 
 #if WITH_NNUE
 
-constexpr int INPUTS_A = 897;
+constexpr int INPUTS_A = 3588;
 constexpr int INPUTS_B = 256;
 constexpr int HIDDEN_1A = 1280;
 constexpr int HIDDEN_1A_POOLED = HIDDEN_1A / nnue::POOL_STRIDE;
@@ -286,11 +293,10 @@ constexpr int HIDDEN_3 = 16;
 
 using LAttnType = nnue::Layer<HIDDEN_1B, 32>;
 using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
-using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true>;
+using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
 using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2>;
 using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
 using EVALType = nnue::Layer<HIDDEN_3, 1>;
-using LMOVEType = nnue::Layer<INPUTS_A, 4096, int16_t, nnue::QSCALE>;
 
 /*
  * The accumulator takes the inputs and processes them into two outputs,
@@ -301,118 +307,136 @@ using LMOVEType = nnue::Layer<INPUTS_A, 4096, int16_t, nnue::QSCALE>;
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
 using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
 
+using LMOVEType = nnue::Layer<INPUTS_A / Accumulator::NUM_BUCKETS, 4096, int16_t, nnue::QSCALE>;
+
+/* Each thread uses its own stack */
 static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
 
-#if !SHARED_WEIGHTS
-static struct
+static struct Model
 {
-    void init() {}
+    void init();
 
-    LAttnType L_ATTN{spatial_attn_w, spatial_attn_b};
-    L1AType L1A{hidden_1a_w, hidden_1a_b};
-    L1BType L1B{hidden_1b_w, hidden_1b_b};
-    L2Type L2{hidden_2_w, hidden_2_b};
-    L3Type L3{hidden_3_w, hidden_3_b};
-    EVALType EVAL{out_w, out_b};
-
-#if USE_ROOT_MOVES
-    LMOVEType L_M{move_w, move_b};
-#endif /* USE_ROOT_MOVES */
-} model;
-
-#else
-/* Weights are built as separate module and shared between all engine flavors. */
-class WeightLoader
-{
-    PyObject* module = nullptr;
-
-public:
-    WeightLoader()
+    void validate_weights_file(const std::filesystem::path& weights_path)
     {
-        module = PyImport_ImportModule("weights");
-        if (!module)
+        constexpr auto param_count =
+            L1AType::param_count()
+            + L1BType::param_count()
+            + LAttnType::param_count()
+            + L2Type::param_count()
+            + L3Type::param_count()
+            + EVALType::param_count()
+        #if USE_MOVE_PREDICTION
+            + LMOVEType::param_count()
+        #endif
+            ;
+        constexpr auto expected_size = param_count * sizeof(float);
+        const auto file_size = std::filesystem::file_size(weights_path);
+        if (file_size != expected_size)
+            throw std::runtime_error(weights_path.string() + ": expected " + std::to_string(expected_size) + " bytes, got " + std::to_string(file_size));
+    }
+
+    void load_weights(const std::filesystem::path& weights_path)
+    {
+        validate_weights_file(weights_path);
+
+        std::ifstream file(weights_path, std::ios::binary);
+        if (!file)
+            throw std::runtime_error("Could not open weights file: " + weights_path.string());
+
+        file.exceptions(std::ios::failbit | std::ios::badbit);
+
+        try
         {
-            PyErr_Print();
-            throw std::runtime_error("Failed to load weights module");
-        }
-    }
+            /* Load layers in the same order that the trainer exports them. */
+            L1B.load_weights(file);
+            L1A.load_weights(file);
+            LATTN.load_weights(file);
+            L2.load_weights(file);
+            L3.load_weights(file);
+            EVAL.load_weights(file);
 
-    ~WeightLoader()
-    {
-        if (module)
+        #if USE_MOVE_PREDICTION
+            LMOVES.load_weights(file);
+        #endif
+        }
+        catch (const std::exception&)
         {
-            Py_DECREF(module);
-            module = nullptr;
+            throw std::runtime_error("Error reading weights from: " + weights_path.string());
         }
+        Context::log_message(LogLevel::INFO, "Loaded " + weights_path.string());
     }
 
-    template<typename T>
-    T* get_weights(const char* name)
-    {
-        PyObject* func = PyObject_GetAttrString(module, name);
-        ASSERT_MESSAGE(func, std::string(name));
+    std::string default_weights_path;
 
-        PyObject* capsule = PyObject_CallObject(func, nullptr);
-
-        Py_DECREF(func);
-        T* result = static_cast<T*>(PyCapsule_GetPointer(capsule, PyCapsule_GetName(capsule)));
-        Py_DECREF(capsule);
-        return result;
-    }
-};
-
-template <typename T, size_t ROWS, size_t COLS>
-class WeightAdapter
-{
-    const T* raw_ptr;
-
-public:
-    WeightAdapter(WeightLoader& loader, const char* name) : raw_ptr(loader.get_weights<T>(name)) {}
-
-    const T (&as_2d() const)[ROWS][COLS] { return *reinterpret_cast<const T(*)[ROWS][COLS]>(raw_ptr); }
-    const T (&as_1d() const)[COLS] { return *reinterpret_cast<const T(*)[COLS]>(raw_ptr); }
-};
-
-template <typename L>
-INLINE void init_layer(WeightLoader& loader, L& layer, const char* get_w, const char* get_b)
-{
-    WeightAdapter<float, L::ROWS, L::COLS> w(loader, get_w);
-    WeightAdapter<float, 1, L::COLS> b(loader, get_b);
-    layer.set_weights(w.as_2d(), b.as_1d());
-}
-
-#define INIT_LAYER(layer, name) init_layer(loader, layer, "get_" #name "_w", "get_" #name "_b")
-
-static struct
-{
-    LAttnType L_ATTN;
+    LAttnType LATTN;
     L1AType L1A;
     L1BType L1B;
     L2Type L2;
     L3Type L3;
     EVALType EVAL;
 
-#if USE_ROOT_MOVES
-    LMOVEType L_M;
-#endif /* USE_ROOT_MOVES */
+#if USE_MOVE_PREDICTION
+    LMOVEType LMOVES;
+#endif
 
-    void init()
-    {
-        WeightLoader loader;
-
-        INIT_LAYER(L_ATTN, spatial_attn);
-        INIT_LAYER(L1A, hidden_1a);
-        INIT_LAYER(L1B, hidden_1b);
-        INIT_LAYER(L2, hidden_2);
-        INIT_LAYER(L3, hidden_3);
-        INIT_LAYER(EVAL, eval);
-
-    #if USE_ROOT_MOVES
-        INIT_LAYER(L_M, move);
-    #endif /* USE_ROOT_MOVES */
-    }
 } model;
+
+
+#if !SHARED_WEIGHTS
+/* weights are compiled-in */
+#define INIT_LAYER(layer, name) layer.set_weights(name ## _w, name ## _b)
+
+void Model::init()
+{
+    INIT_LAYER(LATTN, spatial_attn);
+    INIT_LAYER(L1A, hidden_1a);
+    INIT_LAYER(L1B, hidden_1b);
+    INIT_LAYER(L2, hidden_2);
+    INIT_LAYER(L3, hidden_3);
+    INIT_LAYER(EVAL, out);
+
+#if USE_MOVE_PREDICTION
+    INIT_LAYER(LMOVES, move);
+#endif
+}
+#else
+
+void Model::init()
+{
+    if (!default_weights_path.empty())
+    {
+        load_weights(default_weights_path);
+    }
+}
 #endif /* SHARED_WEIGHTS */
+
+
+static void _load_weights(const std::string& file_path)
+{
+    if (file_path.empty())
+        model.init();
+    else
+        model.load_weights(file_path);
+}
+
+
+void Context::load_weights(const std::string& file_path)
+{
+    cython_wrapper::call_nogil(_load_weights, file_path); // catch exception and translate to Python
+}
+
+
+static INLINE void update(Accumulator& accumulator, const Context* ctxt)
+{
+    accumulator.update(model.L1A, model.L1B, ctxt->state());
+}
+
+
+/* incremental version */
+static INLINE void update(Accumulator& accumulator, const Context* ctxt, Accumulator& prev_acc)
+{
+    accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
+}
 
 
 void search::Context::update_accumulators()
@@ -442,14 +466,14 @@ void search::Context::update_accumulators()
         if (ctxt->is_root())
         {
             ASSERT(ctxt->_parent == nullptr);
-            accumulator.update(model.L1A, model.L1B, ctxt->state());
+            update(accumulator, ctxt);
         }
         else
         {
             auto& prev_acc = NNUE_data[t][ctxt->_ply - ctxt->_nnue_prev_offs];
             ASSERT(!prev_acc.needs_update(ctxt->_parent->state()));
 
-            accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
+            update(accumulator, ctxt, prev_acc);
         }
 
         ctxt->_eval_raw = SCORE_MIN;
@@ -466,7 +490,7 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     auto& acc = NNUE_data[tid()][_ply];
     ASSERT(!acc.needs_update(state()));
 
-    _eval_raw = nnue::eval(acc, model.L_ATTN, model.L2, model.L3, model.EVAL);
+    _eval_raw = nnue::eval(acc, model.LATTN, model.L2, model.L3, model.EVAL);
 
     if (stm_perspective)
     {
@@ -503,20 +527,9 @@ void search::Context::eval_with_nnue()
 
         if (state().just_king(!turn()) || (depth() >= 0 && abs(eval) <= eval_margin(*this)))
         {
-        #if USE_ROOT_MOVES
-            if (is_root() && iteration() == 1)
-            {
-                _move_maker.ensure_moves(*this, true);
-            }
-        #endif /* USE_ROOT_MOVES */
-
             const auto eval_nn = eval_nnue_raw(true);
 
-        #if 0
-            eval = eval_nn * (NNUE_EVAL_TERM + eval / 32) / 1024;
-        #else
             eval = (eval_nn * NNUE_BLEND_PERCENT + eval * (100 - NNUE_BLEND_PERCENT)) / 100;
-        #endif
         }
         else
         {
@@ -541,14 +554,7 @@ void search::Context::update_root_accumulators()
 
     for (int i = 1; i != SMP_CORES; ++i)
     {
-        auto& acc = NNUE_data[i][0];
-        acc._hash = root._hash;
-        memcpy(acc._output_a, root._output_a, sizeof(acc._output_a));
-        memcpy(acc._output_b, root._output_b, sizeof(acc._output_b));
-
-    #if DEBUG_INCREMENTAL
-        memcpy(acc._input, root._input, sizeof(acc._input));
-    #endif
+        NNUE_data[i][0] = root;
     }
 }
 
@@ -578,7 +584,8 @@ namespace search
      * Context
      *---------------------------------------------------------------------*/
     atomic_bool Context::_cancel(false);
-    atomic_int  Context::_tb_cardinality(6);
+    int         Context::_tb_cardinality(0);
+    bool        Context::_tb_initialized(false);
     atomic_int  Context::_time_limit(-1); /* milliseconds */
     atomic_time Context::_time_start;
     size_t Context::_callback_count(0);
@@ -604,11 +611,9 @@ namespace search
     std::string(*Context::_pgn)(Context*) = nullptr;
     void (*Context::_print_state)(const State&, bool) = nullptr;
     void (*Context::_report)(PyObject*, std::vector<Context*>&) = nullptr;
-    void (*Context::_set_syzygy_path)(const std::string&) = nullptr;
-    bool (*Context::_tb_probe_wdl)(const State&, int*) = nullptr;
     size_t (*Context::_vmem_avail)() = nullptr;
 
-    std::string Context::_syzygy_path = "syzygy/3-4-5";
+    std::string Context::_syzygy_path;
 
 
     score_t eval_material_for_side_that_moved(const State& state, const State* prev, const BaseMove& move)
@@ -662,14 +667,29 @@ namespace search
     }
 
 
-    /* static */ void Context::init()
+    /* static */ void Context::init(const std::string& exe_dir)
     {
         setup_crash_handler();
         _init(); /* Init attack masks and other magic bitboards in chess.cpp */
 
     #if WITH_NNUE
+    #if SHARED_WEIGHTS
+        try
+        {
+            const auto weights_path = std::filesystem::absolute(std::filesystem::path(exe_dir) / "weights.bin");
+
+            model.load_weights(weights_path);
+            model.default_weights_path = weights_path.string();
+        }
+        catch(const std::exception& e)
+        {
+            std::cerr << e.what() << std::endl;
+            _exit(-1);
+        }
+    #else
         model.init();
-    #endif
+    #endif /* SHARED_WEIGHTS */
+    #endif /* WITH_NNUE */
     }
 
 
@@ -933,20 +953,23 @@ namespace search
      *
      * Called by eval_captures (if !STATIC_EXCHANGES).
      */
-    INLINE int
-    do_captures(int tid, const State& state, Bitboard from_mask, Bitboard to_mask, score_t standpat_threshold)
+    INLINE int do_captures(int tid, const State& state, score_t standpat_threshold)
     {
         ASSERT(!state.is_check(!state.turn)); /* expect legal position */
 
         static constexpr auto ply = FIRST_EXCHANGE_PLY;
-        const auto mask = to_mask & state.occupied_co(!state.turn) & ~state.kings;
+
+        auto mask = state.occupied_co(!state.turn);
+        if (state.en_passant_square != Square::UNDEFINED)
+            mask |= BB_SQUARES[state.en_passant_square];
+
+        mask &= ~state.kings;
 
         /*
          * Generate all pseudo-legal captures.
-         * NOTE: generate... function takes mask args in reverse: to, from.
          */
         auto& moves = Context::moves(tid, ply);
-        if (state.generate_pseudo_legal_moves(moves, mask, from_mask).empty())
+        if (state.generate_pseudo_legal_moves(moves, mask).empty())
         {
             return 0;
         }
@@ -958,11 +981,18 @@ namespace search
          */
         for (auto& move : moves)
         {
-            ASSERT(state.piece_type_at(move.to_square()));
             ASSERT(state.piece_type_at(move.from_square()));
-            ASSERT(state.piece_color_at(move.to_square()) != state.turn);
 
-            move._score = state.piece_value_at(move.to_square(), !state.turn); /* victim value */
+            if (state.en_passant_square == move.to_square())
+            {
+                if (BB_SQUARES[move.from_square()] & state.pawns)
+                    move._score = WEIGHT[PAWN]; /* TODO: piece-square, piece grading */
+            }
+            else
+            {
+                move._score = state.piece_value_at(move.to_square(), !state.turn); /* victim value */
+            }
+
             if (const auto promo = move.promotion())
             {
                 /* Take piece squares and piece grading (dynamic value) into account for the promo */
@@ -1004,7 +1034,8 @@ namespace search
          */
         for (const auto& move : moves)
         {
-            ASSERT(move._score > 0);
+            if (move._score == 0)
+                continue;
 
             /* potential gain is less than best score so far? bail */
             if (move._score /* + STANDPAT_MARGIN  */ <= score)
@@ -1070,7 +1101,7 @@ namespace search
         else
         {
             const int standpat_threshold = ctxt._ply > 1 ? ctxt._alpha - score : SCORE_MIN;
-            result = do_captures(ctxt.tid(), *state, BB_ALL, BB_ALL, standpat_threshold);
+            result = do_captures(ctxt.tid(), *state, standpat_threshold);
         }
 
         ASSERT(result >= 0);
@@ -1176,6 +1207,41 @@ namespace search
     }
 
 
+    static const char* piece_symbol(chess::PieceType type, chess::Color color, bool unicode)
+    {
+        if (unicode)
+            return chess::UNICODE_PIECE_SYMBOLS[color][type];
+        else
+            return chess::PIECE_SYMBOL[color][type];
+    }
+
+
+    /* static */
+    void Context::print_board(std::ostream& out, const State& state, bool unicode)
+    {
+        for (int rank = 7; rank >= 0; --rank)
+        {
+            out << rank + 1 << ' ';
+
+            for (int file = 0; file < 8; ++file)
+            {
+                const auto square = Square(rank * 8 + file);
+                if (const auto piece_type = state.piece_type_at(square))
+                {
+                    const auto piece_color = state.piece_color_at(square);
+                    out << piece_symbol(piece_type, piece_color, unicode) << ' ';
+                }
+                else
+                {
+                    out << ". ";
+                }
+            }
+            out << "\n";
+        }
+        out << "  a b c d e f g h" << std::endl;
+    }
+
+
     /*
      * Reinitialize top context at the start of a new iteration.
      */
@@ -1211,11 +1277,11 @@ namespace search
         _cutoff_move = Move();
         _has_singleton = false;
 
-        _max_depth = iteration();
+        _max_depth = iteration() + (turn() == chess::BLACK);
 
         _mate_detected = 0;
 
-        _repetitions = -1;
+        _repeated = -1;
 
         _retry_next = false;
         _retry_beta = SCORE_MAX;
@@ -1262,20 +1328,10 @@ namespace search
             const score_t delta = score - prev_score;
             prev_score = score;
 
-        #if 1
-            /* Widen in the OPPOSITE direction of the score trend, in case the raise/fall in
-             * the score is caused by too narrow a window and a refutation / tactic was missed.
-             */
             _alpha = std::max<score_t>(SCORE_MIN, score - std::max(WINDOW_HALF, delta));
             _beta = std::min<score_t>(SCORE_MAX, score + std::max(WINDOW_HALF, -delta));
-        #else
-            const score_t window_size = std::max(WINDOW_HALF, abs(delta));
-            _alpha = std::max<score_t>(SCORE_MIN, score - window_size);
-            _beta = std::min<score_t>(SCORE_MAX, score + window_size);
-        #endif
         }
 
-        // log_message(LogLevel::INFO, std::format("{}: {}, [{}:{}]", iteration(), score, _alpha, _beta));
         ASSERT(_alpha < _beta);
 
         /* save iteration bounds */
@@ -1389,7 +1445,7 @@ namespace search
         if (is_root())
             return false;
         else
-            ASSERT(is_repeated() <= 0);
+            ASSERT(!is_repeated());
 
         if (_ply + 1 >= PLY_MAX)
             return true;
@@ -1502,6 +1558,36 @@ namespace search
     }
 
 
+    /* static */ void Context::tb_init()
+    {
+#if USE_ENDTABLES
+        if (_tb_initialized)
+        {
+            ::tb_free();
+            _tb_initialized = false;
+            _tb_cardinality = 0;
+        }
+        if (!_syzygy_path.empty())
+        {
+            try
+            {
+                _syzygy_path = std::filesystem::canonical(_syzygy_path).string();
+            }
+            catch (const std::exception& e)
+            {
+                _syzygy_path = "";
+                log_message(LogLevel::ERROR, e.what());
+                return;
+            }
+
+            _tb_initialized = ::tb_init(_syzygy_path.c_str());
+            _tb_cardinality = TB_LARGEST;
+        }
+        std::cout << "info string " << _syzygy_path << " cardinality " << _tb_cardinality << "\n";
+#endif /* USE_ENDTABLES */
+    }
+
+
     /*---------------------------------------------------------------------
      * MoveMaker
      *---------------------------------------------------------------------*/
@@ -1606,41 +1692,6 @@ namespace search
         _group_quiet_moves = (ctxt.depth() < 0 && !ctxt.is_check());
     #endif /* GROUP_QUIET_MOVES */
 
-    #if USE_ROOT_MOVES
-        if (order_root_moves && ctxt._time_limit >= ROOT_MOVES_MIN_TIME)
-        {
-            int16_t input[nnue::round_up<INPUT_STRIDE>(INPUTS_A)] = {};
-            nnue::one_hot_encode(ctxt.state(), input);
-            nnue::predict_moves(input, model.L_M, moves_list);
-
-            bool all_valid = true;
-            int count = 0;
-
-            for (auto& move : moves_list)
-            {
-                ASSERT(move._group == MoveOrder::UNORDERED_MOVES);
-                if (count >= ROOT_MAX_MOVES)
-                {
-                    move._score = 0;
-                }
-                else if (make_move<false>(ctxt, move, MoveOrder::ROOT_MOVES, move._score))
-                {
-                    // std::cout << "info string " << move << ": " << move._score / float(nnue::QSCALE) << std::endl;
-                    ++count;
-                }
-                else
-                {
-                    all_valid = move._score = 0;
-                }
-            }
-
-            if (all_valid)
-                _need_sort = false; /* moves already sorted by eval_with_moves */
-            else
-                sort_moves(ctxt, 0, moves_list.size());
-        }
-    #endif /* USE_ROOT_MOVES */
-
         if (!from_cache)
             moves_cache.write(ctxt.state(), moves_list);
     }
@@ -1687,6 +1738,11 @@ namespace search
 
         /* Confidence bar for historical scores */
         const double hist_high = (Phase == 3) ? hist_thresholds[ctxt.iteration()] : 0;
+
+    #if USE_MOVE_PREDICTION
+        int active[65];  // 32 pieces + 1 stm + 16 + 16 occupancy
+        int active_count = 0;
+    #endif /* USE_MOVE_PREDICTION */
 
         /********************************************************************/
         /* Iterate over pseudo-legal moves                                  */
@@ -1771,7 +1827,9 @@ namespace search
                     || is_pawn_push(ctxt, move))
                 {
                     if (make_move<true>(ctxt, move, MoveOrder::TACTICAL_MOVES, hist_score))
+                    {
                         ASSERT(move._score == decltype(move._score)(hist_score));
+                    }
                 }
             }
             else /* Phase == 4 */
@@ -1781,12 +1839,28 @@ namespace search
                     remake_move(ctxt, move);
                     continue;
                 }
+
                 if (make_move<true>(ctxt, move, futility))
                 {
-                    incremental_update(move, ctxt);
-                    const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
                     move._group = MoveOrder::LATE_MOVES;
-                    move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
+                #if USE_MOVE_PREDICTION
+                    if (ctxt.iteration() <= MOVE_PREDICTION_MAX_ITER)
+                    {
+                        if (active_count == 0)
+                            nnue::for_each_active_input(ctxt.state(), [&](int idx) {
+                                ASSERT(active_count < 65);
+                                active[active_count++] = idx;
+                            });
+
+                        nnue::score_move(model.LMOVES, active, active_count, move);
+                    }
+                    else
+                #endif /* USE_MOVE_PREDICTION */
+                    {
+                        incremental_update(move, ctxt);
+                        const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
+                        move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
+                    }
                 }
             }
         }
@@ -1840,6 +1914,18 @@ namespace search
             ASSERT(compare_moves_ge(moves_list[i-1], moves_list[i]));
         }
     #endif /* NO_ASSERT */
+
+    #if 0 && USE_MOVE_PREDICTION /* debug */
+        if (_phase == 4 && ctxt.iteration() <= MOVE_PREDICTION_MAX_ITER)
+        {
+            for (const auto& m : moves_list)
+            {
+                if (m._group == MoveOrder::LATE_MOVES)
+                    std::cout << m.uci() << ": " << m._score << " (" << float(m._score) / nnue::QSCALE << ")\n";
+            }
+            std::cout << "\n";
+        }
+    #endif /* USE_MOVE_PREDICTION */
     }
 
 

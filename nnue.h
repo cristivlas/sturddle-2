@@ -21,6 +21,7 @@
  */
 #include "common.h"
 #include "chess.h"
+#include <fstream>
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
@@ -55,14 +56,18 @@
     constexpr int INPUT_STRIDE = 16;
 #endif
 
+#ifndef DEBUG_INCREMENTAL
 #define DEBUG_INCREMENTAL false
-
+#endif
 
 namespace nnue
 {
     using namespace chess;
     using input_t = int16_t;
 
+    constexpr int ACTIVE_INPUTS = 897;
+    constexpr int EVAL_SCALE = 100;
+    constexpr int MAX_ACTIVE_INPUTS = 65; // 32 pieces + 32 occupancy mask + turn
     constexpr auto POOL_STRIDE = Vec8s::size();
     constexpr int QSCALE = 1024;
 
@@ -106,7 +111,6 @@ namespace nnue
 
     static const Vector v_zero(0.0);
     static const Vec8s  v8_zero(0);
-    static const Vec16s v16_zero(0);
 
 
     template <typename V>
@@ -200,13 +204,13 @@ namespace nnue
     }
 
     template <typename T>
-    INLINE void one_hot_encode(const State& board, T (&encoding)[round_up<INPUT_STRIDE>(897)])
+    INLINE void one_hot_encode(const State& board, T (&encoding)[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)])
     {
         const auto& color_masks = board._occupied_co;
         int i = 63;
+
         #pragma unroll 6
-        for (const auto bb : {
-            board.kings, board.pawns, board.knights, board.bishops, board.rooks, board.queens })
+        for (const auto bb : {board.kings, board.pawns, board.knights, board.bishops, board.rooks, board.queens})
         {
             #pragma unroll 2
             for (const auto mask : color_masks)
@@ -221,6 +225,45 @@ namespace nnue
         for_each_square_r(color_masks[1], [&](Square j) { encoding[896 - j] = 1; });
     }
 
+    template <typename F>
+    static INLINE void for_each_active_input(const State& state, F&& func)
+    {
+        const auto& color_masks = state._occupied_co;
+        int i = 63;
+
+        for (const auto bb : {state.kings, state.pawns, state.knights, state.bishops, state.rooks, state.queens})
+        {
+            for (const auto mask : color_masks)
+            {
+                for_each_square_r((bb & mask), [&](Square sq) { func(i - sq); });
+                i += 64;
+            }
+        }
+
+        if (state.turn)
+            func(TURN_INDEX);
+
+        // Occupancy masks
+        for_each_square_r(color_masks[0], [&](Square sq) { func(832 - sq); });
+        for_each_square_r(color_masks[1], [&](Square sq) { func(896 - sq); });
+    }
+
+    template <typename F>
+    static INLINE void for_each_active_king_or_pawn(const State& state, F&& func)
+    {
+        const auto& color_masks = state._occupied_co;
+        int i = 63;
+
+        for (const auto bb : {state.kings, state.pawns})
+        {
+            for (const auto mask : color_masks)
+            {
+                for_each_square_r((bb & mask), [&](Square sq) { func(i - sq); });
+                i += 64;
+            }
+        }
+    }
+
     /** Calculate the piece-square index into the one-hot encoding. */
     INLINE constexpr int piece_square_index(PieceType piece_type, Color color, Square square)
     {
@@ -233,6 +276,7 @@ namespace nnue
         return (color ? 833 : 769) + 63 - square;
     }
 
+
     /** Rectified Linear Unit (reLU) activation */
     template <typename V> INLINE V relu(V v) { return max(v, 0); }
 
@@ -242,8 +286,6 @@ namespace nnue
     template <>
     INLINE Vec8s relu<Vec8s>(Vec8s v) { return max(v, v8_zero); }
 
-    template <>
-    INLINE Vec16s relu<Vec16s>(Vec16s v) { return max(v, v16_zero); }
 
     template <int N>
     INLINE void activate(const int16_t (&input)[N], float (&output)[N])
@@ -277,12 +319,44 @@ namespace nnue
     }
 
 
+#if INSTRSET >= 9 /* AVX-512 */
+    /* Overflow is prevented at training time */
+    INLINE Vec32s mul_add(Vec32s a, Vec32s b, Vec32s acc)
+    {
+        return acc + a * b;
+    }
+#elif __ARM__
+    INLINE Vec16s mul_add(Vec16s a, Vec16s b, Vec16s acc)
+    {
+        return acc + a * b;
+    }
+#else
+    INLINE Vec8i mul_add(Vec16s a, Vec16s b, Vec8i acc)
+    {
+    #if __AVXVNNI
+        return _mm256_dpwssd_epi32(acc, a, b);
+    #elif INSTRSET < 8
+        /* SSE2 */
+        // Multiply a * b and accumulate neighbouring outputs into int32 values
+        __m128i product_lo = _mm_madd_epi16(a.get_low(), b.get_low());
+        __m128i product_hi = _mm_madd_epi16(a.get_high(), b.get_high());
+        // Add to the main int32 accumulator
+        return Vec8i(_mm_add_epi32(acc.get_low(), product_lo), _mm_add_epi32(acc.get_high(), product_hi));
+    #else
+        /* AVX2 */
+        __m256i product = _mm256_madd_epi16(a, b);
+        return _mm256_add_epi32(acc, product);
+    #endif
+    }
+#endif /* INSTRSET >= 9 */
+
+
     template <int I, int O, typename T, int Scale, bool Incremental>
     struct BaseLayer
     {
         static constexpr int ROWS = I;
         static constexpr int COLS = O;
-        /* Round up to INPUT_STRIDE to deal with the 897 inputs. */
+        /* Round up to INPUT_STRIDE to deal with odd inputs. */
         static constexpr int INPUTS = round_up<INPUT_STRIDE>(I);
         static constexpr int OUTPUTS = O;
 
@@ -321,16 +395,28 @@ namespace nnue
             set_weights(w, b);
         }
 
+        static constexpr size_t param_count()
+        {
+            return (I + 1) * O;
+        }
+
         void set_weights(const float(&w)[I][OUTPUTS], const float(&b)[OUTPUTS])
         {
             for (int j = 0; j != OUTPUTS; ++j)
-                _b[j] = b[j] * Scale;
+                if constexpr (Scale == 1)
+                    _b[j] = b[j];
+                else
+                    _b[j] = std::round(b[j] * Scale);
 
             for (int i = 0; i != I; ++i)
             {
                 for (int j = 0; j != OUTPUTS; ++j)
                 {
-                    _wt[j][i] = w[i][j] * Scale;
+                    if constexpr (Scale == 1)
+                        _wt[j][i] = w[i][j];
+                    else
+                        _wt[j][i] = std::round(w[i][j] * Scale);
+
                     if constexpr (Incremental)
                         this->_w[i][j] = _wt[j][i];
                 }
@@ -347,42 +433,40 @@ namespace nnue
             }
         }
 
-        /* input */
-        template <size_t S, typename NO_ACTIVATION>
-        static INLINE void dot(
-            const input_t (&input)[S],
-            int16_t (&output)[OUTPUTS],
-            const int16_t(&b)[OUTPUTS],
-            const int16_t(&wt)[OUTPUTS][INPUTS],
-            NO_ACTIVATION /* activation applied separately */
-        )
+        void load_weights(std::ifstream& file)
         {
-            static_assert(S >= INPUTS);
+            auto w = std::make_unique<float[]>(I * OUTPUTS);
+            auto b = std::make_unique<float[]>(OUTPUTS);
 
-        #define MUL_ADD(a, b, s) s += a * b
+            file.read(reinterpret_cast<char*>(w.get()), I * OUTPUTS * sizeof(float));
+            file.read(reinterpret_cast<char*>(b.get()), OUTPUTS * sizeof(float));
+
+            set_weights(reinterpret_cast<float(&)[I][OUTPUTS]>(*(w.get())), reinterpret_cast<float(&)[OUTPUTS]>(*(b.get())));
+        }
+
+        /* input */
+        template <size_t INPUT_SIZE>
+        INLINE void dot(const input_t (&input)[INPUT_SIZE], int16_t (&output)[OUTPUTS], size_t base = 0) const
+        {
         #if INSTRSET >= 9 /* AVX 512 */
             using VecShort = Vec32s;
             using VSum = Vec32s;
+        #elif __ARM__
+            using VecShort = Vec16s;
+            using VSum = Vec16s;
         #else
             using VecShort = Vec16s;
-            #if __AVXVNNI__
-                #undef MUL_ADD
-                #define MUL_ADD(a, b, s) s = _mm256_dpwssd_epi32(s, a, b)
-                using VSum = Vec8i;
-            #else
-                using VSum = Vec16s;
-            #endif /* __AVXVNNI__ */
+            using VSum = Vec8i;
         #endif /* INSTRSET */
 
             constexpr auto N = VecShort::size();
             static_assert(N == INPUT_STRIDE);
             static_assert(OUTPUTS % N == 0);
 
-            constexpr auto R = round_down<N>(INPUTS);
-            static_assert(R == INPUTS); /* expect padded inputs */
-
             VecShort in, vw;
             VSum sum[N]; /* accumulate partial sums */
+
+            constexpr auto INPUT_MAX = std::min<int>(INPUTS, INPUT_SIZE);
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
@@ -390,7 +474,7 @@ namespace nnue
                 for (int k = 0; k != N; ++k)
                     sum[k] = VSum(0);
 
-                for (int i = 0; i != R; i += N)
+                for (int i = 0; i < INPUT_MAX; i += N)
                 {
                     in.load_a(input + i);
                     if (all_zero(in))
@@ -398,16 +482,53 @@ namespace nnue
 
                     for (int k = 0; k != N; ++k)
                     {
-                        vw.load_a(&wt[j + k][i]);
-                        MUL_ADD(in, vw, sum[k]);
+                        vw.load(&_wt[j + k][i + base]);
+                        sum[k] = mul_add(in, vw, sum[k]);
                     }
                 }
 
                 const auto sums = horizontal_add(sum);
-                vw.load_a(&b[j]);
+                vw.load_a(&_b[j]);
                 (vw + sums).store_a(&output[j]);
             }
-            #undef MUL_ADD
+        }
+
+        template <typename F>
+        INLINE void dot_sparse(int16_t (&output)[OUTPUTS], size_t base, F&& for_each_active) const
+        {
+        #if __ARM__
+            using VecShort = Vec16s;
+        #else
+            using VecShort = Vec32s;
+        #endif
+
+            VecShort vo, vw;
+
+            // Initialize with biases
+            for (int j = 0; j < OUTPUTS; j += VecShort::size())
+            {
+                vw.load_a(&_b[j]);
+                vw.store_a(&output[j]);
+            }
+
+            // Collect active indices
+            int active[MAX_ACTIVE_INPUTS];
+            int count = 0;
+            for_each_active([&](int idx) { ASSERT(count < MAX_ACTIVE_INPUTS); active[count++] = idx; });
+
+            // Add weights, looping over outputs once
+            for (int j = 0; j < OUTPUTS; j += VecShort::size())
+            {
+                vo.load_a(&output[j]);
+
+                for (int k = 0; k < count; ++k)
+                {
+                    vw.load_a(&this->_w[base + active[k]][j]);
+                    vo += vw;
+                }
+
+                vo.store_a(&output[j]);
+            }
         }
 
         /* hidden, output */
@@ -504,130 +625,221 @@ namespace nnue
 
     template <int M, int N, int O> struct Accumulator
     {
+        static_assert(ACTIVE_INPUTS * 4 == M);
+
         static constexpr int INPUTS = round_up<INPUT_STRIDE>(M);
         static constexpr int OUTPUTS_A = N;
         static constexpr int OUTPUTS_B = O;
+        static constexpr int NUM_BUCKETS = 4;
+
+        struct Bucket
+        {
+            ALIGN int16_t output[OUTPUTS_A] = { };
+            uint64_t hash = 0;
+        };
+
+        Bucket _bucket[NUM_BUCKETS];
+        int _current_bucket = 0;
+        ALIGN int16_t _output_b[OUTPUTS_B] = { };
 
     #if DEBUG_INCREMENTAL
-        ALIGN input_t _input[INPUTS] = { }; /* one-hot encoding */
+        /* remember previous inputs, for debugging */
+        ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { }; /* one-hot encoding */
     #endif
-        ALIGN int16_t _output_a[OUTPUTS_A] = { };
-        ALIGN int16_t _output_b[OUTPUTS_B] = { };
-        uint64_t _hash = 0;
+
+
+        static INLINE int get_bucket(const State& state)
+        {
+            return std::min<int>(chess::popcount(state.pawns) / 4, 3);
+        }
+
+
+        INLINE bool needs_update(const State& state) const
+        {
+            return state.hash() != _bucket[_current_bucket].hash;
+        }
+
 
         /** Compute 1st layer output from scratch at root */
+        template <typename LA, typename LB>
+        INLINE void full_update(const LA& layer_1a, const LB& layer_1b, const State& state, int bucket)
+        {
+            const size_t base = bucket * ACTIVE_INPUTS;
+
+        #if DEBUG_INCREMENTAL
+            memset(&_input, 0, sizeof(_input));
+            one_hot_encode(state, _input);
+        #endif
+
+        #if DOT_SPARSE
+            layer_1a.dot_sparse(_bucket[bucket].output, base, [&](auto&& add_weight) {
+                for_each_active_input(state, add_weight);
+            });
+            layer_1b.dot_sparse(_output_b, 0, [&](auto&& add_weight) {
+                for_each_active_king_or_pawn(state, add_weight);
+            });
+        #else
+        #if !DEBUG_INCREMENTAL
+            ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
+        #endif
+            one_hot_encode(state, _input);
+
+            layer_1a.dot(_input, _bucket[bucket].output, base);
+            layer_1b.dot(_input, _output_b);
+
+        #endif /* DOT_SPARSE */
+
+            _bucket[bucket].hash = state.hash();
+            _current_bucket = bucket;
+        }
+
         template <typename LA, typename LB>
         INLINE void update(const LA& layer_1a, const LB& layer_1b, const State& state)
         {
             if (needs_update(state))
             {
-            #if DEBUG_INCREMENTAL
-                memset(&_input, 0, sizeof(_input));
-            #else
-                ALIGN input_t _input[INPUTS] = { };
-            #endif
-                one_hot_encode(state, _input);
-
-                layer_1a.dot(_input, _output_a);
-                layer_1b.dot(_input, _output_b);
-
-                _hash = state.hash();
+                full_update(layer_1a, layer_1b, state, get_bucket(state));
             }
         }
 
         /** Utility for incremental updates */
-        static INLINE void delta(int (&d)[INPUTS], int& idx, PieceType pt, Color col, Square sq)
+        static INLINE void delta(int (&d)[MAX_ACTIVE_INPUTS], int& idx, PieceType pt, Color col, Square sq)
         {
             d[idx++] = piece_square_index(pt, col, sq);
             d[idx++] = mask_index(col, sq);
         }
 
-        INLINE bool needs_update(const State& state) const
-        {
-            return state.hash() != _hash;
-        }
-
         /** Update 1st layer output incrementally, based on a previous state */
-        template <typename LA, typename LB, typename A>
+        template <typename LA, typename LB>
         INLINE void update(
             const LA& layer_a,
             const LB& layer_b,
             const State& prev,
             const State& state,
             const Move& move,
-            A& ancestor)
+            Accumulator& ancestor)
         {
-            if (needs_update(state))
+            ASSERT(needs_update(state));
+            ASSERT(ancestor._bucket[ancestor._current_bucket].hash == prev.hash());
+
+            const int bucket = get_bucket(state);
+            bool incremental_a = (ancestor._bucket[bucket].hash == prev.hash());
+
+            /* compute delta based on ancestor state */
+            ASSERT(prev.turn != state.turn);
+
+            int remove_inputs[MAX_ACTIVE_INPUTS];
+            int add_inputs[MAX_ACTIVE_INPUTS];
+            int r_idx = 0, a_idx = 0;
+
+            if (move)
             {
-                _hash = state.hash();
+                get_deltas(prev, state, move, prev.turn, remove_inputs, add_inputs, r_idx, a_idx);
 
-                /* compute delta based on ancestor state */
-                ASSERT(prev.turn != state.turn);
-
-                memcpy(_output_a, ancestor._output_a, sizeof(_output_a));
-                memcpy(_output_b, ancestor._output_b, sizeof(_output_b));
-
-            #if DEBUG_INCREMENTAL
-                memcpy(_input, ancestor._input, sizeof(_input));
-            #endif
-                int remove_inputs[INPUTS];
-                int add_inputs[INPUTS];
-                int r_idx = 0, a_idx = 0;
-
-                if (move)
-                {
-                    update(prev, state, move, prev.turn, remove_inputs, add_inputs, r_idx, a_idx);
-
-                    ASSERT(a_idx < INPUTS);
-                    ASSERT(r_idx < INPUTS);
-                }
-
-            #if DEBUG_INCREMENTAL
-                for (int i = 0; i != r_idx; ++i)
-                    _input[remove_inputs[i]] = 0;
-                for (int i = 0; i != a_idx; ++i)
-                    _input[add_inputs[i]] = 1;
-
-                _input[TURN_INDEX] ^= 1;
-
-                input_t temp[INPUTS] = { };
-                one_hot_encode(state, temp);
-
-                for (int i = 0; i != INPUTS; ++i)
-                    ASSERT_ALWAYS(_input[i] == temp[i]);
-
-            #endif /* DEBUG_INCREMENTAL */
-
-                if (state.turn)
-                    add_inputs[a_idx++] = TURN_INDEX;
-                else
-                    remove_inputs[r_idx++] = TURN_INDEX;
-
-                recompute(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx);
-
-            #if DEBUG_INCREMENTAL
-                int16_t output_a[OUTPUTS_A] = { };
-                layer_a.dot(_input, output_a);
-                for (int i = 0; i != OUTPUTS_A; ++i)
-                    ASSERT_ALWAYS(abs(output_a[i] - _output_a[i]) < 0.0001);
-
-                int16_t output_b[OUTPUTS_B] = { };
-                layer_b.dot(_input, output_b);
-                for (int i = 0; i != OUTPUTS_B; ++i)
-                    ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
-            #endif /* DEBUG_INCREMENTAL */
+                ASSERT(a_idx < MAX_ACTIVE_INPUTS);
+                ASSERT(r_idx < MAX_ACTIVE_INPUTS);
             }
+
+        #if DEBUG_INCREMENTAL
+            memcpy(_input, ancestor._input, sizeof(_input));
+
+            // Validate get_deltas
+            for (int i = 0; i != r_idx; ++i)
+                _input[remove_inputs[i]] = 0;
+            for (int i = 0; i != a_idx; ++i)
+                _input[add_inputs[i]] = 1;
+
+            _input[TURN_INDEX] ^= 1;
+
+            ALIGN input_t temp[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
+            one_hot_encode(state, temp);
+
+            for (int i = 0; i != ACTIVE_INPUTS; ++i)
+                ASSERT_ALWAYS(_input[i] == temp[i]);
+        #endif /* DEBUG_INCREMENTAL */
+
+            if (state.turn)
+                add_inputs[a_idx++] = TURN_INDEX;
+            else
+                remove_inputs[r_idx++] = TURN_INDEX;
+
+            const size_t base = bucket * ACTIVE_INPUTS;
+
+            if (incremental_a)
+            {
+                memcpy(_bucket[bucket].output, ancestor._bucket[bucket].output, sizeof(_bucket[bucket].output));
+            }
+            else if (_bucket[bucket].hash != state.hash())
+            {
+                const int prev_bucket = ancestor._current_bucket;
+                const size_t base_old = prev_bucket * ACTIVE_INPUTS;
+                const size_t base_new = bucket * ACTIVE_INPUTS;
+
+                // Start from ancestor's output (computed with prev_bucket weights for prev position)
+                memcpy(_bucket[bucket].output, ancestor._bucket[prev_bucket].output, sizeof(_bucket[bucket].output));
+
+            #if __ARM__
+                using VecShort = Vec16s;
+            #else
+                using VecShort = Vec32s;
+            #endif
+                static_assert(OUTPUTS_A % VecShort::size() == 0);
+
+                auto apply_delta = [&](int idx)
+                {
+                    VecShort vo, vw_old, vw_new;
+
+                    for (int j = 0; j < OUTPUTS_A; j += VecShort::size())
+                    {
+                        vo.load_a(&_bucket[bucket].output[j]);
+                        vw_old.load_a(&layer_a._w[base_old + idx][j]);
+                        vw_new.load_a(&layer_a._w[base_new + idx][j]);
+                        vo = vo - vw_old + vw_new;
+                        vo.store_a(&_bucket[bucket].output[j]);
+                    }
+                };
+                for_each_active_input(prev, apply_delta);
+
+                // Now _bucket[bucket].output has correct output for prev position with bucket weights
+                // Set flag so move deltas get applied
+                incremental_a = true;
+            }
+
+            /* layer B: update incrementally from ancestor state */
+            memcpy(_output_b, ancestor._output_b, sizeof(_output_b));
+            incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, incremental_a);
+
+            _bucket[bucket].hash = state.hash();
+            _current_bucket = bucket;
+
+        #if DEBUG_INCREMENTAL
+            // Validate that incremental_update produces same result as full dot products
+            // layer A
+            ALIGN int16_t output_a[OUTPUTS_A] = { };
+            layer_a.dot(temp, output_a, base);
+            for (int i = 0; i != OUTPUTS_A; ++i)
+                ASSERT_ALWAYS(abs(output_a[i] - _bucket[bucket].output[i]) < 0.0001);
+
+            // layer B
+            ALIGN int16_t output_b[OUTPUTS_B] = { };
+            layer_b.dot(temp, output_b);
+            for (int i = 0; i != OUTPUTS_B; ++i)
+                ASSERT_ALWAYS(abs(output_b[i] - _output_b[i]) < 0.0001);
+        #endif /* DEBUG_INCREMENTAL */
         }
 
         /** Recompute incrementally */
         template <typename LA, typename LB>
-        INLINE void recompute(
+        INLINE void incremental_update(
             const LA& layer_a,
             const LB& layer_b,
-            const int (&remove_inputs)[INPUTS],
-            const int (&add_inputs)[INPUTS],
+            const int (&remove_inputs)[MAX_ACTIVE_INPUTS],
+            const int (&add_inputs)[MAX_ACTIVE_INPUTS],
             const int r_idx,
-            const int a_idx)
+            const int a_idx,
+            size_t base,
+            int bucket,
+            bool update_layer_a)
         {
         #if __ARM__
             using VecShort = Vec16s;
@@ -649,26 +861,29 @@ namespace nnue
             VecShort vo, vw;
 
             /* Layer A */
-            for (int j = 0; j != OUTPUTS_A; j += VecShort::size())
+            if (update_layer_a)
             {
-                vo.load_a(&_output_a[j]);
-
-                for (int i = 0; i < r_idx; ++i)
+                for (int j = 0; j != OUTPUTS_A; j += VecShort::size())
                 {
-                    const auto index = remove_inputs[i];
-                    ASSERT(index < LA::INPUTS);
-                    vw.load_a(&layer_a._w[index][j]);
-                    vo -= vw;
-                }
+                    vo.load_a(&_bucket[bucket].output[j]);
 
-                for (int i = 0; i < a_idx; ++i)
-                {
-                    const auto index = add_inputs[i];
-                    ASSERT(index < LA::INPUTS);
-                    vw.load_a(&layer_a._w[index][j]);
-                    vo += vw;
+                    for (int i = 0; i < r_idx; ++i)
+                    {
+                        const auto index = base + remove_inputs[i];
+                        ASSERT(index < LA::INPUTS);
+                        vw.load_a(&layer_a._w[index][j]);
+                        vo -= vw;
+                    }
+
+                    for (int i = 0; i < a_idx; ++i)
+                    {
+                        const auto index = base + add_inputs[i];
+                        ASSERT(index < LA::INPUTS);
+                        vw.load_a(&layer_a._w[index][j]);
+                        vo += vw;
+                    }
+                    vo.store_a(&_bucket[bucket].output[j]);
                 }
-                vo.store_a(&_output_a[j]);
             }
 
             if (update_layer_b)
@@ -700,14 +915,14 @@ namespace nnue
             }
         }
 
-        /** Incremental update of one-hot encoding */
-        INLINE void update(
+        /** Get the indices of pieces to add / remove */
+        INLINE void get_deltas(
             const State& from_pos,
             const State& to_pos,
             const Move& move,
             Color color, /* color of side that moved */
-            int (&remove)[INPUTS],
-            int (&add)[INPUTS],
+            int (&remove)[MAX_ACTIVE_INPUTS],
+            int (&add)[MAX_ACTIVE_INPUTS],
             int& r_idx,
             int& a_idx)
         {
@@ -763,11 +978,11 @@ namespace nnue
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
 
-        pool(a._output_a, l2_in);
+        pool(a._bucket[a._current_bucket].output, l2_in);
 
         /* The "spatial attention" layer modulates L2. */
-        activate(a._output_b, attn_in); // process output of hidden_1b
-        attn.dot(attn_in, attn_out, [](const Vector& v) { return max(v, v_zero); });
+        activate(a._output_b, attn_in);
+        attn.dot(attn_in, attn_out);
 
         static_assert(L2::INPUTS % Vector::size() == 0);
 
@@ -785,32 +1000,25 @@ namespace nnue
         l3.dot(l2_out, l3_out, [](const Vector& v) { return max(v, v_zero); });
 
         out.dot(l3_out, output);
-        return 100 * output[0];
+        return EVAL_SCALE * output[0];
     }
 
 
-    template <typename T>
-    INLINE void sort_moves(T& moves, const int16_t(& logits)[4096])
+    template <typename LM>
+    INLINE void score_move(const LM& layer_m, const int (&active)[MAX_ACTIVE_INPUTS], int count, Move& move)
     {
-        for (auto& move : moves)
+        const auto index = move.from_square() * 64 + move.to_square();
+
+        // Start with bias
+        auto score = layer_m._b[index];
+
+        // Add contribution from each active feature
+        for (int k = 0; k < count; ++k)
         {
-            const auto index = move.from_square() * 64 + move.to_square();
-            ASSERT(index >= 0);
-            ASSERT(index < 4096);
-            move._score = logits[index];
+            score += layer_m._wt[index][active[k]];
         }
 
-        // Sort highest scores first
-        std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) { return a._score > b._score; });
-    }
-
-
-    template <typename I, typename L, typename T>
-    INLINE void predict_moves(const I& input, const L& moves, T& pseudo_legal_moves)
-    {
-        ALIGN int16_t logits[L::OUTPUTS];
-        moves.dot(input, logits);
-
-        sort_moves(pseudo_legal_moves, logits);
+        using move_score_t = decltype(move._score);
+        move._score = std::min(std::numeric_limits<move_score_t>::max(), score);
     }
 } /* namespace nnue */

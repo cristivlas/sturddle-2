@@ -4,18 +4,13 @@ Alternative engine bootloader that uses the native UCI implementation.
 '''
 # import everything for the benefit of pyinstaller
 import argparse
-import atexit
 import importlib
 import logging
-# import math
 import os
-import sysconfig
-# import time
 
 import chess
 import chess.pgn
 import chess.polyglot
-import chess.syzygy
 import psutil
 
 import armcpu
@@ -103,30 +98,9 @@ def _configure_logging(args):
     logging.basicConfig(level=level, filename=filename, format=format)
 
 
-'''
-Workaround for --onefile executable built with PyInstaller:
-hide the console if not running from a CMD prompt or Windows Terminal.
-
-PyInstaller 6.9.0 has --hide-console, not available in 5.7.0
-'''
-def manage_console():
-    # Running under Windows, but not from under CMD.EXE or Windows Terminal (PowerShell)?
-    if sysconfig.get_platform().startswith('win') and all(
-        (v not in os.environ) for v in ['PROMPT', 'WT_SESSION']
-        ):
-
-        # When running under the PyInstaller bootloader, check the grandparent process
-        # Grandparent is None if running under Python interpreter in CMD.
-        p = psutil.Process().parent().parent()
-        if p:
-            if p.name().lower() in ['explorer.exe', 'powershell.exe']:
-                engine.ensure_console()
-            else:
-                import ctypes
-                ctypes.windll.kernel32.FreeConsole()
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Sturddle Chess Engine')
+    parser.add_argument('-D', '--dev-mode', action='store_true', help='enable developer-mode features')
     parser.add_argument('-l', '--logfile', default='sturddle.log')
     parser.add_argument('-s', '--separate-logs', action='store_true')
     parser.add_argument('-v', '--verbose', action='store_true', help='enable verbose logging')
@@ -137,8 +111,7 @@ if __name__ == '__main__':
     engine = load_engine()
     assert engine, 'Failed to load engine.'
     try:
-        manage_console()
-        engine.uci('Sturddle', debug=args.verbose)
+        engine.uci('Sturddle', debug=args.verbose, dev_mode=args.dev_mode)
     except KeyboardInterrupt:
         pass
     except Exception as e:

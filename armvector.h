@@ -18,62 +18,6 @@
     #define ARCH "ARM"
 #endif
 
-#if SIMD_EMULATION /* emulate with SIMDE */
-
-class Vec4f
-{
-    __m128 xmm;
-
-public:
-    static constexpr size_t size() { return 4; }
-
-    Vec4f() = default;
-    Vec4f(float f) : xmm(_mm_set1_ps(f)) {}
-    Vec4f(__m128 x) : xmm(x) {}
-    Vec4f(float f0, float f1, float f2, float f3) {
-        xmm = _mm_setr_ps(f0, f1, f2, f3);
-    }
-    void load_a(const float* p) { xmm = _mm_load_ps(p); }
-    void store_a(float* p) const { _mm_store_ps(p, xmm); }
-
-    operator __m128() const { return xmm; }
-};
-
-INLINE float horizontal_add(const Vec4f& a)
-{
-    __m128 t1 = _mm_movehl_ps(a, a);
-    __m128 t2 = _mm_add_ps(a, t1);
-    __m128 t3 = _mm_shuffle_ps(t2, t2, 1);
-    __m128 t4 = _mm_add_ss(t2, t3);
-    return _mm_cvtss_f32(t4);
-}
-
-INLINE Vec4f operator + (const Vec4f& a, const Vec4f& b)
-{
-    return _mm_add_ps(a, b);
-}
-
-INLINE Vec4f operator - (const Vec4f& a, const Vec4f& b)
-{
-    return _mm_sub_ps(a, b);
-}
-
-INLINE Vec4f operator * (const Vec4f& a, const Vec4f& b)
-{
-    return _mm_mul_ps(a, b);
-}
-
-INLINE Vec4f mul_add(const Vec4f& a, const Vec4f& b, const Vec4f& c)
-{
-    return _mm_fmadd_ps(a, b, c);
-}
-
-INLINE Vec4f max(const Vec4f& a, const Vec4f& b)
-{
-    return _mm_max_ps(a, b);
-}
-
-#else /* NEON */
 
 class Vec4f
 {
@@ -95,7 +39,7 @@ public:
     operator float32x4_t() const { return v; }
 };
 
-INLINE float horizontal_add(const Vec4f& a)
+INLINE float horizontal_add(Vec4f a)
 {
 #if (__arm64__) || (__aarch64__)
     return vaddvq_f32(a);
@@ -111,31 +55,30 @@ INLINE float horizontal_add(const Vec4f& a)
 #endif
 }
 
-INLINE Vec4f operator + (const Vec4f& a, const Vec4f& b)
+INLINE Vec4f operator + (Vec4f a, Vec4f b)
 {
     return vaddq_f32(a, b);
 }
 
-INLINE Vec4f operator - (const Vec4f& a, const Vec4f& b)
+INLINE Vec4f operator - (Vec4f a, Vec4f b)
 {
     return vsubq_f32(a, b);
 }
 
-INLINE Vec4f operator * (const Vec4f& a, const Vec4f& b)
+INLINE Vec4f operator * (Vec4f a, Vec4f b)
 {
     return vmulq_f32(a, b);
 }
 
-INLINE Vec4f mul_add(const Vec4f& a, const Vec4f& b, const Vec4f& c)
+INLINE Vec4f mul_add(Vec4f a, Vec4f b, Vec4f c)
 {
     return vmlaq_f32(c, a, b); // may map to vfmaq_f32 on some archs?
 }
 
-INLINE Vec4f max(const Vec4f& a, const Vec4f& b)
+INLINE Vec4f max(Vec4f a, Vec4f b)
 {
     return vmaxq_f32(a, b);
 }
-#endif /* NEON */
 
 
 #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
@@ -177,7 +120,7 @@ public:
     INLINE operator float16x8_t() const { return v; }
 };
 
-INLINE float horizontal_add(const Vec8f& x)
+INLINE float horizontal_add(Vec8f x)
 {
 #if 0
     // Split and add
@@ -200,29 +143,35 @@ INLINE float horizontal_add(const Vec8f& x)
 #endif
 }
 
-INLINE Vec8f operator + (const Vec8f& a, const Vec8f& b)
+INLINE Vec8f operator + (Vec8f a, Vec8f b)
 {
     return vaddq_f16(a, b);
 }
 
-INLINE Vec8f operator - (const Vec8f& a, const Vec8f& b)
+INLINE Vec8f operator - (Vec8f a, Vec8f b)
 {
     return vsubq_f16(a, b);
 }
 
-INLINE Vec8f operator * (const Vec8f& a, const Vec8f& b)
+INLINE Vec8f operator * (Vec8f a, Vec8f b)
 {
     return vmulq_f16(a, b);
 }
 
-INLINE Vec8f max(const Vec8f& a, const Vec8f& b)
+INLINE Vec8f max(Vec8f a, Vec8f b)
 {
     return vmaxq_f16(a, b);
 }
 
-INLINE Vec8f mul_add(const Vec8f& a, const Vec8f& b, const Vec8f& c)
+INLINE Vec8f mul_add(Vec8f a, Vec8f b, Vec8f c)
 {
     return vfmaq_f16(c, a, b);
+}
+
+INLINE Vec8f to_float(__m256i a)
+{
+    const auto m = _mm256_cvtepi32_ps(a);
+    return Vec8f(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7]);
 }
 #endif /* __ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
 
@@ -249,18 +198,15 @@ public:
     }
 };
 
-
 INLINE Vec8s max(Vec8s a, Vec8s b)
 {
     return _mm_max_epi16(a, b);
 }
 
-
 INLINE __m256i extend(Vec8s a)
 {
     return _mm256_cvtepi16_epi32(a);
 }
-
 
 INLINE int32_t horizontal_add (__m256i a)
 {
@@ -275,87 +221,6 @@ INLINE int32_t horizontal_add (__m256i a)
     return (int32_t)_mm_cvtsi128_si32(sum3);
 }
 
-
-#if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
-/* Vec8f is currently supported on FP16 Neon only */
-INLINE Vec8f to_float(__m256i a)
-{
-    const auto m = _mm256_cvtepi32_ps(a);
-    return Vec8f(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7]);
-}
-#endif /* __ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
-
-
-#if 0 && !__APPLE__ /* Emulate with SIMDE */
-class Vec16s
-{
-    __m256i ymm;
-
-public:
-    static constexpr size_t size() { return 16; }
-
-    Vec16s() = default;
-    Vec16s(int16_t i) : ymm(_mm256_set1_epi16(i)) {}
-    Vec16s(__m256i y) : ymm(y) {}
-
-    Vec16s(int16_t i0, int16_t i1, int16_t i2,  int16_t i3,  int16_t i4,  int16_t i5,  int16_t i6,  int16_t i7,
-           int16_t i8, int16_t i9, int16_t i10, int16_t i11, int16_t i12, int16_t i13, int16_t i14, int16_t i15) {
-        ymm = _mm256_setr_epi16(i0, i1, i2, i3, i4, i5, i6, i7, i8, i9, i10, i11, i12, i13, i14, i15 );
-    }
-
-    void load(const int16_t* p)
-    {
-        ymm = _mm256_loadu_si256((__m256i const*)p);
-    }
-
-    void load_a(const int16_t* p)
-    {
-        ymm = _mm256_load_si256((__m256i const*)p);
-    }
-
-    void store_a(int16_t* p) const
-    {
-        _mm256_store_si256((__m256i*)p, ymm);
-    }
-
-    operator __m256i() const { return ymm; }
-};
-
-INLINE int16_t horizontal_add(const Vec16s& a)
-{
-    __m128i sum1 = _mm_add_epi16(_mm256_extracti128_si256(a,1),_mm256_castsi256_si128(a));
-    __m128i sum2 = _mm_add_epi16(sum1,_mm_unpackhi_epi64(sum1,sum1));
-    __m128i sum3 = _mm_add_epi16(sum2,_mm_shuffle_epi32(sum2,1));
-    __m128i sum4 = _mm_add_epi16(sum3,_mm_shufflelo_epi16(sum3,1));
-    return (int16_t)_mm_cvtsi128_si32(sum4);
-}
-
-INLINE bool horizontal_or(const Vec16s& a)
-{
-    return !_mm256_testz_si256(a, a);
-}
-
-INLINE Vec16s operator + (const Vec16s& a, const Vec16s& b)
-{
-    return _mm256_add_epi16(a, b);
-}
-
-INLINE Vec16s operator - (const Vec16s& a, const Vec16s& b)
-{
-    return _mm256_sub_epi16(a, b);
-}
-
-INLINE Vec16s operator * (const Vec16s& a, const Vec16s& b)
-{
-    return _mm256_mullo_epi16(a, b);
-}
-
-INLINE Vec16s Vec16s max(Vec16s a, Vec16s b)
-{
-    return _mm256_max_epi16(a,b);
-}
-
-#else /* NEON */
 
 class Vec16s
 {
@@ -385,7 +250,7 @@ public:
     INLINE void store_a(int16_t* p) const { vst1q_s16_x2(p, _data); }
 };
 
-INLINE int16_t horizontal_add(const Vec16s& a)
+INLINE int16_t horizontal_add(Vec16s a)
 {
     int16x8_t sum1 = vpaddq_s16(a.get_low(), a.get_high());
     int16x4_t sum2 = vadd_s16(vget_low_s16(sum1), vget_high_s16(sum1));
@@ -394,12 +259,12 @@ INLINE int16_t horizontal_add(const Vec16s& a)
 }
 
 // TODO: implement correctly. Fake it for now.
-INLINE int16_t horizontal_add_x(const Vec16s& a)
+INLINE int16_t horizontal_add_x(Vec16s a)
 {
     return horizontal_add(a);
 }
 
-INLINE bool horizontal_or(const Vec16s& a)
+INLINE bool horizontal_or(Vec16s a)
 {
     int16x8_t or1 = vorrq_s16(a.get_low(), a.get_high());
     int16x4_t or2 = vorr_s16(vget_low_s16(or1), vget_high_s16(or1));
@@ -407,7 +272,7 @@ INLINE bool horizontal_or(const Vec16s& a)
     return vget_lane_s16(or3, 0) | vget_lane_s16(or3, 1);
 }
 
-INLINE Vec16s operator + (const Vec16s& a, const Vec16s& b)
+INLINE Vec16s operator + (Vec16s a, Vec16s b)
 {
     int16x8x2_t result;
     result.val[0] = vaddq_s16(a.get_low(), b.get_low());
@@ -415,7 +280,7 @@ INLINE Vec16s operator + (const Vec16s& a, const Vec16s& b)
     return result;
 }
 
-INLINE Vec16s operator - (const Vec16s& a, const Vec16s& b)
+INLINE Vec16s operator - (Vec16s a, Vec16s b)
 {
     int16x8x2_t result;
     result.val[0] = vsubq_s16(a.get_low(), b.get_low());
@@ -423,7 +288,7 @@ INLINE Vec16s operator - (const Vec16s& a, const Vec16s& b)
     return result;
 }
 
-INLINE Vec16s operator * (const Vec16s& a, const Vec16s& b)
+INLINE Vec16s operator * (Vec16s a, Vec16s b)
 {
     int16x8x2_t result;
     result.val[0] = vmulq_s16(a.get_low(), b.get_low());
@@ -431,15 +296,13 @@ INLINE Vec16s operator * (const Vec16s& a, const Vec16s& b)
     return result;
 }
 
-INLINE Vec16s max(const Vec16s& a, const Vec16s& b)
+INLINE Vec16s max(Vec16s a, Vec16s b)
 {
     int16x8x2_t result;
     result.val[0] = vmaxq_s16(a.get_low(), b.get_low());
     result.val[1] = vmaxq_s16(a.get_high(),b.get_high());
     return result;
 }
-
-#endif /* !__APPLE__ */
 
 
 template <typename V> INLINE V& operator += (V& a, V b)

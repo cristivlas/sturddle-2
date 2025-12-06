@@ -3,17 +3,18 @@ import argparse
 import h5py
 import numpy as np
 import os
+import shutil
 import tempfile
 from tqdm import tqdm
 
-def find_first_empty_record(dataset):
+
+def find_first_empty_record(dataset, batch_size):
     """Find the index of the first empty record in the dataset."""
     total_records = dataset.shape[0]
 
     print("Scanning for first empty record...")
     with tqdm(total=total_records, desc="Scanning records") as pbar:
         # Process in batches to improve performance
-        batch_size = 5000
         for start in range(0, total_records, batch_size):
             end = min(start + batch_size, total_records)
             batch = dataset[start:end]
@@ -32,7 +33,8 @@ def find_first_empty_record(dataset):
     # No empty records found
     return total_records
 
-def truncate_h5_file(input_path, output_path, verbose=False):
+
+def truncate_h5_file(input_path, output_path, batch_size, verbose=False):
     """Truncate an HDF5 file to remove empty records at the end."""
     with h5py.File(input_path, 'r') as in_file:
         # Assume 'data' is the main dataset
@@ -43,7 +45,7 @@ def truncate_h5_file(input_path, output_path, verbose=False):
             print(f"Original file has {total_records} records with shape {dataset.shape}")
 
         # Find the first empty record
-        first_empty_index = find_first_empty_record(dataset)
+        first_empty_index = find_first_empty_record(dataset, batch_size)
 
         if first_empty_index == total_records:
             print("No empty records found in the file.")
@@ -71,7 +73,6 @@ def truncate_h5_file(input_path, output_path, verbose=False):
             )
 
             # Copy data in batches
-            batch_size = 10000
             with tqdm(total=valid_record_count, desc="Copying valid records") as pbar:
                 for i in range(0, valid_record_count, batch_size):
                     end = min(i + batch_size, valid_record_count)
@@ -85,6 +86,7 @@ def truncate_h5_file(input_path, output_path, verbose=False):
 def main():
     parser = argparse.ArgumentParser(description='Truncate HDF5 file to remove empty records at the end')
     parser.add_argument('input', help='Input HDF5 file path')
+    parser.add_argument('-b', '--batch-size', type=int, default=10000, help='Batch size (default: 10000)')
     parser.add_argument('-o', '--output', help='Output HDF5 file path (defaults to overwriting input)')
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
 
@@ -95,11 +97,12 @@ def main():
 
     # If overwriting, create a temporary file first
     if args.input == output_path:
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.h5')
+        input_dir = os.path.dirname(os.path.abspath(args.input))
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.h5', dir=input_dir)
         temp_file.close()
         try:
-            if truncate_h5_file(args.input, temp_file.name, args.verbose):
-                os.replace(temp_file.name, args.input)
+            if truncate_h5_file(args.input, temp_file.name, args.batch_size, args.verbose):
+                shutil.move(temp_file.name, args.input)
                 print(f"Original file successfully replaced with truncated version")
             else:
                  os.unlink(temp_file.name)

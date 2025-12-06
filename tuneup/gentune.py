@@ -46,7 +46,8 @@ if __name__ == '__main__':
     parser.add_argument('-a', '--asymmetric', action='store_true', help='test mtdf vs. negascout')
     parser.add_argument('-b', '--book', default='8moves_v3', help='opening book file')
     parser.add_argument('-c', '--concurrency', type=int, choices=range(1, 64), default=os.cpu_count() // 2)
-    parser.add_argument('--hash', type=int, help='hash table size')
+    parser.add_argument('-H', '--hash', type=int, help='hash table size')
+    parser.add_argument('-n', '--n-initial-points', type=int, default=8)
     parser.add_argument('-o', '--output')
     parser.add_argument('-p', '--plot-every', type=int, default=0)
     parser.add_argument('-r', '--rounds', type=int)
@@ -105,7 +106,7 @@ if __name__ == '__main__':
         command = make_path('main.py')
     platform = sysconfig.get_platform()
     if platform.startswith('win'):
-        command = sys.executable + ' ' + command
+        command = f'"{sys.executable}" "{command}"'
 
     config = {
         'engines': [
@@ -122,7 +123,8 @@ if __name__ == '__main__':
         'rounds': args.rounds if args.rounds else len(args.tune) * 15,
         'plot_every': args.plot_every,
         'opening_file': make_path('tuneup', 'books', args.book + '.pgn'),
-        'concurrency': args.concurrency
+        'concurrency': args.concurrency,
+        'n_initial_points': args.n_initial_points,
     }
 
     config = json.dumps(config, sort_keys=False, indent=4)

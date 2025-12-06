@@ -37,6 +37,7 @@ constexpr auto FIRST_EXCHANGE_PLY = PLY_MAX;
 /* Configuration API */
 struct Param {
     int val = 0;
+    int default_val = 0;
     int min_val = std::numeric_limits<int>::min();
     int max_val = std::numeric_limits<int>::max();
     std::string group;
@@ -201,9 +202,10 @@ namespace search
     struct IterationInfo
     {
         score_t score;
-        size_t nodes;
-        double knps;
-        int milliseconds;
+        size_t  nodes;
+        float   knps;
+        int     milliseconds;
+        size_t  tbhits;
     };
 
 
@@ -273,7 +275,7 @@ namespace search
         Algorithm   _algorithm = Algorithm::MTDF;
 
         mutable int8_t _can_forward_prune = -1;
-        mutable int8_t _repetitions = -1;
+        mutable int8_t _repeated = -1;
 
         Square      _capture_square = Square::UNDEFINED;
         bool        _futility_pruning = true;
@@ -316,6 +318,7 @@ namespace search
         static void cancel() { _cancel.store(true, std::memory_order_relaxed); }
 
         bool        can_forward_prune() const;
+        bool        can_probe_endtables() const { return piece_count() <= tb_cardinality(); }
 
         template<bool PruneCaptures = false> bool can_prune() const;
         template<bool PruneCaptures = false> bool can_prune_move(const Move&) const;
@@ -367,7 +370,8 @@ namespace search
         float       history_score(const Move&) const;
 
         score_t     improvement() const;
-        static void init();
+        static void init(const std::string& exe_dir);
+
         bool        is_beta_cutoff(Context*, score_t);
         static bool is_cancelled() { return _cancel.load(std::memory_order_relaxed); }
         INLINE bool is_capture() const { return state().is_capture(); }
@@ -375,6 +379,7 @@ namespace search
         bool        is_counter_move(const Move&) const;
         bool        is_evasion() const;
         bool        is_extended() const;
+        bool        is_fifty_move_rule_draw() const { return _fifty >= 100; }
         bool        is_last_move();
         INLINE bool is_leftmost() const { return is_root() || _leftmost; }
         bool        is_leaf(); /* treat as terminal node ? */
@@ -387,13 +392,14 @@ namespace search
         INLINE bool is_leaf_extended() const { return _ply > _max_depth; }
         bool        is_recapture() const;
         bool        is_reduced() const;
-        int         is_repeated() const;
+        bool        is_repeated() const;
         INLINE bool is_retry() const { return _is_retry; }
         INLINE bool is_root() const { return _ply == 0; }
 
         INLINE int  iteration() const { ASSERT(_tt); return _tt->_iteration; }
 
         LMRAction   late_move_reduce(int move_count, int64_t time_left);
+        static void load_weights(const std::string& file_path);
 
         static void log_message(LogLevel, const std::string&, bool force = false);
 
@@ -409,10 +415,11 @@ namespace search
         bool        on_next(int64_t*);
         INLINE int  piece_count() const { return state().piece_count(); }
 
-        void        reset(bool force_reorder_moves = true, bool clear_best_move = true);
-        int         repeated_count(const State&) const;
+        static void print_board(std::ostream&, const State&, bool unicode);
 
+        void        reset(bool force_reorder_moves = true, bool clear_best_move = true);
         int         rewind(int where = 0, bool reorder = false);
+
         INLINE void set_counter_move(const BaseMove& move) { _counter_move = move; }
         void        set_search_window(score_t score, score_t& prev_score);
         static void set_start_time();
@@ -451,28 +458,26 @@ namespace search
         static MovesList& moves(int tid, int ply);
         static StatePool& states(int tid, int ply);
 
-        static void set_syzygy_path(const std::string& path) { _syzygy_path = path; }
+        static void set_syzygy_path(const std::string& path) { _syzygy_path = path; tb_init(); }
         static const std::string& syzygy_path() { return _syzygy_path; }
-        static void set_tb_cardinality(int n) { _tb_cardinality = n; }
-        static int tb_cardinality() { return _tb_cardinality.load(std::memory_order_relaxed); }
+
+        static int tb_cardinality() { return _tb_cardinality; }
 
         /*
          * Python callbacks
          */
         static PyObject*    _engine; /* searcher instance */
 
-        static bool         (*_book_init)(const std::string&);
-        static BaseMove     (*_book_lookup)(const State&, bool);
+        static bool         (*_book_init)(const std::string&); /* DEPRECATED with NATIVE_BOOK */
+        static BaseMove     (*_book_lookup)(const State&, bool); /* DEPRECATED with NATIVE_BOOK */
         static std::string  (*_epd)(const State&);
         static void         (*_log_message)(int, const std::string&, bool);
         static void         (*_on_iter)(PyObject*, Context*, const IterationInfo*);
         static void         (*_on_move)(PyObject*, const std::string&, int);
         static void         (*_on_next)(PyObject*, int64_t);
         static std::string  (*_pgn)(Context*);
-        static void         (*_print_state)(const State&, bool unicode);
+        static void         (*_print_state)(const State&, bool unicode); /* DEPRECATED, use print_board */
         static void         (*_report)(PyObject*, std::vector<Context*>&);
-        static void         (*_set_syzygy_path)(const std::string&);
-        static bool         (*_tb_probe_wdl)(const State&, int*);
         static size_t       (*_vmem_avail)();
 
         static HistoryPtr   _history;
@@ -481,7 +486,9 @@ namespace search
         const Move* get_next_move(score_t);
         bool has_cycle(const State&) const;
 
-        void update_accumulators();
+        void update_accumulators(); /* lazy */
+
+        static void tb_init();
 
         MoveMaker           _move_maker;
 
@@ -494,7 +501,8 @@ namespace search
         static atomic_int   _time_limit; /* milliseconds */
         static atomic_time  _time_start;
         static std::string  _syzygy_path;
-        static atomic_int   _tb_cardinality;
+        static int          _tb_cardinality;
+        static bool         _tb_initialized;
 
         static std::vector<ContextStack>    _context_stacks;
         static std::vector<MoveStack>       _move_stacks;
@@ -602,7 +610,7 @@ namespace search
     {
         return move.promotion() != chess::PieceType::QUEEN /* ignore under-promotions */
             && !move._state->is_capture()
-            && move._state->pushed_pawns_score <= 1
+            && move._state->pushed_pawns_score == 0
             && !move._state->is_check();
     }
 
@@ -623,7 +631,7 @@ namespace search
                 (_parent != nullptr)
                 && !is_pv_node()
                 && !_excluded
-                && (state().pushed_pawns_score <= 2)
+                && (state().pushed_pawns_score == 0)
                 && !state().just_king_and_pawns()
                 && (_parent->_mate_detected == 0 || _parent->_mate_detected % 2)
                 && !is_check();
@@ -669,7 +677,7 @@ namespace search
 
         return !is_leftmost()
             && !is_retry()
-            && (state().pushed_pawns_score <= 1)
+            && (state().pushed_pawns_score == 0)
             && !is_extended()
             && (_move.from_square() != _parent->_capture_square)
             && !is_recapture()
@@ -953,23 +961,26 @@ namespace search
     }
 
 
-    INLINE int Context::repeated_count(const State& state) const
+    INLINE bool Context::is_repeated() const
     {
-        ASSERT(_history);
-        return int(_history->count(state)) + has_cycle(state);
-    }
-
-
-    INLINE int Context::is_repeated() const
-    {
-        if (_repetitions < 0)
+        if (_repeated < 0)
         {
-            ASSERT(_history);
-            _repetitions = repeated_count(state());
+            if (state().en_passant_square != Square::UNDEFINED)
+            {
+                _repeated = 0;
+            }
+            else
+            {
+                if (_parent)
+                    zobrist_update(_parent->state(), _move, *_state);
 
-            ASSERT(_repetitions >= 0);
+                ASSERT(_history);
+                _repeated = _history->count(state()) > 0 || has_cycle(state());
+
+                ASSERT(_repeated >= 0);
+            }
         }
-        return _repetitions;
+        return _repeated > 0;
     }
 
 
@@ -1714,9 +1725,6 @@ namespace search
 
 /*** Export misc. stuff to Cython ***/
 score_t eval(const std::string& epd, bool as_side_to_move, int depth = 0, int millis = -1);
-
-/*** uci_native.cpp ***/
-bool _ensure_console();
 
 /* C++ implementation of UCI protocol if NATIVE_UCI is defined,
  * or just a stub otherwise (and the uci.pyx impl is used instead).

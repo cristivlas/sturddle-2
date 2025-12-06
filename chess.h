@@ -352,8 +352,8 @@ namespace chess
     constexpr Bitboard BB_QUANDRANTS[4] = { BB_NW, BB_NE, BB_SW, BB_SE, };
 
     constexpr Bitboard BB_PASSED[2] = {
-        /* BB_RANK_4 | */ BB_RANK_3 | BB_RANK_2,
-        /* BB_RANK_5 | */ BB_RANK_6 | BB_RANK_7
+        BB_RANK_4 | BB_RANK_3 | BB_RANK_2,
+        BB_RANK_5 | BB_RANK_6 | BB_RANK_7,
     };
 
     extern Rays BB_RAYS;
@@ -382,7 +382,15 @@ namespace chess
         PieceType::KING,
     };
 
-    constexpr const char* PIECE_SYMBOL[] = { "", "p", "n", "b", "r", "q", "k" };
+    constexpr const char* PIECE_SYMBOL[2][7] = {
+        { "", "p", "n", "b", "r", "q", "k" },
+        { "", "P", "N", "B", "R", "Q", "K" },
+    };
+
+    constexpr const char* UNICODE_PIECE_SYMBOLS[2][7] = {
+        {"", "♟", "♞", "♝", "♜", "♛", "♚"},
+        {"", "♙", "♘", "♗", "♖", "♕", "♔"},
+    };
 
     enum Color : uint8_t
     {

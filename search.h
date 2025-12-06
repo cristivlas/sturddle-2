@@ -268,7 +268,6 @@ namespace search
         score_t _w_alpha = SCORE_MIN;
         score_t _w_beta = SCORE_MAX;
         bool _reset_window = false;
-        bool _probe_endtables = false;
         bool _analysis = false;
 
         /* Stats for current thread */
@@ -288,6 +287,7 @@ namespace search
         size_t _null_move_not_ok = 0;
         size_t _reductions = 0;
         size_t _retry_reductions = 0;
+        size_t _tb_hits = 0;
 
         unsigned _pass = 0; /* MTD(f) pass */
 
@@ -310,7 +310,8 @@ namespace search
         template<TT_Type=TT_Type::NONE, typename C=struct Context>
         void store(C& ctxt, int depth);
 
-        void store(Context&, TT_Entry&, TT_Type, int depth);
+        void update_entry(Context&, TT_Entry&, TT_Type, int depth);
+        bool update_and_store(Context&, TT_Type);
 
         template<typename C> void store_countermove(C& ctxt);
         void store_killer_move(const Context&);
@@ -340,6 +341,8 @@ namespace search
 
         /* set hash table size in MB */
         static void set_hash_size(size_t);
+
+        size_t tb_hits() const { return _tb_hits; }
     };
 
 
@@ -452,7 +455,6 @@ namespace search
         else
             ASSERT(ctxt.tt_entry()._hash == ctxt.state().hash());
 
-
         if (ctxt.tt_entry().is_valid())
         {
             ASSERT(ctxt.tt_entry().matches(ctxt.state()));
@@ -502,8 +504,8 @@ namespace search
                 }
             }
 
-            store(ctxt, ctxt.tt_entry(), type, depth);
-            _table.update(ctxt.tt_result());
+            update_entry(ctxt, ctxt.tt_entry(), type, depth);
+            _table.store(ctxt.tt_result());
         }
     }
 

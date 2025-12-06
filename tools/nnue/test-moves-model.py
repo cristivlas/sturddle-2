@@ -5,6 +5,7 @@ import chess
 import numpy as np
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+# os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
 import tensorflow as tf
 
@@ -18,18 +19,21 @@ tests = [
     '5bk1/1p3p2/6pp/pPR1p3/P7/1P4P1/3r3P/5BK1 w - -',
     'r4rk1/ppq2p1p/4pp2/1P1p4/P7/3N1P2/6Pb/R2Q1R1K w - -',
     'rnbq1rk1/pp3pbp/3ppnp1/2p3N1/2BPP3/2N2Q2/PPP2PPP/R1B1K2R w KQ -',
-    'r7/8/5kp1/2p2p1p/1pRbbP1P/1P2p1PK/P3B3/5R2 b - -'
+    'r7/8/5kp1/2p2p1p/1pRbbP1P/1P2p1PK/P3B3/5R2 b - -',
+    'r2q3r/p1nkb1pn/b1p1p2p/1p2P2Q/2pP4/2N3P1/1P1B1PBP/R2R2K1 w - -',
 ]
 
 # Expected best moves and evaluations for each position
 expected_moves = [
     'b7b6', 'g3e3', 'b2b4', 'd1d4', 'h5f6',
-    'g7g5', 'c5c7', 'd3f2', 'e4e5', 'a8a2'
+    'g7g5', 'c5c7', 'd3f2', 'e4e5', 'a8a2',
+    'd4d5',
 ]
 
 expected_evals = [
     0.09, -5.97, 5.62, 4.78, 0.44,
-    -4.79, -0.20, 1.82, -0.52, -5.77
+    -4.79, -0.20, 1.82, -0.52, -5.77,
+    3.4
 ]
 
 def encode(board):
@@ -66,7 +70,7 @@ def load_model(args):
         })
 
 
-def get_top_moves(move_logits, board, num_moves=5):
+def get_top_moves(move_logits, board, num_moves):
     """
     Get top moves from 4096 move logits output by scoring all legal moves.
     move_logits shape: (1, 4096) representing all 64x64 from-to combinations
@@ -129,7 +133,7 @@ def run_tests(args, model):
 
         # If model has move prediction capability, show top moves
         if has_move_prediction:
-            top_moves = get_top_moves(move_logits, board)
+            top_moves = get_top_moves(move_logits, board, args.num_moves)
 
             print("Top predicted moves:")
             for j, (move, prob) in enumerate(top_moves, 1):
@@ -165,5 +169,6 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('input', nargs=1, help='Path to the model file')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Show detailed output including model summary')
+    parser.add_argument('-n', '--num-moves', type=int, default=5)
+    parser.add_argument('-v', '--verbose', action='store_true', help='Show detailed output including model summary')
     main(parser.parse_args())

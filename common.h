@@ -28,13 +28,9 @@
 #include <stdexcept>
 #include "backtrace.h"
 
-#if defined(_MSC_VER) && !defined(__clang__)
-  #pragma warning(disable:4244)
-  #define _USE_MATH_DEFINES
-  #define HAVE_INT128 false
-#else
-  #define HAVE_INT128 (INTPTR_MAX == INT64_MAX)
-#endif /* !Microsoft Compiler */
+#if (__arm__) || (__arm64__) || (__aarch64__)
+  #define __ARM__ true
+#endif
 
 #if !defined(_DEBUG)
 #if _MSC_VER
@@ -45,6 +41,16 @@
 #else
   #define INLINE inline
 #endif /* _DEBUG */
+
+#ifdef _MSC_VER
+  #include <xmmintrin.h>
+  #define PREFETCH(addr) _mm_prefetch((char*)(addr), _MM_HINT_T0)
+#elif defined(__GNUC__) || defined(__clang__)
+  #define PREFETCH(addr) __builtin_prefetch(addr, 0, 3)
+#else
+  #define PREFETCH(addr) // No-op
+#endif
+
 
 using score_t = int;
 
@@ -113,9 +119,10 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 /* Experimental */
 #define USE_BOOK_HINT                       false
-#define USE_ROOT_MOVES                      false
+#define USE_MOVE_PREDICTION                 true
 
-#define USE_ENDTABLES                       false
+/* Support endtable probing with the Fathom library */
+#define USE_ENDTABLES                       true
 
 #define USE_LIBPOPCOUNT                     true
 
@@ -136,7 +143,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 
 /* default hash table size in megabytes */
-#if USE_MMAP_HASH_TABLE
+#if USE_MMAP_HASH_TABLE || defined(_WIN32)
 constexpr size_t DEFAULT_HASH_TABLE_SIZE =  256;
 #else
 constexpr size_t DEFAULT_HASH_TABLE_SIZE =  32;
@@ -190,23 +197,22 @@ namespace search
     enum MoveOrder : int8_t
     {
         UNDEFINED = 0,
-        ROOT_MOVES = 1, /* NN suggestions -- @root & top iterations */
-        PREV_ITER = 2, /* best move from previous iteration */
-        BEST_MOVES = 3, /* best move(s) from cache (hashtable) */
-        HASH_MOVES = 4, /* moves from hashtable */
-        PROMOTIONS = 5,
-        LAST_MOVED_CAPTURE = 6,
-        WINNING_CAPTURES = 7,
-        EQUAL_CAPTURES = 8,
-        KILLER_MOVES = 9,
-        LOSING_CAPTURES = 10,
-        HISTORY_COUNTERS = 11,
-        TACTICAL_MOVES = 12, /* pushed pawns, checks, etc. */
-        LATE_MOVES = 13, /* all other legal moves not covered above */
-        UNORDERED_MOVES = 14,
-        PRUNED_MOVES = 15,
-        QUIET_MOVES = 16,
-        ILLEGAL_MOVES = 17,
+        PREV_ITER = 1, /* best move from previous iteration */
+        BEST_MOVES = 2, /* best move(s) from cache (hashtable) */
+        HASH_MOVES = 3, /* moves from hashtable */
+        PROMOTIONS = 4,
+        LAST_MOVED_CAPTURE = 5,
+        WINNING_CAPTURES = 6,
+        EQUAL_CAPTURES = 7,
+        KILLER_MOVES = 8,
+        LOSING_CAPTURES = 9,
+        HISTORY_COUNTERS = 10,
+        TACTICAL_MOVES = 11, /* pushed pawns, checks, etc. */
+        LATE_MOVES = 12, /* all other legal moves not covered above */
+        UNORDERED_MOVES = 13,
+        PRUNED_MOVES = 14,
+        QUIET_MOVES = 15,
+        ILLEGAL_MOVES = 16,
     };
 }
 

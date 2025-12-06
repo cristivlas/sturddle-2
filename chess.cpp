@@ -106,7 +106,7 @@ namespace chess
         if (is_none())
             return "none";
 
-        return square_name(from_square()) + square_name(to_square()) + PIECE_SYMBOL[promotion()];
+        return square_name(from_square()) + square_name(to_square()) + PIECE_SYMBOL[0][promotion()];
     }
 
 
@@ -321,13 +321,28 @@ namespace chess
         to_mask &= ~(kings | our_pieces);
 
         /* Piece moves. */
-        if (const auto non_pawns = our_pieces & ~pawns & from_mask)
+        if (auto non_pawns = our_pieces & ~pawns & from_mask)
+        {
+        #if 0
+            for (const auto sliders : {queens, rooks, bishops})
+            {
+                for_each_square_r(sliders & non_pawns, [&](Square from_square) {
+                    const auto moves = attacks_mask(from_square, occupied) & to_mask;
+                    for_each_square_r(moves, [&](Square to_square) {
+                        add_move(moves_list, from_square, to_square);
+                    });
+                });
+                non_pawns &= ~sliders;
+            }
+            ASSERT((non_pawns & ~(knights | kings)) == BB_EMPTY);
+        #endif
             for_each_square_r(non_pawns, [&](Square from_square) {
                 const auto moves = attacks_mask(from_square, occupied) & to_mask;
                 for_each_square_r(moves, [&](Square to_square) {
                     add_move(moves_list, from_square, to_square);
                 });
             });
+        }
 
         if (castling_rights && (kings & from_mask) != BB_EMPTY)
             generate_castling_moves(moves_list, to_mask);
