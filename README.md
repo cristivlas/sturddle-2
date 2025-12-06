@@ -16,7 +16,7 @@ virtual environment for building.
 
 <code>python3 tools\build.py</code> builds a native executable for the host OS.
 
-On x64_64, the executable bundles binary images that support AVX512, AVX2, AVX, VNNI, and generic (SSEE3).
+On x64_64, the executable bundles binary images that support AVX512, AVX2, AVX, VNNI, and generic SSE2.
 At runtime, a "bootstrap" python scripts selects the right engine module based on processor features.
 
 To build just a python module:
