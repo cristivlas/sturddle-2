@@ -62,8 +62,6 @@ def make_model(args, strategy):
             w = tf.clip_by_value(w, self.qmin, self.qmax)
 
             if self.quantize_round:
-                # mask = tf.abs(w) < 1 / Q_SCALE
-                # w = tf.where(mask, tf.sign(w) / Q_SCALE, w)
                 w = tf.round(w * Q_SCALE) / Q_SCALE
 
             return w
@@ -102,6 +100,14 @@ def make_model(args, strategy):
         elif args.loss_bce:
             loss_eval = tf.keras.losses.binary_crossentropy(wdl_eval_target, wdl_eval_pred)
             loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)
+        elif args.loss_focal_bce:
+            loss_outcome = tf.keras.losses.binary_focal_crossentropy(
+                outcome_target, wdl_eval_pred, gamma=args.focal_gamma
+            )
+            loss_outcome = tf.reduce_mean(loss_outcome)
+            loss_eval = tf.keras.losses.huber(wdl_eval_target, wdl_eval_pred, delta=args.huber_delta)
+            loss_eval = tf.reduce_mean(loss_eval)
+            # tf.print("eval:", loss_eval, "outcome:", loss_outcome)
         else:
             # default: mean square error
             loss_eval = tf.reduce_mean(tf.square(wdl_eval_pred - wdl_eval_target))
@@ -213,14 +219,6 @@ def make_model(args, strategy):
             trainable=not args.freeze_eval,
         )(input_1b)
 
-        # Experiment: pawns "reconstruction" auto-encoder
-        if args.pawn_reconstruction:
-            pawn_bits = Lambda(lambda x: x[:, 128:256], name='pawn_target')(unpack_layer)
-            pawn_bits = tf.cast(pawn_bits, tf.float32)
-            pawn_recon = Dense(128, activation='sigmoid', name='pawn_recon', trainable=not args.freeze_eval)(hidden_1b)
-            pawn_recon = tf.cast(pawn_recon, tf.float32)
-            recon_loss = tf.reduce_mean(tf.keras.losses.binary_crossentropy(pawn_bits, pawn_recon))
-
         spatial_attn = Dense(ATTN_FAN_OUT, activation=None, name='spatial_attn', trainable=not args.freeze_eval)(hidden_1b)
 
         def custom_pooling(x):
@@ -281,10 +279,6 @@ def make_model(args, strategy):
 
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=outputs, name=args.name)
-
-        if args.pawn_reconstruction:
-            model.add_loss(args.pawn_weight * recon_loss)
-            model.add_metric(recon_loss, name='pawns')
 
         if args.optimizer in ['adam', 'amsgrad']:
             optimizer=tf.keras.optimizers.Adam(
@@ -444,9 +438,6 @@ def write_weigths(args, model, indent=2):
 
 def write_binary_weights(args, model, file):
     for layer in model.layers:
-        if layer.name == 'pawn_recon':
-            continue
-
         weights = layer.get_weights()
         if len(weights) == 2:
             kernel, bias = weights
@@ -978,17 +969,16 @@ if __name__ == '__main__':
         parser.add_argument('--save-model', action='store_true', help='save model immediately, use with --import and/or --alt-model')
 
         parser.add_argument('--loss-bce', action='store_true', help='use binary cross-entropy loss (default is MSE)')
+        parser.add_argument('--loss-focal-bce', action='store_true', help='use focal binary cross-entropy loss (default is MSE)')
         parser.add_argument('--loss-mae', action='store_true', help='use mean absolute error loss (defaule is MSE)')
+        parser.add_argument('--focal-gamma', type=float, default=2.0)
+        parser.add_argument('--huber-delta', type=float, default=0.075)
 
         parser.add_argument('--no-capture', action='store_true', help='exclude captures from training')
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
 
         parser.add_argument('--outcome-weight', type=float, default=0.1, help='weight for outcome loss vs eval loss')
         parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
-
-        # Experimental, pawn structure
-        parser.add_argument('--pawn-reconstruction', action='store_true')
-        parser.add_argument('--pawn-weight', type=float, default=0.025)
 
         # Move prediction related arguments
         parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')
