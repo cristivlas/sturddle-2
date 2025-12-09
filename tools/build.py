@@ -186,7 +186,6 @@ if __name__ == '__main__':
 
     MAIN = os.path.join(OUT_DIR, 'main' if args.native_uci else 'sturddle')
     NAME = f'{args.name}-{".".join(chess_engine.__build__[:3])}'
-    DGST = os.path.join(OUT_DIR, f'{NAME}-sha256.txt')
     NAME = os.path.join(OUT_DIR, NAME)
     if is_windows():
         MAIN += '.exe'
@@ -197,6 +196,8 @@ if __name__ == '__main__':
             sys.exit(-2)
     else:
         NAME += f'-{platform.system()}-{platform.machine()}'
+
+    DGST = f'{NAME}-sha256.txt'
 
     while True:
         try:

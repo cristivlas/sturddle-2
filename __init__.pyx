@@ -1262,7 +1262,7 @@ Context.init(os.path.dirname(__file__).encode())
 
 __major__   = 2
 __minor__   = 4
-__patch__   = 0
+__patch__   = 1
 __build__   = [str(__major__), f'{int(__minor__):d}', str(__patch__), timestamp().decode()]
 
 

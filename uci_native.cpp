@@ -1001,8 +1001,7 @@ void UCI::debug()
     search::Context::print_board(std::cout, _buf._state, use_unicode);
     output(std::format("fen: {}", search::Context::epd(_buf._state)));
     output(std::format("hash: {}", _buf._state._hash));
-    size_t history_size = 0;
-    history_size = search::Context::_history->_positions.size();
+    const size_t history_size = search::Context::_history->size();
     output(std::format("history size: {}", history_size));
     output(std::format("halfmove clock: {}", search::Context::_history->_fifty));
     std::ostringstream checkers;
