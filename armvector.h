@@ -203,6 +203,11 @@ INLINE Vec8s max(Vec8s a, Vec8s b)
     return _mm_max_epi16(a, b);
 }
 
+INLINE Vec8s min(Vec8s a, Vec8s b)
+{
+    return _mm_min_epi16(a, b);
+}
+
 INLINE __m256i extend(Vec8s a)
 {
     return _mm256_cvtepi16_epi32(a);
@@ -303,7 +308,6 @@ INLINE Vec16s max(Vec16s a, Vec16s b)
     result.val[1] = vmaxq_s16(a.get_high(),b.get_high());
     return result;
 }
-
 
 template <typename V> INLINE V& operator += (V& a, V b)
 {
