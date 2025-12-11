@@ -20,23 +20,31 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 # uncomment (or set in environment) for newer TF versions (> 2.15.1 ?) that use Keras 3
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
-
+# (needs tf-keras)
 ACCUMULATOR_SIZE = 1280
 ATTN_FAN_OUT = 32
 POOL_SIZE = 8
 
-Q_SCALE = 1024
+Q16_SCALE = 255
 
 # Quantization range: use int16_t with Q_SCALE, prevent overflow
 # 32 pieces + (16 + 16) occupancy + 1 side-to-move + 1 bias == 66
-Q_MAX_A = 32767 / Q_SCALE / 66
+Q_MAX_A = 32767 / Q16_SCALE / 66
 Q_MIN_A = -Q_MAX_A
 
 # (8 pawns + 1 king) x 2 + 1 bias == 19
-Q_MAX_B = 32767  / Q_SCALE / 19
+Q_MAX_B = 32767  / Q16_SCALE / 19
 Q_MIN_B = -Q_MAX_B
 
-SCALE = 100.0
+# clipped relu max value
+Q16_CLIP = 127 / Q16_SCALE
+
+Q8_SCALE = 16
+Q8_MAX = 127 / Q8_SCALE
+
+assert 1/Q8_SCALE < Q8_MAX
+
+EVAL_SCALE = 100.0
 
 
 def configure_logging(args):
@@ -53,7 +61,8 @@ def configure_logging(args):
 
 def make_model(args, strategy):
     class QConstraint(tf.keras.constraints.Constraint):
-        def __init__(self, qmin, qmax, quantize_round=args.quantize_round):
+        def __init__(self, qscale, qmin, qmax, quantize_round=args.quantize_round):
+            self.qscale = qscale
             self.qmin = qmin
             self.qmax = qmax
             self.quantize_round = quantize_round
@@ -62,7 +71,7 @@ def make_model(args, strategy):
             w = tf.clip_by_value(w, self.qmin, self.qmax)
 
             if self.quantize_round:
-                w = tf.round(w * Q_SCALE) / Q_SCALE
+                w = tf.round(w * self.qscale) / self.qscale
 
             return w
 
@@ -83,7 +92,7 @@ def make_model(args, strategy):
         eval_target = y_true[:, 0:1]
 
         if args.clip_eval:
-            clipped = soft_clip(eval_target, args.clip_eval / SCALE);
+            clipped = soft_clip(eval_target, args.clip_eval / EVAL_SCALE);
             # tf.print("\nEval:", eval_target, "\nClipped:", clipped)
             eval_target = clipped
 
@@ -91,8 +100,8 @@ def make_model(args, strategy):
         sigmoid_scale = tf.constant(args.outcome_scale, dtype=tf.float32)
 
         # convert predicted and expected (target) eval scores to Win/Draw/Loss prob. scores
-        wdl_eval_pred = tf.sigmoid(y_pred * SCALE / sigmoid_scale)
-        wdl_eval_target = tf.sigmoid(eval_target * SCALE / sigmoid_scale)
+        wdl_eval_pred = tf.sigmoid(y_pred * EVAL_SCALE / sigmoid_scale)
+        wdl_eval_target = tf.sigmoid(eval_target * EVAL_SCALE / sigmoid_scale)
 
         if args.loss_mae:
             loss_eval = tf.reduce_mean(tf.abs(wdl_eval_pred - wdl_eval_target))
@@ -193,7 +202,7 @@ def make_model(args, strategy):
         # Apply bucketing
         bucketed = BucketShift(name='bucket_shift')(concat)
 
-        constr_a = QConstraint(Q_MIN_A, Q_MAX_A)
+        constr_a = QConstraint(Q16_SCALE, Q_MIN_A, Q_MAX_A)
         hidden_1a = Dense(
             ACCUMULATOR_SIZE,
             activation=ACTIVATION,
@@ -204,14 +213,14 @@ def make_model(args, strategy):
             trainable=not args.freeze_eval,
         )(bucketed)
 
-        constr_b = QConstraint(Q_MIN_B, Q_MAX_B)
+        constr_b = QConstraint(Q16_SCALE, Q_MIN_B, Q_MAX_B)
 
         # Define hidden layer 1b (use kings and pawns to modulate "main" network path)
         # hidden_1b_layer: selects the pawns and kings features.
         input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
         hidden_1b = Dense(
             64,
-            activation=ACTIVATION,
+            activation=tf.keras.layers.ReLU(max_value=Q16_CLIP, name='clip_relu'),
             name='hidden_1b',
             kernel_initializer=K_INIT,
             kernel_constraint=constr_b,
@@ -219,7 +228,15 @@ def make_model(args, strategy):
             trainable=not args.freeze_eval,
         )(input_1b)
 
-        spatial_attn = Dense(ATTN_FAN_OUT, activation=None, name='spatial_attn', trainable=not args.freeze_eval)(hidden_1b)
+        constr_8bit = QConstraint(Q8_SCALE, -Q8_MAX, Q8_MAX)
+        spatial_attn = Dense(
+            ATTN_FAN_OUT,
+            activation=None,
+            name='spatial_attn',
+              kernel_constraint=constr_8bit,
+            bias_constraint=constr_8bit,
+            trainable=not args.freeze_eval
+        )(hidden_1b)
 
         def custom_pooling(x):
             reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
@@ -310,7 +327,7 @@ def make_model(args, strategy):
             # tf.debugging.assert_all_finite(outcome_target, "outcome_target has nan/inf")
             # tf.debugging.assert_all_finite(y_pred, "y_pred has nan/inf")
 
-            centipawns = y_pred * SCALE
+            centipawns = y_pred * EVAL_SCALE
             scale = tf.constant(args.outcome_scale, dtype=tf.float32)
             logits = centipawns / scale
             probs = tf.sigmoid(logits)
@@ -321,7 +338,7 @@ def make_model(args, strategy):
         @tf.function
         def mae(y_true, y_pred):
             eval_target = y_true[:, 0:1]  # Extract eval component
-            return tf.keras.metrics.mean_absolute_error(eval_target, y_pred) * SCALE / 100
+            return tf.keras.metrics.mean_absolute_error(eval_target, y_pred) * EVAL_SCALE / 100
 
         losses = {'out': combined_loss}
         metrics = {'out': [accuracy, mae]}
@@ -596,7 +613,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             # Get both evaluation and outcome data
             y_eval = self.data[start:end, self.feature_count:self.feature_count+1]
             y_eval = tf.cast(y_eval, tf.int64)  # Cast from unsigned to signed
-            y_eval = tf.cast(y_eval, tf.float32) / SCALE  # Convert to float, and scale
+            y_eval = tf.cast(y_eval, tf.float32) / EVAL_SCALE  # Convert to float, and scale
             y_eval = tf.where(white_to_move, y_eval, -y_eval)  # Convert to White's perspective
 
             y_outcome = self.data[start:end, self.feature_count+1:self.feature_count+2]
@@ -763,7 +780,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                     eval_y = y[:, 0:1]
                     outcome_y = y[:, 1:2]
 
-                bound = args.filter / SCALE
+                bound = args.filter / EVAL_SCALE
                 lower_bound = tf.greater(eval_y, -bound)
                 upper_bound = tf.less(eval_y, bound)
                 condition = tf.logical_and(lower_bound, upper_bound)

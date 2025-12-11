@@ -57,7 +57,12 @@
 #endif
 
 #ifndef DEBUG_INCREMENTAL
-#define DEBUG_INCREMENTAL false
+    #define DEBUG_INCREMENTAL false
+#endif
+
+/* CXXFLAGS or CFLAGS="-march=armv8.2-a+fp16+dotprod" */
+#if !__ARM__ || defined(__ARM_FEATURE_DOTPROD)
+    #define USE_8_BIT_QUANTIZATION true
 #endif
 
 namespace nnue
@@ -66,10 +71,12 @@ namespace nnue
     using input_t = int16_t;
 
     constexpr int ACTIVE_INPUTS = 897;
+    constexpr int CLIP_RELU = 127;
     constexpr int EVAL_SCALE = 100;
     constexpr int MAX_ACTIVE_INPUTS = 65; // 32 pieces + 32 occupancy mask + turn
     constexpr auto POOL_STRIDE = Vec8s::size();
-    constexpr int QSCALE = 1024;
+    constexpr int QSCALE_16 = 255;
+    constexpr int QSCALE_8 = 16;
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
@@ -279,6 +286,7 @@ namespace nnue
 
     /** Rectified Linear Unit (reLU) activation */
     template <typename V> INLINE V relu(V v) { return max(v, 0); }
+    template <typename V> INLINE V clipped_relu(V v) { return min(CLIP_RELU, relu(v)); }
 
     template <>
     INLINE Vector relu<Vector>(Vector v) { return max(v, v_zero); }
@@ -286,17 +294,17 @@ namespace nnue
     template <>
     INLINE Vec8s relu<Vec8s>(Vec8s v) { return max(v, v8_zero); }
 
-
+#if !USE_8_BIT_QUANTIZATION
     template <int N>
-    INLINE void activate(const int16_t (&input)[N], float (&output)[N])
+    INLINE void activate_attn(const int16_t (&input)[N], float (&output)[N])
     {
-        constexpr float QSCALE_RECIP = 1.0f / QSCALE;
+        constexpr float QSCALE_RECIP = 1.0f / QSCALE_16;
 
 #if __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC
         /* Vec8f supported only on FP16 (half-precision) Neon */
         #pragma clang loop vectorize(enable)
         for (int i = 0; i != N; ++i)
-            output[i] = std::max<float>(0, float(input[i]) * QSCALE_RECIP);
+            output[i] = std::max<float>(0, float(std::min<int>(CLIP_RELU, input[i])) * QSCALE_RECIP);
 #else
     #if INSTRSET < 9
         using VF = Vec8f;
@@ -312,11 +320,105 @@ namespace nnue
 
         for (size_t i = 0; i < N; i += VF::size())
         {
-            VF v = to_float(extend(relu(VS().load_a(&input[i]))));
+            VF v = to_float(extend(clipped_relu(VS().load_a(&input[i]))));
             (v * v_scale).store_a(&output[i]);
         }
 #endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
     }
+
+#elif __ARM__
+    template <int N>
+    INLINE void activate_attn(const int16_t (&input)[N], int8_t (&output)[N])
+    {
+        constexpr int VECSIZE = 16;  // Process 16x int16 at a time
+        static_assert(N % VECSIZE == 0);
+
+        for (size_t i = 0; i < N; i += VECSIZE)
+        {
+            // Load 2x 8 int16 values
+            int16x8_t v_lo = vld1q_s16(&input[i]);
+            int16x8_t v_hi = vld1q_s16(&input[i + 8]);
+
+            // Clipped ReLU on both
+            int16x8_t zero = vdupq_n_s16(0);
+            int16x8_t max_val = vdupq_n_s16(127);
+
+            v_lo = vmaxq_s16(v_lo, zero);
+            v_lo = vminq_s16(v_lo, max_val);
+            v_hi = vmaxq_s16(v_hi, zero);
+            v_hi = vminq_s16(v_hi, max_val);
+
+            // Narrow both halves
+            int8x8_t v_lo_i8 = vqmovn_s16(v_lo);
+            int8x8_t v_hi_i8 = vqmovn_s16(v_hi);
+
+            // Combine and store 16x int8
+            int8x16_t result = vcombine_s8(v_lo_i8, v_hi_i8);
+            vst1q_s8(&output[i], result);
+        }
+    }
+#else
+    template <int N>
+    INLINE void activate_attn(const int16_t (&input)[N], int8_t (&output)[N])
+    {
+    #if INSTRSET >= 9 /* AVX 512 */
+        using VecShort = Vec32s;
+    #else
+        using VecShort = Vec16s;
+    #endif
+        static_assert(N % VecShort::size() == 0);
+
+        VecShort v;
+
+        for (size_t i = 0; i < N; i += VecShort::size())
+        {
+            v.load_a(&input[i]);
+            v = clipped_relu(v);
+
+            // const auto in_range = (v >= 0) & (v <= 127);
+            // ASSERT(horizontal_and(in_range));
+
+            // Just store it. The 8-bit quantized multiplication handles scaling.
+            compress_saturated(v).store_a(&output[i]);
+        }
+    }
+
+
+#if INSTRSET < 8
+    static const __m128i ONE_EPI16 = _mm_set1_epi16(1);
+#endif
+#if INSTRSET >= 8 && !defined(__AVXVNNI__)
+    static const __m256i ONE_EPI16_AVX = _mm256_set1_epi16(1);
+#endif
+
+
+    INLINE Vec8i mul_add(Vec32uc a, Vec32c b, Vec8i acc)
+    {
+    #if __AVXVNNI__
+        acc = _mm256_dpbusd_epi32(acc, a, b);
+    #elif INSTRSET < 8
+        /* SSSE3 */
+        // Multiply a * b and accumulate neighbouring outputs into int16 values
+        __m128i product_lo = _mm_maddubs_epi16(a.get_low(), b.get_low());
+        __m128i product_hi = _mm_maddubs_epi16(a.get_high(), b.get_high());
+
+        // Multiply product by 1 (idempotent) and accumulate neighbouring outputs into int32 values
+        product_lo = _mm_madd_epi16(product_lo, ONE_EPI16);
+        product_hi = _mm_madd_epi16(product_hi, ONE_EPI16);
+
+        // Add to the main int32 accumulator
+        acc = Vec8i(_mm_add_epi32(acc.get_low(), product_lo), _mm_add_epi32(acc.get_high(), product_hi));
+    #else
+        /* AVX2 */
+        __m256i product = _mm256_maddubs_epi16(a, b);
+
+        product = _mm256_madd_epi16(product, ONE_EPI16_AVX);
+        acc = _mm256_add_epi32(acc, product);
+    #endif
+        return acc;
+    }
+#endif /* USE_8_BIT_QUANTIZATION */
+
 
 
 #if INSTRSET >= 9 /* AVX-512 */
@@ -531,6 +633,138 @@ namespace nnue
             }
         }
 
+  #if USE_8_BIT_QUANTIZATION
+        /* 8-bit quantized multiplication */
+        /* NOTE: Linear (no activation) */
+    #if __ARM__
+        INLINE void dot(const int8_t (&input)[INPUTS], float (&output)[OUTPUTS]) const
+        {
+            constexpr auto N = 16;  // NEON processes 16 bytes per register (vs 32 for AVX2)
+
+            static_assert(INPUTS % N == 0);
+            static_assert(OUTPUTS % N == 0);
+
+            for (int j = 0; j != OUTPUTS; j += N)
+            {
+                // 16 partial sums, each is a 4x int32 vector
+                int32x4_t partial_sum[N];
+
+                #pragma unroll N
+                for (int k = 0; k != N; ++k)
+                    partial_sum[k] = vdupq_n_s32(0);
+
+                for (int i = 0; i != INPUTS; i += N)
+                {
+                    // Load 16 uint8 inputs
+                    uint8x16_t v_in = vld1q_u8(reinterpret_cast<const uint8_t*>(&input[i]));
+
+                    for (int k = 0; k != N; ++k)
+                    {
+                        // Load 16 int8 weights
+                        int8x16_t v_wt = vld1q_s8(&_wt[j + k][i]);
+
+                        // Dot product: computes 4 dots of 4 elements each
+                        // Assumes input in [0, 127] for correct unsigned×signed
+                        partial_sum[k] = vdotq_s32(partial_sum[k], vreinterpretq_s8_u8(v_in), v_wt);
+                    }
+                }
+
+                // Process outputs in groups of 4 (to vectorize the final stage)
+                for (int n = 0; n < N; n += 4)
+                {
+                    // Horizontal add: reduce each partial_sum from 4x int32 to scalar
+                    int32_t sums[4];
+                    for (int i = 0; i < 4; ++i) {
+                        int32x2_t sum_pairs = vadd_s32(
+                            vget_low_s32(partial_sum[n+i]),
+                            vget_high_s32(partial_sum[n+i])
+                        );
+                        sums[i] = vget_lane_s32(vpadd_s32(sum_pairs, sum_pairs), 0);
+                    }
+
+                    // Load as vector
+                    int32x4_t i_out = vld1q_s32(sums);
+
+                    // Load 4 biases (int8) and extend to int32
+                    int8_t bias_bytes[4] = {_b[j + n], _b[j + n + 1], _b[j + n + 2], _b[j + n + 3]};
+                    int16x4_t bias_i16 = vget_low_s16(vmovl_s8(vld1_s8(bias_bytes)));
+                    int32x4_t bias_i32 = vmovl_s16(bias_i16);
+
+                    // Multiply bias by QSCALE and add
+                    int32x4_t qscale_vec = vdupq_n_s32(QSCALE_16);
+                    bias_i32 = vmulq_s32(bias_i32, qscale_vec);
+                    i_out = vaddq_s32(i_out, bias_i32);
+
+                    // ReLU: max(i_out, 0)
+                    // i_out = vmaxq_s32(i_out, vdupq_n_s32(0));
+
+                    // Convert to float
+                    float32x4_t out = vcvtq_f32_s32(i_out);
+
+                    // Divide by (QSCALE * QSCALE)
+                    float32x4_t scale = vdupq_n_f32(float(QSCALE_8 * QSCALE_16));
+                    out = vdivq_f32(out, scale);
+
+                    // Store 4 outputs
+                    ASSERT(j + n + 3 < OUTPUTS);
+                    vst1q_f32(&output[j + n], out);
+                }
+            }
+        }
+    #else /* !__ARM__ */
+        INLINE void dot(const int8_t (&input)[INPUTS], float (&output)[OUTPUTS]) const
+        {
+            constexpr auto N = Vec32c::size();
+
+            static_assert(INPUTS % N == 0);
+            static_assert(OUTPUTS % N == 0);
+
+            Vec32uc v_in;
+            Vec32c v_wt;
+            Vec8i partial_sum[N];
+
+            for (int j = 0; j != OUTPUTS; j += N)
+            {
+                #pragma unroll N
+                for (int k = 0; k != N; ++k)
+                    partial_sum[k] = 0;
+
+                for (int i = 0; i != INPUTS; i += N)
+                {
+                    v_in.load_a(&input[i]);
+
+                    for (int k = 0; k != N; ++k)
+                    {
+                        v_wt.load_a(&_wt[j + k][i]);
+                        partial_sum[k] = mul_add(v_in, v_wt, partial_sum[k]);
+                    }
+                }
+
+                #pragma unroll
+                for (int n = 0; n < 32; n += 16)
+                {
+                    auto i_out = Vec16i(
+                        horizontal_add(partial_sum[n+0]), horizontal_add(partial_sum[n+1]), horizontal_add(partial_sum[n+2]), horizontal_add(partial_sum[n+3]),
+                        horizontal_add(partial_sum[n+4]), horizontal_add(partial_sum[n+5]), horizontal_add(partial_sum[n+6]), horizontal_add(partial_sum[n+7]),
+                        horizontal_add(partial_sum[n+8]), horizontal_add(partial_sum[n+9]), horizontal_add(partial_sum[n+10]),horizontal_add(partial_sum[n+11]),
+                        horizontal_add(partial_sum[n+12]),horizontal_add(partial_sum[n+13]),horizontal_add(partial_sum[n+14]),horizontal_add(partial_sum[n+15])
+                    );
+
+                    Vec16c bias;
+                    bias.load_a(&_b[j + n]);
+                    i_out += extend(extend(bias)) * QSCALE_16; // add converted 8bit -> 32bit bias
+
+                    //const Vec16f out = to_float(relu(i_out)) / float(QSCALE_8 * QSCALE_16);
+                    const Vec16f out = to_float(i_out) / float(QSCALE_8 * QSCALE_16);
+
+                    ASSERT(j + n < OUTPUTS);
+                    out.store_a(&output[j + n]);
+                }
+            }
+        }
+    #endif /* !__ARM__ */
+    #endif /* USE_8_BIT_QUANTIZATION */
+
         /* hidden, output */
         template <typename ACTIVATION>
         static INLINE void dot(
@@ -602,7 +836,7 @@ namespace nnue
             v.load_a(&in[i]);
             v = max(v, v8_zero);
 
-            out[j] = float(::horizontal_add(extend(v))) / POOL_STRIDE / QSCALE;
+            out[j] = float(::horizontal_add(extend(v))) / POOL_STRIDE / QSCALE_16;
         }
     #else
         /* AVX2 (or better) */
@@ -616,8 +850,8 @@ namespace nnue
             ASSERT(j < OUTPUTS);
             ASSERT(j + 1< OUTPUTS);
 
-            out[j] = float(::horizontal_add(extend(max(v.get_low(), v8_zero)))) / POOL_STRIDE / QSCALE;
-            out[j + 1] = float(::horizontal_add(extend(max(v.get_high(), v8_zero)))) / POOL_STRIDE / QSCALE;
+            out[j] = float(::horizontal_add(extend(max(v.get_low(), v8_zero)))) / POOL_STRIDE / QSCALE_16;
+            out[j + 1] = float(::horizontal_add(extend(max(v.get_high(), v8_zero)))) / POOL_STRIDE / QSCALE_16;
         }
     #endif /* INSTRSET < 8 */
     }
@@ -971,17 +1205,21 @@ namespace nnue
         static_assert(A::OUTPUTS_A == L2::INPUTS * POOL_STRIDE);
         static_assert(A::OUTPUTS_B == ATTN::INPUTS);
 
+    #if USE_8_BIT_QUANTIZATION
+        ALIGN int8_t attn_in[ATTN::INPUTS];
+    #else
         ALIGN float attn_in[ATTN::INPUTS];
+    #endif /* USE_8_BIT_QUANTIZATION */
         ALIGN float attn_out[ATTN::OUTPUTS];
         ALIGN float l2_in[L2::INPUTS];
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float l3_out[L3::OUTPUTS];
-        ALIGN float output[1]; // eval
+        ALIGN float eval[1];
 
         pool(a._bucket[a._current_bucket].output, l2_in);
 
         /* The "spatial attention" layer modulates L2. */
-        activate(a._output_b, attn_in);
+        activate_attn(a._output_b, attn_in);
         attn.dot(attn_in, attn_out);
 
         static_assert(L2::INPUTS % Vector::size() == 0);
@@ -999,8 +1237,8 @@ namespace nnue
         l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
         l3.dot(l2_out, l3_out, [](const Vector& v) { return max(v, v_zero); });
 
-        out.dot(l3_out, output);
-        return EVAL_SCALE * output[0];
+        out.dot(l3_out, eval);
+        return EVAL_SCALE * eval[0];
     }
 
 

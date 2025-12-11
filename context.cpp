@@ -291,9 +291,13 @@ constexpr int HIDDEN_1B = 64;
 constexpr int HIDDEN_2 = 16;
 constexpr int HIDDEN_3 = 16;
 
+#if USE_8_BIT_QUANTIZATION
+using LAttnType = nnue::Layer<HIDDEN_1B, 32, int8_t, nnue::QSCALE_8>;
+#else
 using LAttnType = nnue::Layer<HIDDEN_1B, 32>;
-using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
-using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
+#endif /* USE_8_BIT_QUANTIZATION */
+using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE_16, true /* incremental */>;
+using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE_16, true /* incremental */>;
 using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2>;
 using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
 using EVALType = nnue::Layer<HIDDEN_3, 1>;
@@ -307,7 +311,7 @@ using EVALType = nnue::Layer<HIDDEN_3, 1>;
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
 using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
 
-using LMOVEType = nnue::Layer<INPUTS_A / Accumulator::NUM_BUCKETS, 4096, int16_t, nnue::QSCALE>;
+using LMOVEType = nnue::Layer<INPUTS_A / Accumulator::NUM_BUCKETS, 4096, int16_t, nnue::QSCALE_16>;
 
 /* Each thread uses its own stack */
 static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
