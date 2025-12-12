@@ -115,7 +115,9 @@ if __name__ == '__main__':
         elif arch == 'AVX512':
             arch_flags = '-march=skylake-avx512 -mtune=skylake-avx512'
         elif arch == 'ARMv8_2':
-            arch_flags = '-march=armv8.2-a+fp16'
+            arch_flags = '-march=armv8.2-a+fp16+dotprod'
+        elif not arch_flags:
+            arch_flags = '-mssse3'  # generic x86_64 requires SSSE3 for 8-bit quantization
 
         # os.environ['CXXFLAGS'] = f'{arch_flags} -DUSE_MMAP_HASH_TABLE -DSHARED_WEIGHTS'
         os.environ['CXXFLAGS'] = f'{arch_flags} -DSHARED_WEIGHTS'

@@ -114,7 +114,9 @@ def make_model(args, strategy):
                 outcome_target, wdl_eval_pred, gamma=args.focal_gamma
             )
             loss_outcome = tf.reduce_mean(loss_outcome)
-            loss_eval = tf.keras.losses.huber(wdl_eval_target, wdl_eval_pred, delta=args.huber_delta)
+            # loss_eval = tf.keras.losses.huber(wdl_eval_target, wdl_eval_pred, delta=args.huber_delta)
+            # And now for something completely different: mix up eval space with WDL space:
+            loss_eval = tf.keras.losses.huber(eval_target, y_pred, delta=args.huber_delta)
             loss_eval = tf.reduce_mean(loss_eval)
             # tf.print("eval:", loss_eval, "outcome:", loss_outcome)
         else:
