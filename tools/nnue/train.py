@@ -39,7 +39,7 @@ Q_MIN_B = -Q_MAX_B
 # clipped relu max value
 Q16_CLIP = 127 / Q16_SCALE
 
-Q8_SCALE = 16
+Q8_SCALE = 32
 Q8_MAX = 127 / Q8_SCALE
 
 assert 1/Q8_SCALE < Q8_MAX

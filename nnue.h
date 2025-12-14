@@ -76,7 +76,7 @@ namespace nnue
     constexpr int MAX_ACTIVE_INPUTS = 65; // 32 pieces + 32 occupancy mask + turn
     constexpr auto POOL_STRIDE = Vec8s::size();
     constexpr int QSCALE_16 = 255;
-    constexpr int QSCALE_8 = 16;
+    constexpr int QSCALE_8 = 32;
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;

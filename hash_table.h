@@ -309,7 +309,7 @@ namespace search
         explicit INLINE SharedLock(std::atomic<T> &mutex) : BaseLock<T>(mutex)
         {
 #if SMP
-            while (true)
+            for (int retries = 0; retries < SPIN_LOCK_MAX_RETRY; ++retries)
             {
                 for (T i = T(); i < MaxShare; )
                 {
@@ -319,11 +319,13 @@ namespace search
                         this->_locked = true;
                         return;
                     }
-                    if constexpr(Blocking)
-                        ;
-                    else if (i > MaxShare)
+                    if (i >= MaxShare)
                         break;
                 }
+                if constexpr (Blocking)
+                    std::this_thread::yield();
+                else
+                    return;  // Non-blocking: single attempt, no spin
             }
 #else
             this->_locked = true;
