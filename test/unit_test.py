@@ -340,14 +340,14 @@ def test_nnue_eval():
     ]
 
     evals = [
-        20.535466074943542, -55.42590022087097, -3.072226047515869, -108.80478620529175, 409.6158027648926, -181.30751848220825, 112.73374557495117, 10.010415315628052
+        26.8929123878479, -88.62643837928772, -17.786261439323425, -190.82109928131104, 385.6884479522705, -117.8074598312378, 170.42136192321777, 14.039379358291626
     ]
     for i, fen in enumerate(tests):
         eval = engine.nnue_eval_fen(fen)
         expect = int(evals[i])
         err = abs(eval - expect)
         print(f'{fen}: eval={eval}, expected={expect}, error={err}')
-        # assert err <= 2
+        assert err <= 2
 
 
 def test_parse_fen():
