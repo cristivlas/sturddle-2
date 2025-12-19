@@ -221,7 +221,7 @@ def make_model(args, strategy):
         # hidden_1b_layer: selects the pawns and kings features.
         input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
         hidden_1b = Dense(
-            64,
+            128,
             activation=tf.keras.layers.ReLU(max_value=Q16_CLIP, name='clip_relu'),
             name='hidden_1b',
             kernel_initializer=K_INIT,
@@ -846,7 +846,8 @@ def set_weights(from_model, to_model):
         if len(to_layer.get_weights()):  # Trainable?
             try:
                 to_layer.set_weights(params)
-            except:
+            except Exception as e:
+                print(e)
                 logging.exception(name)
 
 
@@ -989,7 +990,7 @@ if __name__ == '__main__':
 
         parser.add_argument('--loss-bce', action='store_true', help='use binary cross-entropy loss (default is MSE)')
         parser.add_argument('--loss-focal-bce', action='store_true', help='use focal binary cross-entropy loss (default is MSE)')
-        parser.add_argument('--loss-mae', action='store_true', help='use mean absolute error loss (defaule is MSE)')
+        parser.add_argument('--loss-mae', action='store_true', help='use mean absolute error loss (default is MSE)')
         parser.add_argument('--focal-gamma', type=float, default=2.0)
         parser.add_argument('--huber-delta', type=float, default=0.075)
 

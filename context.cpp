@@ -287,7 +287,7 @@ constexpr int INPUTS_A = 3588;
 constexpr int INPUTS_B = 256;
 constexpr int HIDDEN_1A = 1280;
 constexpr int HIDDEN_1A_POOLED = HIDDEN_1A / nnue::POOL_STRIDE;
-constexpr int HIDDEN_1B = 64;
+constexpr int HIDDEN_1B = 128;
 constexpr int HIDDEN_2 = 16;
 constexpr int HIDDEN_3 = 16;
 
@@ -296,6 +296,7 @@ using LAttnType = nnue::Layer<HIDDEN_1B, 32, int8_t, nnue::QSCALE_8>;
 #else
 using LAttnType = nnue::Layer<HIDDEN_1B, 32>;
 #endif /* USE_8_BIT_QUANTIZATION */
+
 using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE_16, true /* incremental */>;
 using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE_16, true /* incremental */>;
 using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2>;
