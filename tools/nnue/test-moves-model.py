@@ -7,6 +7,8 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
+EVAL_SCALE = 64
+
 import tensorflow as tf
 
 tests = [
@@ -117,7 +119,8 @@ def run_tests(args, model):
             has_move_prediction = False
 
         # Get evaluation score
-        eval_value = eval_score[0][0]
+        eval_value = eval_score[0][0] * EVAL_SCALE / 100
+
         eval_error = abs(eval_value - expected_eval)
         eval_errors.append(eval_error)
 

@@ -72,7 +72,7 @@ namespace nnue
 
     constexpr int ACTIVE_INPUTS = 897;
     constexpr int CLIP_RELU = 127;
-    constexpr int EVAL_SCALE = 100;
+    constexpr int EVAL_SCALE = 64;
     constexpr int MAX_ACTIVE_INPUTS = 65; // 32 pieces + 32 occupancy mask + turn
     constexpr auto POOL_STRIDE = Vec8s::size();
     constexpr int QSCALE_16 = 255;

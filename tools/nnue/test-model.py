@@ -8,6 +8,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import numpy as np
 import tensorflow as tf
 
+EVAL_SCALE = 64
+
 tests = [
     chess.STARTING_FEN,
     '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - - 0 2',
@@ -63,7 +65,7 @@ def run_tests(args, model):
         eval = model.predict(encoding)
         print(board.epd(), *eval)
         res = eval[0][0][0] if len(eval) > 1 else eval[0][0]
-        evals.append(float(res) * 100)
+        evals.append(float(res) * EVAL_SCALE)
     print(evals)
 
 
