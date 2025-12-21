@@ -44,7 +44,7 @@ Q8_MAX = 127 / Q8_SCALE
 
 assert 1/Q8_SCALE < Q8_MAX
 
-EVAL_SCALE = 100.0
+EVAL_SCALE = 64.0
 
 
 def configure_logging(args):
