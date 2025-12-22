@@ -7,7 +7,7 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
-EVAL_SCALE = 64
+EVAL_SCALE = 16
 
 import tensorflow as tf
 
