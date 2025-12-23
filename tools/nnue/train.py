@@ -412,12 +412,31 @@ def make_model(args, strategy):
     return model
 
 
+def get_layer_weights(args, layer):
+    """Get layer weights, applying quantization constraints if requested."""
+    params = layer.get_weights()
+    if len(params) != 2:
+        return params
+
+    weights, biases = params
+
+    if args.quantize_round:
+        kernel_constraint = getattr(layer, 'kernel_constraint', None)
+        bias_constraint = getattr(layer, 'bias_constraint', None)
+        if kernel_constraint is not None:
+            weights = kernel_constraint(weights).numpy()
+        if bias_constraint is not None:
+            biases = bias_constraint(biases).numpy()
+
+    return weights, biases
+
+
 '''
 Export weights as C++ code snippet.
 '''
 def write_weigths(args, model, indent=2):
     for layer in model.layers:
-        params = layer.get_weights()
+        params = get_layer_weights(args, layer)
         if not params:
             continue
         weights, biases = params
@@ -457,9 +476,9 @@ def write_weigths(args, model, indent=2):
 
 def write_binary_weights(args, model, file):
     for layer in model.layers:
-        weights = layer.get_weights()
-        if len(weights) == 2:
-            kernel, bias = weights
+        params = get_layer_weights(args, layer)
+        if len(params) == 2:
+            kernel, bias = params
             print(layer.name, kernel.shape, bias.shape)
             kernel.astype(np.float32).tofile(file)
             bias.astype(np.float32).tofile(file)
