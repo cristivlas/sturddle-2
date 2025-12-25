@@ -221,15 +221,10 @@ static INLINE size_t get_even(size_t n)
 }
 
 
-INLINE uint64_t scramble64(uint64_t h)
+/* Extract upper 32 bits of hash for TT key (lower bits used for bucket index) */
+INLINE uint32_t hash_key(uint64_t h)
 {
-    // h ^= h >> 33;
-    // h *= 0xff51afd7ed558ccd;
-    // h ^= h >> 33;
-    // h *= 0xc4ceb9fe1a85ec53;
-    // h ^= h >> 33;
-
-    return h;
+    return static_cast<uint32_t>(h >> 32);
 }
 
 
@@ -345,7 +340,7 @@ namespace search
     };
 
 
-    template <typename T, size_t BUCKET_SIZE = 14>
+    template <typename T, size_t BUCKET_SIZE = 18>
     class hash_table
     {
         using clock_t = uint8_t;
@@ -396,7 +391,7 @@ namespace search
     private:
         static INLINE size_t get_num_buckets(size_t megabytes)
         {
-            static_assert(sizeof(T) == 18);
+            static_assert(sizeof(T) == 14);
             static_assert(bucket_size() == 256);
 
             auto buckets = megabytes * ONE_MEGABYTE / bucket_size();
@@ -408,7 +403,7 @@ namespace search
             ASSERT(!_data.empty());
             ASSERT(_data.size() % 2 == 0);
 
-            const auto idx = scramble64(hash) & (_data.size() - 1);
+            const auto idx = hash & (_data.size() - 1);
             ASSERT(idx >= 0 && idx < _data.size());
 
             PREFETCH(&_data[idx]);
@@ -486,6 +481,8 @@ namespace search
             const auto h = s.hash();
             ASSERT(h);
 
+            const auto key = hash_key(h);
+
             auto& bucket = get_bucket(h);
             shared_lock_t lock(bucket.mutex());
 
@@ -505,7 +502,7 @@ namespace search
                     {
                         auto& e = bucket._entries[slot];
 
-                        if (e._hash == h)
+                        if (e._key == key)
                         {
                             result._entry = e;
                             result._replacement_slot = slot;

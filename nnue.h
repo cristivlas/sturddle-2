@@ -493,44 +493,6 @@ namespace nnue
             }
         }
 
-        template <typename F>
-        INLINE void dot_sparse(int16_t (&output)[OUTPUTS], size_t base, F&& for_each_active) const
-        {
-        #if __ARM__
-            using VecShort = Vec16s;
-        #else
-            using VecShort = Vec32s;
-        #endif
-
-            VecShort vo, vw;
-
-            // Initialize with biases
-            for (int j = 0; j < OUTPUTS; j += VecShort::size())
-            {
-                vw.load_a(&_b[j]);
-                vw.store_a(&output[j]);
-            }
-
-            // Collect active indices
-            int active[MAX_ACTIVE_INPUTS];
-            int count = 0;
-            for_each_active([&](int idx) { ASSERT(count < MAX_ACTIVE_INPUTS); active[count++] = idx; });
-
-            // Add weights, looping over outputs once
-            for (int j = 0; j < OUTPUTS; j += VecShort::size())
-            {
-                vo.load_a(&output[j]);
-
-                for (int k = 0; k < count; ++k)
-                {
-                    vw.load_a(&this->_w[base + active[k]][j]);
-                    vo += vw;
-                }
-
-                vo.store_a(&output[j]);
-            }
-        }
-
         /* hidden, output */
         template <typename ACTIVATION>
         static INLINE void dot(
@@ -668,26 +630,13 @@ namespace nnue
 
         #if DEBUG_INCREMENTAL
             memset(&_input, 0, sizeof(_input));
-            one_hot_encode(state, _input);
-        #endif
-
-        #if DOT_SPARSE
-            layer_1a.dot_sparse(_bucket[bucket].output, base, [&](auto&& add_weight) {
-                for_each_active_input(state, add_weight);
-            });
-            layer_1b.dot_sparse(_output_b, 0, [&](auto&& add_weight) {
-                for_each_active_king_or_pawn(state, add_weight);
-            });
         #else
-        #if !DEBUG_INCREMENTAL
             ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
         #endif
             one_hot_encode(state, _input);
 
             layer_1a.dot(_input, _bucket[bucket].output, base);
             layer_1b.dot(_input, _output_b);
-
-        #endif /* DOT_SPARSE */
 
             _bucket[bucket].hash = state.hash();
             _current_bucket = bucket;

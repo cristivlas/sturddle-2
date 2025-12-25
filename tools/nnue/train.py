@@ -399,12 +399,25 @@ def make_model(args, strategy):
     return model
 
 
+def get_layer_weights(layer):
+    """Get layer weights, applying constraints if present."""
+    params = layer.get_weights()
+    if len(params) != 2:
+        return None
+    weights, biases = params
+    if layer.kernel_constraint:
+        weights = layer.kernel_constraint(weights).numpy()
+    if layer.bias_constraint:
+        biases = layer.bias_constraint(biases).numpy()
+    return weights, biases
+
+
 '''
 Export weights as C++ code snippet.
 '''
 def write_weigths(args, model, indent=2):
     for layer in model.layers:
-        params = layer.get_weights()
+        params = get_layer_weights(layer)
         if not params:
             continue
         weights, biases = params
@@ -447,9 +460,9 @@ def write_binary_weights(args, model, file):
         if layer.name == 'pawn_recon':
             continue
 
-        weights = layer.get_weights()
-        if len(weights) == 2:
-            kernel, bias = weights
+        params = get_layer_weights(layer)
+        if params:
+            kernel, bias = params
             print(layer.name, kernel.shape, bias.shape)
             kernel.astype(np.float32).tofile(file)
             bias.astype(np.float32).tofile(file)
