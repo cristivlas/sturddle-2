@@ -288,6 +288,7 @@ DECLARE_VALUE(  MOVE_PREDICTION_MAX_ITER,             3,    0,      10)
 #endif
 
 #if WITH_NNUE
+DECLARE_VALUE(  EVAL_AGREEMENT_THRESHOLD,            50,   25,     150)
 DECLARE_VALUE(  NNUE_BLEND_PERCENT,                  82,   50,     100)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      459,  400,     600)
 #endif /* WITH_NNUE */

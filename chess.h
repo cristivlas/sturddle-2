@@ -1047,7 +1047,7 @@ namespace chess
         bool has_tt_result = false;
         alignas(std::max_align_t) uint8_t tt_result[32] = {};
 
-        /* material and PST from white's POV */
+        /* material (and optionally PST) from white's POV */
         static constexpr auto UNKNOWN_SCORE = std::numeric_limits<score_t>::max();
         mutable score_t simple_score = UNKNOWN_SCORE;
 

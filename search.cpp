@@ -682,6 +682,20 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             ctxt.eval_with_nnue();
             eval = ctxt._eval;
         }
+
+        /* Reduce depth when NNUE and material evaluations agree (simple position). */
+        if (   ctxt.state().simple_score != State::UNKNOWN_SCORE
+            && !ctxt.is_root()
+            && !ctxt.is_pv_node()
+            && ctxt.depth() >= 4
+            && ctxt.can_reduce())
+        {
+            const auto material_stm = ctxt.state().simple_score * SIGN[ctxt.turn()];
+            if (abs(eval - material_stm) < EVAL_AGREEMENT_THRESHOLD)
+            {
+                --ctxt._max_depth;
+            }
+        }
     #endif /* WITH_NNUE */
 
     #if REVERSE_FUTILITY_PRUNING
