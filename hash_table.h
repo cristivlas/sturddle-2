@@ -221,18 +221,6 @@ static INLINE size_t get_even(size_t n)
 }
 
 
-INLINE uint64_t scramble64(uint64_t h)
-{
-    // h ^= h >> 33;
-    // h *= 0xff51afd7ed558ccd;
-    // h ^= h >> 33;
-    // h *= 0xc4ceb9fe1a85ec53;
-    // h ^= h >> 33;
-
-    return h;
-}
-
-
 namespace search
 {
     template <typename T>
@@ -410,7 +398,7 @@ namespace search
             ASSERT(!_data.empty());
             ASSERT(_data.size() % 2 == 0);
 
-            const auto idx = scramble64(hash) & (_data.size() - 1);
+            const auto idx = hash & (_data.size() - 1);
             ASSERT(idx >= 0 && idx < _data.size());
 
             PREFETCH(&_data[idx]);

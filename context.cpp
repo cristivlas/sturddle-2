@@ -118,11 +118,10 @@ namespace
         INLINE bool lookup(const State& state, MovesList& moves)
         {
             const auto hash = state.hash();
-            const auto slot = scramble64(hash);
 
             for (size_t j = 0; j < BUCKET_SIZE; ++j)
             {
-                const auto i = (slot + j) & (_data.size() - 1);
+                const auto i = (hash + j) & (_data.size() - 1);
                 ASSERT(i < _data.size());
                 auto& entry = _data[i];
 
@@ -140,11 +139,10 @@ namespace
         INLINE void write(const State& state, const MovesList& moves, bool force_write = false)
         {
             const auto hash = state.hash();
-            const auto slot = scramble64(hash);
 
             for (size_t j = 0; j < BUCKET_SIZE; ++j)
             {
-                const auto i = (slot + j) & (_data.size() - 1);
+                const auto i = (hash + j) & (_data.size() - 1);
                 ASSERT(i < _data.size());
                 auto& entry = _data[i];
 
