@@ -683,6 +683,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             eval = ctxt._eval;
         }
 
+    #if 0
         /* Reduce depth when NNUE and material evaluations agree (simple position). */
         if (   ctxt.state().simple_score != State::UNKNOWN_SCORE
             && !ctxt.is_root()
@@ -696,6 +697,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 --ctxt._max_depth;
             }
         }
+    #endif
     #endif /* WITH_NNUE */
 
     #if REVERSE_FUTILITY_PRUNING

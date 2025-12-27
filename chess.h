@@ -1048,7 +1048,7 @@ namespace chess
         alignas(std::max_align_t) uint8_t tt_result[32] = {};
 
         /* material (and optionally PST) from white's POV */
-        static constexpr auto UNKNOWN_SCORE = std::numeric_limits<score_t>::max();
+        static constexpr auto UNKNOWN_SCORE = std::numeric_limits<int16_t>::min();
         mutable score_t simple_score = UNKNOWN_SCORE;
 
         void apply_move(const BaseMove&);

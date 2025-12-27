@@ -299,6 +299,7 @@ namespace search
         score_t     _eval_raw = SCORE_MIN; /* unscaled _eval */
 
         int         _extension = 0; /* count pending fractional extensions */
+        int         _continuation_length = 0; /* counter move sequence length */
         int         _fifty = 0;
         int         _mate_detected = 0;
         int         _pruned_count = 0;
@@ -844,7 +845,7 @@ namespace search
         ASSERT(move != _move);
 
         const auto score = _tt->history_score(_ply, state(), turn(), move);
-        return score + COUNTER_MOVE_BONUS * is_counter_move(move);
+        return score + COUNTER_MOVE_BONUS * (is_counter_move(move) + _continuation_length) / 3.0;
     }
 
 
@@ -1058,6 +1059,12 @@ namespace search
             ctxt->_move = *move;
             ctxt->_state = move->_state;
             ctxt->_leftmost = is_leftmost() && next_move_index() == 1;
+
+            /* Track continuation (counter move sequence) length */
+            if (*move == _counter_move)
+                ctxt->_continuation_length = _continuation_length + 1;
+            else
+                ctxt->_continuation_length = 0;
 
             if (_path_len >= _ply + 1 && _ply + 1 < PV_PATH_MAX)
             {
