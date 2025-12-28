@@ -310,9 +310,7 @@ namespace search
                     if (i >= MaxShare)
                         break;
                 }
-                if constexpr (Blocking)
-                    std::this_thread::yield();
-                else
+                if constexpr (!Blocking)
                     return;  // Non-blocking: single attempt, no spin
             }
 #else
