@@ -109,6 +109,7 @@ public:
     }
 
     INLINE void clear() { _current_size = 0; }
+    INLINE void resize(size_t n) { _current_size = n; }
     INLINE size_t size() const { return _current_size; }
     INLINE bool empty() const { return size() == 0; }
     INLINE iterator begin() { return &_container.data()[0]; }
@@ -1047,7 +1048,7 @@ namespace chess
         bool has_tt_result = false;
         alignas(std::max_align_t) uint8_t tt_result[32] = {};
 
-        /* material (and optionally PST) from white's POV */
+        /* material and PST from white's POV */
         static constexpr auto UNKNOWN_SCORE = std::numeric_limits<int16_t>::min();
         mutable score_t simple_score = UNKNOWN_SCORE;
 
@@ -1186,7 +1187,10 @@ namespace chess
         /* perft */
         size_t make_pseudo_legal_moves(MovesList&) const;
 
-        void generate_moves(MovesList& out, MovesList& buffer) const;
+        void generate_moves(MovesList& moves) const;
+
+        /* Check if a pseudo-legal move is legal (doesn't leave king in check) */
+        bool is_legal(const BaseMove& move) const;
 
         void generate_castling_moves(MovesList& moves, Bitboard to_mask = BB_ALL) const;
 

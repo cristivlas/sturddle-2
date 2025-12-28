@@ -291,20 +291,98 @@ namespace chess
     }
 
 
-    void State::generate_moves(MovesList& moves, MovesList& buffer) const
+    void State::generate_moves(MovesList& moves) const
     {
-        State temp;
-        moves.clear();
+        generate_pseudo_legal_moves(moves);
 
-        for (const auto& move : generate_pseudo_legal_moves(buffer))
+        size_t write = 0;
+        for (size_t read = 0; read < moves.size(); ++read)
         {
-            clone_into(temp);
-
-            temp.apply_move(move);
-
-            if (!temp.is_check(turn))
-                moves.emplace_back(move);
+            if (is_legal(moves[read]))
+                moves[write++] = moves[read];
         }
+        moves.resize(write);
+    }
+
+
+    bool State::is_legal(const BaseMove& move) const
+    {
+        const auto from_sq = move.from_square();
+        const auto to_sq = move.to_square();
+        const auto from_mask = BB_SQUARES[from_sq];
+        const auto to_mask = BB_SQUARES[to_sq];
+        const auto our_color = turn;
+        const auto king_sq = king(our_color);
+        const auto checkers = checkers_mask(our_color);
+
+        /* King move: check if destination is attacked */
+        if (from_mask & kings)
+        {
+            /* Castling not allowed when in check */
+            if (is_castling(move))
+                return checkers == BB_EMPTY;
+
+            /* For king moves, compute attacks on destination with king removed */
+            const auto new_occupied = (occupied() & ~from_mask) | to_mask;
+            return attackers_mask(!our_color, to_sq, new_occupied) == BB_EMPTY;
+        }
+
+        /* If in check, non-king moves must block or capture the checker */
+        if (checkers != BB_EMPTY)
+        {
+            /* Double check: only king can move */
+            if (popcount(checkers) > 1)
+                return false;
+
+            /* Single check: must capture checker or block */
+            const auto checker_sq = Square(lsb(checkers));
+
+            /* Can capture the checker? */
+            if (to_mask & checkers)
+            {
+                /* Still need to verify pin constraint */
+                const auto pin = pin_mask(our_color, from_sq);
+                return pin == BB_ALL || (pin & to_mask);
+            }
+
+            /* Can block? Only possible for sliding piece checks */
+            const auto block_mask = between(checker_sq, king_sq);
+            if ((to_mask & block_mask) == BB_EMPTY)
+                return false;
+
+            /* Verify pin constraint for blocking move */
+            const auto pin = pin_mask(our_color, from_sq);
+            return pin == BB_ALL || (pin & to_mask);
+        }
+
+        /* En passant: special case - can expose king to horizontal attack */
+        if (to_sq == en_passant_square && (pawns & from_mask))
+        {
+            const auto captured_sq = Square(en_passant_square - 8 * SIGN[our_color]);
+            const auto captured_mask = BB_SQUARES[captured_sq];
+
+            /* Compute new occupancy after en passant */
+            const auto new_occupied = (occupied() & ~from_mask & ~captured_mask) | to_mask;
+
+            /* Check for sliding attacks on king through the cleared squares */
+            const auto their_rooks_queens = (rooks | queens) & occupied_co(!our_color);
+            if (their_rooks_queens & magic_bits_attacks.Rook(new_occupied, king_sq))
+                return false;
+
+            const auto their_bishops_queens = (bishops | queens) & occupied_co(!our_color);
+            if (their_bishops_queens & magic_bits_attacks.Bishop(new_occupied, king_sq))
+                return false;
+
+            return true;
+        }
+
+        /* Regular move: check pin constraint */
+        const auto pin = pin_mask(our_color, from_sq);
+        if (pin == BB_ALL)
+            return true; /* Not pinned */
+
+        /* Pinned piece: can only move along pin ray */
+        return (pin & to_mask) != BB_EMPTY;
     }
 
 

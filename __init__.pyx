@@ -193,7 +193,7 @@ cdef extern from 'chess.h' namespace 'chess':
         Bitboard checkers_mask(Color) const
 
         void generate_castling_moves(MovesList& moves) const
-        void generate_moves(MovesList&, MovesList&) const
+        void generate_moves(MovesList&) const
 
         MovesList& generate_pseudo_legal_moves(MovesList&, Bitboard, Bitboard) const
         size_t make_pseudo_legal_moves(MovesList&) const
@@ -1197,12 +1197,11 @@ def perft(fen, repeat=1):
 
 def perft2(fen, repeat=1):
     cdef MovesList moves
-    cdef MovesList buffer
     cdef size_t count = 0
     board = BoardState(chess.Board(fen=fen))
     start = time.perf_counter()
     for i in range(0, repeat):
-        board._state.generate_moves(moves, buffer)
+        board._state.generate_moves(moves)
         count += moves.size()
     return count, time.perf_counter() - start
 
