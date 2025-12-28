@@ -559,6 +559,7 @@ private:
     void debug();
     void go(const Arguments &args);
     void isready();
+    void perft(int depth, bool pseudo_legal);
     void ponderhit();
     void position(const Arguments &args);
     void setoption(const Arguments &args);
@@ -1016,6 +1017,14 @@ void UCI::go(const Arguments &args)
 {
     stop();
 
+    /* Handle "go perft <depth> [pseudo]" */
+    if (args.size() >= 3 && args[1] == "perft")
+    {
+        const bool pseudo_legal = (args.size() >= 4 && args[3] == "pseudo");
+        perft(to_int(args[2]), pseudo_legal);
+        return;
+    }
+
     bool explicit_movetime = false, do_analysis = false, do_ponder = false;
     int movestogo = 0, movetime = 0;
     double time_remaining[] = {0, 0};
@@ -1365,6 +1374,88 @@ void UCI::stop()
     _compute_pool->wait_for_tasks();
 #endif
     output_best_move();
+}
+
+/**
+ * Recursive perft (performance test) function.
+ * Counts the number of leaf nodes at a given depth.
+ */
+static uint64_t perft(chess::State& state, int depth, bool pseudo_legal)
+{
+    if (depth == 0)
+        return 1;
+
+    chess::MovesList moves;
+    chess::MovesList buffer;
+
+    if (pseudo_legal)
+        state.generate_pseudo_legal_moves(moves);
+    else
+        state.generate_moves(moves, buffer);
+
+    if (depth == 1)
+        return moves.size();
+
+    uint64_t nodes = 0;
+    for (const auto& move : moves)
+    {
+        chess::State next = state;
+        next.apply_move(move);
+        nodes += perft(next, depth - 1, pseudo_legal);
+    }
+    return nodes;
+}
+
+/**
+ * Perft with divide: shows node counts for each root move.
+ */
+void UCI::perft(int depth, bool pseudo_legal)
+{
+    if (depth < 1)
+    {
+        output("Nodes searched: 1");
+        return;
+    }
+
+    chess::MovesList moves;
+    chess::MovesList buffer;
+
+    if (pseudo_legal)
+        _buf._state.generate_pseudo_legal_moves(moves);
+    else
+        _buf._state.generate_moves(moves, buffer);
+
+    const auto start = std::chrono::steady_clock::now();
+    uint64_t total = 0;
+
+    for (const auto& move : moves)
+    {
+        chess::State next = _buf._state;
+        next.apply_move(move);
+
+        uint64_t nodes = (depth == 1) ? 1 : ::perft(next, depth - 1, pseudo_legal);
+        total += nodes;
+
+        g_out.clear();
+        std::format_to(std::back_inserter(g_out), "{}: {}", move.uci(), nodes);
+        output(g_out);
+    }
+
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+
+    output("");
+    g_out.clear();
+    std::format_to(std::back_inserter(g_out), "Nodes searched: {}{}", total, pseudo_legal ? " (pseudo-legal)" : "");
+    output(g_out);
+
+    if (ms > 0)
+    {
+        const auto nps = total * 1000 / ms;
+        g_out.clear();
+        std::format_to(std::back_inserter(g_out), "Time: {} ms, NPS: {}", ms, nps);
+        output(g_out);
+    }
 }
 
 void UCI::uci()
