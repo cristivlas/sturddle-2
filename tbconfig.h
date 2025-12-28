@@ -121,8 +121,8 @@
 #define TB_ROOK_ATTACKS(sq, occ_mask)   magic_bits_attacks.Rook(occ_mask, sq)
 #define TB_BISHOP_ATTACKS(sq, occ_mask) magic_bits_attacks.Bishop(occ_mask, sq)
 #else
-#define TB_ROOK_ATTACKS(sq, occ_mask)   BB_ROOK_ATTACKS.get(sq, occ_mask)
-#define TB_BISHOP_ATTACKS(sq, occ_mask) BB_BISHOP_ATTACKS.get(sq, occ_mask)
+#define TB_ROOK_ATTACKS(sq, occ_mask)   chess::BB_ROOK_ATTACKS.get(sq, occ_mask)
+#define TB_BISHOP_ATTACKS(sq, occ_mask) chess::BB_DIAG_ATTACKS.get(sq, occ_mask)
 #endif /* USE_MAGIC_BITS */
 
 /*
