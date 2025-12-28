@@ -1188,6 +1188,9 @@ namespace chess
 
         void generate_moves(MovesList& out, MovesList& buffer) const;
 
+        /* Check if a pseudo-legal move is legal (doesn't leave king in check) */
+        bool is_legal(const BaseMove& move) const;
+
         void generate_castling_moves(MovesList& moves, Bitboard to_mask = BB_ALL) const;
 
         /*
