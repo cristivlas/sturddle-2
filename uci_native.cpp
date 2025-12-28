@@ -1378,16 +1378,21 @@ void UCI::stop()
 
 /**
  * Recursive perft function.
- * When output_moves is provided, outputs per-move node counts (for root level).
+ * Uses pre-allocated move lists from Context to avoid allocation overhead.
+ * When output_move is provided, outputs per-move node counts (for root level).
  */
 static uint64_t perft(
     chess::State& state,
     int depth,
+    int ply,
     bool pseudo_legal,
     std::function<void(const chess::Move&, uint64_t)> output_move = nullptr)
 {
-    chess::MovesList moves;
-    chess::MovesList buffer;
+    if (ply >= PLY_MAX - 1)
+        return 0;
+
+    auto& moves = search::Context::moves(0, ply);
+    auto& buffer = search::Context::moves(0, ply + 1);
 
     if (pseudo_legal)
         state.generate_pseudo_legal_moves(moves);
@@ -1404,7 +1409,7 @@ static uint64_t perft(
         {
             state.clone_into(next);
             next.apply_move(move);
-            nodes = perft(next, depth - 1, pseudo_legal);
+            nodes = perft(next, depth - 1, ply + 1, pseudo_legal);
         }
         total += nodes;
 
@@ -1421,7 +1426,7 @@ void UCI::perft(int depth, bool pseudo_legal)
 {
     const auto start = std::chrono::steady_clock::now();
 
-    uint64_t total = ::perft(_buf._state, depth, pseudo_legal, [](const chess::Move& move, uint64_t nodes) {
+    uint64_t total = ::perft(_buf._state, depth, 0, pseudo_legal, [](const chess::Move& move, uint64_t nodes) {
         g_out.clear();
         std::format_to(std::back_inserter(g_out), "{}: {}", move.uci(), nodes);
         output(g_out);
