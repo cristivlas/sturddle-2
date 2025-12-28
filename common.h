@@ -166,7 +166,7 @@ constexpr size_t DEFAULT_HASH_TABLE_SIZE =  32;
  * https://github.com/goutham/magic-bits
  */
 #if !defined(USE_MAGIC_BITS)
-  #define USE_MAGIC_BITS                    true
+  #define USE_MAGIC_BITS                    false
 #endif
 
 /*

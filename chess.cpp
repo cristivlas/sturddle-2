@@ -366,11 +366,11 @@ namespace chess
 
             /* Check for sliding attacks on king through the cleared squares */
             const auto their_rooks_queens = (rooks | queens) & occupied_co(!our_color);
-            if (their_rooks_queens & magic_bits_attacks.Rook(new_occupied, king_sq))
+            if (their_rooks_queens & rank_and_file_attacks(new_occupied, king_sq))
                 return false;
 
             const auto their_bishops_queens = (bishops | queens) & occupied_co(!our_color);
-            if (their_bishops_queens & magic_bits_attacks.Bishop(new_occupied, king_sq))
+            if (their_bishops_queens & diagonal_attacks(new_occupied, king_sq))
                 return false;
 
             return true;

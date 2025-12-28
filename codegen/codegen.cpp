@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2023, 2024, 2025 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +22,7 @@
 
 #include "hash_builder.h"
 
-int main(int argc, const char* argv[])
+int main()
 {
     HashBuilder builder;
 
