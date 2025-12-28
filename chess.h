@@ -109,6 +109,7 @@ public:
     }
 
     INLINE void clear() { _current_size = 0; }
+    INLINE void resize(size_t n) { _current_size = n; }
     INLINE size_t size() const { return _current_size; }
     INLINE bool empty() const { return size() == 0; }
     INLINE iterator begin() { return &_container.data()[0]; }
@@ -1186,7 +1187,7 @@ namespace chess
         /* perft */
         size_t make_pseudo_legal_moves(MovesList&) const;
 
-        void generate_moves(MovesList& out, MovesList& buffer) const;
+        void generate_moves(MovesList& moves) const;
 
         /* Check if a pseudo-legal move is legal (doesn't leave king in check) */
         bool is_legal(const BaseMove& move) const;

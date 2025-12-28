@@ -1392,12 +1392,10 @@ static uint64_t perft(
         return 0;
 
     auto& moves = search::Context::moves(0, ply);
-    auto& buffer = search::Context::moves(0, ply + 1);
-
     if (pseudo_legal)
         state.generate_pseudo_legal_moves(moves);
     else
-        state.generate_moves(moves, buffer);
+        state.generate_moves(moves);
 
     uint64_t total = 0;
     chess::State next;

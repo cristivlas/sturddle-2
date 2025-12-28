@@ -291,15 +291,17 @@ namespace chess
     }
 
 
-    void State::generate_moves(MovesList& moves, MovesList& buffer) const
+    void State::generate_moves(MovesList& moves) const
     {
-        moves.clear();
+        generate_pseudo_legal_moves(moves);
 
-        for (const auto& move : generate_pseudo_legal_moves(buffer))
+        size_t write = 0;
+        for (size_t read = 0; read < moves.size(); ++read)
         {
-            if (is_legal(move))
-                moves.emplace_back(move);
+            if (is_legal(moves[read]))
+                moves[write++] = moves[read];
         }
+        moves.resize(write);
     }
 
 
