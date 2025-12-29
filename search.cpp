@@ -249,7 +249,7 @@ void TranspositionTable::update_entry(Context& ctxt, TT_Entry& entry, TT_Type ty
     entry._eval = ctxt._eval; /* static eval */
     entry._value = ctxt._score;
     entry._hash_move = ctxt._best_move;
-    entry._key = hash_key(ctxt.state().hash());
+    entry._hash = ctxt.state().hash();
     entry._depth = depth;
 }
 

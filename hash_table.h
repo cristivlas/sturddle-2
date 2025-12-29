@@ -221,11 +221,6 @@ static INLINE size_t get_even(size_t n)
 }
 
 
-/* Extract upper 32 bits of hash for TT key (lower bits used for bucket index) */
-INLINE uint32_t hash_key(uint64_t h)
-{
-    return static_cast<uint32_t>(h >> 32);
-}
 
 
 namespace search
@@ -340,7 +335,7 @@ namespace search
     };
 
 
-    template <typename T, size_t BUCKET_SIZE = 18>
+    template <typename T, size_t BUCKET_SIZE = 14>
     class hash_table
     {
         using clock_t = uint8_t;
@@ -391,7 +386,7 @@ namespace search
     private:
         static INLINE size_t get_num_buckets(size_t megabytes)
         {
-            static_assert(sizeof(T) == 14);
+            static_assert(sizeof(T) == 18);
             static_assert(bucket_size() == 256);
 
             auto buckets = megabytes * ONE_MEGABYTE / bucket_size();
@@ -481,8 +476,6 @@ namespace search
             const auto h = s.hash();
             ASSERT(h);
 
-            const auto key = hash_key(h);
-
             auto& bucket = get_bucket(h);
             shared_lock_t lock(bucket.mutex());
 
@@ -502,7 +495,7 @@ namespace search
                     {
                         auto& e = bucket._entries[slot];
 
-                        if (e._key == key)
+                        if (e._hash == h)
                         {
                             result._entry = e;
                             result._replacement_slot = slot;

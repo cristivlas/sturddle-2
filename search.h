@@ -166,7 +166,7 @@ namespace search
     class TT_Entry
     {
     public:
-        uint32_t    _key = 0; /* upper 32 bits of Zobrist hash */
+        uint64_t    _hash = 0;
         TT_Type     _type : 2;
         uint8_t     _generation : 5;
         bool        _pv : 1;
@@ -185,7 +185,7 @@ namespace search
 
         INLINE bool matches(const State& state) const
         {
-            return /* is_valid() && */ _key == hash_key(state.hash());
+            return _hash == state.hash();
         }
 
         template<typename C>
@@ -453,7 +453,7 @@ namespace search
         if (!ctxt.tt_entry().is_valid() || ctxt.tt_entry()._depth < ctxt.depth())
             StorageView<HashTable::Result>::store(ctxt._state->tt_result, ctxt._state->has_tt_result, _table.probe(ctxt.state(), ctxt.depth()));
         else
-            ASSERT(ctxt.tt_entry()._key == hash_key(ctxt.state().hash()));
+            ASSERT(ctxt.tt_entry()._hash == ctxt.state().hash());
 
         if (ctxt.tt_entry().is_valid())
         {
