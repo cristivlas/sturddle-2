@@ -72,7 +72,7 @@ template<typename T> INLINE T constexpr pow2(T x) { return x * x; }
 
 
 /* Fixed capacity container */
-template<typename T, size_t max_size = 256>
+template<typename T, size_t max_size = 256, bool check_bounds = !NO_ASSERT>
 class MaxSizeVector
 {
 public:
@@ -164,10 +164,14 @@ private:
         throw std::out_of_range(msg);
     }
 
-    static INLINE void check_range(const char* prefix, const char* func, size_t v, size_t vmax)
+    static INLINE void check_range([[maybe_unused]] const char* prefix,
+                                   [[maybe_unused]] const char* func,
+                                   [[maybe_unused]] size_t v,
+                                   [[maybe_unused]] size_t vmax)
     {
-        if (v >= vmax)
-            out_of_range(std::string(prefix), func, v, vmax);
+        if constexpr (check_bounds)
+            if (v >= vmax)
+                out_of_range(std::string(prefix), func, v, vmax);
     }
 
 private:
