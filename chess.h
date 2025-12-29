@@ -120,14 +120,14 @@ public:
     INLINE void emplace_back(T&& value)
     {
         check_capacity(__func__);
-        _container.data()[_current_size++] = std::move(value);
+        new (&_container.data()[_current_size++]) T(std::move(value));
     }
 
     template <typename... Args>
     INLINE void emplace_back(Args&&... args)
     {
         check_capacity(__func__);
-        _container.data()[_current_size++] = T(std::forward<Args>(args)...);
+        new (&_container.data()[_current_size++]) T(std::forward<Args>(args)...);
     }
 
     INLINE T& operator[](size_t index)
