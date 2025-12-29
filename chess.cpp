@@ -295,17 +295,19 @@ namespace chess
     {
         generate_pseudo_legal_moves(moves);
 
+        const auto checkers = checkers_mask(turn);
+
         size_t write = 0;
         for (size_t read = 0; read < moves.size(); ++read)
         {
-            if (is_legal(moves[read]))
+            if (is_legal(moves[read], checkers))
                 moves[write++] = moves[read];
         }
         moves.resize(write);
     }
 
 
-    bool State::is_legal(const BaseMove& move) const
+    bool State::is_legal(const BaseMove& move, Bitboard checkers) const
     {
         const auto from_sq = move.from_square();
         const auto to_sq = move.to_square();
@@ -313,7 +315,6 @@ namespace chess
         const auto to_mask = BB_SQUARES[to_sq];
         const auto our_color = turn;
         const auto king_sq = king(our_color);
-        const auto checkers = checkers_mask(our_color);
 
         /* King move: check if destination is attacked */
         if (from_mask & kings)

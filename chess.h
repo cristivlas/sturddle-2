@@ -735,6 +735,26 @@ namespace chess
 #endif /* USE_PIECE_SQUARE_TABLES */
 
 
+    INLINE Bitboard diagonal_attacks(Bitboard mask, Square square)
+    {
+#if USE_MAGIC_BITS
+        return magic_bits_attacks.Bishop(mask, square);
+#else
+        return BB_DIAG_ATTACKS.get(square, mask);
+#endif /* !USE_MAGIC_BITS */
+    }
+
+
+    INLINE Bitboard rank_and_file_attacks(Bitboard mask, Square square)
+    {
+#if USE_MAGIC_BITS
+        return magic_bits_attacks.Rook(mask, square);
+#else
+        return BB_ROOK_ATTACKS.get(square, mask);
+#endif /* !USE_MAGIC_BITS */
+    }
+
+
     /* A position on the chessboard represented as a collection of bitboards. */
     struct Position
     {
@@ -785,20 +805,11 @@ namespace chess
             ASSERT(square != Square::UNDEFINED);
             auto attackers = knights & BB_KNIGHT_ATTACKS[square];
 
-    #if USE_MAGIC_BITS
             if (const auto queens_and_rooks = queens | rooks)
-                attackers |= queens_and_rooks & magic_bits_attacks.Rook(occupied_mask, square);
+                attackers |= queens_and_rooks & rank_and_file_attacks(occupied_mask, square);
 
             if (const auto queens_and_bishops = queens | bishops)
-                attackers |= queens_and_bishops & magic_bits_attacks.Bishop(occupied_mask, square);
-    #else
-            if (const auto queens_and_rooks = queens | rooks)
-                attackers |= queens_and_rooks & BB_ROOK_ATTACKS.get(square, occupied_mask);
-
-            if (const auto queens_and_bishops = queens | bishops)
-                attackers |= queens_and_bishops & BB_DIAG_ATTACKS.get(square, occupied_mask);
-
-    #endif /* !USE_MAGIC_BITS */
+                attackers |= queens_and_bishops & diagonal_attacks(occupied_mask, square);
 
             return attackers & occupied_co(color);
         }
@@ -900,54 +911,25 @@ namespace chess
             const bool color = (bb_square & white) == bb_square;
             return BB_PAWN_ATTACKS[color][square];
         }
-        else if (bb_square & knights)
+        if (bb_square & knights)
         {
             return BB_KNIGHT_ATTACKS[square];
         }
-        else if (bb_square & kings)
+        if (bb_square & kings)
         {
             return BB_KING_ATTACKS[square];
         }
-        else
-        {
-            Bitboard mask = 0;
 
-    #if USE_MAGIC_BITS
-            if ((bb_square & bishops) || (bb_square & queens))
-                mask = magic_bits_attacks.Bishop(occupied, square);
+        /* Sliders: bishop, rook, or queen */
+        Bitboard mask = 0;
+        const auto diag = bb_square & (bishops | queens);
+        const auto orth = bb_square & (rooks | queens);
+        if (diag)
+            mask = diagonal_attacks(occupied, square);
+        if (orth)
+            mask |= rank_and_file_attacks(occupied, square);
 
-            if ((bb_square & rooks) || (bb_square & queens))
-                mask |= magic_bits_attacks.Rook(occupied, square);
-    #else
-            if ((bb_square & bishops) || (bb_square & queens))
-                mask = BB_DIAG_ATTACKS.get(square, occupied);
-
-            if ((bb_square & rooks) || (bb_square & queens))
-                mask |= BB_ROOK_ATTACKS.get(square, occupied);
-
-    #endif /* !USE_MAGIC_BITS */
-            return mask;
-        }
-    }
-
-
-    INLINE Bitboard diagonal_attacks(Bitboard mask, Square square)
-    {
-#if USE_MAGIC_BITS
-        return magic_bits_attacks.Bishop(mask, square);
-#else
-        return BB_DIAG_ATTACKS.get(square, mask);
-#endif /* !USE_MAGIC_BITS */
-    }
-
-
-    INLINE Bitboard rank_and_file_attacks(Bitboard mask, Square square)
-    {
-#if USE_MAGIC_BITS
-        return magic_bits_attacks.Rook(mask, square);
-#else
-        return BB_ROOK_ATTACKS.get(square, mask);
-#endif /* !USE_MAGIC_BITS */
+        return mask;
     }
 
 
@@ -1190,7 +1172,8 @@ namespace chess
         void generate_moves(MovesList& moves) const;
 
         /* Check if a pseudo-legal move is legal (doesn't leave king in check) */
-        bool is_legal(const BaseMove& move) const;
+        bool is_legal(const BaseMove& move) const { return is_legal(move, checkers_mask(turn)); }
+        bool is_legal(const BaseMove& move, Bitboard checkers) const;
 
         void generate_castling_moves(MovesList& moves, Bitboard to_mask = BB_ALL) const;
 
