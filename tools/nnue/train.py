@@ -899,7 +899,10 @@ def main(args):
         dataset, steps_per_epoch = dataset_from_file(args, args.input[0], strategy, callbacks)
 
         if args.schedule:
-            from keras.callbacks import ReduceLROnPlateau
+            if os.environ['TF_USE_LEGACY_KERAS']:
+                from tf_keras.callbacks import ReduceLROnPlateau
+            else:
+                from keras.callbacks import ReduceLROnPlateau
 
             lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=1, min_lr=1e-9)
             callbacks.append(lr)
@@ -1048,8 +1051,8 @@ if __name__ == '__main__':
             parser.error("--outcome-weight must be between 0 and 1 (inclusive)")
 
         # Validate move_weight
-        if args.predict_moves and (args.move_weight <= 0 or args.move_weight >= 1):
-            parser.error("--move-weight must be between 0 and 1 (exclusive)")
+        if args.predict_moves and (args.move_weight < 0 or args.move_weight > 1):
+            parser.error("--move-weight must be between 0 and 1 (inclusive)")
 
         # Validate new move prediction parameters
         if args.predict_moves:
