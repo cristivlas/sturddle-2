@@ -1256,7 +1256,6 @@ namespace search
         ASSERT(_futility_pruning);
         ASSERT(_capture_square == Square::UNDEFINED); // no null-move at root
 
-        ASSERT(_continuation_length == 0); // no continuation at root
         ASSERT(_double_ext == 0); // no extensions at root
         ASSERT(_extension == 0);
         ASSERT(_excluded.is_none());
