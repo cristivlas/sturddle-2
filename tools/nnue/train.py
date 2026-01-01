@@ -2,7 +2,7 @@
 '''
 **********************************************************************
 Trainer for the Sturddle Chess 2.X engine's neural net.
-Copyright (c) 2023 - 2025 Cristian Vlasceanu.
+Copyright (c) 2023 - 2026 Cristian Vlasceanu.
 **********************************************************************
 '''
 import argparse

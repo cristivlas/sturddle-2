@@ -3,7 +3,7 @@
 Build all-in-one executable using pyinstaller.
 
 Part of Sturddle Chess 2
-Copyright (c) 2023 - 2025 Cristian Vlasceanu.
+Copyright (c) 2023 - 2026 Cristian Vlasceanu.
 '''
 import argparse
 import glob
