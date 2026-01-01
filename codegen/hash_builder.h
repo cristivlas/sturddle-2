@@ -210,16 +210,13 @@ public:
         // Check for PEXT support
         out << "// PEXT support detection\n";
         out << "#if defined(__BMI2__) && (defined(__x86_64__) || defined(_M_X64))\n";
-        out << "  #define USE_PEXT 1\n";
+        out << "  #define USE_PEXT true\n";
         out << "  #if defined(_MSC_VER)\n";
         out << "    #include <intrin.h>\n";
-        out << "    #define PEXT(src, mask) _pext_u64(src, mask)\n";
         out << "  #else\n";
         out << "    #include <x86intrin.h>\n";
-        out << "    #define PEXT(src, mask) _pext_u64(src, mask)\n";
         out << "  #endif\n";
-        out << "#else\n";
-        out << "  #define USE_PEXT 0\n";
+        out << "  #define PEXT(src, mask) _pext_u64(src, mask)\n";
         out << "#endif\n\n";
 
         out << "namespace chess {\n\n";
@@ -227,10 +224,10 @@ public:
         // Magic hash info (for non-PEXT path)
         out << "#if !USE_PEXT\n";
         out << "constexpr struct HashInfo {\n";
-        out << "    uint64_t mask;\n";
-        out << "    uint64_t mul;\n";
-        out << "    uint32_t shift;\n";
-        out << "    uint32_t base_offset;\n";
+        out << "    const uint64_t mask;\n";
+        out << "    const uint64_t mul;\n";
+        out << "    const uint32_t shift;\n";
+        out << "    const uint32_t base_offset;\n";
         out << "} hash_info[" << _groups.size() * 64 << "] = {\n";
         for (const auto& group : _groups)
             for (const auto& h : group._hash_info)
@@ -241,15 +238,15 @@ public:
         out << "#else /* USE_PEXT */\n\n";
         // PEXT info (for PEXT path)
         out << "constexpr struct PextInfo {\n";
-        out << "    uint64_t mask;\n";
-        out << "    uint32_t base_offset;\n";
+        out << "    const uint64_t mask;\n";
+        out << "    const uint32_t base_offset;\n";
         out << "} pext_info[" << _groups.size() * 64 << "] = {\n";
         for (const auto& group : _groups)
             for (int sq = 0; sq < 64; ++sq)
                 out << "    { 0x" << std::hex << group._pext_info[sq].mask << std::dec
                     << ", " << group._pext_info[sq].base_offset << " },\n";
         out << "};\n";
-        out << "#endif // USE_PEXT\n\n";
+        out << "#endif /* USE_PEXT */\n\n";
 
         out << "template <int> struct GroupInfo;\n\n";
         for (const auto& group : _groups)

@@ -72,7 +72,7 @@ template<typename T> INLINE T constexpr pow2(T x) { return x * x; }
 
 
 /* Fixed capacity container */
-template<typename T, size_t max_size = 256, bool check_bounds = !NO_ASSERT>
+template<typename T, size_t max_size = 256, bool check_bounds = false>
 class MaxSizeVector
 {
 public:

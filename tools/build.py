@@ -98,7 +98,7 @@ if __name__ == '__main__':
         print(f'Building {arch if arch else "generic"} module')
         print('*********************************************************')
 
-        arch_flags = ''
+        arch_flags = '-DUSE_MAGIC_BITS'
         if is_windows() and 'clang-cl.exe' not in cl_exe.lower():
             if arch:
                 if arch.endswith('_VNNI'):
@@ -107,17 +107,16 @@ if __name__ == '__main__':
                 arch_flags = f'/arch:{arch}'
         # otherwise assume Clang or GCC on POSIX
         elif arch == 'AVX':
-            arch_flags = '-march=corei7-avx -mtune=corei7-avx'  # sandybridge
+            arch_flags = '-DUSE_MAGIC_BITS -march=corei7-avx -mtune=corei7-avx'  # sandybridge
         elif arch == 'AVX2':
-            arch_flags = '-march=core-avx2 -mtune=znver3'       # optimize for AMD Zen3
+            arch_flags = '-march=core-avx2 -mtune=znver3'  # optimize for AMD Zen3
         elif arch == 'AVX2_VNNI':
             arch_flags = '-march=alderlake -mtune=raptorlake'
         elif arch == 'AVX512':
             arch_flags = '-march=skylake-avx512 -mtune=skylake-avx512'
         elif arch == 'ARMv8_2':
-            arch_flags = '-march=armv8.2-a+fp16'
+            arch_flags = '-DUSE_MAGIC_BITS -march=armv8.2-a+fp16'
 
-        # os.environ['CXXFLAGS'] = f'{arch_flags} -DUSE_MMAP_HASH_TABLE -DSHARED_WEIGHTS'
         os.environ['CXXFLAGS'] = f'{arch_flags} -DSHARED_WEIGHTS'
 
         arch = arch.lower()

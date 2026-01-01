@@ -190,6 +190,66 @@ def test_pins():
         assert expected == result, f'{id}: expected={expected}, got {result}'
 
 
+def test_pin_mask():
+    """Test pin_mask correctness by comparing with python-chess."""
+    BB_ALL = 0xFFFFFFFFFFFFFFFF
+
+    tests = [
+        # Diagonal pins
+        ('diag.01', '4k3/8/8/b7/8/2N5/8/4K3 w - -', chess.C3, True),   # Knight pinned by bishop
+        ('diag.02', '4k3/8/8/8/8/2N5/1b6/4K3 w - -', chess.C3, False), # Knight not pinned (bishop wrong side)
+        ('diag.03', '4k3/8/5b2/8/8/2N5/8/4K3 w - -', chess.C3, False), # Knight not pinned (not on ray)
+        ('diag.04', '8/8/8/8/1b6/2P5/3K4/7k w - -', chess.C3, True),   # Pawn pinned diagonally
+        ('diag.05', '4k3/8/8/4K3/8/2B5/8/q7 w - -', chess.C3, True),   # Bishop pinned by queen diagonally
+
+        # Orthogonal pins
+        ('orth.01', '4k3/8/8/8/4r3/8/4N3/4K3 w - -', chess.E2, True),  # Knight pinned by rook
+        ('orth.02', '4k3/8/8/8/8/3Nr3/8/4K3 w - -', chess.D3, False),  # Knight not pinned (not on ray to king)
+        ('orth.03', '4k3/8/8/8/r7/8/8/R3K3 w Q -', chess.A1, False),   # Rook not pinned (king not on file)
+        ('orth.04', '4k3/4q3/8/8/8/8/4R3/4K3 w - -', chess.E2, True),  # Rook pinned by queen
+        ('orth.05', '4k3/8/8/8/r3B2K/8/8/8 w - -', chess.E4, True),    # Bishop pinned horizontally
+
+        # Multiple potential pinners
+        ('multi.01', '4k3/8/8/b7/1b6/2N5/8/4K3 w - -', chess.C3, True),  # Two bishops, closer one pins
+        ('multi.02', 'r3k3/4r3/8/8/8/8/4N3/4K3 w - -', chess.E2, True),  # Two rooks on file
+
+        # Blocker between piece and sniper
+        ('block.01', '4k3/8/8/b7/1P6/2N5/8/4K3 w - -', chess.C3, False),  # Pawn blocks pin
+        ('block.02', '4k3/4r3/8/8/4P3/8/4N3/4K3 w - -', chess.E2, False), # Pawn blocks vertical pin
+
+        # Edge cases
+        ('edge.01', 'k7/8/8/8/8/8/8/4K2R w - -', chess.H1, False),  # Rook not pinned
+        ('edge.02', '4k3/8/8/8/8/8/8/r3K3 w - -', chess.E1, False), # King can't be pinned
+        ('edge.03', '4k3/8/8/8/8/q7/1N6/2K5 w - -', chess.B2, True), # Knight pinned by queen
+
+        # Pinned piece can move along pin ray
+        ('ray.01', '4k3/8/8/4r3/8/8/4R3/4K3 w - -', chess.E2, True),  # Rook pinned but can move on file
+        ('ray.02', '4k3/8/8/4K3/8/2B5/8/b7 w - -', chess.C3, True),   # Bishop pinned but can move on diagonal
+    ]
+
+    for id, fen, square, expected_pinned in tests:
+        board = chess.Board(fen=fen)
+        state = engine.BoardState(board)
+
+        assert expected_pinned == board.is_pinned(board.turn, square)
+
+        color = chess.WHITE if board.color_at(square) == chess.WHITE else chess.BLACK
+        pin = state.pin_mask(color, square)
+
+        is_pinned = (pin != BB_ALL)
+        assert is_pinned == expected_pinned, f'{id}: square {chess.square_name(square)} expected pinned={expected_pinned}, got {is_pinned} (pin_mask={hex(pin)})'
+
+        # For pinned pieces, verify pin mask is correct by checking legal moves
+        if expected_pinned:
+            piece = board.piece_at(square)
+            if piece and piece.piece_type != chess.KING:
+                # Get legal moves for this piece from python-chess
+                py_moves = [m for m in board.legal_moves if m.from_square == square]
+                for move in py_moves:
+                    to_mask = 1 << move.to_square
+                    assert (pin & to_mask) != 0, f'{id}: move {move.uci()} should be on pin ray but pin_mask={hex(pin)}'
+
+
 def test_static_exchanges():
     tests = [
         ('capt.01', '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - - 0 2', 'e5', chess.BLACK, 85),
@@ -379,6 +439,7 @@ test_en_passant()
 
 test_is_checkmate()
 test_pins()
+test_pin_mask()
 test_static_exchanges()
 test_zobrist()
 test_forks()
