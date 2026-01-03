@@ -899,7 +899,7 @@ def main(args):
         dataset, steps_per_epoch = dataset_from_file(args, args.input[0], strategy, callbacks)
 
         if args.schedule:
-            if os.environ['TF_USE_LEGACY_KERAS']:
+            if os.environ.get('TF_USE_LEGACY_KERAS'):
                 from tf_keras.callbacks import ReduceLROnPlateau
             else:
                 from keras.callbacks import ReduceLROnPlateau

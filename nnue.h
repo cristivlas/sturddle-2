@@ -1,6 +1,6 @@
 #pragma once
 /*
- * Sturddle Chess Engine (C) 2023 - 2025 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2023 - 2026 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -57,7 +57,7 @@
 #endif
 
 #ifndef DEBUG_INCREMENTAL
-#define DEBUG_INCREMENTAL false
+    #define DEBUG_INCREMENTAL false
 #endif
 
 namespace nnue
