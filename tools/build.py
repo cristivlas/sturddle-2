@@ -3,7 +3,7 @@
 Build all-in-one executable using pyinstaller.
 
 Part of Sturddle Chess 2
-Copyright (c) 2023 - 2026 Cristian Vlasceanu.
+Copyright (c) 2023 - 2025 Cristian Vlasceanu.
 '''
 import argparse
 import glob
@@ -13,8 +13,8 @@ import shutil
 import sys
 
 BOOK = 'book.bin'
-OUT_DIR = 'dist'
 WEIGHTS = 'weights.bin'
+OUT_DIR = 'dist'
 
 def find_editbin():
     """Find editbin using distutils MSVC detection"""
@@ -98,7 +98,7 @@ if __name__ == '__main__':
         print(f'Building {arch if arch else "generic"} module')
         print('*********************************************************')
 
-        arch_flags = '-DUSE_MAGIC_BITS'
+        arch_flags = ''
         if is_windows() and 'clang-cl.exe' not in cl_exe.lower():
             if arch:
                 if arch.endswith('_VNNI'):
@@ -107,17 +107,20 @@ if __name__ == '__main__':
                 arch_flags = f'/arch:{arch}'
         # otherwise assume Clang or GCC on POSIX
         elif arch == 'AVX':
-            arch_flags = '-DUSE_MAGIC_BITS -march=corei7-avx -mtune=corei7-avx'  # sandybridge
+            arch_flags = '-march=corei7-avx -mtune=corei7-avx'  # sandybridge
         elif arch == 'AVX2':
-            arch_flags = '-march=core-avx2 -mtune=znver3'  # optimize for AMD Zen3
+            arch_flags = '-march=core-avx2 -mtune=znver3'       # optimize for AMD Zen3
         elif arch == 'AVX2_VNNI':
             arch_flags = '-march=alderlake -mtune=raptorlake'
         elif arch == 'AVX512':
             arch_flags = '-march=skylake-avx512 -mtune=skylake-avx512'
         elif arch == 'ARMv8_2':
-            arch_flags = '-DUSE_MAGIC_BITS -march=armv8.2-a+fp16'
+            arch_flags = '-march=armv8.2-a+fp16'
+        else:
+            arch_flags = '-mssse3'
 
-        os.environ['CXXFLAGS'] = f'{arch_flags} -DSHARED_WEIGHTS'
+        # os.environ['CXXFLAGS'] = f'{arch_flags} -DUSE_MMAP_HASH_TABLE'
+        os.environ['CXXFLAGS'] = f'{arch_flags}'
 
         arch = arch.lower()
         os.environ['TARGET'] = f'chess_engine_{arch}' if arch else 'chess_engine'

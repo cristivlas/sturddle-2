@@ -26,9 +26,9 @@
 #include <cerrno>
 #include <iomanip>
 #include <iterator>
+#include <map>
 #include <filesystem>
 #include <fstream>
-#include <map>
 #include <sstream>
 #include "chess.h"
 
@@ -42,14 +42,12 @@
 
 #if WITH_NNUE
   #include "nnue.h"
-  #if !(SHARED_WEIGHTS)
-    #include "weights.h"
-  #endif
 #endif
 
 #include "eval.h"
 
 #if USE_ENDTABLES
+  #include <filesystem>
   #include "tbprobe.h"
 #endif
 
@@ -281,59 +279,49 @@ std::map<std::string, int> _get_params()
 
 #if WITH_NNUE
 
-constexpr int INPUTS_A = 3588;
-constexpr int INPUTS_B = 256;
-constexpr int HIDDEN_1A = 1280;
-constexpr int HIDDEN_1A_POOLED = HIDDEN_1A / nnue::POOL_STRIDE;
-constexpr int HIDDEN_1B = 64;
-constexpr int HIDDEN_2 = 16;
-constexpr int HIDDEN_3 = 16;
+constexpr int FEATURES = 24576;
+constexpr int HIDDEN_1 = 256; // accumulator size
+constexpr int HIDDEN_2 = 32;
+constexpr int HIDDEN_3 = 8;
 
-using LAttnType = nnue::Layer<HIDDEN_1B, 32>;
-using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
-using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
-using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2>;
+using L1Type = nnue::Layer<FEATURES, HIDDEN_1, int16_t, nnue::QSCALE_16, true /* incremental */>;
+#if USE_8_BIT_QUANTIZATION
+  using L2Type = nnue::Layer<HIDDEN_1 * 2, HIDDEN_2, int8_t, nnue::QSCALE_8>;
+#else
+  using L2Type = nnue::Layer<HIDDEN_1 * 2, HIDDEN_2>;
+#endif /* USE_8_BIT_QUANTIZATION */
 using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
 using EVALType = nnue::Layer<HIDDEN_3, 1>;
 
-/*
- * The accumulator takes the inputs and processes them into two outputs,
- * using layers L1A and L1B. L1B processes the 1st 256 inputs, which
- * correspond to kings and pawns. The output of L1B is processed by the
- * spatial attention layer, which moodulates the outputs of the L1A layer.
- */
-using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
+using Accumulator = nnue::Accumulator<FEATURES, HIDDEN_1>;
 using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
-
-using LMOVEType = nnue::Layer<INPUTS_A / Accumulator::NUM_BUCKETS, 4096, int16_t, nnue::QSCALE>;
 
 /* Each thread uses its own stack */
 static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
 
-static struct Model
+
+#define INIT_LAYER(layer, name) layer.load_weights(file)
+
+static struct
 {
-    void init();
+    L1Type L1_B, L1_W;
+    L2Type L2;
+    L3Type L3;
+    EVALType EVAL;
+
+    std::string default_weights_path;
 
     void validate_weights_file(const std::filesystem::path& weights_path)
     {
-        constexpr auto param_count =
-            L1AType::param_count()
-            + L1BType::param_count()
-            + LAttnType::param_count()
-            + L2Type::param_count()
-            + L3Type::param_count()
-            + EVALType::param_count()
-        #if USE_MOVE_PREDICTION
-            + LMOVEType::param_count()
-        #endif
-            ;
+        constexpr auto param_count = 2 * L1Type::param_count() + L2Type::param_count() + L3Type::param_count() + EVALType::param_count();
         constexpr auto expected_size = param_count * sizeof(float);
+
         const auto file_size = std::filesystem::file_size(weights_path);
         if (file_size != expected_size)
             throw std::runtime_error(weights_path.string() + ": expected " + std::to_string(expected_size) + " bytes, got " + std::to_string(file_size));
     }
 
-    void load_weights(const std::filesystem::path& weights_path)
+    void init(const std::filesystem::path& weights_path)
     {
         validate_weights_file(weights_path);
 
@@ -345,95 +333,45 @@ static struct Model
 
         try
         {
-            /* Load layers in the same order that the trainer exports them. */
-            L1B.load_weights(file);
-            L1A.load_weights(file);
-            LATTN.load_weights(file);
-            L2.load_weights(file);
-            L3.load_weights(file);
-            EVAL.load_weights(file);
-
-        #if USE_MOVE_PREDICTION
-            LMOVES.load_weights(file);
-        #endif
+            INIT_LAYER(L1_B, black_perspective);
+            INIT_LAYER(L1_W, white_perspective);
+            INIT_LAYER(L2, hidden_2);
+            INIT_LAYER(L3, hidden_3);
+            INIT_LAYER(EVAL, eval);
         }
         catch (const std::exception&)
         {
             throw std::runtime_error("Error reading weights from: " + weights_path.string());
         }
-        Context::log_message(LogLevel::INFO, "Loaded " + weights_path.string());
     }
-
-    std::string default_weights_path;
-
-    LAttnType LATTN;
-    L1AType L1A;
-    L1BType L1B;
-    L2Type L2;
-    L3Type L3;
-    EVALType EVAL;
-
-#if USE_MOVE_PREDICTION
-    LMOVEType LMOVES;
-#endif
-
 } model;
 
 
-#if !SHARED_WEIGHTS
-/* weights are compiled-in */
-#define INIT_LAYER(layer, name) layer.set_weights(name ## _w, name ## _b)
-
-void Model::init()
+static INLINE void update(Accumulator& accumulator, const Context* ctxt)
 {
-    INIT_LAYER(LATTN, spatial_attn);
-    INIT_LAYER(L1A, hidden_1a);
-    INIT_LAYER(L1B, hidden_1b);
-    INIT_LAYER(L2, hidden_2);
-    INIT_LAYER(L3, hidden_3);
-    INIT_LAYER(EVAL, out);
-
-#if USE_MOVE_PREDICTION
-    INIT_LAYER(LMOVES, move);
-#endif
+    accumulator.update(model.L1_B, model.L1_W, ctxt->state());
 }
-#else
 
-void Model::init()
+
+/* incremental version */
+static INLINE void update(Accumulator& accumulator, const Context* ctxt, const Accumulator& prev_acc)
 {
-    if (!default_weights_path.empty())
-    {
-        load_weights(default_weights_path);
-    }
+    accumulator.update(model.L1_B, model.L1_W, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
 }
-#endif /* SHARED_WEIGHTS */
 
 
 static void _load_weights(const std::string& file_path)
 {
     if (file_path.empty())
-        model.init();
+        model.init(model.default_weights_path);
     else
-        model.load_weights(file_path);
+        model.init(file_path);
 }
 
 
-void Context::load_weights(const std::string& file_path)
+void search::Context::load_weights(const std::string& file_path)
 {
     cython_wrapper::call_nogil(_load_weights, file_path); // catch exception and translate to Python
-}
-
-
-static INLINE void update(Accumulator& accumulator, const Context* ctxt)
-{
-    accumulator.update(model.L1A, model.L1B, ctxt->state());
-}
-
-
-/* incremental version */
-static INLINE void update(Accumulator& accumulator, const Context* ctxt, Accumulator& prev_acc)
-{
-    accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
 }
 
 
@@ -479,7 +417,7 @@ void search::Context::update_accumulators()
 }
 
 
-score_t search::Context::eval_nnue_raw(bool stm_perspective)
+score_t search::Context::eval_nnue_raw()
 {
     ASSERT(!is_valid(_eval_raw));
 
@@ -488,12 +426,7 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     auto& acc = NNUE_data[tid()][_ply];
     ASSERT(!acc.needs_update(state()));
 
-    _eval_raw = nnue::eval(acc, model.LATTN, model.L2, model.L3, model.EVAL);
-
-    if (stm_perspective)
-    {
-        _eval_raw *= SIGN[state().turn];
-    }
+    _eval_raw = nnue::eval(state().turn, acc, model.L2, model.L3, model.EVAL);
 
     return _eval_raw;
 }
@@ -525,7 +458,7 @@ void search::Context::eval_with_nnue()
 
         if (state().just_king(!turn()) || (depth() >= 0 && abs(eval) <= eval_margin(*this)))
         {
-            const auto eval_nn = eval_nnue_raw(true);
+            const auto eval_nn = eval_nnue_raw();
 
             eval = (eval_nn * NNUE_BLEND_PERCENT + eval * (100 - NNUE_BLEND_PERCENT)) / 100;
         }
@@ -552,7 +485,16 @@ void search::Context::update_root_accumulators()
 
     for (int i = 1; i != SMP_CORES; ++i)
     {
-        NNUE_data[i][0] = root;
+        auto& acc = NNUE_data[i][0];
+        acc._hash = root._hash;
+
+        for (auto color : {BLACK, WHITE})
+        {
+            memcpy(acc.output(color), root.output(color), sizeof(acc.output(color)));
+        #if DEBUG_INCREMENTAL
+            memcpy(acc._perspective[color], root._perspective[color], sizeof(acc._perspective[color]));
+        #endif
+        }
     }
 }
 
@@ -571,7 +513,7 @@ int nnue::eval_fen(const std::string& fen)
     tt.init(true);
     ctxt.set_tt(&tt);
 
-    return ctxt.eval_nnue_raw(false);
+    return ctxt.eval_nnue_raw();
 }
 #endif /* WITH_NNUE */
 
@@ -671,12 +613,10 @@ namespace search
         _init(); /* Init attack masks and other magic bitboards in chess.cpp */
 
     #if WITH_NNUE
-    #if SHARED_WEIGHTS
         try
         {
             const auto weights_path = std::filesystem::absolute(std::filesystem::path(exe_dir) / "weights.bin");
-
-            model.load_weights(weights_path);
+            model.init(weights_path);
             model.default_weights_path = weights_path.string();
         }
         catch(const std::exception& e)
@@ -684,9 +624,6 @@ namespace search
             std::cerr << e.what() << std::endl;
             _exit(-1);
         }
-    #else
-        model.init();
-    #endif /* SHARED_WEIGHTS */
     #endif /* WITH_NNUE */
     }
 
@@ -1275,7 +1212,7 @@ namespace search
         _cutoff_move = Move();
         _has_singleton = false;
 
-        _max_depth = iteration() + (turn() == chess::BLACK);
+        _max_depth = iteration();
 
         _mate_detected = 0;
 
@@ -1581,6 +1518,7 @@ namespace search
             _tb_initialized = ::tb_init(_syzygy_path.c_str());
             _tb_cardinality = TB_LARGEST;
         }
+
         std::cout << "info string " << _syzygy_path << " cardinality " << _tb_cardinality << "\n";
 #endif /* USE_ENDTABLES */
     }
@@ -1737,11 +1675,6 @@ namespace search
         /* Confidence bar for historical scores */
         const double hist_high = (Phase == 3) ? hist_thresholds[ctxt.iteration()] : 0;
 
-    #if USE_MOVE_PREDICTION
-        int active[65];  // 32 pieces + 1 stm + 16 + 16 occupancy
-        int active_count = 0;
-    #endif /* USE_MOVE_PREDICTION */
-
         /********************************************************************/
         /* Iterate over pseudo-legal moves                                  */
         /********************************************************************/
@@ -1837,28 +1770,13 @@ namespace search
                     remake_move(ctxt, move);
                     continue;
                 }
-
                 if (make_move<true>(ctxt, move, futility))
                 {
                     move._group = MoveOrder::LATE_MOVES;
-                #if USE_MOVE_PREDICTION
-                    if (ctxt.iteration() <= MOVE_PREDICTION_MAX_ITER)
-                    {
-                        if (active_count == 0)
-                            nnue::for_each_active_input(ctxt.state(), [&](int idx) {
-                                ASSERT(active_count < 65);
-                                active[active_count++] = idx;
-                            });
 
-                        nnue::score_move(model.LMOVES, active, active_count, move);
-                    }
-                    else
-                #endif /* USE_MOVE_PREDICTION */
-                    {
-                        incremental_update(move, ctxt);
-                        const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
-                        move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
-                    }
+                    incremental_update(move, ctxt);
+                    const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
+                    move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
                 }
             }
         }
@@ -1912,18 +1830,6 @@ namespace search
             ASSERT(compare_moves_ge(moves_list[i-1], moves_list[i]));
         }
     #endif /* NO_ASSERT */
-
-    #if 0 && USE_MOVE_PREDICTION /* debug */
-        if (_phase == 4 && ctxt.iteration() <= MOVE_PREDICTION_MAX_ITER)
-        {
-            for (const auto& m : moves_list)
-            {
-                if (m._group == MoveOrder::LATE_MOVES)
-                    std::cout << m.uci() << ": " << m._score << " (" << float(m._score) / nnue::QSCALE << ")\n";
-            }
-            std::cout << "\n";
-        }
-    #endif /* USE_MOVE_PREDICTION */
     }
 
 

@@ -351,7 +351,7 @@ namespace search
 
         score_t     eval(bool as_white, int depth, int millisec); /* testing and tuning */
 
-        score_t     eval_nnue_raw(bool side_to_move_pov);
+        score_t     eval_nnue_raw();
         void        eval_with_nnue();
         static void update_root_accumulators();
 
@@ -750,7 +750,7 @@ namespace search
 
 #if !WITH_NNUE
     INLINE void search::Context::eval_with_nnue() {}
-    INLINE score_t search::Context::eval_nnue_raw(bool) { return 0; }
+    INLINE score_t search::Context::eval_nnue_raw() { return 0; }
     INLINE void search::Context::update_root_accumulators() {}
 #endif /* !WITH_NNUE */
 
