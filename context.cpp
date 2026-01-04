@@ -280,7 +280,7 @@ std::map<std::string, int> _get_params()
 #if WITH_NNUE
 
 constexpr int FEATURES = 24576;
-constexpr int HIDDEN_1 = 256; // accumulator size
+constexpr int HIDDEN_1 = 128; // accumulator size
 constexpr int HIDDEN_2 = 32;
 constexpr int HIDDEN_3 = 8;
 

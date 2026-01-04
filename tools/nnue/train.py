@@ -23,7 +23,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # (and pip install tf-keras if needed)
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
-ACCUMULATOR_SIZE = 256
+ACCUMULATOR_SIZE = 128
 
 Q16_SCALE = 255
 
