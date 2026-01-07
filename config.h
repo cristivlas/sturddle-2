@@ -83,6 +83,16 @@ struct Config
         const int   _max = 0;
         const std::string _group;
         const bool  _normal = false;
+
+        template <typename T>
+        Param(Val* val, int min_val, int max_val, T group, bool normal)
+            : _val(val), _default_val(*val), _min(min_val), _max(max_val), _group(group), _normal(normal)
+        {}
+
+        template <typename T>
+        Param(Val* val, int default_val, int min_val, int max_val, T group, bool normal)
+            : _val(val), _default_val(default_val), _min(min_val), _max(max_val), _group(group), _normal(normal)
+        {}
     };
 
     using Namespace = std::map<std::string, Param>;
