@@ -213,14 +213,6 @@ def make_model(args, strategy):
             trainable=not args.freeze_eval,
         )(input_1b)
 
-        # Experiment: pawns "reconstruction" auto-encoder
-        if args.pawn_reconstruction:
-            pawn_bits = Lambda(lambda x: x[:, 128:256], name='pawn_target')(unpack_layer)
-            pawn_bits = tf.cast(pawn_bits, tf.float32)
-            pawn_recon = Dense(128, activation='sigmoid', name='pawn_recon', trainable=not args.freeze_eval)(hidden_1b)
-            pawn_recon = tf.cast(pawn_recon, tf.float32)
-            recon_loss = tf.reduce_mean(tf.keras.losses.binary_crossentropy(pawn_bits, pawn_recon))
-
         spatial_attn = Dense(ATTN_FAN_OUT, activation=None, name='spatial_attn', trainable=not args.freeze_eval)(hidden_1b)
 
         def custom_pooling(x):
@@ -281,10 +273,6 @@ def make_model(args, strategy):
 
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=outputs, name=args.name)
-
-        if args.pawn_reconstruction:
-            model.add_loss(args.pawn_weight * recon_loss)
-            model.add_metric(recon_loss, name='pawns')
 
         if args.optimizer in ['adam', 'amsgrad']:
             optimizer=tf.keras.optimizers.Adam(
@@ -457,9 +445,6 @@ def write_weigths(args, model, indent=2):
 
 def write_binary_weights(args, model, file):
     for layer in model.layers:
-        if layer.name == 'pawn_recon':
-            continue
-
         params = get_layer_weights(layer)
         if params:
             kernel, bias = params
@@ -904,7 +889,7 @@ def main(args):
             else:
                 from keras.callbacks import ReduceLROnPlateau
 
-            lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=1, min_lr=1e-9)
+            lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=1, min_lr=1e-10)
             callbacks.append(lr)
 
         if args.model is not None:
@@ -1001,10 +986,6 @@ if __name__ == '__main__':
 
         parser.add_argument('--outcome-weight', type=float, default=0.1, help='weight for outcome loss vs eval loss')
         parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
-
-        # Experimental, pawn structure
-        parser.add_argument('--pawn-reconstruction', action='store_true')
-        parser.add_argument('--pawn-weight', type=float, default=0.025)
 
         # Move prediction related arguments
         parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')
