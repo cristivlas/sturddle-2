@@ -627,6 +627,23 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                     not_draw = tf.not_equal(outcome_y, 0.5)
                     condition = tf.logical_and(condition, not_draw)
 
+                if args.discard_mismatch:
+                    threshold = args.discard_mismatch / SCALE
+                    # eval_y is from White's POV, outcome_y is 0.0 (loss), 0.5 (draw), 1.0 (win)
+
+                    # Strong white advantage but black won
+                    white_winning_black_won = tf.logical_and(
+                        tf.greater(eval_y, threshold),
+                        tf.less(outcome_y, 0.25)
+                    )
+                    # Strong black advantage but white won
+                    black_winning_white_won = tf.logical_and(
+                        tf.less(eval_y, -threshold),
+                        tf.greater(outcome_y, 0.75)
+                    )
+                    mismatch = tf.logical_or(white_winning_black_won, black_winning_white_won)
+                    condition = tf.logical_and(condition, tf.logical_not(mismatch))
+
                 condition = tf.reshape(condition, [-1])  # Flatten to 1D
 
                 # Apply mask to both input and all outputs
@@ -821,6 +838,7 @@ if __name__ == '__main__':
 
         parser.add_argument('--no-capture', action='store_true', help='exclude captures from training')
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
+        parser.add_argument('--discard-mismatch', type=float, default=0, help='discard examples where |eval| > threshold (in centipawns) AND game outcome disagrees')
 
         parser.add_argument('--outcome-weight', type=float, default=0.1, help='weight for outcome loss vs eval loss, 0: train on evals only, 1: outcome only')
         parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
