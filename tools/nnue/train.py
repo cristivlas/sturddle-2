@@ -66,11 +66,9 @@ def make_model(args, strategy):
             assert 1 / self.qscale < self.qmax
 
         def __call__(self, w):
-            w = tf.clip_by_value(w, self.qmin, self.qmax)
-
             if self.quantize_round:
                 w = tf.round(w * self.qscale) / self.qscale
-
+            w = tf.clip_by_value(w, self.qmin, self.qmax)
             return w
 
     @tf.function
@@ -366,6 +364,7 @@ def get_layer_weights(layer):
     """Get layer weights, applying constraints if present."""
     params = layer.get_weights()
     if len(params) != 2:
+        print(f"Skip: {layer.name}")
         return None
     weights, biases = params
     if layer.kernel_constraint:
