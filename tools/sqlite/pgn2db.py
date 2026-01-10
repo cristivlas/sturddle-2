@@ -21,6 +21,7 @@ class Statistics:
         self.positions_filtered_capture = 0
         self.positions_filtered_color = 0
         self.positions_filtered_limit = 0
+        self.positions_filtered_mismatch = 0
         self.positions_inserted = 0
         self.white_wins = 0
         self.black_wins = 0
@@ -40,7 +41,8 @@ class Statistics:
             self.positions_filtered_check +
             self.positions_filtered_capture +
             self.positions_filtered_color +
-            self.positions_filtered_limit
+            self.positions_filtered_limit +
+            self.positions_filtered_mismatch
         )
         total_games = self.games
         positions_inserted = self.positions_inserted
@@ -69,6 +71,7 @@ class Statistics:
             logging.info(f"  - Filtered (capture): {self.positions_filtered_capture:,} ({self.positions_filtered_capture/self.positions_parsed*100:.2f}%)")
             logging.info(f"  - Filtered (color): {self.positions_filtered_color:,} ({self.positions_filtered_color/self.positions_parsed*100:.2f}%)")
             logging.info(f"  - Filtered (eval limit): {self.positions_filtered_limit:,} ({self.positions_filtered_limit/self.positions_parsed*100:.2f}%)")
+            logging.info(f"  - Filtered (mismatch): {self.positions_filtered_mismatch:,} ({self.positions_filtered_mismatch/self.positions_parsed*100:.2f}%)")
             logging.info(f"Positions inserted: {positions_inserted:,} ({positions_inserted/self.positions_parsed*100:.2f}%)")
         else:
             logging.info(f"Total positions filtered: {total_filtered:,}")
@@ -277,6 +280,22 @@ def pgn_to_epd(args, game, stats):
 
         # Get outcome from side-to-move perspective
         outcome = white_outcome if side_to_move else black_outcome
+
+        # Filter positions where eval strongly disagrees with game outcome
+        # score > 0 means side-to-move is winning, outcome = 1 means side-to-move won
+        if args.discard_mismatch:
+            threshold = args.discard_mismatch
+            # Strong advantage for side-to-move but they lost
+            if score > threshold and outcome == -1:
+                logging.debug(f'--- mismatch: score {score} but lost\n')
+                stats.positions_filtered_mismatch += 1
+                continue
+            # Strong disadvantage for side-to-move but they won
+            if score < -threshold and outcome == 1:
+                logging.debug(f'--- mismatch: score {score} but won\n')
+                stats.positions_filtered_mismatch += 1
+                continue
+
         logging.debug(f"{['black', 'white'][side_to_move]} score: {score}, result: {outcome} ({game.headers.get('Result', '*')})")
         logging.debug(f"+++ {epd}, {score}, {current_move.uci()}, {move_san}, {outcome}\n")
         epd_list.append((epd, score, current_move.uci(), move_san, move_from, move_to, outcome))
@@ -453,6 +472,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval-before-always', action='store_true', help='Always apply eval score to position BEFORE making the move')
     parser.add_argument('--lichess', action='store_true', help='parse lichess eval format (https://database.lichess.org/)')
     parser.add_argument('--limit', type=int, help='absolute eval limit, in centipawns')
+    parser.add_argument('--discard-mismatch', type=int, help='discard positions where |eval| > threshold (in centipawns) AND game outcome disagrees')
     parser.add_argument('--logfile', type=str, help='log file (default: output filename with .log extension)')
     parser.add_argument('--mate-score', type=int, default=15000, help='mate score in centipawns (default: 15000, 0 skips close-to-mate positions)')
     parser.add_argument('--min-elo', type=int, help='if specified, only include games with minimum player ELO')

@@ -741,8 +741,8 @@ namespace search
         if (is_valid(_eval))
             return _eval;
 
-        if (is_valid(tt_entry()._value) && tt_entry()._depth >= depth())
-            return tt_entry()._value;
+        if (is_valid(tt_entry()._eval))
+            return tt_entry()._eval;
 
         return evaluate_material();
     }
