@@ -16,6 +16,7 @@ Q_MAX_B = 32767 / Q_SCALE / 19
 
 ACCUMULATOR_SIZE = 1280
 POOL_SIZE = 8
+ATTN_BUCKETS = 4
 
 # Layer definitions: (name, kernel_shape, bias_shape, constraint_type)
 # constraint_type: 'A', 'B', or None
@@ -24,7 +25,7 @@ POOL_SIZE = 8
 LAYERS = [
     ('hidden_1b', (256, 64), (64,), 'B'),
     ('hidden_1a', (3588, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), 'A'),
-    ('spatial_attn', (64, 32), (32,), None),
+    ('spatial_attn', (64 * ATTN_BUCKETS, 32), (32,), None),  # bucketed: 64 inputs × 4 buckets
     ('hidden_2', (ACCUMULATOR_SIZE // POOL_SIZE, 16), (16,), None),
     ('hidden_3', (16, 16), (16,), None),
     ('out', (16, 1), (1,), None),

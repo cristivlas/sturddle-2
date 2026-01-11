@@ -66,6 +66,7 @@ namespace nnue
     using input_t = int16_t;
 
     constexpr int ACTIVE_INPUTS = 897;
+    constexpr int ATTN_BUCKETS = 4;
     constexpr int EVAL_SCALE = 100;
     constexpr int MAX_ACTIVE_INPUTS = 65; // 32 pieces + 32 occupancy mask + turn
     constexpr auto POOL_STRIDE = Vec8s::size();
@@ -494,19 +495,20 @@ namespace nnue
         }
 
         /* hidden, output */
-        template <typename ACTIVATION>
+        template <size_t INPUT_SIZE, typename ACTIVATION>
         static INLINE void dot(
-            const float (&input)[INPUTS],
+            const float (&input)[INPUT_SIZE],
             float (&output)[OUTPUTS],
             const float(&b)[OUTPUTS],
             const float(&wt)[OUTPUTS][INPUTS],
-            ACTIVATION activate
+            ACTIVATION activate,
+            size_t base = 0
         )
         {
             constexpr int N = Vector::size();
             constexpr int Q = (OUTPUTS % N == 0) ? N : OUTPUTS % N;
 
-            static_assert(INPUTS % N == 0);
+            static_assert(INPUT_SIZE % N == 0);
             static_assert(Q == N || Q == 1); /* result layer: Q == 1 */
 
             Vector sum[Q], v_wt, v_in, v_out;
@@ -517,15 +519,15 @@ namespace nnue
                 for (int k = 0; k != Q; ++k)
                     sum[k] = Vector(0.0);
 
-                #pragma unroll INPUTS
-                for (int i = 0; i != INPUTS; i += N)
+                #pragma unroll INPUT_SIZE
+                for (size_t i = 0; i != INPUT_SIZE; i += N)
                 {
                     v_in.load_a(&input[i]);
 
                     #pragma unroll Q
                     for (int k = 0; k != Q; ++k)
                     {
-                        v_wt.load_a(&wt[j + k][i]);
+                        v_wt.load_a(&wt[j + k][base + i]);
                         sum[k] = mul_add(v_in, v_wt, sum[k]);
                     }
                 }
@@ -539,13 +541,25 @@ namespace nnue
         template <size_t N, typename U, typename V>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS]) const
         {
-            dot(input, output, _b, _wt, [](const Vector& v) { return v; });
+            dot(input, output, _b, _wt, [](const Vector& v) { return v; }, 0);
+        }
+
+        template <size_t N, typename U, typename V>
+        INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], size_t base) const
+        {
+            dot(input, output, _b, _wt, [](const Vector& v) { return v; }, base);
         }
 
         template <size_t N, typename U, typename V, typename ACTIVATION>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], ACTIVATION activate) const
         {
-            dot(input, output, _b, _wt, activate);
+            dot(input, output, _b, _wt, activate, 0);
+        }
+
+        template <size_t N, typename U, typename V, typename ACTIVATION>
+        INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], ACTIVATION activate, size_t base) const
+        {
+            dot(input, output, _b, _wt, activate, base);
         }
     };
 
@@ -918,9 +932,11 @@ namespace nnue
     INLINE int eval(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out)
     {
         static_assert(A::OUTPUTS_A == L2::INPUTS * POOL_STRIDE);
-        static_assert(A::OUTPUTS_B == ATTN::INPUTS);
+        static_assert(A::OUTPUTS_B * ATTN_BUCKETS == ATTN::INPUTS);
 
-        ALIGN float attn_in[ATTN::INPUTS];
+        constexpr int ATTN_IN_PER_BUCKET = A::OUTPUTS_B;
+
+        ALIGN float attn_in[ATTN_IN_PER_BUCKET];
         ALIGN float attn_out[ATTN::OUTPUTS];
         ALIGN float l2_in[L2::INPUTS];
         ALIGN float l2_out[L2::OUTPUTS];
@@ -930,8 +946,9 @@ namespace nnue
         pool(a._bucket[a._current_bucket].output, l2_in);
 
         /* The "spatial attention" layer modulates L2. */
+        /* Use bucket offset to select the right weights slice */
         activate(a._output_b, attn_in);
-        attn.dot(attn_in, attn_out);
+        attn.dot(attn_in, attn_out, static_cast<size_t>(a._current_bucket * ATTN_IN_PER_BUCKET));
 
         static_assert(L2::INPUTS % Vector::size() == 0);
 

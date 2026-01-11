@@ -1,7 +1,7 @@
 # distutils: language = c++
 # cython: language_level = 3
 """
-Sturddle Chess Engine (c) 2022 - 2025 Cristian Vlasceanu.
+Sturddle Chess Engine (c) 2022 - 2026 Cristian Vlasceanu.
 -------------------------------------------------------------------------
 
 This program is free software: you can redistribute it and/or modify
@@ -1261,7 +1261,7 @@ Context.init(os.path.dirname(__file__).encode())
 
 __major__   = 2
 __minor__   = 4
-__patch__   = 'X'
+__patch__   = 'raptor'
 __build__   = [str(__major__), f'{int(__minor__):d}', str(__patch__), timestamp().decode()]
 
 

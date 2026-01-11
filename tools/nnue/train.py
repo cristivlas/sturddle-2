@@ -24,6 +24,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 ACCUMULATOR_SIZE = 1280
 ATTN_FAN_OUT = 32
 POOL_SIZE = 8
+ATTN_BUCKETS = 4  # Number of buckets for spatial attention layer
 
 Q_SCALE = 1024
 
@@ -86,29 +87,37 @@ def make_model(args, strategy):
             eval_target = clipped
 
         outcome_target = y_true[:, 1:2]
+        piece_ratio = y_true[:, 2:3]  # 0 to 1, for dynamic outcome weighting
+
         sigmoid_scale = tf.constant(args.outcome_scale, dtype=tf.float32)
 
         # convert predicted and expected (target) eval scores to Win/Draw/Loss prob. scores
         wdl_eval_pred = tf.sigmoid(y_pred * SCALE / sigmoid_scale)
         wdl_eval_target = tf.sigmoid(eval_target * SCALE / sigmoid_scale)
 
+        # Compute per-sample losses
         if args.loss_mae:
-            loss_eval = tf.reduce_mean(tf.abs(wdl_eval_pred - wdl_eval_target))
-            loss_outcome = tf.reduce_mean(tf.abs(wdl_eval_pred - outcome_target))
+            loss_eval = tf.abs(wdl_eval_pred - wdl_eval_target)
+            loss_outcome = tf.abs(wdl_eval_pred - outcome_target)
         elif args.loss_bce:
-            loss_eval = tf.keras.losses.binary_crossentropy(wdl_eval_target, wdl_eval_pred)
-            loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)
+            loss_eval = tf.keras.losses.binary_crossentropy(wdl_eval_target, wdl_eval_pred)[:, tf.newaxis]
+            loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)[:, tf.newaxis]
         else:
             # default: mean square error
-            loss_eval = tf.reduce_mean(tf.square(wdl_eval_pred - wdl_eval_target))
-            loss_outcome = tf.reduce_mean(tf.square(wdl_eval_pred - outcome_target))
+            loss_eval = tf.square(wdl_eval_pred - wdl_eval_target)
+            loss_outcome = tf.square(wdl_eval_pred - outcome_target)
 
-        # blend the losses
-        eval_weight = tf.constant(1.0 - args.outcome_weight, dtype=tf.float32)
-        outcome_weight = tf.constant(args.outcome_weight, dtype=tf.float32)
+        # Blend the losses with dynamic per-sample weighting based on piece count
+        base_outcome_weight = tf.constant(args.outcome_weight, dtype=tf.float32)
+        if args.dynamic_outcome_weight:
+            # More pieces -> trust outcome more (eval less reliable in complex positions)
+            outcome_weight = base_outcome_weight * piece_ratio
+        else:
+            outcome_weight = base_outcome_weight
+        eval_weight = 1.0 - outcome_weight
 
         loss = loss_eval * eval_weight + loss_outcome * outcome_weight
-        return loss
+        return tf.reduce_mean(loss)
 
 
     class Unpack(tf.keras.layers.Layer):
@@ -152,6 +161,34 @@ def make_model(args, strategy):
             sparse = features_tiled * bucket_mask
 
             return tf.reshape(sparse, [-1, 4 * num_features])
+
+
+    class AttnBucketShift(tf.keras.layers.Layer):
+        """Shift attention inputs into buckets based on pawn count (input-side bucketing)."""
+        def __init__(self, num_buckets, **kwargs):
+            super(AttnBucketShift, self).__init__(**kwargs)
+            self.num_buckets = num_buckets
+
+        def call(self, inputs):
+            # inputs[0]: hidden_1b output, shape (batch, 64)
+            # inputs[1]: unpacked features (to extract pawn count)
+            hidden_1b, features = inputs
+
+            # Extract pawn bits from features (same logic as BucketShift)
+            pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
+            pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
+            bucket_id = tf.cast(tf.minimum(pawn_count // 4, self.num_buckets - 1), tf.int32)
+
+            # Shift features into buckets (same approach as BucketShift)
+            num_features = tf.shape(hidden_1b)[1]
+            bucket_mask = tf.one_hot(bucket_id, self.num_buckets, dtype=hidden_1b.dtype)
+            bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
+
+            features_tiled = tf.tile(tf.expand_dims(hidden_1b, 1), [1, self.num_buckets, 1])
+            sparse = features_tiled * bucket_mask
+
+            return tf.reshape(sparse, [-1, self.num_buckets * num_features])
+
 
     with strategy.scope():
         ACTIVATION = tf.keras.activations.relu
@@ -209,7 +246,14 @@ def make_model(args, strategy):
             trainable=not args.freeze_eval,
         )(input_1b)
 
-        spatial_attn = Dense(ATTN_FAN_OUT, activation=None, name='spatial_attn', trainable=not args.freeze_eval)(hidden_1b)
+        # Bucketed spatial attention: shift hidden_1b into buckets based on pawn count, then apply Dense
+        hidden_1b_bucketed = AttnBucketShift(ATTN_BUCKETS, name='attn_bucket_shift')([hidden_1b, unpack_layer])
+        spatial_attn = Dense(
+            ATTN_FAN_OUT,
+            activation=None,
+            name='spatial_attn',
+            trainable=not args.freeze_eval
+        )(hidden_1b_bucketed)
 
         def custom_pooling(x):
             reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
@@ -651,8 +695,22 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 y_outcome_flipped = 1.0 - y_outcome
                 y_outcome = tf.concat([y_outcome, y_outcome_flipped], axis=0)
 
+            # Compute piece count ratio (0 to 1) for dynamic outcome weighting
+            def popcount(bb):
+                """Count bits in uint64 array using parallel bit counting."""
+                bb = bb.astype(np.uint64)
+                bb = bb - ((bb >> 1) & np.uint64(0x5555555555555555))
+                bb = (bb & np.uint64(0x3333333333333333)) + ((bb >> 2) & np.uint64(0x3333333333333333))
+                bb = (bb + (bb >> 4)) & np.uint64(0x0F0F0F0F0F0F0F0F)
+                return ((bb * np.uint64(0x0101010101010101)) >> 56).astype(np.float32)
+
+            piece_count = np.zeros(x.shape[0], dtype=np.float32)
+            for i in range(12):
+                piece_count += popcount(x[:, i])
+            piece_ratio = (piece_count / 32.0)[:, np.newaxis]
+
             # Combine both targets into a single tensor
-            y_combined = tf.concat([y_eval, y_outcome], axis=1)  # Shape: (batch_size, 2)
+            y_combined = tf.concat([y_eval, y_outcome, tf.constant(piece_ratio)], axis=1)  # Shape: (batch_size, 3)
 
             # Prepare outputs based on whether move prediction is enabled
             if args.predict_moves and self.data.shape[1] > self.feature_count + 1:
@@ -744,11 +802,11 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             )
             output_shapes = (
                 (None, packed_feature_count),
-                ((None, 2), (None, 1))
+                ((None, 3), (None, 1))
             )
         else:
             output_types = (np.uint64, np.float32)
-            output_shapes = ((None, packed_feature_count), (None, 2))
+            output_shapes = ((None, packed_feature_count), (None, 3))
 
         dataset = tf.data.Dataset.from_generator(
             generator,
@@ -791,30 +849,6 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                         tf.greater(outcome_y, 0.75)
                     )
                     mismatch = tf.logical_or(white_winning_black_won, black_winning_white_won)
-
-                    # # Debug: print examples being discarded specifically by discard_mismatch
-                    # # Only count mismatches that pass the --filter bound
-                    # new_mismatch = tf.logical_and(mismatch, tf.reshape(condition, tf.shape(mismatch)))
-                    # mismatch_flat = tf.reshape(new_mismatch, [-1])
-                    # mismatch_indices = tf.where(mismatch_flat)
-                    # num_mismatches = tf.shape(mismatch_indices)[0]
-                    # batch_size = tf.shape(mismatch_flat)[0]
-                    # pct = tf.cast(num_mismatches, tf.float32) / tf.cast(batch_size, tf.float32) * 100.0
-                    # tf.print("\n[discard_mismatch] threshold:", threshold * SCALE, "cp, found", num_mismatches, "/", batch_size, "(", pct, "%) mismatches")
-                    #
-                    # # Print details of first few mismatches
-                    # def print_mismatch_details():
-                    #     eval_flat = tf.reshape(eval_y * SCALE, [-1])
-                    #     outcome_flat = tf.reshape(outcome_y, [-1])
-                    #     max_to_show = tf.minimum(num_mismatches, 5)
-                    #     tf.print("  Sample mismatches (eval_cp, outcome):")
-                    #     for i in tf.range(max_to_show):
-                    #         idx = mismatch_indices[i, 0]
-                    #         tf.print("    eval:", eval_flat[idx], "cp, outcome:", outcome_flat[idx])
-                    #     return True
-                    #
-                    # tf.cond(num_mismatches > 0, print_mismatch_details, lambda: True)
-
                     condition = tf.logical_and(condition, tf.logical_not(mismatch))
 
                 condition = tf.reshape(condition, [-1])  # Flatten to 1D
@@ -871,8 +905,23 @@ def set_weights(from_model, to_model):
 
         if len(to_layer.get_weights()):  # Trainable?
             try:
+                to_weights = to_layer.get_weights()
+                # Handle spatial_attn layer shape mismatch (unbucketed -> bucketed input)
+                if name == 'spatial_attn' and len(params) == 2 and len(to_weights) == 2:
+                    old_kernel, old_bias = params
+                    new_kernel, new_bias = to_weights
+                    # Check if source is unbucketed (64, 32) and target is bucketed (64*N, 32)
+                    if old_kernel.shape[0] < new_kernel.shape[0] and new_kernel.shape[0] % old_kernel.shape[0] == 0:
+                        num_buckets = new_kernel.shape[0] // old_kernel.shape[0]
+                        print(f"Converting spatial_attn: {old_kernel.shape} -> {new_kernel.shape} ({num_buckets} buckets)")
+                        # Tile weights across input buckets to preserve learned representation
+                        # Each bucket gets a copy of the original weights
+                        params = [
+                            np.tile(old_kernel, (num_buckets, 1)),
+                            old_bias  # bias stays the same size (32,)
+                        ]
                 to_layer.set_weights(params)
-            except:
+            except Exception:
                 logging.exception(name)
 
 
@@ -1025,6 +1074,7 @@ if __name__ == '__main__':
 
         parser.add_argument('--outcome-weight', type=float, default=0.1, help='weight for outcome loss vs eval loss')
         parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
+        parser.add_argument('--dynamic-outcome-weight', action='store_true', help='scale outcome weight by piece count (more pieces = trust outcome more)')
 
         # Move prediction related arguments
         parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')
