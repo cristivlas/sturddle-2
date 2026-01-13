@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 """
-Sturddle Chess Engine (c) 2022 - 2025 Cristian Vlasceanu.
+Sturddle Chess Engine (c) 2022 - 2026 Cristian Vlasceanu.
 -------------------------------------------------------------------------
 
 This program is free software: you can redistribute it and/or modify
@@ -390,17 +390,26 @@ def test_repetition():
 def test_nnue_eval():
     tests = [
         chess.STARTING_FEN,
-        '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - - 0 2',
         'r2r2k1/1pp2ppp/p2q1b2/3pN3/2PP4/PP1Q3P/5PP1/R3R1K1 b - - 0 22',
         'r4rk1/1ppnbppp/p2q4/3pNb2/3P4/PP5P/2PNBPP1/R2QK2R w KQ - 5 14',
+        'r4rk1/ppp2ppp/5n2/2bPn3/4K3/2NP4/PPPBB1PP/R6R w - - 3 3',
+        '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - - 0 2',
         'rqr3k1/p4p1p/5Qp1/2b5/2N5/2Pn2NP/P2B1PP1/2R2RK1 w - - 0 24',
         '2r3k1/p5p1/4p3/1p1bP3/2pb2Q1/5N2/1q3P1P/3R1RK1 b - - 3 32',
-        'r4rk1/ppp2ppp/5n2/2bPn3/4K3/2NP4/PPPBB1PP/R6R w - - 3 3',
         '1r1q1rk1/p3bBpp/2Q5/8/3Pb3/2n1BN2/P4PPP/R4RK1 b - - 0 18',
+        '8/pp2k3/8/8/8/8/3K1PP1/8 w - - 0 1',
+        '3r2k1/pp3p2/8/8/8/5P2/PP4K1/3R4 w - - 0 1',
+        'r3k3/pp6/8/3p4/3P4/8/PP2K3/R7 w q - 0 1',
+        '2r2rk1/pp3p2/8/8/8/8/PP3PP1/2R2RK1 w - - 0 1',
+        '8/8/4k3/4p3/4P3/4K3/8/8 w - - 0 1',
+        '8/5k2/8/3p4/3P4/2K1P3/8/8 w - - 0 1',
+        '4k3/8/8/8/8/8/4K3/4R3 w - - 0 1',
     ]
 
     evals = [
-        39.42016065120697, -459.8994255065918, -6.529958546161652, -129.38026189804077, 490.4092788696289, -229.8170566558838, 36.226022243499756, 63.90178203582764
+        38.08856010437012, -6.910905241966248, -130.68335056304932, 66.71770811080933, -429.119348526001,
+        498.3708381652832,-234.34641361236572, 65.67885279655457, 50.84508657455444, 41.79249405860901,
+        34.246307611465454, 216.33355617523193, 1.0638132691383362, 471.4807987213135, 515.7840251922607
     ]
     for i, fen in enumerate(tests):
         eval = engine.nnue_eval_fen(fen)
