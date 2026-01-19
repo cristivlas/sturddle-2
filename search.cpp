@@ -749,6 +749,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         /* iterate over moves */
         while (auto next_ctxt = ctxt.next(null_move, futility, move_count, &time_left))
         {
+            auto full_depth = next_ctxt->_max_depth; /* for retry; updated after extensions */
+
             if (next_ctxt->is_null_move())
             {
                 null_move = false;
@@ -858,6 +860,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 }
 
                 /* Late-move reduction and pruning */
+                full_depth = next_ctxt->_max_depth; /* save before LMR */
+
                 if (move_count && next_ctxt->late_move_reduce(move_count, time_left) == LMRAction::Prune)
                 {
                     next_ctxt->_prune_reason = PruneReason::PRUNE_LMP;
@@ -874,18 +878,40 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             }
 
             /*
-             * Recursively search next move.
+             * Recursively search next move; retry at full depth if needed.
              */
-            const auto move_score = -negamax(*next_ctxt, table);
-
-            if (ctxt.is_cancelled())
+            score_t move_score;
+            FailHigh fail_high = FailHigh::None;
+            for (;;)
             {
-                if (move_score < SCORE_MAX)
-                    ctxt._score = move_score;
-                return ctxt._score;
+                move_score = -negamax(*next_ctxt, table);
+
+                if (ctxt.is_cancelled())
+                {
+                    if (move_score < SCORE_MAX)
+                        ctxt._score = move_score;
+                    return ctxt._score;
+                }
+
+                fail_high = ctxt.is_beta_cutoff(next_ctxt, move_score);
+
+                if (fail_high != FailHigh::Retry)
+                    break;
+
+                /* Retry: reset next_ctxt for full-depth/full-window search */
+                next_ctxt->_max_depth = full_depth;
+                next_ctxt->_alpha = -ctxt._beta;
+                next_ctxt->_beta = (ctxt._retry_beta < ctxt._beta) ? ctxt._retry_beta : -ctxt._alpha;
+                ctxt._retry_beta = SCORE_MAX;
+                next_ctxt->_score = SCORE_MIN;
+                next_ctxt->_is_retry = true;
+                next_ctxt->_retry_above_alpha = RETRY::None;
+
+                if (next_ctxt->move_count() >= 0)
+                    next_ctxt->rewind(0, !next_ctxt->can_reuse_moves());
             }
 
-            if (ctxt.is_beta_cutoff(next_ctxt, move_score))
+            if (fail_high == FailHigh::Cutoff)
             {
                 ASSERT(ctxt._score == move_score);
                 ASSERT(ctxt._cutoff_move || next_ctxt->is_null_move());
@@ -945,10 +971,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     table._history_counters_hit += (next_ctxt->_move._group == MoveOrder::HISTORY_COUNTERS);
 
                 break; /* found a cutoff */
-            }
-            else if (ctxt._retry_next)
-            {
-                continue;
             }
             else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_capture() && !next_ctxt->is_check())
             {

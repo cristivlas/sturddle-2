@@ -756,10 +756,11 @@ namespace search
 
 
     /*
-     * Track the best score and move so far, return true if beta cutoff;
+     * Track the best score and move so far;
      * called from search right after: score = -negamax(*next_ctxt).
+     * Returns: Cutoff if beta cutoff, Retry if re-search needed, None otherwise.
      */
-    bool Context::is_beta_cutoff(Context* next_ctxt, score_t score)
+    FailHigh Context::is_beta_cutoff(Context* next_ctxt, score_t score)
     {
         ASSERT(!next_ctxt->is_root());
         ASSERT(score > SCORE_MIN && score < SCORE_MAX);
@@ -774,7 +775,7 @@ namespace search
 
                 /* ignore if not fail-high */
                 if (score < _beta)
-                    return false;
+                    return FailHigh::None;
             }
 
             if (score > _alpha)
@@ -789,24 +790,15 @@ namespace search
                     }
                     else if (next_ctxt->_retry_above_alpha == RETRY::Reduced)
                     {
-                        ASSERT(!next_ctxt->is_retry());
-                        _retry_next = true;
-
                         if constexpr(EXTRA_STATS)
                             ++_tt->_retry_reductions;
+
+                        return FailHigh::Retry;
                     }
                     else if (next_ctxt->_retry_above_alpha == RETRY::PVS && score < _beta)
                     {
-                        ASSERT(!next_ctxt->is_retry());
-                        _retry_next = true;
                         _retry_beta = -score;
-                    }
-
-                    if (_retry_next)
-                    {
-                        /* rewind and search again at full depth */
-                        rewind(-1);
-                        return false;
+                        return FailHigh::Retry;
                     }
 
                     if (score >= _beta)
@@ -842,7 +834,7 @@ namespace search
 
         ASSERT(_alpha >= _score); /* invariant */
 
-        return _alpha >= _beta;
+        return _alpha >= _beta ? FailHigh::Cutoff : FailHigh::None;
     }
 
 
@@ -1281,7 +1273,6 @@ namespace search
 
         _repeated = -1;
 
-        _retry_next = false;
         _retry_beta = SCORE_MAX;
 
         rewind(0, force_reorder_moves);
@@ -1598,12 +1589,22 @@ namespace search
         ASSERT(_count > 0 || where == 0);
         ASSERT(where == 0 || where == -1); /* other cases not supported */
 
+        /*
+         * Pruning decisions depend on depth; rewind without reorder
+         * should only happen at the same depth as when moves were ordered,
+         * unless no pruning occurred.
+         */
+        if (!force_reorder && (_have_pruned_moves || _have_quiet_moves))
+        {
+            ASSERT(_reorder_depth == ctxt._max_depth);
+        }
+
         if (force_reorder)
         {
-            ASSERT(!ctxt.is_retry());
             ASSERT(where == 0);
 
             _phase = 0;
+            _reorder_depth = ctxt._max_depth;
 
             auto& moves_list = ctxt.moves();
             for (int i = 0; i != _count; ++i)
@@ -1675,6 +1676,7 @@ namespace search
 
         _count = int(moves_list.size());
         _current = 0;
+        _reorder_depth = ctxt._max_depth;
 
         auto& states_vec = Context::states(ctxt.tid(), ctxt._ply);
         if (states_vec.size() < size_t(_count))

@@ -146,6 +146,7 @@ namespace search
             std::swap(_phase, other._phase);
             std::swap(_count, other._count);
             std::swap(_current, other._current);
+            std::swap(_reorder_depth, other._reorder_depth);
             std::swap(_state_index, other._state_index);
         }
 
@@ -188,6 +189,7 @@ namespace search
         int8_t      _phase = 0; /* move ordering phase */
         int         _count = -1;
         int         _current = -1;
+        int         _reorder_depth = 0; /* depth at which moves were ordered */
         size_t      _state_index = 0;
     };
 
@@ -196,6 +198,9 @@ namespace search
 
     /* Reason for retrying */
     enum class RETRY : uint8_t { None = 0, Reduced, PVS };
+
+    /* Result of is_beta_cutoff */
+    enum class FailHigh : int { None = 0, Cutoff, Retry };
 
     INLINE constexpr bool operator!(RETRY retry) { return retry == RETRY::None; }
 
@@ -288,7 +293,6 @@ namespace search
         bool        _multicut_allowed = MULTICUT;
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
-        bool        _retry_next = false;
         int8_t      _nnue_prev_offs = 1; /* NNUE */
 
         uint8_t     _double_ext = 0;
@@ -372,7 +376,7 @@ namespace search
         score_t     improvement() const;
         static void init(const std::string& exe_dir);
 
-        bool        is_beta_cutoff(Context*, score_t);
+        FailHigh    is_beta_cutoff(Context*, score_t);
         static bool is_cancelled() { return _cancel.load(std::memory_order_relaxed); }
         INLINE bool is_capture() const { return state().is_capture(); }
         INLINE bool is_check() const { return state().is_check(); }
@@ -1008,14 +1012,6 @@ namespace search
     {
         ASSERT(_alpha < _beta);
 
-        const bool retry = _retry_next;
-        if (retry)
-        {
-            ASSERT(move_count > 0);
-            --move_count;
-        }
-        _retry_next = false;
-
         if (!on_next(time_left))
             return nullptr;
 
@@ -1031,20 +1027,6 @@ namespace search
         ASSERT(make_null_move || move->_state);
         ASSERT(make_null_move || move->_group != MoveOrder::UNDEFINED);
         ASSERT(make_null_move || move->_group < MoveOrder::UNORDERED_MOVES);
-
-        /* Save previously generated moves for reuse on retry */
-        MoveMaker temp;
-        if (retry)
-        {
-            const auto ctxt = next_ply<false>();
-            if (ctxt->move_count() >= 0)
-            {
-                if (ctxt->can_reuse_moves())
-                    ctxt->_move_maker.swap(temp);
-                else
-                    ctxt->cache_scores(true /* force write */);
-            }
-        }
 
         auto ctxt = next_ply<true>(); /* Construct new context */
 
@@ -1095,7 +1077,6 @@ namespace search
         ctxt->_ply = _ply + 1;
         ctxt->_double_ext = _double_ext;
         ctxt->_extension = _extension;
-        ctxt->_is_retry = retry;
         if (is_root())
         {
             ctxt->_is_singleton = !ctxt->is_null_move() && _move_maker.is_singleton(*this);
@@ -1152,12 +1133,6 @@ namespace search
                 ctxt->_retry_above_alpha = RETRY::PVS;
                 ASSERT(ctxt->_alpha == ctxt->_beta - 1);
             }
-            else if (ctxt->is_retry() && _retry_beta < _beta)
-            {
-                ASSERT(_algorithm == Algorithm::NEGASCOUT);
-                ctxt->_beta = _retry_beta;
-                _retry_beta = SCORE_MAX;
-            }
 
             /*
              * https://en.wikipedia.org/wiki/Fifty-move_rule
@@ -1172,14 +1147,6 @@ namespace search
                     ctxt->_fifty = (is_root() ? _history->_fifty : _fifty) + 1;
             }
 
-            if (temp.count() >= 0)
-            {
-                /* Reuse previously generated moves */
-                ctxt->_move_maker.swap(temp);
-                ASSERT(temp.count() == -1);
-
-                ctxt->rewind(0);
-            }
         }
 
         ASSERT(ctxt->_alpha < ctxt->_beta);
