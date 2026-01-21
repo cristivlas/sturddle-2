@@ -89,11 +89,6 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define MTDF_REORDER_MOVES                  true
 
-/* Reorder moves on LMR/PVS retry to reconsider pruned moves at higher depth.
- * When false, keeps existing move order (pruned moves stay pruned).
- */
-#define RETRY_REORDER_MOVES                 false
-
 /* Use C++ implementation for Polyglot opening book (NATIVE_UCI only) */
 #if !defined(NATIVE_BOOK)
   #define NATIVE_BOOK                       true

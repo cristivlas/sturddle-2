@@ -129,11 +129,8 @@ namespace search
         const Move* get_next_move(Context& ctxt, score_t futility = 0);
 
         bool group_quiet_moves() const { return _group_quiet_moves; }
-        void set_group_quiet_moves(bool v) { _group_quiet_moves = v; }
         bool has_moves(Context&);
-        bool have_pruned_moves() const { return _have_pruned_moves; }
-        bool have_quiet_moves() const { return _have_quiet_moves; }
-        bool have_skipped_moves() const { return have_pruned_moves() || have_quiet_moves(); }
+        bool have_skipped_moves() const { return _have_pruned_moves || _have_quiet_moves; }
         bool is_last(Context&);
         bool is_singleton(Context&);
 
@@ -428,7 +425,6 @@ namespace search
         int         rewind(int where = 0, bool reorder = false);
 
         INLINE void set_counter_move(const BaseMove& move) { _counter_move = move; }
-        INLINE void set_group_quiet_moves(bool v) { _move_maker.set_group_quiet_moves(v); }
         void        set_search_window(score_t score, score_t& prev_score);
         static void set_start_time();
         static void set_time_limit_ms(int milliseconds);
@@ -695,14 +691,7 @@ namespace search
 
     INLINE bool Context::can_reuse_move_order() const
     {
-        if (_move_maker.have_quiet_moves())
-            return false;
-
-        if constexpr (RETRY_REORDER_MOVES)
-            if (_move_maker.have_pruned_moves())
-                return false;
-
-        return true;
+        return !_move_maker.have_skipped_moves() && !_move_maker.group_quiet_moves();
     }
 
 

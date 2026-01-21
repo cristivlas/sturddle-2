@@ -1596,7 +1596,7 @@ namespace search
          */
         if (!force_reorder && (_have_pruned_moves || _have_quiet_moves))
         {
-            ASSERT(!RETRY_REORDER_MOVES || _reorder_depth == ctxt._max_depth);
+            ASSERT(_reorder_depth == ctxt._max_depth);
         }
 
         if (force_reorder)

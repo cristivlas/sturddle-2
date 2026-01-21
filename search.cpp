@@ -906,8 +906,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 next_ctxt->_score = SCORE_MIN;
                 next_ctxt->_is_retry = true;
                 next_ctxt->_retry_above_alpha = RETRY::None;
-                // next_ctxt->set_group_quiet_moves(
-                //     GROUP_QUIET_MOVES && next_ctxt->depth() < 0 && !next_ctxt->is_check());
 
                 if (next_ctxt->move_count() >= 0)
                     next_ctxt->rewind(0, !next_ctxt->can_reuse_move_order());
