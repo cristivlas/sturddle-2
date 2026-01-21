@@ -1275,7 +1275,7 @@ namespace search
 
         _retry_beta = SCORE_MAX;
 
-        rewind(0, force_reorder_moves);
+        rewind(force_reorder_moves);
     }
 
 
@@ -1581,13 +1581,10 @@ namespace search
      * MoveMaker
      *---------------------------------------------------------------------*/
 
-    int MoveMaker::rewind(Context& ctxt, int where, bool force_reorder)
+    int MoveMaker::rewind(Context& ctxt, bool force_reorder)
     {
         if (_count < 0)
             return -1;
-
-        ASSERT(_count > 0 || where == 0);
-        ASSERT(where == 0 || where == -1); /* other cases not supported */
 
         /*
          * Pruning decisions depend on depth; rewind without reorder
@@ -1596,13 +1593,11 @@ namespace search
          */
         if (!force_reorder && (_have_pruned_moves || _have_quiet_moves))
         {
-            ASSERT(_reorder_depth == ctxt._max_depth);
+            ASSERT(!RETRY_REORDER_MOVES || _reorder_depth == ctxt._max_depth);
         }
 
         if (force_reorder)
         {
-            ASSERT(where == 0);
-
             _phase = 0;
             _reorder_depth = ctxt._max_depth;
 
@@ -1630,19 +1625,9 @@ namespace search
                 move._score = 0;
                 move._group = MoveOrder::UNORDERED_MOVES;
             }
-
         }
 
-        if (where >= 0)
-        {
-            _current = std::min(where, _count);
-        }
-        else
-        {
-            _current = std::max(0, _current + where);
-        }
-
-        ASSERT(_current >= 0);
+        _current = 0;
         return _current;
     }
 

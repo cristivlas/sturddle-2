@@ -134,7 +134,7 @@ namespace search
         bool is_last(Context&);
         bool is_singleton(Context&);
 
-        int rewind(Context&, int where, bool reorder);
+        int rewind(Context&, bool reorder = false);
 
         INLINE void swap(MoveMaker& other)
         {
@@ -422,7 +422,7 @@ namespace search
         static void print_board(std::ostream&, const State&, bool unicode);
 
         void        reset(bool force_reorder_moves = true, bool clear_best_move = true);
-        int         rewind(int where = 0, bool reorder = false);
+        int         rewind(bool reorder = false);
 
         INLINE void set_counter_move(const BaseMove& move) { _counter_move = move; }
         void        set_search_window(score_t score, score_t& prev_score);
@@ -1181,9 +1181,9 @@ namespace search
     }
 
 
-    INLINE int Context::rewind(int where, bool reorder)
+    INLINE int Context::rewind(bool reorder)
     {
-        return _move_maker.rewind(*this, where, reorder);
+        return _move_maker.rewind(*this, reorder);
     }
 
 

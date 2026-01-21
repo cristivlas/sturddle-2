@@ -482,7 +482,7 @@ cdef extern from 'context.h' namespace 'search':
 
         bool            is_repeated() const
         int             iteration() const
-        int             rewind(int where, bool reorder)
+        int             rewind(bool reorder)
         void            reset(bool, bool)
 
         @staticmethod
@@ -1218,7 +1218,7 @@ def perft3(fen, repeat=1):
         node._ctxt._max_depth = max(1, i % 100)
         while node._ctxt.next(False, 0, move_count) != NULL:
             count += 1
-        node._ctxt.rewind(0, True)
+        node._ctxt.rewind(True)
 
     return count, time.perf_counter() - start
 
