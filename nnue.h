@@ -334,7 +334,7 @@ namespace nnue
 #else
     INLINE Vec8i mul_add(Vec16s a, Vec16s b, Vec8i acc)
     {
-    #if __AVXVNNI
+    #if __AVXVNNI__
         return _mm256_dpwssd_epi32(acc, a, b);
     #elif INSTRSET < 8
         /* SSE2 */
