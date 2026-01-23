@@ -329,8 +329,6 @@ namespace search
 
         bool        can_reduce() const;
 
-        bool        can_reuse_move_order() const;
-
         int64_t     check_time_and_update_nps(int64_t* = nullptr); /* return elapsed milliseconds */
 
         static void clear_caches_and_stacks();
@@ -686,12 +684,6 @@ namespace search
             && (_move.from_square() != _parent->_capture_square)
             && !is_recapture()
             && !is_check();
-    }
-
-
-    INLINE bool Context::can_reuse_move_order() const
-    {
-        return !_move_maker.have_skipped_moves() && !_move_maker.group_quiet_moves();
     }
 
 

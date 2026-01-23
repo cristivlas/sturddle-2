@@ -1192,7 +1192,7 @@ namespace search
      */
     const Move* Context::first_valid_move()
     {
-        rewind(0);
+        rewind();
         return get_next_move(0 /* = no futility pruning */);
     }
 

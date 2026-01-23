@@ -908,7 +908,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 next_ctxt->_retry_above_alpha = RETRY::None;
 
                 if (next_ctxt->move_count() >= 0)
-                    next_ctxt->rewind(!next_ctxt->can_reuse_move_order());
+                    next_ctxt->rewind(true);
             }
 
             if (fail_high == FailHigh::Cutoff)
