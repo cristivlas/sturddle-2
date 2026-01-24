@@ -194,7 +194,8 @@ void TranspositionTable::init(bool new_game)
         _killer_moves.fill({});
         _ply_history.fill({});
     #if MATERIAL_CORRECTION_HISTORY
-        std::fill(_material_correction[0].front().begin(), _material_correction[1].back().end(), 0);
+        _material_correction[0] = {};
+        _material_correction[1] = {};
     #endif /* MATERIAL_CORRECTION_HISTORY */
     }
     else
@@ -709,7 +710,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             && ctxt.depth() > 0
             && ctxt.depth() < 7
             && eval < MATE_HIGH
-            && eval > ctxt._beta + std::max<score_t>(0, REVERSE_FUTILITY_MARGIN * ctxt.depth() - ctxt.improvement())
+            /* improvement is from the perspective of the side that just moved -- i.e. the opponent's */
+            && eval > ctxt._beta + std::max<score_t>(REVERSE_FUTILITY_MARGIN * ctxt.depth(), ctxt.improvement())
             && !ctxt.is_check())
         {
             ASSERT(eval > SCORE_MIN);

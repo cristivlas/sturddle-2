@@ -230,7 +230,7 @@ namespace search
     using HashTable = hash_table<TT_Entry>;
 
 #if MATERIAL_CORRECTION_HISTORY
-    static constexpr int MATERIAL_CORR_HIST_SIZE  = 16384;
+    static constexpr int MATERIAL_CORR_HIST_SIZE  = 4096;
     static constexpr int MATERIAL_CORRECTION_GRAIN = 256;
     static constexpr int MATERIAL_CORRECTION_LIMIT = 256 * 32; /* +/- 8192 */
 #endif /* MATERIAL_CORRECTION_HISTORY */
