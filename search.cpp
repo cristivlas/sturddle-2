@@ -219,7 +219,7 @@ void TranspositionTable::init(bool new_game)
 void TranspositionTable::update_material_correction(Color stm, uint64_t mat_key, int bucket, int diff, int depth)
 {
     auto& entry = _material_correction[stm][bucket][mat_key % MATERIAL_CORR_HIST_SIZE];
-    const int weight = std::min(1 + depth, 16);
+    const int weight = std::min(2 + depth, 16);
     entry = (entry * (MATERIAL_CORRECTION_GRAIN - weight) + diff * weight) / MATERIAL_CORRECTION_GRAIN;
     entry = std::clamp(entry, -MATERIAL_CORRECTION_LIMIT, MATERIAL_CORRECTION_LIMIT);
 }
@@ -741,14 +741,22 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             return ctxt._score;
         }
 
-        /* Reduce depth by 2 if PV node not found in the TT (idea from SF). */
-        if (ctxt._ply
-            && ctxt.is_pv_node()
-            && ctxt.depth() >= 6
-            && !ctxt.tt_entry().is_valid()
-            && ctxt.can_reduce()
-           )
-            ctxt._max_depth -= 2;
+        if (!ctxt.is_root())
+        {
+            /* Internal Iterative Reduction: reduce depth when TT miss means we lack move ordering guidance. */
+            if (ctxt.is_pv_node()
+                && ctxt.depth() >= 6
+                && !ctxt.tt_entry().is_valid()
+                && ctxt.can_reduce()
+               )
+            {
+                ctxt._max_depth -= 2;
+            }
+            else if (ctxt.is_reduced() && ctxt.has_improved())
+            {
+                ++ctxt._max_depth;
+            }
+        }
 
         bool null_move = ctxt.is_null_move_ok();
 
@@ -1050,6 +1058,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             const auto raw_eval = ctxt._eval - applied;
             const auto diff = std::clamp(int(ctxt._score - raw_eval), -MATERIAL_CORRECTION_LIMIT, MATERIAL_CORRECTION_LIMIT);
             table.update_material_correction(stm, mat_key, bucket, diff, ctxt.depth());
+            // if (diff)
+            //     std::cout << "MCH update: " << ctxt.epd() << " bucket=" << bucket << " depth=" << ctxt.depth() << " diff=" << diff << " score=" << ctxt._score << " raw_eval=" << raw_eval << std::endl;
         }
     #endif /* MATERIAL_CORRECTION_HISTORY */
     }

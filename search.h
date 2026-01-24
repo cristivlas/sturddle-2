@@ -231,8 +231,8 @@ namespace search
 
 #if MATERIAL_CORRECTION_HISTORY
     static constexpr int MATERIAL_CORR_HIST_SIZE  = 4096;
-    static constexpr int MATERIAL_CORRECTION_GRAIN = 256;
-    static constexpr int MATERIAL_CORRECTION_LIMIT = 256 * 32; /* +/- 8192 */
+    static constexpr int MATERIAL_CORRECTION_GRAIN = 128;
+    static constexpr int MATERIAL_CORRECTION_LIMIT = 128 * 32; /* +/- 4096 */
 #endif /* MATERIAL_CORRECTION_HISTORY */
 
     /*

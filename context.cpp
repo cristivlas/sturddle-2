@@ -547,6 +547,8 @@ void search::Context::eval_with_nnue()
             const auto mat_key = state().mat_key();
             const auto bucket = nnue::get_bucket(state());
             const auto correction = _tt->material_correction(turn(), mat_key, bucket);
+            // if (correction / MATERIAL_CORRECTION_GRAIN)
+            //     std::cout << "MCH apply: " << epd() << " bucket=" << bucket << " adj=" << correction / MATERIAL_CORRECTION_GRAIN << " eval=" << eval << " -> " << eval + correction / MATERIAL_CORRECTION_GRAIN << std::endl;
             eval += correction / MATERIAL_CORRECTION_GRAIN;
         }
     #endif /* MATERIAL_CORRECTION_HISTORY */
