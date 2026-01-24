@@ -1058,8 +1058,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             const auto raw_eval = ctxt._eval - applied;
             const auto diff = std::clamp(int(ctxt._score - raw_eval), -MATERIAL_CORRECTION_LIMIT, MATERIAL_CORRECTION_LIMIT);
             table.update_material_correction(stm, mat_key, bucket, diff, ctxt.depth());
-            // if (diff)
-            //     std::cout << "MCH update: " << ctxt.epd() << " bucket=" << bucket << " depth=" << ctxt.depth() << " diff=" << diff << " score=" << ctxt._score << " raw_eval=" << raw_eval << std::endl;
         }
     #endif /* MATERIAL_CORRECTION_HISTORY */
     }
