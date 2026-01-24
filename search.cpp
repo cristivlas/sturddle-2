@@ -193,6 +193,9 @@ void TranspositionTable::init(bool new_game)
 
         _killer_moves.fill({});
         _ply_history.fill({});
+    #if MATERIAL_CORRECTION_HISTORY
+        std::fill(_material_correction[0].front().begin(), _material_correction[1].back().end(), 0);
+    #endif /* MATERIAL_CORRECTION_HISTORY */
     }
     else
     {
@@ -209,6 +212,17 @@ void TranspositionTable::init(bool new_game)
 {
     return (100.0 * _table.size()) / _table.capacity();
 }
+
+
+#if MATERIAL_CORRECTION_HISTORY
+void TranspositionTable::update_material_correction(Color stm, uint64_t mat_key, int bucket, int diff, int depth)
+{
+    auto& entry = _material_correction[stm][bucket][mat_key % MATERIAL_CORR_HIST_SIZE];
+    const int weight = std::min(1 + depth, 16);
+    entry = (entry * (MATERIAL_CORRECTION_GRAIN - weight) + diff * weight) / MATERIAL_CORRECTION_GRAIN;
+    entry = std::clamp(entry, -MATERIAL_CORRECTION_LIMIT, MATERIAL_CORRECTION_LIMIT);
+}
+#endif /* MATERIAL_CORRECTION_HISTORY */
 
 
 void TranspositionTable::update_stats(const Context& ctxt)
@@ -695,8 +709,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             && ctxt.depth() > 0
             && ctxt.depth() < 7
             && eval < MATE_HIGH
-            && eval > ctxt._beta
-                + std::max<score_t>(REVERSE_FUTILITY_MARGIN * ctxt.depth(), ctxt.improvement())
+            && eval > ctxt._beta + std::max<score_t>(0, REVERSE_FUTILITY_MARGIN * ctxt.depth() - ctxt.improvement())
             && !ctxt.is_check())
         {
             ASSERT(eval > SCORE_MIN);
@@ -1017,7 +1030,23 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
      * (https://www.stmintz.com/ccc/index.php?id=93686)
      */
     if (ctxt._score && !ctxt.is_root() && ctxt.depth() > 0 && !ctxt._excluded && !ctxt.is_cancelled())
+    {
         table.store(ctxt, ctxt.depth());
+
+    #if MATERIAL_CORRECTION_HISTORY
+        if (is_valid(ctxt._eval) && abs(ctxt._score) < MATE_HIGH && abs(ctxt._eval) < MATE_HIGH)
+        {
+            const auto stm = ctxt.turn();
+            const auto mat_key = ctxt.state().mat_key();
+            const auto bucket = ctxt.get_bucket();
+            /* Use raw eval (before correction) for stable convergence */
+            const auto applied = table.material_correction(stm, mat_key, bucket) / MATERIAL_CORRECTION_GRAIN;
+            const auto raw_eval = ctxt._eval - applied;
+            const auto diff = std::clamp(int(ctxt._score - raw_eval), -MATERIAL_CORRECTION_LIMIT, MATERIAL_CORRECTION_LIMIT);
+            table.update_material_correction(stm, mat_key, bucket, diff, ctxt.depth());
+        }
+    #endif /* MATERIAL_CORRECTION_HISTORY */
+    }
 
     if constexpr(EXTRA_STATS)
         table.update_stats(ctxt);

@@ -541,9 +541,27 @@ void search::Context::eval_with_nnue()
             );
         }
 
+    #if MATERIAL_CORRECTION_HISTORY
+        if (abs(eval) < MATE_HIGH)
+        {
+            const auto mat_key = state().mat_key();
+            const auto bucket = nnue::get_bucket(state());
+            const auto correction = _tt->material_correction(turn(), mat_key, bucket);
+            eval += correction / MATERIAL_CORRECTION_GRAIN;
+        }
+    #endif /* MATERIAL_CORRECTION_HISTORY */
+
         _eval = eval + eval_fuzz();
     }
 }
+
+
+#if WITH_NNUE
+int search::Context::get_bucket() const
+{
+    return nnue::get_bucket(state());
+}
+#endif
 
 
 void search::Context::update_root_accumulators()
@@ -1135,6 +1153,7 @@ namespace search
             _eval += eval_insufficient_material(state(), _eval, [this]() {
                 return eval_tactical(*this, _eval);
             });
+
         #endif /* !WITH_NNUE */
         }
 
@@ -1593,7 +1612,7 @@ namespace search
          */
         if (!force_reorder && (_have_pruned_moves || _have_quiet_moves))
         {
-            ASSERT(!RETRY_REORDER_MOVES || _reorder_depth == ctxt._max_depth);
+            ASSERT(_reorder_depth == ctxt._max_depth);
         }
 
         if (force_reorder)

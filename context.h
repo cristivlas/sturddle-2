@@ -355,16 +355,19 @@ namespace search
 
         score_t     eval_nnue_raw(bool side_to_move_pov);
         void        eval_with_nnue();
+
+        int         get_bucket() const;
+
         static void update_root_accumulators();
 
-        score_t     static_eval() const; /* use TT value if available, eval material otherwise */
+        score_t     static_eval() const { return is_valid(_eval) ? _eval : tt_entry()._eval; }
 
         void        extend(); /* fractional and other extensions */
         const Move* first_valid_move();
 
         score_t     futility_margin() const;
 
-        INLINE bool has_improved() const { return improvement() > 0; }
+        INLINE bool has_improved() const { return improvement() > IMPROVEMENT_MARGIN; }
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
         INLINE bool has_pruned_moves() const { return _pruned_count || _move_maker.have_skipped_moves(); }
 
@@ -729,21 +732,6 @@ namespace search
     }
 
 
-    /*
-     * Use value from the TT if available, else use material evaluation.
-     */
-    INLINE score_t Context::static_eval() const
-    {
-        if (is_valid(_eval))
-            return _eval;
-
-        if (is_valid(tt_entry()._eval))
-            return tt_entry()._eval;
-
-        return evaluate_material();
-    }
-
-
 #if !WITH_NNUE
     INLINE void search::Context::eval_with_nnue() {}
     INLINE score_t search::Context::eval_nnue_raw(bool) { return 0; }
@@ -851,15 +839,17 @@ namespace search
     {
         if (_improvement < 0)
         {
-            if (_ply < 2 || _excluded || is_promotion())
+            if (_ply < 2 || _excluded)
             {
                 _improvement = 0;
             }
             else
             {
-                const auto prev = _parent->_parent;
+                const auto prev = _parent->_parent; /* 2 plies ago */
                 const auto eval = static_eval();
                 const auto prev_eval = prev->static_eval();
+
+                ASSERT(is_valid(eval) && is_valid(prev_eval));
 
                 if (abs(eval) < MATE_HIGH && abs(prev_eval) < MATE_HIGH)
                 {
@@ -867,12 +857,7 @@ namespace search
                 }
                 else
                 {
-                    const auto gg_parent = prev->_parent;
-                    const auto gg_parent_state = gg_parent ? gg_parent->_state : nullptr;
-
-                    _improvement = std::max(0,
-                          eval_material_for_side_that_moved(*_state, _parent->_state, _move)
-                        - eval_material_for_side_that_moved(*prev->_state, gg_parent_state, prev->_move));
+                   _improvement = 0;
                 }
             }
         }
@@ -993,7 +978,7 @@ namespace search
     {
         return NULL_MOVE_REDUCTION_BASE /* base reduction */
             + ctxt.depth() / NULL_MOVE_REDUCTION_DEPTH_DIV
-            + std::min(ctxt.depth() / 2, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_REDUCTION_DIV);
+            + std::min(ctxt.depth() / 2, std::max(0, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_REDUCTION_DIV));
     }
 
 

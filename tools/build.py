@@ -88,8 +88,7 @@ if __name__ == '__main__':
         ARCHS = [args.arch, '']
     elif args.native_uci:
         if platform.machine() in ['x86_64', 'AMD64']:
-            # ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', 'AVX', '']
-            ARCHS = ['AVX512', 'AVX2', 'AVX', '']
+            ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', 'AVX', '']
         elif platform.machine() == 'aarch64':
             ARCHS = ['ARMv8_2', '']
 

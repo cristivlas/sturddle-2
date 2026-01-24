@@ -75,6 +75,11 @@ namespace nnue
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
 
+    INLINE int get_bucket(const State& state)
+    {
+        return std::min<int>(chess::popcount(state.pawns) / 4, 3);
+    }
+
     #if INSTRSET >= 9
         using Vector = Vec16f;
 
@@ -622,12 +627,6 @@ namespace nnue
         /* remember previous inputs, for debugging */
         ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { }; /* one-hot encoding */
     #endif
-
-
-        static INLINE int get_bucket(const State& state)
-        {
-            return std::min<int>(chess::popcount(state.pawns) / 4, 3);
-        }
 
 
         INLINE bool needs_update(const State& state) const

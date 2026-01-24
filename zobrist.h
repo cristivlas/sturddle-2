@@ -365,4 +365,27 @@ namespace chess
             ASSERT(state._hash == zobrist_hash(state));
         }
     }
+
+#if MATERIAL_CORRECTION_HISTORY
+    /*
+     * Material key for correction history, using existing Zobrist randoms.
+     * Indexed by [color * 55 + piece_type_index * 11 + count] within random_u64.
+     */
+    inline uint64_t material_key(const State& state)
+    {
+        uint64_t key = 0;
+        for (int c = 0; c < 2; ++c)
+        {
+            const auto mask = state.occupied_co(Color(c));
+            const auto base = c * 55;
+            key ^= random_u64[base +  0 + popcount(state.pawns & mask)];
+            key ^= random_u64[base + 11 + popcount(state.knights & mask)];
+            key ^= random_u64[base + 22 + popcount(state.bishops & mask)];
+            key ^= random_u64[base + 33 + popcount(state.rooks & mask)];
+            key ^= random_u64[base + 44 + popcount(state.queens & mask)];
+        }
+        return key;
+    }
+#endif /* MATERIAL_CORRECTION_HISTORY */
+
 } /* namespace chess */

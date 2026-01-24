@@ -85,6 +85,8 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define KILLER_MOVE_HEURISTIC               true
 
+#define MATERIAL_CORRECTION_HISTORY         true
+
 #define MTDF_CSTAR_BISECT                   true
 
 #define MTDF_REORDER_MOVES                  true
