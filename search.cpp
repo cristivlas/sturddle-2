@@ -1034,6 +1034,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         table.store(ctxt, ctxt.depth());
 
     #if MATERIAL_CORRECTION_HISTORY
+        /*
+         * Learn evaluation corrections for material imbalances. Compare search scores vs static
+         * evals to identify systematic errors; learned corrections are applied to future evals.
+         */
         if (is_valid(ctxt._eval) && abs(ctxt._score) < MATE_HIGH && abs(ctxt._eval) < MATE_HIGH)
         {
             const auto stm = ctxt.turn();
