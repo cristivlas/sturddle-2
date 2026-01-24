@@ -80,6 +80,8 @@ namespace search
         MTDF,
     };
 
+    enum POV : bool { US, THEM };
+
 
     /* For detecting repeated positions */
     struct History
@@ -275,7 +277,6 @@ namespace search
         int16_t     _beta = SCORE_MAX;
         int16_t     _score = SCORE_MIN; /* dynamic eval score */
         int16_t     _retry_beta = SCORE_MAX; /* NEGASCOUT only */
-        mutable int _improvement = SCORE_MIN;
 
         Algorithm   _algorithm = Algorithm::MTDF;
 
@@ -367,14 +368,17 @@ namespace search
 
         score_t     futility_margin() const;
 
-        INLINE bool has_improved() const { return improvement() > IMPROVEMENT_MARGIN; }
+        template<POV pov>
+        INLINE bool has_improved() const { return improvement<pov>() > IMPROVEMENT_MARGIN; }
+
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
         INLINE bool has_pruned_moves() const { return _pruned_count || _move_maker.have_skipped_moves(); }
 
         int         history_count(const Move&) const;
         float       history_score(const Move&) const;
 
-        score_t     improvement() const;
+        template<POV pov> score_t improvement() const;
+
         static void init(const std::string& exe_dir);
 
         FailHigh    is_beta_cutoff(Context*, score_t);
@@ -833,36 +837,27 @@ namespace search
 
 
     /*
-     * Improvement for the side that just moved.
+     * Eval improvement w.r.t. 2 plies ago.
+     * US: from the side-to-move's perspective.
+     * THEM: from the opponent's (side that just moved) perspective.
      */
+    template<POV pov>
     INLINE score_t Context::improvement() const
     {
-        if (_improvement < 0)
-        {
-            if (_ply < 2 || _excluded)
-            {
-                _improvement = 0;
-            }
-            else
-            {
-                const auto prev = _parent->_parent; /* 2 plies ago */
-                const auto eval = static_eval();
-                const auto prev_eval = prev->static_eval();
+        if (_ply < 2 || _excluded)
+            return 0;
 
-                ASSERT(is_valid(eval) && is_valid(prev_eval));
+        const auto prev = _parent->_parent; /* 2 plies ago */
+        const auto eval = static_eval();
+        const auto prev_eval = prev->static_eval();
 
-                if (abs(eval) < MATE_HIGH && abs(prev_eval) < MATE_HIGH)
-                {
-                    _improvement = std::max(0, prev_eval - eval);
-                }
-                else
-                {
-                   _improvement = 0;
-                }
-            }
-        }
+        ASSERT(is_valid(eval) && is_valid(prev_eval));
 
-        return _improvement;
+        if (abs(eval) >= MATE_HIGH || abs(prev_eval) >= MATE_HIGH)
+            return 0;
+
+        /* prev_eval - eval > 0 means position worsened for STM (improved for opponent) */
+        return std::max(0, pov == US ? eval - prev_eval : prev_eval - eval);
     }
 
 

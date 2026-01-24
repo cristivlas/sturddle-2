@@ -1398,7 +1398,7 @@ namespace search
 
         if (_move._group != MoveOrder::TACTICAL_MOVES)
         {
-            reduction += !_parent->has_improved();
+            reduction += !_parent->has_improved<THEM>();
             reduction -= 2 * _parent->is_counter_move(_move);
 
             if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= 13)

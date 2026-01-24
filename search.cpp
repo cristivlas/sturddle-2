@@ -710,8 +710,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             && ctxt.depth() > 0
             && ctxt.depth() < 7
             && eval < MATE_HIGH
-            /* improvement is from the perspective of the side that just moved -- i.e. the opponent's */
-            && eval > ctxt._beta + std::max<score_t>(REVERSE_FUTILITY_MARGIN * ctxt.depth(), ctxt.improvement())
+            && eval > ctxt._beta + std::max<score_t>(REVERSE_FUTILITY_MARGIN * ctxt.depth(), ctxt.improvement<THEM>())
             && !ctxt.is_check())
         {
             ASSERT(eval > SCORE_MIN);
@@ -752,7 +751,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             {
                 ctxt._max_depth -= 2;
             }
-            else if (ctxt.is_reduced() && ctxt.has_improved())
+            else if (ctxt.is_reduced() && ctxt.has_improved<US>())
             {
                 ++ctxt._max_depth;
             }
@@ -976,7 +975,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         if (ctxt._ply < PLY_HISTORY_MAX && abs(move_score) < MATE_HIGH)
                         {
                             auto& h = table._ply_history[ctxt._ply][ctxt.turn()][next_ctxt->_move];
-                            h.first += next_ctxt->improvement() / ctxt.depth();
+                            h.first += next_ctxt->improvement<THEM>() / ctxt.depth();
                             ++h.second;
                         }
 
