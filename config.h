@@ -282,7 +282,8 @@ GROUP(Search)
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
 DECLARE_CONST(  DOUBLE_EXT_MAX,                       2,    0,       5)
 DECLARE_VALUE(  EXCHANGES_MAX_DEPTH,                  4,    2,      32)
-DECLARE_VALUE(  IMPROVEMENT_MARGIN,                  45,    0,     200)
+DECLARE_VALUE(  IMPROVEMENT_EXTENSION_DEPTH,          7,    0,      15)
+DECLARE_VALUE(  IMPROVEMENT_MARGIN,                  48,    0,     200)
 
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_THRESHOLD,        4,    0,      10)
 
@@ -347,6 +348,13 @@ DECLARE_VALUE(  WINDOW_DIV,                          67,    1,     100)
 DECLARE_VALUE(  WINDOW_HALF,                         25,    5,      50)
 
 GROUP(MoveOrdering)
+
+#if CAPTURE_HISTORY
+DECLARE_VALUE(  CAPTURE_HISTORY_LMR_HIGH,           200,   50,     400)
+DECLARE_VALUE(  CAPTURE_HISTORY_LMR_LOW,             50,    0,     150)
+DECLARE_VALUE(  CAPTURE_HISTORY_WEIGHT,             512,  100,    1024)
+#endif /* CAPTURE_HISTORY */
+
 DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 217,  150,     230)
 DECLARE_VALUE(  COUNTER_MOVE_MIN_DEPTH,               2,    0,       5)
 
@@ -355,10 +363,6 @@ DECLARE_VALUE(  HISTORY_SCORE_MUL,                  261,  200,     280)
 DECLARE_VALUE(  HISTORY_HIGH,                        91,   50,     150)
 DECLARE_VALUE(  HISTORY_LOW,                         12,    0,      30)
 DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,      15)
-
-#if CAPTURE_HISTORY
-DECLARE_VALUE(  CAPTURE_HISTORY_WEIGHT,             512,  100,    1024)
-#endif /* CAPTURE_HISTORY */
 
 GROUP(Eval)
 

@@ -66,7 +66,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define ADAPTIVE_NULL_MOVE                  true
 
-#define CAPTURE_HISTORY                     true
+#define CAPTURE_HISTORY                     false
 
 /*
  * Count valid moves made as nodes if true, otherwise use effectively
@@ -87,7 +87,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define KILLER_MOVE_HEURISTIC               true
 
-#define MATERIAL_CORRECTION_HISTORY         true
+#define MATERIAL_CORRECTION_HISTORY         false
 
 #define MTDF_CSTAR_BISECT                   true
 

@@ -587,7 +587,7 @@ namespace chess
     uint64_t zobrist_hash(const struct State& state);
 
 #if MATERIAL_CORRECTION_HISTORY
-    uint64_t material_key(const struct State& state);
+    uint64_t pawn_key(const struct State& state);
 #endif /* MATERIAL_CORRECTION_HISTORY */
 
 
@@ -1099,15 +1099,6 @@ namespace chess
 
         void rehash() { _hash = 0; hash(); }
 
-    #if MATERIAL_CORRECTION_HISTORY
-        uint64_t mat_key() const
-        {
-            if (_material_key == 0)
-                _material_key = material_key(*this);
-            return _material_key;
-        }
-    #endif /* MATERIAL_CORRECTION_HISTORY */
-
         INLINE bool has_connected_rooks(Color color) const
         {
             const auto rook_mask = rooks & occupied_co(color);
@@ -1290,9 +1281,6 @@ namespace chess
 
         mutable std::array<int8_t, 2> _check = {-1, -1};
         mutable uint64_t _hash = 0;
-    #if MATERIAL_CORRECTION_HISTORY
-        mutable uint64_t _material_key = 0;
-    #endif /* MATERIAL_CORRECTION_HISTORY */
 
     private:
         void ep_moves(MovesList& moves, Bitboard to_mask) const;
@@ -1431,12 +1419,6 @@ namespace chess
 
         _endgame = ENDGAME_UNKNOWN; /* recalculate lazily */
         _hash = 0; /* invalidate */
-    #if MATERIAL_CORRECTION_HISTORY
-        /* material only changes on captures and/or promos */
-        if (is_capture() || move.promotion())
-            _material_key = 0; /* invalidate */
-        ASSERT(_material_key == 0 || _material_key == material_key(*this));
-    #endif /* MATERIAL_CORRECTION_HISTORY */
         has_tt_result = false;
     }
 
@@ -2159,9 +2141,6 @@ namespace chess
                 return false;
 
             pos._hash = 0; /* reset hash */
-        #if MATERIAL_CORRECTION_HISTORY
-            pos._material_key = 0;
-        #endif /* MATERIAL_CORRECTION_HISTORY */
             pos.piece_count(); /* update cached _piece_count */
             return true;
         }

@@ -755,7 +755,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             {
                 ctxt._max_depth -= 2;
             }
-            else if (ctxt.is_reduced() && ctxt.has_improved<US>())
+            else if (ctxt.is_reduced()
+                && ctxt.depth() < IMPROVEMENT_EXTENSION_DEPTH
+                && ctxt.tt_entry()._value > ctxt.tt_entry()._eval + 2 * IMPROVEMENT_MARGIN
+                && ctxt.has_improved<US>())
             {
                 ++ctxt._max_depth;
             }
@@ -1066,7 +1069,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         if (is_valid(ctxt._eval) && abs(ctxt._score) < MATE_HIGH && abs(ctxt._eval) < MATE_HIGH)
         {
             const auto stm = ctxt.turn();
-            const auto mat_key = ctxt.state().mat_key();
+            const auto mat_key = pawn_key(ctxt.state());
             const auto bucket = ctxt.get_bucket();
             /* Use raw eval (before correction) for stable convergence */
             const auto applied = table.material_correction(stm, mat_key, bucket) / MATERIAL_CORRECTION_GRAIN;

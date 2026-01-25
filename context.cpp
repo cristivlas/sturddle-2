@@ -544,7 +544,7 @@ void search::Context::eval_with_nnue()
     #if MATERIAL_CORRECTION_HISTORY
         if (abs(eval) < MATE_HIGH)
         {
-            const auto mat_key = state().mat_key();
+            const auto mat_key = pawn_key(state());
             const auto bucket = nnue::get_bucket(state());
             const auto correction = _tt->material_correction(turn(), mat_key, bucket);
             eval += correction / MATERIAL_CORRECTION_GRAIN;
@@ -1406,7 +1406,16 @@ namespace search
         }
 
         if (is_capture() || (_move.from_square() == _parent->_capture_square))
+        {
             --reduction;
+        #if CAPTURE_HISTORY
+            const auto cap_hist = _tt->capture_history_score(_parent->state(), _parent->turn(), _move);
+            if (cap_hist > CAPTURE_HISTORY_LMR_HIGH)
+                --reduction;
+            else if (cap_hist > 0 && cap_hist < CAPTURE_HISTORY_LMR_LOW)
+                ++reduction;
+        #endif /* CAPTURE_HISTORY */
+        }
 
         const auto hist_score = _parent->history_score(_move);
         if (hist_score > 0 && hist_score < HISTORY_LOW)
