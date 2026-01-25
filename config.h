@@ -356,6 +356,10 @@ DECLARE_VALUE(  HISTORY_HIGH,                        91,   50,     150)
 DECLARE_VALUE(  HISTORY_LOW,                         12,    0,      30)
 DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,      15)
 
+#if CAPTURE_HISTORY
+DECLARE_VALUE(  CAPTURE_HISTORY_WEIGHT,             512,  100,    1024)
+#endif /* CAPTURE_HISTORY */
+
 GROUP(Eval)
 
 /****************************************************************************/

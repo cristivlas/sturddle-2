@@ -252,11 +252,19 @@ namespace search
         using PlyHistoryCounters = std::array<MoveTable<std::pair<int, int>>, 2>;
         using PlyHistory = std::array<PlyHistoryCounters, PLY_HISTORY_MAX>;
 
+    #if CAPTURE_HISTORY
+        /* Capture history indexed by [attacker_piece_type][victim_piece_type] */
+        using CaptureHistoryTable = std::array<std::array<std::pair<int, int>, 7>, 7>;
+    #endif /* CAPTURE_HISTORY */
+
         /* https://www.chessprogramming.org/Countermove_Heuristic */
         IndexedMoves        _countermoves[2];
 
         KillerMovesTable    _killer_moves; /* killer moves at each ply */
         HistoryCounters     _hcounters[2]; /* History heuristic counters. */
+    #if CAPTURE_HISTORY
+        CaptureHistoryTable _capture_hcounters[2]{}; /* Capture history by color */
+    #endif /* CAPTURE_HISTORY */
     #if MATERIAL_CORRECTION_HISTORY
         /* Indexed by [side_to_move][bucket] -- correction is from STM perspective */
         std::array<std::array<int32_t, MATERIAL_CORR_HIST_SIZE>, 4> _material_correction[2]{};
@@ -342,6 +350,11 @@ namespace search
         void history_update_cutoffs(const Move&);
         void history_update_non_cutoffs(const Move&);
 
+    #if CAPTURE_HISTORY
+        void capture_history_update(const State&, const Move&, bool is_cutoff);
+        int capture_history_score(const State&, Color turn, const Move&) const;
+    #endif /* CAPTURE_HISTORY */
+
         void update_stats(const Context&);
 
         static size_t max_hash_size();
@@ -370,10 +383,7 @@ namespace search
      * https://www.chessprogramming.org/Relative_History_Heuristic
      */
     INLINE const std::pair<int, int>&
-    TranspositionTable::historical_counters(
-        const State& state,
-        Color turn,
-        const Move& move) const
+    TranspositionTable::historical_counters(const State& state, Color turn, const Move& move) const
     {
         ASSERT(move);
 
@@ -387,11 +397,7 @@ namespace search
 
 
     INLINE float
-    TranspositionTable::history_score(
-        int ply,
-        const State& state,
-        Color turn,
-        const Move& move) const
+    TranspositionTable::history_score(int ply, const State& state, Color turn, const Move& move) const
     {
         float score = 0;
         if (ply < PLY_HISTORY_MAX)
@@ -446,6 +452,41 @@ namespace search
         ++counts.first;
         ++counts.second;
     }
+
+
+#if CAPTURE_HISTORY
+    INLINE void TranspositionTable::capture_history_update(const State& state, const Move& move, bool is_cutoff)
+    {
+        ASSERT(move._state && move._state->is_capture());
+
+        const auto turn = !move._state->turn;
+        const auto attacker = state.piece_type_at(move.from_square());
+        const auto victim = move._state->capture_type;
+
+        if (attacker != chess::PieceType::NONE && victim != chess::PieceType::NONE)
+        {
+            auto& counts = _capture_hcounters[turn][attacker][victim];
+            counts.first += is_cutoff;
+            ++counts.second;
+        }
+    }
+
+    INLINE int TranspositionTable::capture_history_score(const State& state, Color turn, const Move& move) const
+    {
+        ASSERT(move._state && move._state->is_capture());
+
+        const auto attacker = state.piece_type_at(move.from_square());
+        /* Use the same indexing as update: move._state->capture_type */
+        const auto victim = move._state->capture_type;
+
+        if (attacker == chess::PieceType::NONE || victim == chess::PieceType::NONE)
+            return 0;
+
+        const auto& counts = _capture_hcounters[turn][attacker][victim];
+        /* Integer math: with WEIGHT=512, cutoff rates >= 0.2% give non-zero scores */
+        return counts.second < 1 ? 0 : (CAPTURE_HISTORY_WEIGHT * counts.first) / counts.second;
+    }
+#endif /* CAPTURE_HISTORY */
 
 
     template<typename C>

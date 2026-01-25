@@ -1448,7 +1448,11 @@ namespace search
                     move._group = MoveOrder::WINNING_CAPTURES + (gain == 0);
                 }
 
+            #if CAPTURE_HISTORY
+                move._score = gain + ctxt._tt->capture_history_score(ctxt.state(), ctxt.turn(), move);
+            #else
                 move._score = gain;
+            #endif /* CAPTURE_HISTORY */
             }
         }
     }

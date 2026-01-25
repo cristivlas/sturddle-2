@@ -197,6 +197,10 @@ void TranspositionTable::init(bool new_game)
         _material_correction[0] = {};
         _material_correction[1] = {};
     #endif /* MATERIAL_CORRECTION_HISTORY */
+    #if CAPTURE_HISTORY
+        _capture_hcounters[0] = {};
+        _capture_hcounters[1] = {};
+    #endif /* CAPTURE_HISTORY */
     }
     else
     {
@@ -958,7 +962,13 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                     return ctxt._score;
                 }
-                else if (next_ctxt->is_capture() + next_ctxt->is_promotion() == 0)
+                else if (next_ctxt->is_capture())
+                {
+                #if CAPTURE_HISTORY
+                    table.capture_history_update(ctxt.state(), next_ctxt->_move, true);
+                #endif /* CAPTURE_HISTORY */
+                }
+                else if (next_ctxt->is_promotion() == 0)
                 {
                     /*
                      * Store data for move reordering heuristics.
@@ -994,7 +1004,13 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                 break; /* found a cutoff */
             }
-            else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_capture() && !next_ctxt->is_check())
+            else if (next_ctxt->is_capture())
+            {
+        #if CAPTURE_HISTORY
+                table.capture_history_update(ctxt.state(), next_ctxt->_move, false);
+        #endif /* CAPTURE_HISTORY */
+            }
+            else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_check())
             {
                 table.history_update_non_cutoffs(next_ctxt->_move);
             }
