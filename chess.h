@@ -586,11 +586,6 @@ namespace chess
 
     uint64_t zobrist_hash(const struct State& state);
 
-#if MATERIAL_CORRECTION_HISTORY
-    uint64_t pawn_key(const struct State& state);
-#endif /* MATERIAL_CORRECTION_HISTORY */
-
-
     /* Move representation */
     class BaseMove
     {

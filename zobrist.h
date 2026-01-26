@@ -366,14 +366,4 @@ namespace chess
         }
     }
 
-#if MATERIAL_CORRECTION_HISTORY
-    /* Pawn structure key for correction history. */
-    inline uint64_t pawn_key(const State& state)
-    {
-        const auto white_pawns = state.pawns & state.white;
-        const auto black_pawns = state.pawns & state.black;
-        return white_pawns ^ (black_pawns * 0x9E3779B97F4A7C15ULL);
-    }
-#endif /* MATERIAL_CORRECTION_HISTORY */
-
 } /* namespace chess */

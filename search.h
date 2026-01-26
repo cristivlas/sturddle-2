@@ -229,12 +229,6 @@ namespace search
 
     using HashTable = hash_table<TT_Entry>;
 
-#if MATERIAL_CORRECTION_HISTORY
-    static constexpr int MATERIAL_CORR_HIST_SIZE  = 4096;
-    static constexpr int MATERIAL_CORRECTION_GRAIN = 128;
-    static constexpr int MATERIAL_CORRECTION_LIMIT = MATERIAL_CORRECTION_GRAIN * 256; /* +/- 32768 */
-#endif /* MATERIAL_CORRECTION_HISTORY */
-
     /*
      * Hash table, counter moves, historical counts.
      * Under SMP the hash table is shared between threads.
@@ -265,10 +259,6 @@ namespace search
     #if CAPTURE_HISTORY
         CaptureHistoryTable _capture_hcounters[2]{}; /* Capture history by color */
     #endif /* CAPTURE_HISTORY */
-    #if MATERIAL_CORRECTION_HISTORY
-        /* Indexed by [side_to_move][bucket] -- correction is from STM perspective */
-        std::array<std::array<int32_t, MATERIAL_CORR_HIST_SIZE>, 4> _material_correction[2]{};
-    #endif /* MATERIAL_CORRECTION_HISTORY */
         static HashTable    _table;        /* shared hashtable */
 
         void clear(); /* clear search stats, bump up generation */
@@ -366,15 +356,6 @@ namespace search
         static void set_hash_size(size_t);
 
         size_t tb_hits() const { return _tb_hits; }
-
-    #if MATERIAL_CORRECTION_HISTORY
-        int material_correction(Color stm, uint64_t mat_key, int bucket) const
-        {
-            return _material_correction[stm][bucket][mat_key % MATERIAL_CORR_HIST_SIZE];
-        }
-
-        void update_material_correction(Color stm, uint64_t mat_key, int bucket, int diff, int depth);
-    #endif /* MATERIAL_CORRECTION_HISTORY */
     };
 
 

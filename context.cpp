@@ -541,16 +541,6 @@ void search::Context::eval_with_nnue()
             );
         }
 
-    #if MATERIAL_CORRECTION_HISTORY
-        if (abs(eval) < MATE_HIGH)
-        {
-            const auto mat_key = pawn_key(state());
-            const auto bucket = nnue::get_bucket(state());
-            const auto correction = _tt->material_correction(turn(), mat_key, bucket);
-            eval += correction / MATERIAL_CORRECTION_GRAIN;
-        }
-    #endif /* MATERIAL_CORRECTION_HISTORY */
-
         _eval = eval + eval_fuzz();
     }
 }
