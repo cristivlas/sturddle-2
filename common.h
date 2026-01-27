@@ -66,7 +66,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define ADAPTIVE_NULL_MOVE                  true
 
-#define CAPTURE_HISTORY                     true
+#define CAPTURE_HISTORY                     false
 
 /*
  * Count valid moves made as nodes if true, otherwise use effectively
@@ -84,6 +84,8 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 /* Filter out quiet moves if extended at leaf (depth < 0) */
 #define GROUP_QUIET_MOVES                   true
+
+#define IMPROVEMENT_EXTENSION               false
 
 #define KILLER_MOVE_HEURISTIC               true
 

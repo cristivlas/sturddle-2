@@ -740,6 +740,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             {
                 ctxt._max_depth -= 2;
             }
+        #if IMPROVEMENT_EXTENSION
             else if (ctxt.is_reduced()
                 && ctxt.depth() < IMPROVEMENT_EXTENSION_DEPTH
                 && ctxt.tt_entry()._value > ctxt.tt_entry()._eval + 2 * IMPROVEMENT_MARGIN
@@ -747,6 +748,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             {
                 ++ctxt._max_depth;
             }
+        #endif /* IMPROVEMENT_EXTENSION */
         }
 
         bool null_move = ctxt.is_null_move_ok();
