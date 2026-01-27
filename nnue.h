@@ -36,6 +36,12 @@
     #define ARCH_VNNI
 #endif /* __AVXVNNI__ */
 
+#ifdef __FMA__  /* support fused multiply+add? */
+    #define ARCH_FMA "/FMA"
+#else
+    #define ARCH_FMA
+#endif /* __FMA__ */
+
 #ifndef ARCH
     #if INSTRSET >= 9 /* AVX 512 */
         #define ARCH "AVX512"
@@ -62,8 +68,11 @@
 
 namespace nnue
 {
+    static const std::string instrset = ARCH ARCH_FMA ARCH_VNNI;
+
     using namespace chess;
     using input_t = int16_t;
+    using weight_t = float;
 
     constexpr int ACTIVE_INPUTS = 897;
     constexpr int ATTN_BUCKETS = 4;
@@ -109,11 +118,6 @@ namespace nnue
         }
     #endif /* INSTRSET */
 
-#ifdef __FMA__  /* support fused multiply+add? */
-    static const std::string instrset = ARCH "/FMA" ARCH_VNNI;
-#else
-    static const std::string instrset = ARCH ARCH_VNNI;
-#endif /* __FMA__ */
 
     static const Vector v_zero(0.0);
     static const Vec8s  v8_zero(0);
@@ -385,7 +389,7 @@ namespace nnue
     };
 
 
-    template <int I, int O, typename T=float, int Scale=1, bool Incremental=false>
+    template <int I, int O, typename T=weight_t, int Scale=1, bool Incremental=false>
     struct Layer : BaseLayer<I, O, T, Scale, Incremental>
     {
         using Base = BaseLayer<I, O, T, Scale, Incremental>;
