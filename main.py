@@ -58,6 +58,23 @@ else:
         return (cpufeature.extension.CPUFeature['AVX512f'] and
                 cpufeature.extension.CPUFeature['AVX512bw'])
 
+    def _is_avx512_bf16_supported():
+        if not _is_avx512_supported():
+            return False
+        try:
+            import cpuid
+            """
+            https://en.wikichip.org/wiki/x86/avx512_bf16
+            CPUID	Instruction Set
+            Input	Output
+            EAX=07H, ECX=0	EBX[bit 31]	AVX512VL
+            EAX=07H, ECX=1	EAX[bit 05]	AVX512_BF16
+            """
+            eax = cpuid.cpuid_count(7, 1)[0]
+            return bool((eax >> 5) & 1)
+        except:
+            return False
+
     def _is_avx2_vnni_supported():
         if not _is_avx2_supported():
             return False
@@ -69,6 +86,7 @@ else:
             return False
 
     flavors = {
+        'chess_engine_avx512_bf16': _is_avx512_bf16_supported,
         'chess_engine_avx512': _is_avx512_supported,
         'chess_engine_avx2_vnni': _is_avx2_vnni_supported,
         'chess_engine_avx2': _is_avx2_supported,

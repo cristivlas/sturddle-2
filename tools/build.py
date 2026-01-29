@@ -88,7 +88,7 @@ if __name__ == '__main__':
         ARCHS = [args.arch, '']
     elif args.native_uci:
         if platform.machine() in ['x86_64', 'AMD64']:
-            ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', 'AVX', '']
+            ARCHS = ['AVX512', 'AVX512_BF16', 'AVX2', 'AVX2_VNNI', 'AVX', '']
         elif platform.machine() == 'aarch64':
             ARCHS = ['ARMv8_2', '']
 
@@ -101,7 +101,7 @@ if __name__ == '__main__':
         arch_flags = '-DUSE_MAGIC_BITS'
         if is_windows() and 'clang-cl.exe' not in cl_exe.lower():
             if arch:
-                if arch.endswith('_VNNI'):
+                if arch.endswith('_VNNI') or arch.endswith('_BF16'):
                     print('Skipping. Compiler is NOT clang!')
                     continue
                 arch_flags = f'/arch:{arch}'
@@ -112,6 +112,8 @@ if __name__ == '__main__':
             arch_flags = '-march=core-avx2 -mtune=znver3'  # optimize for AMD Zen3
         elif arch == 'AVX2_VNNI':
             arch_flags = '-march=alderlake -mtune=raptorlake'
+        elif arch == 'AVX512_BF16':
+            arch_flags = '-march=cooperlake -mtune=znver4'
         elif arch == 'AVX512':
             arch_flags = '-march=skylake-avx512 -mtune=skylake-avx512'
         elif arch == 'ARMv8_2':

@@ -25,6 +25,13 @@
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
+    #if defined(__AVX512BF16__) && defined(__AVX512VL__)
+        #define ARCH_BF16 "/BF16"
+        #define USE_BF16 true
+    #else
+        #define ARCH_BF16
+        #define USE_BF16 false
+    #endif
 #elif (__arm__) || (__arm64__) || (__aarch64__)
     #define __ARM__ true
     #include "armvector.h"
@@ -68,7 +75,7 @@
 
 namespace nnue
 {
-    static const std::string instrset = ARCH ARCH_FMA ARCH_VNNI;
+    static const std::string instrset = ARCH ARCH_FMA ARCH_VNNI ARCH_BF16;
 
     using namespace chess;
     using input_t = int16_t;
@@ -122,6 +129,58 @@ namespace nnue
     static const Vector v_zero(0.0);
     static const Vec8s  v8_zero(0);
 
+    /* Type trait: selects vector type based on weight storage type */
+    template<typename T> struct Vec { using type = Vector; };
+
+#if USE_BF16
+    class Vec32_bf16
+    {
+        __m512bh v;
+
+    public:
+        static constexpr size_t size() { return 32; }
+
+        Vec32_bf16() = default;
+        Vec32_bf16(__m512bh x) : v(x) {}
+
+        operator __m512bh() const { return v; }
+
+        INLINE void load_a(const float *p)
+        {
+            Vec16f low, high;
+            low.load_a(p);
+            high.load_a(p + 16);
+            // float32 to bf16 using dedicated conversion instruction (with rounding)
+            v = _mm512_cvtne2ps_pbh(high, low);
+        }
+
+        INLINE void load_a(const __bf16 *p)
+        {
+            v = (__m512bh)_mm512_load_si512((const __m512i*)p);
+        }
+    };
+
+    INLINE Vec16f mul_add(const Vec32_bf16& a, const Vec32_bf16& b, Vec16f acc)
+    {
+        return Vec16f(_mm512_dpbf16_ps(acc, a, b));
+    }
+
+    template<> struct Vec<__bf16> { using type = Vec32_bf16; };
+
+    template <int N> INLINE void load_partial(Vec16f& v, const __bf16* p)
+    {
+        if constexpr (N == Vec16f::size())
+        {
+            __m256bh vh = (__m256bh)_mm256_load_si256((const __m256i*)p);
+            // bf16 to float32: zero-extend to 32 bits, shift left by 16
+            v = _mm512_castsi512_ps(_mm512_slli_epi32(_mm512_cvtepu16_epi32(vh), 16));
+        }
+        else
+        {
+            static_assert(false);
+        }
+    }
+#endif /* USE_BF16 */
 
     template <typename V>
     INLINE bool all_zero(V v)
@@ -504,12 +563,12 @@ namespace nnue
         }
 
         /* hidden, output */
-        template <size_t INPUT_SIZE, typename ACTIVATION>
+        template <size_t INPUT_SIZE, typename WT, typename ACTIVATION>
         static INLINE void dot(
             const float (&input)[INPUT_SIZE],
             float (&output)[OUTPUTS],
-            const float(&b)[OUTPUTS],
-            const float(&wt)[OUTPUTS][INPUTS],
+            const WT(&b)[OUTPUTS],
+            const WT(&wt)[OUTPUTS][INPUTS],
             ACTIVATION activate,
             size_t base = 0
         )
@@ -520,7 +579,9 @@ namespace nnue
             static_assert(INPUT_SIZE % N == 0);
             static_assert(Q == N || Q == 1); /* result layer: Q == 1 */
 
-            Vector sum[Q], v_wt, v_in, v_out;
+            Vector sum[Q], v_out;
+            typename Vec<WT>::type v_in, v_wt;
+            static_assert(INPUT_SIZE % v_in.size() == 0);
 
             for (int j = 0; j != OUTPUTS; j += Q)
             {
@@ -529,7 +590,7 @@ namespace nnue
                     sum[k] = Vector(0.0);
 
                 #pragma unroll INPUT_SIZE
-                for (size_t i = 0; i != INPUT_SIZE; i += N)
+                for (size_t i = 0; i != INPUT_SIZE; i += v_in.size())
                 {
                     v_in.load_a(&input[i]);
 
@@ -965,8 +1026,8 @@ namespace nnue
         }
         /* end of modulation */
 
-        l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
-        l3.dot(l2_out, l3_out, [](const Vector& v) { return max(v, v_zero); });
+        l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); });
+        l3.dot(l2_out, l3_out, [](const Vector& v) { return relu(v); });
 
         out.dot(l3_out, output);
         return EVAL_SCALE * output[0];
