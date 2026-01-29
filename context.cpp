@@ -177,7 +177,7 @@ struct LMR
         {
             for (int moves = 1; moves < 64; ++moves)
             {
-                _table[depth][moves] = 0.5 + log(depth) * log(moves) / M_E;
+                _table[depth][moves] = 0.5 + log(depth) * log(moves) / 4;
             }
         }
     }
