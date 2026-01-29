@@ -188,11 +188,11 @@ public:
     {
         ASSERT_ALWAYS(_groups.size() == 4);
 
+        // Total table size for magic hash path (non-PEXT) -- does not include Rook attacks.
         constexpr size_t total_table_size =
             TableSize<AttacksType::Diag>::value * 64 +
             TableSize<AttacksType::File>::value * 64 +
-            TableSize<AttacksType::Rank>::value * 64 +
-            TableSize<AttacksType::Rook>::value * 64;
+            TableSize<AttacksType::Rank>::value * 64;
 
         out << "#pragma once\n";
         out << "/*\n";
@@ -230,10 +230,15 @@ public:
         out << "    const uint32_t base_offset;\n";
         out << "} hash_info[" << _groups.size() * 64 << "] = {\n";
         for (const auto& group : _groups)
-            for (const auto& h : group._hash_info)
-                out << "    { 0x" << std::hex << h.mask << ", 0x"
-                    << h.mul << std::dec << ", " << h.shift
-                    << ", " << h.base_offset << " },\n";
+        {
+            if (group._index != int(AttacksType::Rook))
+            {
+                for (const auto& h : group._hash_info)
+                    out << "    { 0x" << std::hex << h.mask << ", 0x"
+                        << h.mul << std::dec << ", " << h.shift
+                        << ", " << h.base_offset << " },\n";
+            }
+        }
         out << "};\n";
         out << "#else /* USE_PEXT */\n\n";
         // PEXT info (for PEXT path)
@@ -255,7 +260,7 @@ public:
             out << "    static constexpr size_t offset = " << group._offset << "UL;\n";
             out << "    static constexpr size_t table_size = " << group._table_size << "UL;\n";
             out << "};\n";
-        };
+        }
         out << "\n";
         out << "/********************************************************\n";
         out << " * Attack table with compile-time PEXT/Magic selection\n";
@@ -291,6 +296,8 @@ public:
         // Write magic hash tables
         for (const auto& group : _groups)
         {
+            if (group._index == int(AttacksType::Rook))
+                continue; // Rook group used with PEXT only
             for (size_t i = 0; i < 64; ++i)
             {
                 for (const auto& hash : group._hash_info[i].table)
@@ -341,14 +348,35 @@ public:
 
         for (const auto& group : _groups)
         {
-            out << "\ntemplate<> struct Attacks<" << type.at(group._index) << ">\n";
-            out << "{\n";
-            out << "    INLINE static uint64_t get(int square, uint64_t mask)\n";
-            out << "    {\n";
-            out << "        return attack_table.get<" << group._index << ">(square, mask);\n";
-            out << "    }\n";
-            out << "};\n";
+            if (group._index != int(AttacksType::Rook))
+            {
+                out << "\ntemplate<> struct Attacks<" << type.at(group._index) << ">\n";
+                out << "{\n";
+                out << "    INLINE static uint64_t get(int square, uint64_t mask)\n";
+                out << "    {\n";
+                out << "        return attack_table.get<" << group._index << ">(square, mask);\n";
+                out << "    }\n";
+                out << "};\n";
+            }
         }
+        // Generate Rook attacks as combination of File + Rank if no PEXT
+        out << "#if USE_PEXT\n";
+        out << "template<> struct Attacks<AttacksType::Rook>\n";
+        out << "{\n";
+        out << "    INLINE static uint64_t get(int square, uint64_t mask)\n";
+        out << "    {\n";
+        out << "        return attack_table.get<" << int(AttacksType::Rook) << ">(square, mask);\n";
+        out << "    }\n";
+        out << "};\n";
+        out << "#else\n";
+        out << "template<> struct Attacks<AttacksType::Rook>\n";
+        out << "{\n";
+        out << "    INLINE static uint64_t get(int square, uint64_t mask)\n";
+        out << "    {\n";
+        out << "        return Attacks<AttacksType::File>::get(square, mask) | Attacks<AttacksType::Rank>::get(square, mask);\n";
+        out << "    }\n";
+        out << "};\n";
+        out << "#endif /* USE_PEXT */\n";
         out << "} /* namespace chess */\n";
     }
 

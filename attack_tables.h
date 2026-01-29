@@ -26,9 +26,9 @@ namespace chess
     enum class AttacksType : int
     {
         Diag,
-        Rook,
         File,
         Rank,
+        Rook,
     };
 
     template<AttacksType> struct Attacks {};
