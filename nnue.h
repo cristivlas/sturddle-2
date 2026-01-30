@@ -540,6 +540,7 @@ namespace nnue
             VSum sum[N]; /* accumulate partial sums */
 
             constexpr auto INPUT_MAX = std::min<int>(INPUTS, INPUT_SIZE);
+            static_assert(INPUT_SIZE % N == 0);
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
@@ -561,6 +562,7 @@ namespace nnue
                 }
 
                 const auto sums = horizontal_add(sum);
+                static_assert(sums.size() == N);
                 vw.load_a(&_b[j]);
                 (vw + sums).store_a(&output[j]);
             }
