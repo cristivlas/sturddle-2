@@ -25,6 +25,7 @@ ACCUMULATOR_SIZE = 1280
 ATTN_FAN_OUT = 32
 POOL_SIZE = 8
 ATTN_BUCKETS = 4  # Number of buckets for spatial attention layer
+HIDDEN2_BUCKETS = 4  # Number of buckets for hidden_2 layer
 
 Q_SCALE = 1024
 
@@ -190,6 +191,33 @@ def make_model(args, strategy):
             return tf.reshape(sparse, [-1, self.num_buckets * num_features])
 
 
+    class Hidden2BucketShift(tf.keras.layers.Layer):
+        """Shift pooled hidden_1a output into buckets based on pawn count."""
+        def __init__(self, num_buckets, **kwargs):
+            super(Hidden2BucketShift, self).__init__(**kwargs)
+            self.num_buckets = num_buckets
+
+        def call(self, inputs):
+            # inputs[0]: pooled output (after residual), shape (batch, 160)
+            # inputs[1]: unpacked features (to extract pawn count)
+            pooled, features = inputs
+
+            # Extract pawn bits from features
+            pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
+            pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
+            bucket_id = tf.cast(tf.minimum(pawn_count // 4, self.num_buckets - 1), tf.int32)
+
+            # Shift features into buckets
+            num_features = tf.shape(pooled)[1]
+            bucket_mask = tf.one_hot(bucket_id, self.num_buckets, dtype=pooled.dtype)
+            bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
+
+            features_tiled = tf.tile(tf.expand_dims(pooled, 1), [1, self.num_buckets, 1])
+            sparse = features_tiled * bucket_mask
+
+            return tf.reshape(sparse, [-1, self.num_buckets * num_features])
+
+
     with strategy.scope():
         ACTIVATION = tf.keras.activations.relu
         K_INIT = tf.keras.initializers.HeNormal
@@ -271,13 +299,16 @@ def make_model(args, strategy):
         # Add residual connection: pooled + pooled * attention_weights
         residual = Add(name='residual')([pooled, modulation])
 
+        # Bucket the residual output before hidden_2
+        residual_bucketed = Hidden2BucketShift(HIDDEN2_BUCKETS, name='hidden2_bucket_shift')([residual, unpack_layer])
+
         hidden_2 = Dense(
             16,
             activation=ACTIVATION,
             kernel_initializer=K_INIT,
             name='hidden_2',
             trainable=not args.freeze_eval,
-        )(residual)
+        )(residual_bucketed)
 
         hidden_3 = Dense(
             16,
@@ -919,6 +950,19 @@ def set_weights(from_model, to_model):
                         params = [
                             np.tile(old_kernel, (num_buckets, 1)),
                             old_bias  # bias stays the same size (32,)
+                        ]
+                # Handle hidden_2 layer shape mismatch (unbucketed -> bucketed input)
+                elif name == 'hidden_2' and len(params) == 2 and len(to_weights) == 2:
+                    old_kernel, old_bias = params
+                    new_kernel, new_bias = to_weights
+                    # Check if conversion is needed: old (160, 16) -> new (640, 16)
+                    if old_kernel.shape[0] < new_kernel.shape[0] and new_kernel.shape[0] % old_kernel.shape[0] == 0:
+                        num_buckets = new_kernel.shape[0] // old_kernel.shape[0]
+                        print(f"Converting hidden_2: {old_kernel.shape} -> {new_kernel.shape} ({num_buckets} buckets)")
+                        # Tile kernel across input buckets
+                        params = [
+                            np.tile(old_kernel, (num_buckets, 1)),
+                            old_bias  # bias stays the same size (16,)
                         ]
                 to_layer.set_weights(params)
             except Exception:

@@ -293,9 +293,9 @@ using LAttnType = nnue::Layer<HIDDEN_1B * nnue::ATTN_BUCKETS, 32>;
 using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
 using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
 #if USE_BF16
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, __bf16>;
+  using L2Type = nnue::Layer<HIDDEN_1A_POOLED * nnue::HIDDEN2_BUCKETS, HIDDEN_2, __bf16>;
 #else
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, float>;
+  using L2Type = nnue::Layer<HIDDEN_1A_POOLED * nnue::HIDDEN2_BUCKETS, HIDDEN_2, float>;
 #endif
 using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
 using EVALType = nnue::Layer<HIDDEN_3, 1>;
