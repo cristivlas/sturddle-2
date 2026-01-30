@@ -26,10 +26,8 @@
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
     #if defined(__AVX512BF16__) && defined(__AVX512VL__)
-        #define ARCH_BF16 "/BF16"
         #define USE_BF16 true
     #else
-        #define ARCH_BF16
         #define USE_BF16 false
     #endif
 #elif (__arm__) || (__arm64__) || (__aarch64__)
@@ -48,6 +46,12 @@
 #else
     #define ARCH_FMA
 #endif /* __FMA__ */
+
+#if USE_BF16
+    #define ARCH_BF16 "/BF16"
+#else
+    #define ARCH_BF16
+#endif /* USE_BF16 */
 
 #ifndef ARCH
     #if INSTRSET >= 9 /* AVX 512 */
