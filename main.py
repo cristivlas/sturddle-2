@@ -58,20 +58,25 @@ else:
         return (cpufeature.extension.CPUFeature['AVX512f'] and
                 cpufeature.extension.CPUFeature['AVX512bw'])
 
-    def _is_avx512_bf16_supported():
-        if not _is_avx512_supported():
-            return False
+    # Check for AVX512 Cooper Lake extensions (BF16, VNNI).
+    def _is_avx512_cooperlake():
         try:
             import cpuid
-            """
-            https://en.wikichip.org/wiki/x86/avx512_bf16
-            CPUID	Instruction Set
-            Input	Output
-            EAX=07H, ECX=0	EBX[bit 31]	AVX512VL
-            EAX=07H, ECX=1	EAX[bit 05]	AVX512_BF16
-            """
+            _, ebx, ecx, _ = cpuid.cpuid_count(7, 0)
             eax = cpuid.cpuid_count(7, 1)[0]
-            return bool((eax >> 5) & 1)
+
+            required_ebx = (
+                (1 << 16) |  # AVX512F
+                (1 << 17) |  # AVX512DQ
+                (1 << 28) |  # AVX512CD
+                (1 << 30) |  # AVX512BW
+                (1 << 31)    # AVX512VL
+            )
+            has_base = (ebx & required_ebx) == required_ebx
+            has_vnni = bool((ecx >> 11) & 1)      # AVX512_VNNI
+            has_bf16 = bool((eax >> 5) & 1)       # AVX512_BF16
+
+            return has_base and has_vnni and has_bf16
         except:
             return False
 
@@ -86,7 +91,7 @@ else:
             return False
 
     flavors = {
-        'chess_engine_avx512_bf16': _is_avx512_bf16_supported,
+        'chess_engine_avx512_bf16': _is_avx512_cooperlake,
         'chess_engine_avx512': _is_avx512_supported,
         'chess_engine_avx2_vnni': _is_avx2_vnni_supported,
         'chess_engine_avx2': _is_avx2_supported,
