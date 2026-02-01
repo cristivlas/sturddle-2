@@ -35,7 +35,7 @@
     #include "armvector.h"
 #endif
 
-#if __AVXVNNI__
+#if __AVXVNNI__ || __AVX512VNNI__
     #define ARCH_VNNI "/VNNI"
 #else
     #define ARCH_VNNI
@@ -209,7 +209,8 @@ namespace nnue
         return !horizontal_or(v.get_high() | v.get_low());
     }
 
-    INLINE Vec32s horizontal_add(const Vec32s (&v)[32])
+    template <typename V>
+    INLINE Vec32s horizontal_add(const V (&v)[32])
     {
         return Vec32s(
             horizontal_add_x(v[0]),  horizontal_add_x(v[1]),  horizontal_add_x(v[2]),  horizontal_add_x(v[3]),
@@ -393,11 +394,19 @@ namespace nnue
 
 
 #if INSTRSET >= 9 /* AVX-512 */
-    /* Overflow is prevented at training time */
-    INLINE Vec32s mul_add(Vec32s a, Vec32s b, Vec32s acc)
-    {
-        return acc + a * b;
-    }
+    #if __AVX512VNNI__
+        INLINE Vec16i mul_add(Vec32s a, Vec32s b, Vec16i acc)
+        {
+            // VPDPWSSD: dot-product of signed 16-bit pairs into signed 32-bit dwords
+            return Vec16i(_mm512_dpwssd_epi32(acc, a, b));
+        }
+    #else
+        /* Overflow is prevented at training time */
+        INLINE Vec32s mul_add(Vec32s a, Vec32s b, Vec32s acc)
+        {
+            return acc + a * b;
+        }
+    #endif /* __AVX512VNNI__ */
 #elif __ARM__
     INLINE Vec16s mul_add(Vec16s a, Vec16s b, Vec16s acc)
     {
@@ -523,7 +532,11 @@ namespace nnue
         {
         #if INSTRSET >= 9 /* AVX 512 */
             using VecShort = Vec32s;
-            using VSum = Vec32s;
+            #if __AVX512VNNI__
+                using VSum = Vec16i;
+            #else
+                using VSum = Vec32s;
+            #endif
         #elif __ARM__
             using VecShort = Vec16s;
             using VSum = Vec16s;
