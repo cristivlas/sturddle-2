@@ -976,7 +976,7 @@ def main(args):
             else:
                 from keras.callbacks import ReduceLROnPlateau
 
-            lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=1, min_lr=1e-10)
+            lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=args.patience, min_lr=1e-10)
             callbacks.append(lr)
 
         if args.model is not None:
@@ -1105,6 +1105,7 @@ if __name__ == '__main__':
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
         parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad', help='optimization algorithm')
+        parser.add_argument('--patience', type=int, default=3, help='how many iterations to wait before decaying LR when using --schedule')
         parser.add_argument('--plot-file', help='plot model architecture to file')
         parser.add_argument('--sample', type=float, help='sampling ratio')
         parser.add_argument('--soft-alpha', type=float, default=0.01, help='alpha for soft_round operation')
