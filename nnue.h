@@ -401,10 +401,10 @@ namespace nnue
             return Vec16i(_mm512_dpwssd_epi32(acc, a, b));
         }
     #else
-        /* Overflow is prevented at training time */
-        INLINE Vec32s mul_add(Vec32s a, Vec32s b, Vec32s acc)
+        INLINE Vec16i mul_add(Vec32s a, Vec32s b, Vec16i acc)
         {
-            return acc + a * b;
+            __m512i product = _mm512_madd_epi16(a, b);
+            return _mm512_add_epi32(acc, product);
         }
     #endif /* __AVX512VNNI__ */
 #elif __ARM__
@@ -532,11 +532,7 @@ namespace nnue
         {
         #if INSTRSET >= 9 /* AVX 512 */
             using VecShort = Vec32s;
-            #if __AVX512VNNI__
-                using VSum = Vec16i;
-            #else
-                using VSum = Vec32s;
-            #endif
+            using VSum = Vec16i;
         #elif __ARM__
             using VecShort = Vec16s;
             using VSum = Vec16s;
