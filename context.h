@@ -787,9 +787,21 @@ namespace search
     static constexpr std::array<int, sizeof ... (I)> margins(std::index_sequence<I...>)
     {
     #if 0
-        return { static_cast<int>(75 * I + pow(I, 1.99)) ... };
-    #else
         return { static_cast<int>(std::min(75.0 * I + pow(I, 1.99), 1289.0 + 200.0 * log(I))) ... };
+    #else
+        constexpr double c0 = -10.005;
+        constexpr double c1 =  81.478;
+        constexpr double c2 =  -1.010;
+        constexpr double c3 =   0.004;
+
+        return { std::max(0,
+            static_cast<int>(
+                c0
+              + c1 * double(I + 1)
+              + c2 * double(I + 1) * double(I + 1)
+              + c3 * double(I + 1) * double(I + 1) * double(I + 1)
+            )
+        )... };
     #endif
     }
 
