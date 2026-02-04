@@ -1405,9 +1405,9 @@ namespace search
         #if CAPTURE_HISTORY
             const auto cap_hist = _tt->capture_history_score(_parent->state(), _parent->turn(), _move);
             if (cap_hist > CAPTURE_HISTORY_LMR_HIGH)
-                --reduction;
-            else if (cap_hist > 0 && cap_hist < CAPTURE_HISTORY_LMR_LOW)
                 ++reduction;
+            else if (cap_hist > 0 && cap_hist < CAPTURE_HISTORY_LMR_LOW)
+                --reduction;
         #endif /* CAPTURE_HISTORY */
         }
 

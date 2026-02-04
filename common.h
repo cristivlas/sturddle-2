@@ -66,7 +66,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define ADAPTIVE_NULL_MOVE                  true
 
-#define CAPTURE_HISTORY                     false
+#define CAPTURE_HISTORY                     true
 
 /*
  * Count valid moves made as nodes if true, otherwise use effectively
