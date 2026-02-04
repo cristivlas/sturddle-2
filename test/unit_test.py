@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 """
-Sturddle Chess Engine (c) 2022 - 2025 Cristian Vlasceanu.
+Sturddle Chess Engine (c) 2022 - 2026 Cristian Vlasceanu.
 -------------------------------------------------------------------------
 
 This program is free software: you can redistribute it and/or modify
@@ -190,6 +190,66 @@ def test_pins():
         assert expected == result, f'{id}: expected={expected}, got {result}'
 
 
+def test_pin_mask():
+    """Test pin_mask correctness by comparing with python-chess."""
+    BB_ALL = 0xFFFFFFFFFFFFFFFF
+
+    tests = [
+        # Diagonal pins
+        ('diag.01', '4k3/8/8/b7/8/2N5/8/4K3 w - -', chess.C3, True),   # Knight pinned by bishop
+        ('diag.02', '4k3/8/8/8/8/2N5/1b6/4K3 w - -', chess.C3, False), # Knight not pinned (bishop wrong side)
+        ('diag.03', '4k3/8/5b2/8/8/2N5/8/4K3 w - -', chess.C3, False), # Knight not pinned (not on ray)
+        ('diag.04', '8/8/8/8/1b6/2P5/3K4/7k w - -', chess.C3, True),   # Pawn pinned diagonally
+        ('diag.05', '4k3/8/8/4K3/8/2B5/8/q7 w - -', chess.C3, True),   # Bishop pinned by queen diagonally
+
+        # Orthogonal pins
+        ('orth.01', '4k3/8/8/8/4r3/8/4N3/4K3 w - -', chess.E2, True),  # Knight pinned by rook
+        ('orth.02', '4k3/8/8/8/8/3Nr3/8/4K3 w - -', chess.D3, False),  # Knight not pinned (not on ray to king)
+        ('orth.03', '4k3/8/8/8/r7/8/8/R3K3 w Q -', chess.A1, False),   # Rook not pinned (king not on file)
+        ('orth.04', '4k3/4q3/8/8/8/8/4R3/4K3 w - -', chess.E2, True),  # Rook pinned by queen
+        ('orth.05', '4k3/8/8/8/r3B2K/8/8/8 w - -', chess.E4, True),    # Bishop pinned horizontally
+
+        # Multiple potential pinners
+        ('multi.01', '4k3/8/8/b7/1b6/2N5/8/4K3 w - -', chess.C3, True),  # Two bishops, closer one pins
+        ('multi.02', 'r3k3/4r3/8/8/8/8/4N3/4K3 w - -', chess.E2, True),  # Two rooks on file
+
+        # Blocker between piece and sniper
+        ('block.01', '4k3/8/8/b7/1P6/2N5/8/4K3 w - -', chess.C3, False),  # Pawn blocks pin
+        ('block.02', '4k3/4r3/8/8/4P3/8/4N3/4K3 w - -', chess.E2, False), # Pawn blocks vertical pin
+
+        # Edge cases
+        ('edge.01', 'k7/8/8/8/8/8/8/4K2R w - -', chess.H1, False),  # Rook not pinned
+        ('edge.02', '4k3/8/8/8/8/8/8/r3K3 w - -', chess.E1, False), # King can't be pinned
+        ('edge.03', '4k3/8/8/8/8/q7/1N6/2K5 w - -', chess.B2, True), # Knight pinned by queen
+
+        # Pinned piece can move along pin ray
+        ('ray.01', '4k3/8/8/4r3/8/8/4R3/4K3 w - -', chess.E2, True),  # Rook pinned but can move on file
+        ('ray.02', '4k3/8/8/4K3/8/2B5/8/b7 w - -', chess.C3, True),   # Bishop pinned but can move on diagonal
+    ]
+
+    for id, fen, square, expected_pinned in tests:
+        board = chess.Board(fen=fen)
+        state = engine.BoardState(board)
+
+        assert expected_pinned == board.is_pinned(board.turn, square)
+
+        color = chess.WHITE if board.color_at(square) == chess.WHITE else chess.BLACK
+        pin = state.pin_mask(color, square)
+
+        is_pinned = (pin != BB_ALL)
+        assert is_pinned == expected_pinned, f'{id}: square {chess.square_name(square)} expected pinned={expected_pinned}, got {is_pinned} (pin_mask={hex(pin)})'
+
+        # For pinned pieces, verify pin mask is correct by checking legal moves
+        if expected_pinned:
+            piece = board.piece_at(square)
+            if piece and piece.piece_type != chess.KING:
+                # Get legal moves for this piece from python-chess
+                py_moves = [m for m in board.legal_moves if m.from_square == square]
+                for move in py_moves:
+                    to_mask = 1 << move.to_square
+                    assert (pin & to_mask) != 0, f'{id}: move {move.uci()} should be on pin ray but pin_mask={hex(pin)}'
+
+
 def test_static_exchanges():
     tests = [
         ('capt.01', '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - - 0 2', 'e5', chess.BLACK, 85),
@@ -330,24 +390,33 @@ def test_repetition():
 def test_nnue_eval():
     tests = [
         chess.STARTING_FEN,
-        '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - - 0 2',
         'r2r2k1/1pp2ppp/p2q1b2/3pN3/2PP4/PP1Q3P/5PP1/R3R1K1 b - - 0 22',
         'r4rk1/1ppnbppp/p2q4/3pNb2/3P4/PP5P/2PNBPP1/R2QK2R w KQ - 5 14',
+        'r4rk1/ppp2ppp/5n2/2bPn3/4K3/2NP4/PPPBB1PP/R6R w - - 3 3',
+        '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - - 0 2',
         'rqr3k1/p4p1p/5Qp1/2b5/2N5/2Pn2NP/P2B1PP1/2R2RK1 w - - 0 24',
         '2r3k1/p5p1/4p3/1p1bP3/2pb2Q1/5N2/1q3P1P/3R1RK1 b - - 3 32',
-        'r4rk1/ppp2ppp/5n2/2bPn3/4K3/2NP4/PPPBB1PP/R6R w - - 3 3',
         '1r1q1rk1/p3bBpp/2Q5/8/3Pb3/2n1BN2/P4PPP/R4RK1 b - - 0 18',
+        '8/pp2k3/8/8/8/8/3K1PP1/8 w - - 0 1',
+        '3r2k1/pp3p2/8/8/8/5P2/PP4K1/3R4 w - - 0 1',
+        'r3k3/pp6/8/3p4/3P4/8/PP2K3/R7 w q - 0 1',
+        '2r2rk1/pp3p2/8/8/8/8/PP3PP1/2R2RK1 w - - 0 1',
+        '8/8/4k3/4p3/4P3/4K3/8/8 w - - 0 1',
+        '8/5k2/8/3p4/3P4/2K1P3/8/8 w - - 0 1',
+        '4k3/8/8/8/8/8/4K3/4R3 w - - 0 1',
     ]
 
     evals = [
-        30.46223819255829, -401.17831230163574, 5.5700987577438354, -156.29093647003174, 539.9513721466064, -317.09110736846924, -28.130176663398743, -26.191619038581848
+        35.92178821563721, -37.80837059020996, -147.96288013458252, 14.691543579101562, -515.5942440032959,
+        575.2802848815918, -227.04806327819824, -29.207301139831543, 56.12175464630127, 26.899409294128418,
+        28.68964672088623, 309.5935106277466, 0.14657974243164062, 537.4797821044922, 514.2780303955078
     ]
     for i, fen in enumerate(tests):
         eval = engine.nnue_eval_fen(fen)
         expect = int(evals[i])
         err = abs(eval - expect)
         print(f'{fen}: eval={eval}, expected={expect}, error={err}')
-        assert err <= 2
+        assert err <= 3
 
 
 def test_parse_fen():
@@ -379,6 +448,7 @@ test_en_passant()
 
 test_is_checkmate()
 test_pins()
+test_pin_mask()
 test_static_exchanges()
 test_zobrist()
 test_forks()

@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2026 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -193,6 +193,10 @@ void TranspositionTable::init(bool new_game)
 
         _killer_moves.fill({});
         _ply_history.fill({});
+    #if CAPTURE_HISTORY
+        _capture_hcounters[0] = {};
+        _capture_hcounters[1] = {};
+    #endif /* CAPTURE_HISTORY */
     }
     else
     {
@@ -695,8 +699,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             && ctxt.depth() > 0
             && ctxt.depth() < 7
             && eval < MATE_HIGH
-            && eval > ctxt._beta
-                + std::max<score_t>(REVERSE_FUTILITY_MARGIN * ctxt.depth(), ctxt.improvement())
+            && eval > ctxt._beta + std::max<score_t>(REVERSE_FUTILITY_MARGIN * ctxt.depth(), ctxt.improvement<THEM>())
             && !ctxt.is_check())
         {
             ASSERT(eval > SCORE_MIN);
@@ -726,14 +729,27 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             return ctxt._score;
         }
 
-        /* Reduce depth by 2 if PV node not found in the TT (idea from SF). */
-        if (ctxt._ply
-            && ctxt.is_pv_node()
-            && ctxt.depth() >= 6
-            && !ctxt.tt_entry().is_valid()
-            && ctxt.can_reduce()
-           )
-            ctxt._max_depth -= 2;
+        if (!ctxt.is_root())
+        {
+            /* Internal Iterative Reduction: reduce depth when TT miss means we lack move ordering guidance. */
+            if (ctxt.is_pv_node()
+                && ctxt.depth() >= 6
+                && !ctxt.tt_entry().is_valid()
+                && ctxt.can_reduce()
+               )
+            {
+                ctxt._max_depth -= 2;
+            }
+        #if IMPROVEMENT_EXTENSION
+            else if (ctxt.is_reduced()
+                && ctxt.depth() < IMPROVEMENT_EXTENSION_DEPTH
+                && ctxt.tt_entry()._value > ctxt.tt_entry()._eval + 2 * IMPROVEMENT_MARGIN
+                && ctxt.has_improved<US>())
+            {
+                ++ctxt._max_depth;
+            }
+        #endif /* IMPROVEMENT_EXTENSION */
+        }
 
         bool null_move = ctxt.is_null_move_ok();
 
@@ -749,6 +765,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         /* iterate over moves */
         while (auto next_ctxt = ctxt.next(null_move, futility, move_count, &time_left))
         {
+            auto full_depth = next_ctxt->_max_depth; /* for retry; updated after extensions */
+
             if (next_ctxt->is_null_move())
             {
                 null_move = false;
@@ -858,6 +876,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 }
 
                 /* Late-move reduction and pruning */
+                full_depth = next_ctxt->_max_depth; /* save before LMR */
+
                 if (move_count && next_ctxt->late_move_reduce(move_count, time_left) == LMRAction::Prune)
                 {
                     next_ctxt->_prune_reason = PruneReason::PRUNE_LMP;
@@ -874,18 +894,40 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             }
 
             /*
-             * Recursively search next move.
+             * Recursively search next move; retry at full depth if needed.
              */
-            const auto move_score = -negamax(*next_ctxt, table);
-
-            if (ctxt.is_cancelled())
+            score_t move_score;
+            FailHigh fail_high = FailHigh::None;
+            for (;;)
             {
-                if (move_score < SCORE_MAX)
-                    ctxt._score = move_score;
-                return ctxt._score;
+                move_score = -negamax(*next_ctxt, table);
+
+                if (ctxt.is_cancelled())
+                {
+                    if (move_score < SCORE_MAX)
+                        ctxt._score = move_score;
+                    return ctxt._score;
+                }
+
+                fail_high = ctxt.is_beta_cutoff(next_ctxt, move_score);
+
+                if (fail_high != FailHigh::Retry)
+                    break;
+
+                /* Retry: reset next_ctxt for full-depth/full-window search */
+                next_ctxt->_max_depth = full_depth;
+                next_ctxt->_alpha = -ctxt._beta;
+                next_ctxt->_beta = (ctxt._retry_beta < ctxt._beta) ? ctxt._retry_beta : -ctxt._alpha;
+                ctxt._retry_beta = SCORE_MAX;
+                next_ctxt->_score = SCORE_MIN;
+                next_ctxt->_is_retry = true;
+                next_ctxt->_retry_above_alpha = RETRY::None;
+
+                if (next_ctxt->move_count() >= 0)
+                    next_ctxt->rewind(true);
             }
 
-            if (ctxt.is_beta_cutoff(next_ctxt, move_score))
+            if (fail_high == FailHigh::Cutoff)
             {
                 ASSERT(ctxt._score == move_score);
                 ASSERT(ctxt._cutoff_move || next_ctxt->is_null_move());
@@ -910,7 +952,13 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                     return ctxt._score;
                 }
-                else if (next_ctxt->is_capture() + next_ctxt->is_promotion() == 0)
+                else if (next_ctxt->is_capture())
+                {
+                #if CAPTURE_HISTORY
+                    table.capture_history_update(ctxt.state(), next_ctxt->_move, true);
+                #endif /* CAPTURE_HISTORY */
+                }
+                else if (next_ctxt->is_promotion() == 0)
                 {
                     /*
                      * Store data for move reordering heuristics.
@@ -927,7 +975,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         if (ctxt._ply < PLY_HISTORY_MAX && abs(move_score) < MATE_HIGH)
                         {
                             auto& h = table._ply_history[ctxt._ply][ctxt.turn()][next_ctxt->_move];
-                            h.first += next_ctxt->improvement() / ctxt.depth();
+                            h.first += next_ctxt->improvement<THEM>() / ctxt.depth();
                             ++h.second;
                         }
 
@@ -946,11 +994,13 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                 break; /* found a cutoff */
             }
-            else if (ctxt._retry_next)
+            else if (next_ctxt->is_capture())
             {
-                continue;
+        #if CAPTURE_HISTORY
+                table.capture_history_update(ctxt.state(), next_ctxt->_move, false);
+        #endif /* CAPTURE_HISTORY */
             }
-            else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_capture() && !next_ctxt->is_check())
+            else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_check())
             {
                 table.history_update_non_cutoffs(next_ctxt->_move);
             }
@@ -995,7 +1045,9 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
      * (https://www.stmintz.com/ccc/index.php?id=93686)
      */
     if (ctxt._score && !ctxt.is_root() && ctxt.depth() > 0 && !ctxt._excluded && !ctxt.is_cancelled())
+    {
         table.store(ctxt, ctxt.depth());
+    }
 
     if constexpr(EXTRA_STATS)
         table.update_stats(ctxt);
@@ -1301,7 +1353,7 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
         }   /* SMP scope end */
 
-        ASSERT(ctxt.iteration() + !ctxt.turn() == ctxt._max_depth);
+        ASSERT(ctxt.iteration());
 
         /* post iteration info if there's a registered callback */
         if (Context::_on_iter)

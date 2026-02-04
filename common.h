@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2026 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -66,6 +66,8 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define ADAPTIVE_NULL_MOVE                  true
 
+#define CAPTURE_HISTORY                     false
+
 /*
  * Count valid moves made as nodes if true, otherwise use effectively
  * searched nodes (not including TT pruned, FP and late-move pruned).
@@ -82,6 +84,8 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 /* Filter out quiet moves if extended at leaf (depth < 0) */
 #define GROUP_QUIET_MOVES                   true
+
+#define IMPROVEMENT_EXTENSION               false
 
 #define KILLER_MOVE_HEURISTIC               true
 
@@ -166,7 +170,7 @@ constexpr size_t DEFAULT_HASH_TABLE_SIZE =  32;
  * https://github.com/goutham/magic-bits
  */
 #if !defined(USE_MAGIC_BITS)
-  #define USE_MAGIC_BITS                    true
+  #define USE_MAGIC_BITS                    false
 #endif
 
 /*

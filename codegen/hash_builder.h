@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2023, 2024 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2026 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,7 +39,16 @@ struct HashParam
     uint64_t mask;
     uint64_t mul;
     uint16_t shift;
+    uint32_t base_offset; // precomputed: group_offset + square * table_size
     PerfectHash table;
+};
+
+// PEXT table entry: stores mask and offset for dense table
+struct PextParam
+{
+    uint64_t mask;
+    uint32_t base_offset;
+    std::vector<uint64_t> dense_table; // indexed by pext result directly
 };
 
 template <AttacksType> struct TableSize
@@ -80,6 +89,7 @@ struct Group
     const size_t _table_size;
 
     std::array<HashParam, 64> _hash_info;
+    std::array<PextParam, 64> _pext_info;
 
     Group(size_t index, size_t offset, size_t table_size)
         : _index(index)
@@ -93,13 +103,35 @@ struct Group
         _hash_info[square].mask = mask;
         _hash_info[square].mul = mul;
         _hash_info[square].shift = shift;
+        _hash_info[square].base_offset = static_cast<uint32_t>(_offset + int(square) * _table_size);
         _hash_info[square].table = table;
     #if DEBUG
         std::clog << square << ": mul=" << std::hex << mul << std::dec
                   << ", shift=" << shift << ", " << table.size() << " entries\n";
     #endif /* DEBUG */
     }
+
+    void set_pext_info(Square square, uint64_t mask, uint32_t base_offset, std::vector<uint64_t>&& dense_table)
+    {
+        ASSERT_ALWAYS(square != Square::UNDEFINED);
+        _pext_info[square].mask = mask;
+        _pext_info[square].base_offset = base_offset;
+        _pext_info[square].dense_table = std::move(dense_table);
+    }
 };
+
+// Software PEXT for codegen (not performance critical)
+inline uint64_t pext_soft(uint64_t src, uint64_t mask)
+{
+    uint64_t result = 0;
+    for (uint64_t bb = 1; mask; bb <<= 1)
+    {
+        if (src & mask & -mask)
+            result |= bb;
+        mask &= mask - 1;
+    }
+    return result;
+}
 
 uint64_t random_uint64()
 {
@@ -119,6 +151,7 @@ uint64_t random_uint64()
 class HashBuilder
 {
     std::vector<Group> _groups;
+    size_t _pext_total_size = 0;
 
 public:
     template <AttacksType type>
@@ -143,6 +176,9 @@ public:
                 std::cerr << "Could not build hash for: " << square << std::endl;
                 return false;
             }
+
+            // Build PEXT dense table for this square
+            build_pext(Square(square), mask, attacks, group);
         }
         _groups.emplace_back(group);
         return true;
@@ -170,17 +206,48 @@ public:
     #endif /* LOCK_TABLE_DATA */
         out << "#include <cstdint>\n";
         out << "#include <cstring>\n\n";
-        out << "namespace chess {\n";
+
+        // Check for PEXT support
+        out << "// PEXT support detection\n";
+        out << "#if defined(__BMI2__) && (defined(__x86_64__) || defined(_M_X64))\n";
+        out << "  #define USE_PEXT true\n";
+        out << "  #if defined(_MSC_VER)\n";
+        out << "    #include <intrin.h>\n";
+        out << "  #else\n";
+        out << "    #include <x86intrin.h>\n";
+        out << "  #endif\n";
+        out << "  #define PEXT(src, mask) _pext_u64(src, mask)\n";
+        out << "#endif\n\n";
+
+        out << "namespace chess {\n\n";
+
+        // Magic hash info (for non-PEXT path)
+        out << "#if !USE_PEXT\n";
         out << "constexpr struct HashInfo {\n";
-        out << "    uint64_t mask;\n";
-        out << "    uint64_t mul;\n";
-        out << "    uint32_t shift;\n";
+        out << "    const uint64_t mask;\n";
+        out << "    const uint64_t mul;\n";
+        out << "    const uint32_t shift;\n";
+        out << "    const uint32_t base_offset;\n";
         out << "} hash_info[" << _groups.size() * 64 << "] = {\n";
         for (const auto& group : _groups)
             for (const auto& h : group._hash_info)
                 out << "    { 0x" << std::hex << h.mask << ", 0x"
-                    << h.mul << std::dec << ", " << h.shift << " },\n";
-        out << "};\n\n";
+                    << h.mul << std::dec << ", " << h.shift
+                    << ", " << h.base_offset << " },\n";
+        out << "};\n";
+        out << "#else /* USE_PEXT */\n\n";
+        // PEXT info (for PEXT path)
+        out << "constexpr struct PextInfo {\n";
+        out << "    const uint64_t mask;\n";
+        out << "    const uint32_t base_offset;\n";
+        out << "} pext_info[" << _groups.size() * 64 << "] = {\n";
+        for (const auto& group : _groups)
+            for (int sq = 0; sq < 64; ++sq)
+                out << "    { 0x" << std::hex << group._pext_info[sq].mask << std::dec
+                    << ", " << group._pext_info[sq].base_offset << " },\n";
+        out << "};\n";
+        out << "#endif /* USE_PEXT */\n\n";
+
         out << "template <int> struct GroupInfo;\n\n";
         for (const auto& group : _groups)
         {
@@ -191,16 +258,40 @@ public:
         };
         out << "\n";
         out << "/********************************************************\n";
-        out << " *\n";
+        out << " * Attack table with compile-time PEXT/Magic selection\n";
         out << " ********************************************************/\n";
         out << "struct AttackTable {\n";
-        out << "    alignas(64) uint64_t _data[" << total_table_size << "];\n\n";
+        out << "#if USE_PEXT\n";
+        out << "    alignas(64) uint64_t _data[" << _pext_total_size << "]; // PEXT dense tables\n";
+        out << "#else\n";
+        out << "    alignas(64) uint64_t _data[" << total_table_size << "]; // Magic hash tables\n";
+        out << "#endif\n\n";
+
         out << "#ifdef DEFINE_ATTACK_TABLE_CTOR\n";
         out << "    AttackTable() {\n";
         out << "        memset(_data, 0, sizeof(_data));\n";
+        out << "#if USE_PEXT\n";
+        // Write PEXT dense tables
         for (const auto& group : _groups)
         {
-            for (size_t i = 0; i < 64; ++i) // iterate over squares
+            for (size_t sq = 0; sq < 64; ++sq)
+            {
+                const auto& pext = group._pext_info[sq];
+                for (size_t idx = 0; idx < pext.dense_table.size(); ++idx)
+                {
+                    if (pext.dense_table[idx] != 0)
+                    {
+                        out << "        _data[" << (pext.base_offset + idx) << "] = 0x"
+                            << std::hex << pext.dense_table[idx] << std::dec << ";\n";
+                    }
+                }
+            }
+        }
+        out << "#else\n";
+        // Write magic hash tables
+        for (const auto& group : _groups)
+        {
+            for (size_t i = 0; i < 64; ++i)
             {
                 for (const auto& hash : group._hash_info[i].table)
                 {
@@ -210,6 +301,7 @@ public:
                 }
             }
         }
+        out << "#endif /* USE_PEXT */\n";
     #if LOCK_TABLE_DATA
         out << "    #ifdef _WIN32\n";
         out << "        VirtualLock(_data, sizeof(_data));\n";
@@ -221,20 +313,21 @@ public:
         out << "#else\n";
         out << "    AttackTable();\n";
         out << "#endif /* DEFINE_ATTACK_TABLE_CTOR */\n\n";
-        out << "    template <int Group>\n";
-        out << "    INLINE size_t hash(unsigned square, uint64_t occupancy_mask) const\n";
-        out << "    {\n";
-        out << "        const auto& hi = hash_info[Group * 64 + square];\n";
-        out << "        occupancy_mask &= hi.mask;\n";
-        out << "        occupancy_mask *= hi.mul;\n";
-        out << "        occupancy_mask >>= hi.shift;\n";
-        out << "        occupancy_mask &= GroupInfo<Group>::table_size - 1;\n";
-        out << "        return GroupInfo<Group>::offset + square * GroupInfo<Group>::table_size + occupancy_mask;\n";
-        out << "    }\n\n";
+
+        // get() method with PEXT/Magic dispatch
         out << "    template <int Group>\n";
         out << "    INLINE uint64_t get(int square, uint64_t occupancy_mask) const\n";
         out << "    {\n";
-        out << "        return _data[hash<Group>(square, occupancy_mask)];\n";
+        out << "#if USE_PEXT\n";
+        out << "        const auto& pi = pext_info[Group * 64 + square];\n";
+        out << "        return _data[pi.base_offset + PEXT(occupancy_mask, pi.mask)];\n";
+        out << "#else\n";
+        out << "        const auto& hi = hash_info[Group * 64 + square];\n";
+        out << "        uint64_t idx = occupancy_mask & hi.mask;\n";
+        out << "        idx *= hi.mul;\n";
+        out << "        idx >>= hi.shift;\n";
+        out << "        return _data[hi.base_offset + (idx & (GroupInfo<Group>::table_size - 1))];\n";
+        out << "#endif\n";
         out << "    }\n";
         out << "};\n\n";
         out << "extern const AttackTable attack_table;\n";
@@ -278,6 +371,24 @@ private:
             }
         }
         return false;
+    }
+
+    void build_pext(Square square, Bitboard mask, const HashTable& attacks, Group& group)
+    {
+        // PEXT table size is 2^popcount(mask)
+        const size_t table_size = 1UL << popcount(mask);
+        std::vector<uint64_t> dense_table(table_size, 0);
+
+        // Fill dense table: index = pext(occupancy, mask)
+        for (const auto& [occupancy, attack] : attacks)
+        {
+            size_t idx = pext_soft(occupancy, mask);
+            ASSERT_ALWAYS(idx < table_size);
+            dense_table[idx] = attack;
+        }
+
+        group.set_pext_info(square, mask, static_cast<uint32_t>(_pext_total_size), std::move(dense_table));
+        _pext_total_size += table_size;
     }
 
     template <AttacksType type>

@@ -2,7 +2,7 @@
 '''
 **********************************************************************
 Trainer for the Sturddle Chess 2.X engine's neural net.
-Copyright (c) 2023 - 2025 Cristian Vlasceanu.
+Copyright (c) 2023 - 2026 Cristian Vlasceanu.
 **********************************************************************
 '''
 import argparse
@@ -24,6 +24,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 ACCUMULATOR_SIZE = 1280
 ATTN_FAN_OUT = 32
 POOL_SIZE = 8
+ATTN_BUCKETS = 4  # Number of buckets for spatial attention layer
+HIDDEN2_BUCKETS = 4  # Number of buckets for hidden_2 layer
 
 Q_SCALE = 1024
 
@@ -59,13 +61,9 @@ def make_model(args, strategy):
             self.quantize_round = quantize_round
 
         def __call__(self, w):
-            w = tf.clip_by_value(w, self.qmin, self.qmax)
-
             if self.quantize_round:
-                # mask = tf.abs(w) < 1 / Q_SCALE
-                # w = tf.where(mask, tf.sign(w) / Q_SCALE, w)
                 w = tf.round(w * Q_SCALE) / Q_SCALE
-
+            w = tf.clip_by_value(w, self.qmin, self.qmax)
             return w
 
     @tf.function
@@ -90,29 +88,37 @@ def make_model(args, strategy):
             eval_target = clipped
 
         outcome_target = y_true[:, 1:2]
+        piece_ratio = y_true[:, 2:3]  # 0 to 1, for dynamic outcome weighting
+
         sigmoid_scale = tf.constant(args.outcome_scale, dtype=tf.float32)
 
         # convert predicted and expected (target) eval scores to Win/Draw/Loss prob. scores
         wdl_eval_pred = tf.sigmoid(y_pred * SCALE / sigmoid_scale)
         wdl_eval_target = tf.sigmoid(eval_target * SCALE / sigmoid_scale)
 
+        # Compute per-sample losses
         if args.loss_mae:
-            loss_eval = tf.reduce_mean(tf.abs(wdl_eval_pred - wdl_eval_target))
-            loss_outcome = tf.reduce_mean(tf.abs(wdl_eval_pred - outcome_target))
+            loss_eval = tf.abs(wdl_eval_pred - wdl_eval_target)
+            loss_outcome = tf.abs(wdl_eval_pred - outcome_target)
         elif args.loss_bce:
-            loss_eval = tf.keras.losses.binary_crossentropy(wdl_eval_target, wdl_eval_pred)
-            loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)
+            loss_eval = tf.keras.losses.binary_crossentropy(wdl_eval_target, wdl_eval_pred)[:, tf.newaxis]
+            loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)[:, tf.newaxis]
         else:
             # default: mean square error
-            loss_eval = tf.reduce_mean(tf.square(wdl_eval_pred - wdl_eval_target))
-            loss_outcome = tf.reduce_mean(tf.square(wdl_eval_pred - outcome_target))
+            loss_eval = tf.square(wdl_eval_pred - wdl_eval_target)
+            loss_outcome = tf.square(wdl_eval_pred - outcome_target)
 
-        # blend the losses
-        eval_weight = tf.constant(1.0 - args.outcome_weight, dtype=tf.float32)
-        outcome_weight = tf.constant(args.outcome_weight, dtype=tf.float32)
+        # Blend the losses with dynamic per-sample weighting based on piece count
+        base_outcome_weight = tf.constant(args.outcome_weight, dtype=tf.float32)
+        if args.dynamic_outcome_weight:
+            # More pieces -> trust outcome more (eval less reliable in complex positions)
+            outcome_weight = base_outcome_weight * piece_ratio
+        else:
+            outcome_weight = base_outcome_weight
+        eval_weight = 1.0 - outcome_weight
 
         loss = loss_eval * eval_weight + loss_outcome * outcome_weight
-        return loss
+        return tf.reduce_mean(loss)
 
 
     class Unpack(tf.keras.layers.Layer):
@@ -156,6 +162,61 @@ def make_model(args, strategy):
             sparse = features_tiled * bucket_mask
 
             return tf.reshape(sparse, [-1, 4 * num_features])
+
+
+    class AttnBucketShift(tf.keras.layers.Layer):
+        """Shift attention inputs into buckets based on pawn count (input-side bucketing)."""
+        def __init__(self, num_buckets, **kwargs):
+            super(AttnBucketShift, self).__init__(**kwargs)
+            self.num_buckets = num_buckets
+
+        def call(self, inputs):
+            # inputs[0]: hidden_1b output, shape (batch, 64)
+            # inputs[1]: unpacked features (to extract pawn count)
+            hidden_1b, features = inputs
+
+            # Extract pawn bits from features (same logic as BucketShift)
+            pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
+            pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
+            bucket_id = tf.cast(tf.minimum(pawn_count // 4, self.num_buckets - 1), tf.int32)
+
+            # Shift features into buckets (same approach as BucketShift)
+            num_features = tf.shape(hidden_1b)[1]
+            bucket_mask = tf.one_hot(bucket_id, self.num_buckets, dtype=hidden_1b.dtype)
+            bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
+
+            features_tiled = tf.tile(tf.expand_dims(hidden_1b, 1), [1, self.num_buckets, 1])
+            sparse = features_tiled * bucket_mask
+
+            return tf.reshape(sparse, [-1, self.num_buckets * num_features])
+
+
+    class Hidden2BucketShift(tf.keras.layers.Layer):
+        """Shift pooled hidden_1a output into buckets based on pawn count."""
+        def __init__(self, num_buckets, **kwargs):
+            super(Hidden2BucketShift, self).__init__(**kwargs)
+            self.num_buckets = num_buckets
+
+        def call(self, inputs):
+            # inputs[0]: pooled output (after residual), shape (batch, 160)
+            # inputs[1]: unpacked features (to extract pawn count)
+            pooled, features = inputs
+
+            # Extract pawn bits from features
+            pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
+            pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
+            bucket_id = tf.cast(tf.minimum(pawn_count // 4, self.num_buckets - 1), tf.int32)
+
+            # Shift features into buckets
+            num_features = tf.shape(pooled)[1]
+            bucket_mask = tf.one_hot(bucket_id, self.num_buckets, dtype=pooled.dtype)
+            bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
+
+            features_tiled = tf.tile(tf.expand_dims(pooled, 1), [1, self.num_buckets, 1])
+            sparse = features_tiled * bucket_mask
+
+            return tf.reshape(sparse, [-1, self.num_buckets * num_features])
+
 
     with strategy.scope():
         ACTIVATION = tf.keras.activations.relu
@@ -213,15 +274,14 @@ def make_model(args, strategy):
             trainable=not args.freeze_eval,
         )(input_1b)
 
-        # Experiment: pawns "reconstruction" auto-encoder
-        if args.pawn_reconstruction:
-            pawn_bits = Lambda(lambda x: x[:, 128:256], name='pawn_target')(unpack_layer)
-            pawn_bits = tf.cast(pawn_bits, tf.float32)
-            pawn_recon = Dense(128, activation='sigmoid', name='pawn_recon', trainable=not args.freeze_eval)(hidden_1b)
-            pawn_recon = tf.cast(pawn_recon, tf.float32)
-            recon_loss = tf.reduce_mean(tf.keras.losses.binary_crossentropy(pawn_bits, pawn_recon))
-
-        spatial_attn = Dense(ATTN_FAN_OUT, activation=None, name='spatial_attn', trainable=not args.freeze_eval)(hidden_1b)
+        # Bucketed spatial attention: shift hidden_1b into buckets based on pawn count, then apply Dense
+        hidden_1b_bucketed = AttnBucketShift(ATTN_BUCKETS, name='attn_bucket_shift')([hidden_1b, unpack_layer])
+        spatial_attn = Dense(
+            ATTN_FAN_OUT,
+            activation=None,
+            name='spatial_attn',
+            trainable=not args.freeze_eval
+        )(hidden_1b_bucketed)
 
         def custom_pooling(x):
             reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
@@ -239,13 +299,16 @@ def make_model(args, strategy):
         # Add residual connection: pooled + pooled * attention_weights
         residual = Add(name='residual')([pooled, modulation])
 
+        # Bucket the residual output before hidden_2
+        residual_bucketed = Hidden2BucketShift(HIDDEN2_BUCKETS, name='hidden2_bucket_shift')([residual, unpack_layer])
+
         hidden_2 = Dense(
             16,
             activation=ACTIVATION,
             kernel_initializer=K_INIT,
             name='hidden_2',
             trainable=not args.freeze_eval,
-        )(residual)
+        )(residual_bucketed)
 
         hidden_3 = Dense(
             16,
@@ -281,10 +344,6 @@ def make_model(args, strategy):
 
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=outputs, name=args.name)
-
-        if args.pawn_reconstruction:
-            model.add_loss(args.pawn_weight * recon_loss)
-            model.add_metric(recon_loss, name='pawns')
 
         if args.optimizer in ['adam', 'amsgrad']:
             optimizer=tf.keras.optimizers.Adam(
@@ -399,12 +458,26 @@ def make_model(args, strategy):
     return model
 
 
+def get_layer_weights(args, layer):
+    """Get layer weights, applying constraints if present."""
+    params = layer.get_weights()
+    if len(params) != 2:
+        return None
+    weights, biases = params
+    if args.quantize_round:
+        if layer.kernel_constraint:
+            weights = layer.kernel_constraint(weights).numpy()
+        if layer.bias_constraint:
+            biases = layer.bias_constraint(biases).numpy()
+    return weights, biases
+
+
 '''
 Export weights as C++ code snippet.
 '''
 def write_weigths(args, model, indent=2):
     for layer in model.layers:
-        params = layer.get_weights()
+        params = get_layer_weights(args, layer)
         if not params:
             continue
         weights, biases = params
@@ -444,12 +517,9 @@ def write_weigths(args, model, indent=2):
 
 def write_binary_weights(args, model, file):
     for layer in model.layers:
-        if layer.name == 'pawn_recon':
-            continue
-
-        weights = layer.get_weights()
-        if len(weights) == 2:
-            kernel, bias = weights
+        params = get_layer_weights(args, layer)
+        if params:
+            kernel, bias = params
             print(layer.name, kernel.shape, bias.shape)
             kernel.astype(np.float32).tofile(file)
             bias.astype(np.float32).tofile(file)
@@ -656,8 +726,22 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 y_outcome_flipped = 1.0 - y_outcome
                 y_outcome = tf.concat([y_outcome, y_outcome_flipped], axis=0)
 
+            # Compute piece count ratio (0 to 1) for dynamic outcome weighting
+            def popcount(bb):
+                """Count bits in uint64 array using parallel bit counting."""
+                bb = bb.astype(np.uint64)
+                bb = bb - ((bb >> 1) & np.uint64(0x5555555555555555))
+                bb = (bb & np.uint64(0x3333333333333333)) + ((bb >> 2) & np.uint64(0x3333333333333333))
+                bb = (bb + (bb >> 4)) & np.uint64(0x0F0F0F0F0F0F0F0F)
+                return ((bb * np.uint64(0x0101010101010101)) >> 56).astype(np.float32)
+
+            piece_count = np.zeros(x.shape[0], dtype=np.float32)
+            for i in range(12):
+                piece_count += popcount(x[:, i])
+            piece_ratio = (piece_count / 32.0)[:, np.newaxis]
+
             # Combine both targets into a single tensor
-            y_combined = tf.concat([y_eval, y_outcome], axis=1)  # Shape: (batch_size, 2)
+            y_combined = tf.concat([y_eval, y_outcome, tf.constant(piece_ratio)], axis=1)  # Shape: (batch_size, 3)
 
             # Prepare outputs based on whether move prediction is enabled
             if args.predict_moves and self.data.shape[1] > self.feature_count + 1:
@@ -749,11 +833,11 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             )
             output_shapes = (
                 (None, packed_feature_count),
-                ((None, 2), (None, 1))
+                ((None, 3), (None, 1))
             )
         else:
             output_types = (np.uint64, np.float32)
-            output_shapes = ((None, packed_feature_count), (None, 2))
+            output_shapes = ((None, packed_feature_count), (None, 3))
 
         dataset = tf.data.Dataset.from_generator(
             generator,
@@ -780,6 +864,23 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 if args.no_draw:
                     not_draw = tf.not_equal(outcome_y, 0.5)
                     condition = tf.logical_and(condition, not_draw)
+
+                if args.discard_mismatch:
+                    threshold = args.discard_mismatch / SCALE
+                    # eval_y is from White's POV, outcome_y is 0.0 (loss), 0.5 (draw), 1.0 (win)
+
+                    # Strong white advantage but black won
+                    white_winning_black_won = tf.logical_and(
+                        tf.greater(eval_y, threshold),
+                        tf.less(outcome_y, 0.25)
+                    )
+                    # Strong black advantage but white won
+                    black_winning_white_won = tf.logical_and(
+                        tf.less(eval_y, -threshold),
+                        tf.greater(outcome_y, 0.75)
+                    )
+                    mismatch = tf.logical_or(white_winning_black_won, black_winning_white_won)
+                    condition = tf.logical_and(condition, tf.logical_not(mismatch))
 
                 condition = tf.reshape(condition, [-1])  # Flatten to 1D
 
@@ -835,8 +936,36 @@ def set_weights(from_model, to_model):
 
         if len(to_layer.get_weights()):  # Trainable?
             try:
+                to_weights = to_layer.get_weights()
+                # Handle spatial_attn layer shape mismatch (unbucketed -> bucketed input)
+                if name == 'spatial_attn' and len(params) == 2 and len(to_weights) == 2:
+                    old_kernel, old_bias = params
+                    new_kernel, new_bias = to_weights
+                    # Check if source is unbucketed (64, 32) and target is bucketed (64*N, 32)
+                    if old_kernel.shape[0] < new_kernel.shape[0] and new_kernel.shape[0] % old_kernel.shape[0] == 0:
+                        num_buckets = new_kernel.shape[0] // old_kernel.shape[0]
+                        print(f"Converting spatial_attn: {old_kernel.shape} -> {new_kernel.shape} ({num_buckets} buckets)")
+                        # Tile weights across input buckets to preserve learned representation
+                        # Each bucket gets a copy of the original weights
+                        params = [
+                            np.tile(old_kernel, (num_buckets, 1)),
+                            old_bias  # bias stays the same size (32,)
+                        ]
+                # Handle hidden_2 layer shape mismatch (unbucketed -> bucketed input)
+                elif name == 'hidden_2' and len(params) == 2 and len(to_weights) == 2:
+                    old_kernel, old_bias = params
+                    new_kernel, new_bias = to_weights
+                    # Check if conversion is needed: old (160, 16) -> new (640, 16)
+                    if old_kernel.shape[0] < new_kernel.shape[0] and new_kernel.shape[0] % old_kernel.shape[0] == 0:
+                        num_buckets = new_kernel.shape[0] // old_kernel.shape[0]
+                        print(f"Converting hidden_2: {old_kernel.shape} -> {new_kernel.shape} ({num_buckets} buckets)")
+                        # Tile kernel across input buckets
+                        params = [
+                            np.tile(old_kernel, (num_buckets, 1)),
+                            old_bias  # bias stays the same size (16,)
+                        ]
                 to_layer.set_weights(params)
-            except:
+            except Exception:
                 logging.exception(name)
 
 
@@ -886,9 +1015,12 @@ def main(args):
         dataset, steps_per_epoch = dataset_from_file(args, args.input[0], strategy, callbacks)
 
         if args.schedule:
-            from keras.callbacks import ReduceLROnPlateau
+            if os.environ.get('TF_USE_LEGACY_KERAS'):
+                from tf_keras.callbacks import ReduceLROnPlateau
+            else:
+                from keras.callbacks import ReduceLROnPlateau
 
-            lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=1, min_lr=1e-9)
+            lr = ReduceLROnPlateau(monitor='loss', factor=0.5, patience=args.patience, min_lr=1e-10)
             callbacks.append(lr)
 
         if args.model is not None:
@@ -982,13 +1114,11 @@ if __name__ == '__main__':
 
         parser.add_argument('--no-capture', action='store_true', help='exclude captures from training')
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
+        parser.add_argument('--discard-mismatch', type=float, default=0, help='discard examples where |eval| > threshold (in centipawns) AND game outcome disagrees')
 
         parser.add_argument('--outcome-weight', type=float, default=0.1, help='weight for outcome loss vs eval loss')
         parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
-
-        # Experimental, pawn structure
-        parser.add_argument('--pawn-reconstruction', action='store_true')
-        parser.add_argument('--pawn-weight', type=float, default=0.025)
+        parser.add_argument('--dynamic-outcome-weight', action='store_true', help='scale outcome weight by piece count (more pieces = trust outcome more)')
 
         # Move prediction related arguments
         parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')
@@ -1019,6 +1149,7 @@ if __name__ == '__main__':
         parser.add_argument('--no-nesterov', dest='nesterov', action='store_false')
         parser.add_argument('--no-mixed-precision', dest='mixed_precision', action='store_false')
         parser.add_argument('--optimizer', choices=['adam', 'amsgrad', 'sgd'], default='amsgrad', help='optimization algorithm')
+        parser.add_argument('--patience', type=int, default=3, help='how many iterations to wait before decaying LR when using --schedule')
         parser.add_argument('--plot-file', help='plot model architecture to file')
         parser.add_argument('--sample', type=float, help='sampling ratio')
         parser.add_argument('--soft-alpha', type=float, default=0.01, help='alpha for soft_round operation')
@@ -1035,8 +1166,8 @@ if __name__ == '__main__':
             parser.error("--outcome-weight must be between 0 and 1 (inclusive)")
 
         # Validate move_weight
-        if args.predict_moves and (args.move_weight <= 0 or args.move_weight >= 1):
-            parser.error("--move-weight must be between 0 and 1 (exclusive)")
+        if args.predict_moves and (args.move_weight < 0 or args.move_weight > 1):
+            parser.error("--move-weight must be between 0 and 1 (inclusive)")
 
         # Validate new move prediction parameters
         if args.predict_moves:

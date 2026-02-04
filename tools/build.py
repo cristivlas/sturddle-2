@@ -3,7 +3,7 @@
 Build all-in-one executable using pyinstaller.
 
 Part of Sturddle Chess 2
-Copyright (c) 2023 - 2025 Cristian Vlasceanu.
+Copyright (c) 2023 - 2026 Cristian Vlasceanu.
 '''
 import argparse
 import glob
@@ -88,7 +88,7 @@ if __name__ == '__main__':
         ARCHS = [args.arch, '']
     elif args.native_uci:
         if platform.machine() in ['x86_64', 'AMD64']:
-            ARCHS = ['AVX512', 'AVX2', 'AVX2_VNNI', 'AVX', '']
+            ARCHS = ['AVX512', 'AVX512_BF16', 'AVX2', 'AVX2_VNNI', 'AVX', '']
         elif platform.machine() == 'aarch64':
             ARCHS = ['ARMv8_2', '']
 
@@ -98,26 +98,27 @@ if __name__ == '__main__':
         print(f'Building {arch if arch else "generic"} module')
         print('*********************************************************')
 
-        arch_flags = ''
+        arch_flags = '-DUSE_MAGIC_BITS'
         if is_windows() and 'clang-cl.exe' not in cl_exe.lower():
             if arch:
-                if arch.endswith('_VNNI'):
+                if arch.endswith('_VNNI') or arch.endswith('_BF16'):
                     print('Skipping. Compiler is NOT clang!')
                     continue
                 arch_flags = f'/arch:{arch}'
         # otherwise assume Clang or GCC on POSIX
         elif arch == 'AVX':
-            arch_flags = '-march=corei7-avx -mtune=corei7-avx'  # sandybridge
+            arch_flags = '-DUSE_MAGIC_BITS -march=corei7-avx -mtune=corei7-avx'  # sandybridge
         elif arch == 'AVX2':
-            arch_flags = '-march=core-avx2 -mtune=znver3'       # optimize for AMD Zen3
+            arch_flags = '-march=core-avx2 -mtune=znver3'  # optimize for AMD Zen3
         elif arch == 'AVX2_VNNI':
             arch_flags = '-march=alderlake -mtune=raptorlake'
+        elif arch == 'AVX512_BF16':
+            arch_flags = '-march=cooperlake -mtune=znver4'
         elif arch == 'AVX512':
             arch_flags = '-march=skylake-avx512 -mtune=skylake-avx512'
         elif arch == 'ARMv8_2':
-            arch_flags = '-march=armv8.2-a+fp16'
+            arch_flags = '-DUSE_MAGIC_BITS -march=armv8.2-a+fp16'
 
-        # os.environ['CXXFLAGS'] = f'{arch_flags} -DUSE_MMAP_HASH_TABLE -DSHARED_WEIGHTS'
         os.environ['CXXFLAGS'] = f'{arch_flags} -DSHARED_WEIGHTS'
 
         arch = arch.lower()
@@ -186,7 +187,6 @@ if __name__ == '__main__':
 
     MAIN = os.path.join(OUT_DIR, 'main' if args.native_uci else 'sturddle')
     NAME = f'{args.name}-{".".join(chess_engine.__build__[:3])}'
-    DGST = os.path.join(OUT_DIR, f'{NAME}-sha256.txt')
     NAME = os.path.join(OUT_DIR, NAME)
     if is_windows():
         MAIN += '.exe'
@@ -197,6 +197,8 @@ if __name__ == '__main__':
             sys.exit(-2)
     else:
         NAME += f'-{platform.system()}-{platform.machine()}'
+
+    DGST = f'{NAME}-sha256.txt'
 
     while True:
         try:

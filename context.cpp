@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2026 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -118,11 +118,10 @@ namespace
         INLINE bool lookup(const State& state, MovesList& moves)
         {
             const auto hash = state.hash();
-            const auto slot = scramble64(hash);
 
             for (size_t j = 0; j < BUCKET_SIZE; ++j)
             {
-                const auto i = (slot + j) & (_data.size() - 1);
+                const auto i = (hash + j) & (_data.size() - 1);
                 ASSERT(i < _data.size());
                 auto& entry = _data[i];
 
@@ -140,11 +139,10 @@ namespace
         INLINE void write(const State& state, const MovesList& moves, bool force_write = false)
         {
             const auto hash = state.hash();
-            const auto slot = scramble64(hash);
 
             for (size_t j = 0; j < BUCKET_SIZE; ++j)
             {
-                const auto i = (slot + j) & (_data.size() - 1);
+                const auto i = (hash + j) & (_data.size() - 1);
                 ASSERT(i < _data.size());
                 auto& entry = _data[i];
 
@@ -179,7 +177,7 @@ struct LMR
         {
             for (int moves = 1; moves < 64; ++moves)
             {
-                _table[depth][moves] = 0.5 + log(depth) * log(moves) / M_E;
+                _table[depth][moves] = 0.5 + log(depth) * log(moves) / 4;
             }
         }
     }
@@ -282,7 +280,7 @@ std::map<std::string, int> _get_params()
  *****************************************************************************/
 
 #if WITH_NNUE
-
+/* Define the network architecture */
 constexpr int INPUTS_A = 3588;
 constexpr int INPUTS_B = 256;
 constexpr int HIDDEN_1A = 1280;
@@ -291,10 +289,14 @@ constexpr int HIDDEN_1B = 64;
 constexpr int HIDDEN_2 = 16;
 constexpr int HIDDEN_3 = 16;
 
-using LAttnType = nnue::Layer<HIDDEN_1B, 32>;
+using LAttnType = nnue::Layer<HIDDEN_1B * nnue::ATTN_BUCKETS, 32>;
 using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
 using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
-using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2>;
+#if USE_BF16
+  using L2Type = nnue::Layer<HIDDEN_1A_POOLED * nnue::HIDDEN2_BUCKETS, HIDDEN_2, __bf16>;
+#else
+  using L2Type = nnue::Layer<HIDDEN_1A_POOLED * nnue::HIDDEN2_BUCKETS, HIDDEN_2, float>;
+#endif
 using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
 using EVALType = nnue::Layer<HIDDEN_3, 1>;
 
@@ -548,6 +550,14 @@ void search::Context::eval_with_nnue()
 }
 
 
+#if WITH_NNUE
+int search::Context::get_bucket() const
+{
+    return nnue::get_bucket(state());
+}
+#endif
+
+
 void search::Context::update_root_accumulators()
 {
     const auto& root = NNUE_data[0][0];
@@ -758,10 +768,11 @@ namespace search
 
 
     /*
-     * Track the best score and move so far, return true if beta cutoff;
+     * Track the best score and move so far;
      * called from search right after: score = -negamax(*next_ctxt).
+     * Returns: Cutoff if beta cutoff, Retry if re-search needed, None otherwise.
      */
-    bool Context::is_beta_cutoff(Context* next_ctxt, score_t score)
+    FailHigh Context::is_beta_cutoff(Context* next_ctxt, score_t score)
     {
         ASSERT(!next_ctxt->is_root());
         ASSERT(score > SCORE_MIN && score < SCORE_MAX);
@@ -776,7 +787,7 @@ namespace search
 
                 /* ignore if not fail-high */
                 if (score < _beta)
-                    return false;
+                    return FailHigh::None;
             }
 
             if (score > _alpha)
@@ -791,24 +802,15 @@ namespace search
                     }
                     else if (next_ctxt->_retry_above_alpha == RETRY::Reduced)
                     {
-                        ASSERT(!next_ctxt->is_retry());
-                        _retry_next = true;
-
                         if constexpr(EXTRA_STATS)
                             ++_tt->_retry_reductions;
+
+                        return FailHigh::Retry;
                     }
                     else if (next_ctxt->_retry_above_alpha == RETRY::PVS && score < _beta)
                     {
-                        ASSERT(!next_ctxt->is_retry());
-                        _retry_next = true;
                         _retry_beta = -score;
-                    }
-
-                    if (_retry_next)
-                    {
-                        /* rewind and search again at full depth */
-                        rewind(-1);
-                        return false;
+                        return FailHigh::Retry;
                     }
 
                     if (score >= _beta)
@@ -844,7 +846,7 @@ namespace search
 
         ASSERT(_alpha >= _score); /* invariant */
 
-        return _alpha >= _beta;
+        return _alpha >= _beta ? FailHigh::Cutoff : FailHigh::None;
     }
 
 
@@ -1145,6 +1147,7 @@ namespace search
             _eval += eval_insufficient_material(state(), _eval, [this]() {
                 return eval_tactical(*this, _eval);
             });
+
         #endif /* !WITH_NNUE */
         }
 
@@ -1202,7 +1205,7 @@ namespace search
      */
     const Move* Context::first_valid_move()
     {
-        rewind(0);
+        rewind();
         return get_next_move(0 /* = no futility pruning */);
     }
 
@@ -1277,16 +1280,15 @@ namespace search
         _cutoff_move = Move();
         _has_singleton = false;
 
-        _max_depth = iteration() + (turn() == chess::BLACK);
+        _max_depth = iteration();
 
         _mate_detected = 0;
 
         _repeated = -1;
 
-        _retry_next = false;
         _retry_beta = SCORE_MAX;
 
-        rewind(0, force_reorder_moves);
+        rewind(force_reorder_moves);
     }
 
 
@@ -1390,7 +1392,7 @@ namespace search
 
         if (_move._group != MoveOrder::TACTICAL_MOVES)
         {
-            reduction += !_parent->has_improved();
+            reduction += !_parent->has_improved<THEM>();
             reduction -= 2 * _parent->is_counter_move(_move);
 
             if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= 13)
@@ -1398,7 +1400,16 @@ namespace search
         }
 
         if (is_capture() || (_move.from_square() == _parent->_capture_square))
+        {
             --reduction;
+        #if CAPTURE_HISTORY
+            const auto cap_hist = _tt->capture_history_score(_parent->state(), _parent->turn(), _move);
+            if (cap_hist > CAPTURE_HISTORY_LMR_HIGH)
+                --reduction;
+            else if (cap_hist > 0 && cap_hist < CAPTURE_HISTORY_LMR_LOW)
+                ++reduction;
+        #endif /* CAPTURE_HISTORY */
+        }
 
         const auto hist_score = _parent->history_score(_move);
         if (hist_score > 0 && hist_score < HISTORY_LOW)
@@ -1592,20 +1603,25 @@ namespace search
      * MoveMaker
      *---------------------------------------------------------------------*/
 
-    int MoveMaker::rewind(Context& ctxt, int where, bool force_reorder)
+    int MoveMaker::rewind(Context& ctxt, bool force_reorder)
     {
         if (_count < 0)
             return -1;
 
-        ASSERT(_count > 0 || where == 0);
-        ASSERT(where == 0 || where == -1); /* other cases not supported */
+        /*
+         * Pruning decisions depend on depth; rewind without reorder
+         * should only happen at the same depth as when moves were ordered,
+         * unless no pruning occurred.
+         */
+        if (!force_reorder && (_have_pruned_moves || _have_quiet_moves))
+        {
+            ASSERT(_reorder_depth == ctxt._max_depth);
+        }
 
         if (force_reorder)
         {
-            ASSERT(!ctxt.is_retry());
-            ASSERT(where == 0);
-
             _phase = 0;
+            _reorder_depth = ctxt._max_depth;
 
             auto& moves_list = ctxt.moves();
             for (int i = 0; i != _count; ++i)
@@ -1631,19 +1647,9 @@ namespace search
                 move._score = 0;
                 move._group = MoveOrder::UNORDERED_MOVES;
             }
-
         }
 
-        if (where >= 0)
-        {
-            _current = std::min(where, _count);
-        }
-        else
-        {
-            _current = std::max(0, _current + where);
-        }
-
-        ASSERT(_current >= 0);
+        _current = 0;
         return _current;
     }
 
@@ -1677,6 +1683,7 @@ namespace search
 
         _count = int(moves_list.size());
         _current = 0;
+        _reorder_depth = ctxt._max_depth;
 
         auto& states_vec = Context::states(ctxt.tid(), ctxt._ply);
         if (states_vec.size() < size_t(_count))

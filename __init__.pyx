@@ -1,7 +1,7 @@
 # distutils: language = c++
 # cython: language_level = 3
 """
-Sturddle Chess Engine (c) 2022 - 2025 Cristian Vlasceanu.
+Sturddle Chess Engine (c) 2022 - 2026 Cristian Vlasceanu.
 -------------------------------------------------------------------------
 
 This program is free software: you can redistribute it and/or modify
@@ -193,7 +193,7 @@ cdef extern from 'chess.h' namespace 'chess':
         Bitboard checkers_mask(Color) const
 
         void generate_castling_moves(MovesList& moves) const
-        void generate_moves(MovesList&, MovesList&) const
+        void generate_moves(MovesList&) const
 
         MovesList& generate_pseudo_legal_moves(MovesList&, Bitboard, Bitboard) const
         size_t make_pseudo_legal_moves(MovesList&) const
@@ -482,7 +482,7 @@ cdef extern from 'context.h' namespace 'search':
 
         bool            is_repeated() const
         int             iteration() const
-        int             rewind(int where, bool reorder)
+        int             rewind(bool reorder)
         void            reset(bool, bool)
 
         @staticmethod
@@ -1197,12 +1197,11 @@ def perft(fen, repeat=1):
 
 def perft2(fen, repeat=1):
     cdef MovesList moves
-    cdef MovesList buffer
     cdef size_t count = 0
     board = BoardState(chess.Board(fen=fen))
     start = time.perf_counter()
     for i in range(0, repeat):
-        board._state.generate_moves(moves, buffer)
+        board._state.generate_moves(moves)
         count += moves.size()
     return count, time.perf_counter() - start
 
@@ -1219,7 +1218,7 @@ def perft3(fen, repeat=1):
         node._ctxt._max_depth = max(1, i % 100)
         while node._ctxt.next(False, 0, move_count) != NULL:
             count += 1
-        node._ctxt.rewind(0, True)
+        node._ctxt.rewind(True)
 
     return count, time.perf_counter() - start
 
@@ -1245,7 +1244,6 @@ def board_from_fen(fen: str):
         return board
 
 
-
 def set_syzygy_path(path):
     Context.set_syzygy_path(path.encode())
 
@@ -1261,7 +1259,7 @@ init_static_callbacks()
 Context.init(os.path.dirname(__file__).encode())
 
 __major__   = 2
-__minor__   = 4
+__minor__   = 5
 __patch__   = 0
 __build__   = [str(__major__), f'{int(__minor__):d}', str(__patch__), timestamp().decode()]
 

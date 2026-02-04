@@ -559,6 +559,7 @@ private:
     void debug();
     void go(const Arguments &args);
     void isready();
+    void perft(int depth, bool pseudo_legal);
     void ponderhit();
     void position(const Arguments &args);
     void setoption(const Arguments &args);
@@ -1001,8 +1002,7 @@ void UCI::debug()
     search::Context::print_board(std::cout, _buf._state, use_unicode);
     output(std::format("fen: {}", search::Context::epd(_buf._state)));
     output(std::format("hash: {}", _buf._state._hash));
-    size_t history_size = 0;
-    history_size = search::Context::_history->_positions.size();
+    const size_t history_size = search::Context::_history->size();
     output(std::format("history size: {}", history_size));
     output(std::format("halfmove clock: {}", search::Context::_history->_fifty));
     std::ostringstream checkers;
@@ -1016,6 +1016,14 @@ void UCI::debug()
 void UCI::go(const Arguments &args)
 {
     stop();
+
+    /* Handle "go perft <depth> [pseudo]" */
+    if (args.size() >= 3 && args[1] == "perft")
+    {
+        const bool pseudo_legal = (args.size() >= 4 && args[3] == "pseudo");
+        perft(to_int(args[2]), pseudo_legal);
+        return;
+    }
 
     bool explicit_movetime = false, do_analysis = false, do_ponder = false;
     int movestogo = 0, movetime = 0;
@@ -1366,6 +1374,77 @@ void UCI::stop()
     _compute_pool->wait_for_tasks();
 #endif
     output_best_move();
+}
+
+/**
+ * Recursive perft function.
+ * Uses pre-allocated move lists from Context to avoid allocation overhead.
+ * When output_move is provided, outputs per-move node counts (for root level).
+ */
+static uint64_t perft(
+    chess::State& state,
+    int depth,
+    int ply,
+    bool pseudo_legal,
+    std::function<void(const chess::Move&, uint64_t)> output_move = nullptr)
+{
+    if (ply >= PLY_MAX - 1)
+        return 0;
+
+    auto& moves = search::Context::moves(0, ply);
+    if (pseudo_legal)
+        state.generate_pseudo_legal_moves(moves);
+    else
+        state.generate_moves(moves);
+
+    uint64_t total = 0;
+    chess::State next;
+
+    for (const auto& move : moves)
+    {
+        uint64_t nodes = 1;
+        if (depth > 1)
+        {
+            state.clone_into(next);
+            next.apply_move(move);
+            nodes = perft(next, depth - 1, ply + 1, pseudo_legal);
+        }
+        total += nodes;
+
+        if (output_move)
+            output_move(move, nodes);
+    }
+    return total;
+}
+
+/**
+ * Perft command: shows node counts for each root move.
+ */
+void UCI::perft(int depth, bool pseudo_legal)
+{
+    const auto start = std::chrono::steady_clock::now();
+
+    uint64_t total = ::perft(_buf._state, depth, 0, pseudo_legal, [](const chess::Move& move, uint64_t nodes) {
+        g_out.clear();
+        std::format_to(std::back_inserter(g_out), "{}: {}", move.uci(), nodes);
+        output(g_out);
+    });
+
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+
+    output("");
+    g_out.clear();
+    std::format_to(std::back_inserter(g_out), "Nodes searched: {}{}", total, pseudo_legal ? " (pseudo-legal)" : "");
+    output(g_out);
+
+    if (ms > 0)
+    {
+        const auto nps = total * 1000 / ms;
+        g_out.clear();
+        std::format_to(std::back_inserter(g_out), "Time: {} ms, NPS: {}", ms, nps);
+        output(g_out);
+    }
 }
 
 void UCI::uci()

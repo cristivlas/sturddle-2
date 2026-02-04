@@ -1,6 +1,6 @@
 #pragma once
 /*
- * Sturddle Chess Engine (C) 2023 - 2025 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2023 - 2026 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,16 +25,33 @@
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
+    #if defined(__AVX512BF16__) && defined(__AVX512VL__)
+        #define USE_BF16 true
+    #else
+        #define USE_BF16 false
+    #endif
 #elif (__arm__) || (__arm64__) || (__aarch64__)
     #define __ARM__ true
     #include "armvector.h"
 #endif
 
-#if __AVXVNNI__
+#if __AVXVNNI__ || __AVX512VNNI__
     #define ARCH_VNNI "/VNNI"
 #else
     #define ARCH_VNNI
 #endif /* __AVXVNNI__ */
+
+#ifdef __FMA__  /* support fused multiply+add? */
+    #define ARCH_FMA "/FMA"
+#else
+    #define ARCH_FMA
+#endif /* __FMA__ */
+
+#if USE_BF16
+    #define ARCH_BF16 "/BF16"
+#else
+    #define ARCH_BF16
+#endif /* USE_BF16 */
 
 #ifndef ARCH
     #if INSTRSET >= 9 /* AVX 512 */
@@ -57,15 +74,20 @@
 #endif
 
 #ifndef DEBUG_INCREMENTAL
-#define DEBUG_INCREMENTAL false
+    #define DEBUG_INCREMENTAL false
 #endif
 
 namespace nnue
 {
+    static const std::string instrset = ARCH ARCH_FMA ARCH_VNNI ARCH_BF16;
+
     using namespace chess;
     using input_t = int16_t;
+    using weight_t = float;
 
     constexpr int ACTIVE_INPUTS = 897;
+    constexpr int ATTN_BUCKETS = 4;
+    constexpr int HIDDEN2_BUCKETS = 4;
     constexpr int EVAL_SCALE = 100;
     constexpr int MAX_ACTIVE_INPUTS = 65; // 32 pieces + 32 occupancy mask + turn
     constexpr auto POOL_STRIDE = Vec8s::size();
@@ -73,6 +95,11 @@ namespace nnue
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
+
+    INLINE int get_bucket(const State& state)
+    {
+        return std::min<int>(chess::popcount(state.pawns) / 4, 3);
+    }
 
     #if INSTRSET >= 9
         using Vector = Vec16f;
@@ -103,15 +130,62 @@ namespace nnue
         }
     #endif /* INSTRSET */
 
-#ifdef __FMA__  /* support fused multiply+add? */
-    static const std::string instrset = ARCH "/FMA" ARCH_VNNI;
-#else
-    static const std::string instrset = ARCH ARCH_VNNI;
-#endif /* __FMA__ */
 
     static const Vector v_zero(0.0);
     static const Vec8s  v8_zero(0);
 
+    /* Type trait: selects vector type based on weight storage type */
+    template<typename T> struct Vec { using type = Vector; };
+
+#if USE_BF16
+    class Vec32_bf16
+    {
+        __m512bh v;
+
+    public:
+        static constexpr size_t size() { return 32; }
+
+        Vec32_bf16() = default;
+        Vec32_bf16(__m512bh x) : v(x) {}
+
+        operator __m512bh() const { return v; }
+
+        INLINE void load_a(const float *p)
+        {
+            Vec16f low, high;
+            low.load_a(p);
+            high.load_a(p + 16);
+            // float32 to bf16 using dedicated conversion instruction (with rounding)
+            v = _mm512_cvtne2ps_pbh(high, low);
+        }
+
+        INLINE void load_a(const __bf16 *p)
+        {
+            v = (__m512bh)_mm512_load_si512((const __m512i*)p);
+        }
+    };
+
+    INLINE Vec16f mul_add(const Vec32_bf16& a, const Vec32_bf16& b, Vec16f acc)
+    {
+        return Vec16f(_mm512_dpbf16_ps(acc, a, b));
+    }
+
+    template<> struct Vec<__bf16> { using type = Vec32_bf16; };
+
+    template <int N> INLINE void load_partial(Vec16f& v, const __bf16* p)
+    {
+        if constexpr (N == Vec16f::size())
+        {
+            __m256bh vh = (__m256bh)_mm256_load_si256((const __m256i*)p);
+            // bf16 to float32: zero-extend to 32 bits, shift left by 16
+            v = _mm512_castsi512_ps(_mm512_slli_epi32(_mm512_cvtepu16_epi32(vh), 16));
+        }
+        else
+        {
+            static_assert(false);
+        }
+    }
+#endif /* USE_BF16 */
 
     template <typename V>
     INLINE bool all_zero(V v)
@@ -136,7 +210,8 @@ namespace nnue
         return !horizontal_or(v.get_high() | v.get_low());
     }
 
-    INLINE Vec32s horizontal_add(const Vec32s (&v)[32])
+    template <typename V>
+    INLINE Vec32s horizontal_add(const V (&v)[32])
     {
         return Vec32s(
             horizontal_add_x(v[0]),  horizontal_add_x(v[1]),  horizontal_add_x(v[2]),  horizontal_add_x(v[3]),
@@ -320,11 +395,19 @@ namespace nnue
 
 
 #if INSTRSET >= 9 /* AVX-512 */
-    /* Overflow is prevented at training time */
-    INLINE Vec32s mul_add(Vec32s a, Vec32s b, Vec32s acc)
-    {
-        return acc + a * b;
-    }
+    #if __AVX512VNNI__
+        INLINE Vec16i mul_add(Vec32s a, Vec32s b, Vec16i acc)
+        {
+            // VPDPWSSD: dot-product of signed 16-bit pairs into signed 32-bit dwords
+            return Vec16i(_mm512_dpwssd_epi32(acc, a, b));
+        }
+    #else
+        INLINE Vec16i mul_add(Vec32s a, Vec32s b, Vec16i acc)
+        {
+            __m512i product = _mm512_madd_epi16(a, b);
+            return _mm512_add_epi32(acc, product);
+        }
+    #endif /* __AVX512VNNI__ */
 #elif __ARM__
     INLINE Vec16s mul_add(Vec16s a, Vec16s b, Vec16s acc)
     {
@@ -333,7 +416,7 @@ namespace nnue
 #else
     INLINE Vec8i mul_add(Vec16s a, Vec16s b, Vec8i acc)
     {
-    #if __AVXVNNI
+    #if __AVXVNNI__
         return _mm256_dpwssd_epi32(acc, a, b);
     #elif INSTRSET < 8
         /* SSE2 */
@@ -379,7 +462,7 @@ namespace nnue
     };
 
 
-    template <int I, int O, typename T=float, int Scale=1, bool Incremental=false>
+    template <int I, int O, typename T=weight_t, int Scale=1, bool Incremental=false>
     struct Layer : BaseLayer<I, O, T, Scale, Incremental>
     {
         using Base = BaseLayer<I, O, T, Scale, Incremental>;
@@ -450,7 +533,7 @@ namespace nnue
         {
         #if INSTRSET >= 9 /* AVX 512 */
             using VecShort = Vec32s;
-            using VSum = Vec32s;
+            using VSum = Vec16i;
         #elif __ARM__
             using VecShort = Vec16s;
             using VSum = Vec16s;
@@ -467,6 +550,7 @@ namespace nnue
             VSum sum[N]; /* accumulate partial sums */
 
             constexpr auto INPUT_MAX = std::min<int>(INPUTS, INPUT_SIZE);
+            static_assert(INPUT_SIZE % N == 0);
 
             for (int j = 0; j != OUTPUTS; j += N)
             {
@@ -488,66 +572,32 @@ namespace nnue
                 }
 
                 const auto sums = horizontal_add(sum);
+                static_assert(sums.size() == N);
                 vw.load_a(&_b[j]);
                 (vw + sums).store_a(&output[j]);
             }
         }
 
-        template <typename F>
-        INLINE void dot_sparse(int16_t (&output)[OUTPUTS], size_t base, F&& for_each_active) const
-        {
-        #if __ARM__
-            using VecShort = Vec16s;
-        #else
-            using VecShort = Vec32s;
-        #endif
-
-            VecShort vo, vw;
-
-            // Initialize with biases
-            for (int j = 0; j < OUTPUTS; j += VecShort::size())
-            {
-                vw.load_a(&_b[j]);
-                vw.store_a(&output[j]);
-            }
-
-            // Collect active indices
-            int active[MAX_ACTIVE_INPUTS];
-            int count = 0;
-            for_each_active([&](int idx) { ASSERT(count < MAX_ACTIVE_INPUTS); active[count++] = idx; });
-
-            // Add weights, looping over outputs once
-            for (int j = 0; j < OUTPUTS; j += VecShort::size())
-            {
-                vo.load_a(&output[j]);
-
-                for (int k = 0; k < count; ++k)
-                {
-                    vw.load_a(&this->_w[base + active[k]][j]);
-                    vo += vw;
-                }
-
-                vo.store_a(&output[j]);
-            }
-        }
-
         /* hidden, output */
-        template <typename ACTIVATION>
+        template <size_t INPUT_SIZE, typename WT, typename ACTIVATION>
         static INLINE void dot(
-            const float (&input)[INPUTS],
+            const float (&input)[INPUT_SIZE],
             float (&output)[OUTPUTS],
-            const float(&b)[OUTPUTS],
-            const float(&wt)[OUTPUTS][INPUTS],
-            ACTIVATION activate
+            const WT(&b)[OUTPUTS],
+            const WT(&wt)[OUTPUTS][INPUTS],
+            ACTIVATION activate,
+            size_t base = 0
         )
         {
             constexpr int N = Vector::size();
             constexpr int Q = (OUTPUTS % N == 0) ? N : OUTPUTS % N;
 
-            static_assert(INPUTS % N == 0);
+            static_assert(INPUT_SIZE % N == 0);
             static_assert(Q == N || Q == 1); /* result layer: Q == 1 */
 
-            Vector sum[Q], v_wt, v_in, v_out;
+            Vector sum[Q], v_out;
+            typename Vec<WT>::type v_in, v_wt;
+            static_assert(INPUT_SIZE % v_in.size() == 0);
 
             for (int j = 0; j != OUTPUTS; j += Q)
             {
@@ -555,15 +605,15 @@ namespace nnue
                 for (int k = 0; k != Q; ++k)
                     sum[k] = Vector(0.0);
 
-                #pragma unroll INPUTS
-                for (int i = 0; i != INPUTS; i += N)
+                #pragma unroll INPUT_SIZE
+                for (size_t i = 0; i != INPUT_SIZE; i += v_in.size())
                 {
                     v_in.load_a(&input[i]);
 
                     #pragma unroll Q
                     for (int k = 0; k != Q; ++k)
                     {
-                        v_wt.load_a(&wt[j + k][i]);
+                        v_wt.load_a(&wt[j + k][base + i]);
                         sum[k] = mul_add(v_in, v_wt, sum[k]);
                     }
                 }
@@ -577,13 +627,25 @@ namespace nnue
         template <size_t N, typename U, typename V>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS]) const
         {
-            dot(input, output, _b, _wt, [](const Vector& v) { return v; });
+            dot(input, output, _b, _wt, [](const Vector& v) { return v; }, 0);
+        }
+
+        template <size_t N, typename U, typename V>
+        INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], size_t base) const
+        {
+            dot(input, output, _b, _wt, [](const Vector& v) { return v; }, base);
         }
 
         template <size_t N, typename U, typename V, typename ACTIVATION>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], ACTIVATION activate) const
         {
-            dot(input, output, _b, _wt, activate);
+            dot(input, output, _b, _wt, activate, 0);
+        }
+
+        template <size_t N, typename U, typename V, typename ACTIVATION>
+        INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], ACTIVATION activate, size_t base) const
+        {
+            dot(input, output, _b, _wt, activate, base);
         }
     };
 
@@ -648,12 +710,6 @@ namespace nnue
     #endif
 
 
-        static INLINE int get_bucket(const State& state)
-        {
-            return std::min<int>(chess::popcount(state.pawns) / 4, 3);
-        }
-
-
         INLINE bool needs_update(const State& state) const
         {
             return state.hash() != _bucket[_current_bucket].hash;
@@ -668,26 +724,13 @@ namespace nnue
 
         #if DEBUG_INCREMENTAL
             memset(&_input, 0, sizeof(_input));
-            one_hot_encode(state, _input);
-        #endif
-
-        #if DOT_SPARSE
-            layer_1a.dot_sparse(_bucket[bucket].output, base, [&](auto&& add_weight) {
-                for_each_active_input(state, add_weight);
-            });
-            layer_1b.dot_sparse(_output_b, 0, [&](auto&& add_weight) {
-                for_each_active_king_or_pawn(state, add_weight);
-            });
         #else
-        #if !DEBUG_INCREMENTAL
             ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
         #endif
             one_hot_encode(state, _input);
 
             layer_1a.dot(_input, _bucket[bucket].output, base);
             layer_1b.dot(_input, _output_b);
-
-        #endif /* DOT_SPARSE */
 
             _bucket[bucket].hash = state.hash();
             _current_bucket = bucket;
@@ -968,26 +1011,30 @@ namespace nnue
     template <typename A, typename ATTN, typename L2, typename L3, typename OUT>
     INLINE int eval(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out)
     {
-        static_assert(A::OUTPUTS_A == L2::INPUTS * POOL_STRIDE);
-        static_assert(A::OUTPUTS_B == ATTN::INPUTS);
+        constexpr int POOL_OUT = A::OUTPUTS_A / POOL_STRIDE;
+        static_assert(POOL_OUT * HIDDEN2_BUCKETS == L2::INPUTS);
+        static_assert(A::OUTPUTS_B * ATTN_BUCKETS == ATTN::INPUTS);
 
-        ALIGN float attn_in[ATTN::INPUTS];
+        constexpr int ATTN_IN_PER_BUCKET = A::OUTPUTS_B;
+
+        ALIGN float attn_in[ATTN_IN_PER_BUCKET];
         ALIGN float attn_out[ATTN::OUTPUTS];
-        ALIGN float l2_in[L2::INPUTS];
+        ALIGN float l2_in[POOL_OUT];
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
 
         pool(a._bucket[a._current_bucket].output, l2_in);
 
-        /* The "spatial attention" layer modulates L2. */
+        /* The "spatial attention" layer modulates L2 input. */
+        /* Use bucket offset to select the right weights slice */
         activate(a._output_b, attn_in);
-        attn.dot(attn_in, attn_out);
+        attn.dot(attn_in, attn_out, static_cast<size_t>(a._current_bucket * ATTN_IN_PER_BUCKET));
 
-        static_assert(L2::INPUTS % Vector::size() == 0);
+        static_assert(POOL_OUT % Vector::size() == 0);
 
         Vector v1, v2;
-        for (int i = 0; i != L2::INPUTS; i += Vector::size())
+        for (int i = 0; i != POOL_OUT; i += Vector::size())
         {
             v1.load_a(&l2_in[i]);
             v2.load_a(&attn_out[i % ATTN::OUTPUTS]);
@@ -996,8 +1043,9 @@ namespace nnue
         }
         /* end of modulation */
 
-        l2.dot(l2_in, l2_out, [](const Vector& v) { return max(v, v_zero); });
-        l3.dot(l2_out, l3_out, [](const Vector& v) { return max(v, v_zero); });
+        /* hidden_2: use bucket offset to select the right weights slice */
+        l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); }, static_cast<size_t>(a._current_bucket * POOL_OUT));
+        l3.dot(l2_out, l3_out, [](const Vector& v) { return relu(v); });
 
         out.dot(l3_out, output);
         return EVAL_SCALE * output[0];

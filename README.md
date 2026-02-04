@@ -25,8 +25,9 @@ or:
 <code>CC=clang++ CFLAGS=-march=native python3 setup.py build_ext --inplace</code>
 
 # Neural Net Architecture
-This version of the engine uses my original **Bluejay** architecture. It retains the "spatial attention" brilliant
-design of previous versions, but changes the activation to linear, and it introduces a "bucket shifting" layer.
+This version of the engine uses an original model nicknamed **Raptor-III**, which expands on the bucketing idea introduced
+in 2.4.0 with the **Bluejay** architecture, by adding bucket-shifting in the "spatial attention" modulation path, and to the
+second hidden layer.
 
 *NOTE*: Some internal details omitted for simplicity.
 

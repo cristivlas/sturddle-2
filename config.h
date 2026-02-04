@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2026 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -83,6 +83,16 @@ struct Config
         const int   _max = 0;
         const std::string _group;
         const bool  _normal = false;
+
+        template <typename T>
+        Param(Val* val, int min_val, int max_val, T group, bool normal)
+            : _val(val), _default_val(*val), _min(min_val), _max(max_val), _group(group), _normal(normal)
+        {}
+
+        template <typename T>
+        Param(Val* val, int default_val, int min_val, int max_val, T group, bool normal)
+            : _val(val), _default_val(default_val), _min(min_val), _max(max_val), _group(group), _normal(normal)
+        {}
     };
 
     using Namespace = std::map<std::string, Param>;
@@ -272,6 +282,9 @@ GROUP(Search)
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
 DECLARE_CONST(  DOUBLE_EXT_MAX,                       2,    0,       5)
 DECLARE_VALUE(  EXCHANGES_MAX_DEPTH,                  4,    2,      32)
+DECLARE_VALUE(  IMPROVEMENT_EXTENSION_DEPTH,          6,    0,      15)
+DECLARE_VALUE(  IMPROVEMENT_MARGIN,                  45,    0,     200)
+
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_THRESHOLD,        4,    0,      10)
 
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
@@ -335,6 +348,13 @@ DECLARE_VALUE(  WINDOW_DIV,                          67,    1,     100)
 DECLARE_VALUE(  WINDOW_HALF,                         25,    5,      50)
 
 GROUP(MoveOrdering)
+
+#if CAPTURE_HISTORY
+DECLARE_VALUE(  CAPTURE_HISTORY_LMR_HIGH,           181,   50,     400)
+DECLARE_VALUE(  CAPTURE_HISTORY_LMR_LOW,             47,    0,     150)
+DECLARE_VALUE(  CAPTURE_HISTORY_WEIGHT,             410,  100,    1024)
+#endif /* CAPTURE_HISTORY */
+
 DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 217,  150,     230)
 DECLARE_VALUE(  COUNTER_MOVE_MIN_DEPTH,               2,    0,       5)
 

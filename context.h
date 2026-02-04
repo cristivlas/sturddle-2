@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2026 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -80,6 +80,8 @@ namespace search
         MTDF,
     };
 
+    enum POV : bool { US, THEM };
+
 
     /* For detecting repeated positions */
     struct History
@@ -134,7 +136,7 @@ namespace search
         bool is_last(Context&);
         bool is_singleton(Context&);
 
-        int rewind(Context&, int where, bool reorder);
+        int rewind(Context&, bool reorder = false);
 
         INLINE void swap(MoveMaker& other)
         {
@@ -146,6 +148,7 @@ namespace search
             std::swap(_phase, other._phase);
             std::swap(_count, other._count);
             std::swap(_current, other._current);
+            std::swap(_reorder_depth, other._reorder_depth);
             std::swap(_state_index, other._state_index);
         }
 
@@ -188,6 +191,7 @@ namespace search
         int8_t      _phase = 0; /* move ordering phase */
         int         _count = -1;
         int         _current = -1;
+        int         _reorder_depth = 0; /* depth at which moves were ordered */
         size_t      _state_index = 0;
     };
 
@@ -196,6 +200,9 @@ namespace search
 
     /* Reason for retrying */
     enum class RETRY : uint8_t { None = 0, Reduced, PVS };
+
+    /* Result of is_beta_cutoff */
+    enum class FailHigh : int { None = 0, Cutoff, Retry };
 
     INLINE constexpr bool operator!(RETRY retry) { return retry == RETRY::None; }
 
@@ -270,7 +277,6 @@ namespace search
         int16_t     _beta = SCORE_MAX;
         int16_t     _score = SCORE_MIN; /* dynamic eval score */
         int16_t     _retry_beta = SCORE_MAX; /* NEGASCOUT only */
-        mutable int _improvement = SCORE_MIN;
 
         Algorithm   _algorithm = Algorithm::MTDF;
 
@@ -288,7 +294,6 @@ namespace search
         bool        _multicut_allowed = MULTICUT;
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
-        bool        _retry_next = false;
         int8_t      _nnue_prev_offs = 1; /* NNUE */
 
         uint8_t     _double_ext = 0;
@@ -325,8 +330,6 @@ namespace search
 
         bool        can_reduce() const;
 
-        bool        can_reuse_moves() const;
-
         int64_t     check_time_and_update_nps(int64_t* = nullptr); /* return elapsed milliseconds */
 
         static void clear_caches_and_stacks();
@@ -353,26 +356,32 @@ namespace search
 
         score_t     eval_nnue_raw(bool side_to_move_pov);
         void        eval_with_nnue();
+
+        int         get_bucket() const;
+
         static void update_root_accumulators();
 
-        score_t     static_eval() const; /* use TT value if available, eval material otherwise */
+        score_t     static_eval() const { return is_valid(_eval) ? _eval : tt_entry()._eval; }
 
         void        extend(); /* fractional and other extensions */
         const Move* first_valid_move();
 
         score_t     futility_margin() const;
 
-        INLINE bool has_improved() const { return improvement() > 0; }
+        template<POV pov>
+        INLINE bool has_improved() const { return improvement<pov>() > IMPROVEMENT_MARGIN; }
+
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
         INLINE bool has_pruned_moves() const { return _pruned_count || _move_maker.have_skipped_moves(); }
 
         int         history_count(const Move&) const;
         float       history_score(const Move&) const;
 
-        score_t     improvement() const;
+        template<POV pov> score_t improvement() const;
+
         static void init(const std::string& exe_dir);
 
-        bool        is_beta_cutoff(Context*, score_t);
+        FailHigh    is_beta_cutoff(Context*, score_t);
         static bool is_cancelled() { return _cancel.load(std::memory_order_relaxed); }
         INLINE bool is_capture() const { return state().is_capture(); }
         INLINE bool is_check() const { return state().is_check(); }
@@ -418,7 +427,7 @@ namespace search
         static void print_board(std::ostream&, const State&, bool unicode);
 
         void        reset(bool force_reorder_moves = true, bool clear_best_move = true);
-        int         rewind(int where = 0, bool reorder = false);
+        int         rewind(bool reorder = false);
 
         INLINE void set_counter_move(const BaseMove& move) { _counter_move = move; }
         void        set_search_window(score_t score, score_t& prev_score);
@@ -685,12 +694,6 @@ namespace search
     }
 
 
-    INLINE bool Context::can_reuse_moves() const
-    {
-        return !_move_maker.have_skipped_moves() && !_move_maker.group_quiet_moves();
-    }
-
-
     /* static */ INLINE int64_t Context::elapsed_milliseconds()
     {
         const auto now = std::chrono::steady_clock::now();
@@ -730,21 +733,6 @@ namespace search
             eval = f();
         }
         return eval;
-    }
-
-
-    /*
-     * Use value from the TT if available, else use material evaluation.
-     */
-    INLINE score_t Context::static_eval() const
-    {
-        if (is_valid(_eval))
-            return _eval;
-
-        if (is_valid(tt_entry()._value) && tt_entry()._depth >= depth())
-            return tt_entry()._value;
-
-        return evaluate_material();
     }
 
 
@@ -849,39 +837,27 @@ namespace search
 
 
     /*
-     * Improvement for the side that just moved.
+     * Eval improvement w.r.t. 2 plies ago.
+     * US: from the side-to-move's perspective.
+     * THEM: from the opponent's (side that just moved) perspective.
      */
+    template<POV pov>
     INLINE score_t Context::improvement() const
     {
-        if (_improvement < 0)
-        {
-            if (_ply < 2 || _excluded || is_promotion())
-            {
-                _improvement = 0;
-            }
-            else
-            {
-                const auto prev = _parent->_parent;
-                const auto eval = static_eval();
-                const auto prev_eval = prev->static_eval();
+        if (_ply < 2 || _excluded)
+            return 0;
 
-                if (abs(eval) < MATE_HIGH && abs(prev_eval) < MATE_HIGH)
-                {
-                    _improvement = std::max(0, prev_eval - eval);
-                }
-                else
-                {
-                    const auto gg_parent = prev->_parent;
-                    const auto gg_parent_state = gg_parent ? gg_parent->_state : nullptr;
+        const auto prev = _parent->_parent; /* 2 plies ago */
+        const auto eval = static_eval();
+        const auto prev_eval = prev->static_eval();
 
-                    _improvement = std::max(0,
-                          eval_material_for_side_that_moved(*_state, _parent->_state, _move)
-                        - eval_material_for_side_that_moved(*prev->_state, gg_parent_state, prev->_move));
-                }
-            }
-        }
+        ASSERT(is_valid(eval) && is_valid(prev_eval));
 
-        return _improvement;
+        if (abs(eval) >= MATE_HIGH || abs(prev_eval) >= MATE_HIGH)
+            return 0;
+
+        /* prev_eval - eval > 0 means position worsened for STM (improved for opponent) */
+        return std::max(0, pov == US ? eval - prev_eval : prev_eval - eval);
     }
 
 
@@ -997,7 +973,7 @@ namespace search
     {
         return NULL_MOVE_REDUCTION_BASE /* base reduction */
             + ctxt.depth() / NULL_MOVE_REDUCTION_DEPTH_DIV
-            + std::min(ctxt.depth() / 2, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_REDUCTION_DIV);
+            + std::min(ctxt.depth() / 2, std::max(0, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_REDUCTION_DIV));
     }
 
 
@@ -1007,14 +983,6 @@ namespace search
     INLINE Context* Context::next(bool make_null_move, score_t futility, int& move_count, int64_t* time_left)
     {
         ASSERT(_alpha < _beta);
-
-        const bool retry = _retry_next;
-        if (retry)
-        {
-            ASSERT(move_count > 0);
-            --move_count;
-        }
-        _retry_next = false;
 
         if (!on_next(time_left))
             return nullptr;
@@ -1031,20 +999,6 @@ namespace search
         ASSERT(make_null_move || move->_state);
         ASSERT(make_null_move || move->_group != MoveOrder::UNDEFINED);
         ASSERT(make_null_move || move->_group < MoveOrder::UNORDERED_MOVES);
-
-        /* Save previously generated moves for reuse on retry */
-        MoveMaker temp;
-        if (retry)
-        {
-            const auto ctxt = next_ply<false>();
-            if (ctxt->move_count() >= 0)
-            {
-                if (ctxt->can_reuse_moves())
-                    ctxt->_move_maker.swap(temp);
-                else
-                    ctxt->cache_scores(true /* force write */);
-            }
-        }
 
         auto ctxt = next_ply<true>(); /* Construct new context */
 
@@ -1095,7 +1049,6 @@ namespace search
         ctxt->_ply = _ply + 1;
         ctxt->_double_ext = _double_ext;
         ctxt->_extension = _extension;
-        ctxt->_is_retry = retry;
         if (is_root())
         {
             ctxt->_is_singleton = !ctxt->is_null_move() && _move_maker.is_singleton(*this);
@@ -1152,12 +1105,6 @@ namespace search
                 ctxt->_retry_above_alpha = RETRY::PVS;
                 ASSERT(ctxt->_alpha == ctxt->_beta - 1);
             }
-            else if (ctxt->is_retry() && _retry_beta < _beta)
-            {
-                ASSERT(_algorithm == Algorithm::NEGASCOUT);
-                ctxt->_beta = _retry_beta;
-                _retry_beta = SCORE_MAX;
-            }
 
             /*
              * https://en.wikipedia.org/wiki/Fifty-move_rule
@@ -1172,14 +1119,6 @@ namespace search
                     ctxt->_fifty = (is_root() ? _history->_fifty : _fifty) + 1;
             }
 
-            if (temp.count() >= 0)
-            {
-                /* Reuse previously generated moves */
-                ctxt->_move_maker.swap(temp);
-                ASSERT(temp.count() == -1);
-
-                ctxt->rewind(0);
-            }
         }
 
         ASSERT(ctxt->_alpha < ctxt->_beta);
@@ -1214,9 +1153,9 @@ namespace search
     }
 
 
-    INLINE int Context::rewind(int where, bool reorder)
+    INLINE int Context::rewind(bool reorder)
     {
-        return _move_maker.rewind(*this, where, reorder);
+        return _move_maker.rewind(*this, reorder);
     }
 
 
@@ -1509,7 +1448,11 @@ namespace search
                     move._group = MoveOrder::WINNING_CAPTURES + (gain == 0);
                 }
 
+            #if CAPTURE_HISTORY
+                move._score = gain + ctxt._tt->capture_history_score(ctxt.state(), ctxt.turn(), move);
+            #else
                 move._score = gain;
+            #endif /* CAPTURE_HISTORY */
             }
         }
     }

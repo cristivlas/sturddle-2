@@ -1,5 +1,5 @@
 /*
- * Sturddle Chess Engine (C) 2022 - 2025 Cristian Vlasceanu
+ * Sturddle Chess Engine (C) 2022 - 2026 Cristian Vlasceanu
  * --------------------------------------------------------------------------
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -72,7 +72,7 @@ template<typename T> INLINE T constexpr pow2(T x) { return x * x; }
 
 
 /* Fixed capacity container */
-template<typename T, size_t max_size = 256>
+template<typename T, size_t max_size = 256, bool check_bounds = false>
 class MaxSizeVector
 {
 public:
@@ -109,6 +109,7 @@ public:
     }
 
     INLINE void clear() { _current_size = 0; }
+    INLINE void resize(size_t n) { _current_size = n; }
     INLINE size_t size() const { return _current_size; }
     INLINE bool empty() const { return size() == 0; }
     INLINE iterator begin() { return &_container.data()[0]; }
@@ -119,14 +120,14 @@ public:
     INLINE void emplace_back(T&& value)
     {
         check_capacity(__func__);
-        _container.data()[_current_size++] = std::move(value);
+        new (&_container.data()[_current_size++]) T(std::move(value));
     }
 
     template <typename... Args>
     INLINE void emplace_back(Args&&... args)
     {
         check_capacity(__func__);
-        _container.data()[_current_size++] = T(std::forward<Args>(args)...);
+        new (&_container.data()[_current_size++]) T(std::forward<Args>(args)...);
     }
 
     INLINE T& operator[](size_t index)
@@ -163,10 +164,14 @@ private:
         throw std::out_of_range(msg);
     }
 
-    static INLINE void check_range(const char* prefix, const char* func, size_t v, size_t vmax)
+    static INLINE void check_range([[maybe_unused]] const char* prefix,
+                                   [[maybe_unused]] const char* func,
+                                   [[maybe_unused]] size_t v,
+                                   [[maybe_unused]] size_t vmax)
     {
-        if (v >= vmax)
-            out_of_range(std::string(prefix), func, v, vmax);
+        if constexpr (check_bounds)
+            if (v >= vmax)
+                out_of_range(std::string(prefix), func, v, vmax);
     }
 
 private:
@@ -581,7 +586,6 @@ namespace chess
 
     uint64_t zobrist_hash(const struct State& state);
 
-
     /* Move representation */
     class BaseMove
     {
@@ -734,6 +738,26 @@ namespace chess
 #endif /* USE_PIECE_SQUARE_TABLES */
 
 
+    INLINE Bitboard diagonal_attacks(Bitboard mask, Square square)
+    {
+#if USE_MAGIC_BITS
+        return magic_bits_attacks.Bishop(mask, square);
+#else
+        return BB_DIAG_ATTACKS.get(square, mask);
+#endif /* !USE_MAGIC_BITS */
+    }
+
+
+    INLINE Bitboard rank_and_file_attacks(Bitboard mask, Square square)
+    {
+#if USE_MAGIC_BITS
+        return magic_bits_attacks.Rook(mask, square);
+#else
+        return BB_ROOK_ATTACKS.get(square, mask);
+#endif /* !USE_MAGIC_BITS */
+    }
+
+
     /* A position on the chessboard represented as a collection of bitboards. */
     struct Position
     {
@@ -784,20 +808,11 @@ namespace chess
             ASSERT(square != Square::UNDEFINED);
             auto attackers = knights & BB_KNIGHT_ATTACKS[square];
 
-    #if USE_MAGIC_BITS
             if (const auto queens_and_rooks = queens | rooks)
-                attackers |= queens_and_rooks & magic_bits_attacks.Rook(occupied_mask, square);
+                attackers |= queens_and_rooks & rank_and_file_attacks(occupied_mask, square);
 
             if (const auto queens_and_bishops = queens | bishops)
-                attackers |= queens_and_bishops & magic_bits_attacks.Bishop(occupied_mask, square);
-    #else
-            if (const auto queens_and_rooks = queens | rooks)
-                attackers |= queens_and_rooks & BB_ROOK_ATTACKS.get(square, occupied_mask);
-
-            if (const auto queens_and_bishops = queens | bishops)
-                attackers |= queens_and_bishops & BB_DIAG_ATTACKS.get(square, occupied_mask);
-
-    #endif /* !USE_MAGIC_BITS */
+                attackers |= queens_and_bishops & diagonal_attacks(occupied_mask, square);
 
             return attackers & occupied_co(color);
         }
@@ -899,54 +914,25 @@ namespace chess
             const bool color = (bb_square & white) == bb_square;
             return BB_PAWN_ATTACKS[color][square];
         }
-        else if (bb_square & knights)
+        if (bb_square & knights)
         {
             return BB_KNIGHT_ATTACKS[square];
         }
-        else if (bb_square & kings)
+        if (bb_square & kings)
         {
             return BB_KING_ATTACKS[square];
         }
-        else
-        {
-            Bitboard mask = 0;
 
-    #if USE_MAGIC_BITS
-            if ((bb_square & bishops) || (bb_square & queens))
-                mask = magic_bits_attacks.Bishop(occupied, square);
+        /* Sliders: bishop, rook, or queen */
+        Bitboard mask = 0;
+        const auto diag = bb_square & (bishops | queens);
+        const auto orth = bb_square & (rooks | queens);
+        if (diag)
+            mask = diagonal_attacks(occupied, square);
+        if (orth)
+            mask |= rank_and_file_attacks(occupied, square);
 
-            if ((bb_square & rooks) || (bb_square & queens))
-                mask |= magic_bits_attacks.Rook(occupied, square);
-    #else
-            if ((bb_square & bishops) || (bb_square & queens))
-                mask = BB_DIAG_ATTACKS.get(square, occupied);
-
-            if ((bb_square & rooks) || (bb_square & queens))
-                mask |= BB_ROOK_ATTACKS.get(square, occupied);
-
-    #endif /* !USE_MAGIC_BITS */
-            return mask;
-        }
-    }
-
-
-    INLINE Bitboard diagonal_attacks(Bitboard mask, Square square)
-    {
-#if USE_MAGIC_BITS
-        return magic_bits_attacks.Bishop(mask, square);
-#else
-        return BB_DIAG_ATTACKS.get(square, mask);
-#endif /* !USE_MAGIC_BITS */
-    }
-
-
-    INLINE Bitboard rank_and_file_attacks(Bitboard mask, Square square)
-    {
-#if USE_MAGIC_BITS
-        return magic_bits_attacks.Rook(mask, square);
-#else
-        return BB_ROOK_ATTACKS.get(square, mask);
-#endif /* !USE_MAGIC_BITS */
+        return mask;
     }
 
 
@@ -1048,7 +1034,7 @@ namespace chess
         alignas(std::max_align_t) uint8_t tt_result[32] = {};
 
         /* material and PST from white's POV */
-        static constexpr auto UNKNOWN_SCORE = std::numeric_limits<score_t>::max();
+        static constexpr auto UNKNOWN_SCORE = std::numeric_limits<int16_t>::min();
         mutable score_t simple_score = UNKNOWN_SCORE;
 
         void apply_move(const BaseMove&);
@@ -1186,7 +1172,11 @@ namespace chess
         /* perft */
         size_t make_pseudo_legal_moves(MovesList&) const;
 
-        void generate_moves(MovesList& out, MovesList& buffer) const;
+        void generate_moves(MovesList& moves) const;
+
+        /* Check if a pseudo-legal move is legal (doesn't leave king in check) */
+        bool is_legal(const BaseMove& move) const { return is_legal(move, checkers_mask(turn)); }
+        bool is_legal(const BaseMove& move, Bitboard checkers) const;
 
         void generate_castling_moves(MovesList& moves, Bitboard to_mask = BB_ALL) const;
 
