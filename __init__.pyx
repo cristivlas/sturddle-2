@@ -1244,7 +1244,6 @@ def board_from_fen(fen: str):
         return board
 
 
-
 def set_syzygy_path(path):
     Context.set_syzygy_path(path.encode())
 
@@ -1261,7 +1260,7 @@ Context.init(os.path.dirname(__file__).encode())
 
 __major__   = 2
 __minor__   = 5
-__patch__   = 'rc14'
+__patch__   = 0
 __build__   = [str(__major__), f'{int(__minor__):d}', str(__patch__), timestamp().decode()]
 
 

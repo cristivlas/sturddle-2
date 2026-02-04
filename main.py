@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 '''
-Alternative engine bootloader that uses the native UCI implementation.
+Engine bootloader. Selects the best available engine module based on CPU features.
 '''
 # import everything for the benefit of pyinstaller
 import argparse
