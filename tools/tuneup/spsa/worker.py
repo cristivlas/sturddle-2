@@ -238,7 +238,7 @@ def worker_loop(worker_config: WorkerConfig):
                 break
             elif status == "retry":
                 delay = response.get("retry_after", 2)
-                logger.info("No work available, retrying in %ds", delay)
+                logger.debug("No work available, retrying in %ds", delay)
                 time.sleep(delay)
                 continue
 
