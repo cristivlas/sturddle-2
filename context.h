@@ -831,8 +831,12 @@ namespace search
         ASSERT(move);
         ASSERT(move != _move);
 
-        const auto score = _tt->history_score(_ply, state(), turn(), move);
-        return score + COUNTER_MOVE_BONUS * is_counter_move(move);
+        auto score = _tt->history_score(_ply, state(), turn(), move);
+        score += COUNTER_MOVE_BONUS * is_counter_move(move);
+    #if CONTINUATION_HISTORY
+        score += _tt->continuation_history_score(*this, turn(), move);
+    #endif /* CONTINUATION_HISTORY */
+        return score;
     }
 
 

@@ -194,9 +194,15 @@ void TranspositionTable::init(bool new_game)
         _killer_moves.fill({});
         _ply_history.fill({});
     #if CAPTURE_HISTORY
-        _capture_hcounters[0] = {};
-        _capture_hcounters[1] = {};
+        _capture_hcounters[BLACK] = {};
+        _capture_hcounters[WHITE] = {};
     #endif /* CAPTURE_HISTORY */
+    #if CONTINUATION_HISTORY
+        _cmh[BLACK].clear();
+        _cmh[WHITE].clear();
+        _followup[BLACK].clear();
+        _followup[WHITE].clear();
+    #endif /* CONTINUATION_HISTORY */
     }
     else
     {
@@ -786,7 +792,11 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     ASSERT(move_count > 0);
                     const auto val = futility - next_ctxt->evaluate_material();
 
-                    if (val < ctxt._alpha && next_ctxt->can_prune<true>())
+                    if (val < ctxt._alpha && next_ctxt->can_prune<true>()
+                    #if CONTINUATION_HISTORY
+                        && table.continuation_history_score(ctxt, ctxt.turn(), next_ctxt->_move) <= CONTINUATION_HISTORY_PRUNING
+                    #endif /* CONTINUATION_HISTORY */
+                       )
                     {
                         next_ctxt->_prune_reason = PruneReason::PRUNE_FUTILITY;
                         update_pruned(ctxt, *next_ctxt, table._futility_prune_count);
@@ -867,7 +877,12 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         }
                         else if (ctxt.tt_entry()._value >= ctxt._beta && next_ctxt->can_reduce())
                         {
+                        #if CONTINUATION_HISTORY
+                            const auto cont_score = table.continuation_history_score(ctxt, ctxt.turn(), next_ctxt->_move);
+                            next_ctxt->_max_depth -= (cont_score > CONTINUATION_HISTORY_PRUNING) ? 1 : 2;
+                        #else
                             next_ctxt->_max_depth -= 2;
+                        #endif /* CONTINUATION_HISTORY */
                         }
                     }
                 #endif /* SINGULAR_EXTENSION */
@@ -987,6 +1002,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                         if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_check())
                             table.history_update_cutoffs(next_ctxt->_move);
+                    #if CONTINUATION_HISTORY
+                        if (next_ctxt->depth() >= CONTINUATION_HISTORY_MIN_DEPTH && !next_ctxt->is_check())
+                            table.continuation_history_update(ctxt, next_ctxt->_move, true);
+                    #endif /* CONTINUATION_HISTORY */
                     }
                 }
                 if constexpr(EXTRA_STATS)
@@ -1003,6 +1022,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_check())
             {
                 table.history_update_non_cutoffs(next_ctxt->_move);
+            #if CONTINUATION_HISTORY
+                if (next_ctxt->_move && next_ctxt->depth() >= CONTINUATION_HISTORY_MIN_DEPTH)
+                    table.continuation_history_update(ctxt, next_ctxt->_move, false);
+            #endif /* CONTINUATION_HISTORY */
             }
 
             /*

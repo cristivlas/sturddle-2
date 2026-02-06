@@ -68,6 +68,8 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define CAPTURE_HISTORY                     true
 
+#define CONTINUATION_HISTORY                true
+
 /*
  * Count valid moves made as nodes if true, otherwise use effectively
  * searched nodes (not including TT pruned, FP and late-move pruned).

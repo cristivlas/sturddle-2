@@ -1370,7 +1370,13 @@ namespace search
 
         /* late move pruning */
         if (depth > 0 && count >= LMP[depth] && can_prune())
-            return LMRAction::Prune;
+        {
+        #if CONTINUATION_HISTORY
+            const auto cont_score = _tt->continuation_history_score(*_parent, _parent->turn(), _move);
+            if (cont_score <= CONTINUATION_HISTORY_PRUNING)
+        #endif /* CONTINUATION_HISTORY */
+                return LMRAction::Prune;
+        }
 
         /* no reductions at very low depth and in qsearch */
         if (depth < 3 || count < LATE_MOVE_REDUCTION_THRESHOLD || !can_reduce())
@@ -1381,19 +1387,18 @@ namespace search
         /* Lookup reduction in the Late Move Reduction table. */
         auto reduction = LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)];
 
-        /* Adjust for time -- main thread only */
-        if (time_left)
-        {
-            auto node_count = time_left * _tt->_nps * 0.001f;
-            auto recip_log_branch = std::min(16u, _tt->_pass) * 0.1 / 16 + 0.5 * piece_count() / 32;
-            auto affordable_depth = fast_log2(1 + node_count) * recip_log_branch;
-            reduction = std::max(reduction, std::max<int>(0, depth - affordable_depth));
-        }
-
         if (_move._group != MoveOrder::TACTICAL_MOVES)
         {
             reduction += !_parent->has_improved<THEM>();
             reduction -= 2 * _parent->is_counter_move(_move);
+
+        #if CONTINUATION_HISTORY
+            {
+                const auto cont_score = _tt->continuation_history_score(*_parent, _parent->turn(), _move);
+                if (cont_score > 0)
+                    reduction -= std::min(2, int(cont_score * 1000 / CONTINUATION_HISTORY_LMR_DIV));
+            }
+        #endif /* CONTINUATION_HISTORY */
 
             if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= 13)
                 ++reduction;
@@ -1414,6 +1419,15 @@ namespace search
         const auto hist_score = _parent->history_score(_move);
         if (hist_score > 0 && hist_score < HISTORY_LOW)
             ++reduction;
+
+        /* Adjust for time -- main thread only */
+        if (time_left)
+        {
+            auto node_count = time_left * _tt->_nps * 0.001f;
+            auto recip_log_branch = std::min(16u, _tt->_pass) * 0.1 / 16 + 0.5 * piece_count() / 32;
+            auto affordable_depth = fast_log2(1 + node_count) * recip_log_branch;
+            reduction = std::max(reduction, std::max<int>(0, depth - affordable_depth));
+        }
 
         reduction = std::max(1, reduction);
         if (reduction > depth && can_prune())
