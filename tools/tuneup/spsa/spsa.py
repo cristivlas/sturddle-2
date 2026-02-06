@@ -3,16 +3,21 @@ SPSA (Simultaneous Perturbation Stochastic Approximation) optimizer.
 
 Pure math module — no I/O, no network, no dependencies beyond stdlib.
 
-Algorithm:
+Algorithm (range-scaled):
+  r_i = upper_i - lower_i  (parameter range)
   delta_k ~ Bernoulli(+1, -1) per parameter
-  theta_plus  = clamp(theta + c_k * delta_k)
-  theta_minus = clamp(theta - c_k * delta_k)
 
-  g_hat[i] = (score_plus - score_minus) / (2 * c_k * delta_k[i])
-  theta_{k+1} = clamp(theta_k + a_k * g_hat_k)
+  theta_plus_i  = clamp(theta_i + c_k * delta_i * r_i)
+  theta_minus_i = clamp(theta_i - c_k * delta_i * r_i)
+
+  g_hat[i] = (score_plus - score_minus) / (2 * c_k * delta_i)
+  theta_{k+1}_i = clamp(theta_i + a_k * g_hat_i * r_i)
 
   a_k = a / (A + k + 1)^alpha
   c_k = c / (k + 1)^gamma
+
+  c is a fraction of parameter range (e.g., 0.05 = 5%).
+  a controls learning rate; the step is a_k * gradient * range.
 """
 
 import random
@@ -104,8 +109,9 @@ class SPSAOptimizer:
         for name, param in self.params.items():
             t = self.state.theta[name]
             d = delta[name]
-            tp = param.clamp(t + ck * d)
-            tm = param.clamp(t - ck * d)
+            r = param.upper - param.lower
+            tp = param.clamp(t + ck * d * r)
+            tm = param.clamp(t - ck * d * r)
             theta_plus[name] = param.to_engine_value(tp)
             theta_minus[name] = param.to_engine_value(tm)
 
@@ -131,17 +137,21 @@ class SPSAOptimizer:
         new_theta = {}
         for name, param in self.params.items():
             d = delta[name]
+            r = param.upper - param.lower
             g_hat = (score_plus - score_minus) / (2.0 * ck * d)
-            t = self.state.theta[name] + ak * g_hat
+            t = self.state.theta[name] + ak * g_hat * r
             t = param.clamp(t)
             new_theta[name] = t
 
         # Record history
+        score_diff = score_plus - score_minus
         self.state.history.append({
             "iteration": k,
             "theta": dict(self.state.theta),
             "score_plus": score_plus,
             "score_minus": score_minus,
+            "score_diff": score_diff,
+            "elo_diff": self.elo_estimate(score_plus) - self.elo_estimate(score_minus),
             "a_k": ak,
             "c_k": ck,
         })

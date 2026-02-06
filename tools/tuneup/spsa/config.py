@@ -39,10 +39,15 @@ class Parameter:
 
 @dataclass
 class SPSAConfig:
-    """SPSA hyperparameters."""
-    budget: int = 200000
-    a: float = 1.0
-    c: float = 2.0
+    """
+    SPSA hyperparameters.
+
+    c is a fraction of each parameter's range (0.05 = perturb by 5% of range).
+    a controls learning rate; effective step = a_k * gradient * range.
+    """
+    budget: int = 10000
+    a: float = 0.5
+    c: float = 0.05
     A_ratio: float = 0.1
     alpha: float = 0.602
     gamma: float = 0.101

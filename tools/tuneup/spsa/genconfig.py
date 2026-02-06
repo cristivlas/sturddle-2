@@ -111,10 +111,10 @@ def main():
                         help='Total games budget (default: 10000)')
     parser.add_argument('-g', '--games-per-iteration', type=int, default=200,
                         help='Games per SPSA iteration (default: 200)')
-    parser.add_argument('-c', '--spsa-c', type=float, default=2.0,
-                        help='SPSA perturbation magnitude c (default: 2.0)')
-    parser.add_argument('-a', '--spsa-a', type=float, default=1.0,
-                        help='SPSA learning rate a (default: 1.0)')
+    parser.add_argument('-c', '--spsa-c', type=float, default=0.05,
+                        help='SPSA perturbation size as fraction of range (default: 0.05)')
+    parser.add_argument('-a', '--spsa-a', type=float, default=0.5,
+                        help='SPSA learning rate (default: 0.5)')
 
     args = parser.parse_args()
 
@@ -166,8 +166,6 @@ def main():
                 'OwnBook': False,
             },
         },
-        'time_control': args.time_control,
-        'depth': args.depth,
         'games_per_iteration': args.games_per_iteration,
         'output_dir': project_dir_abs,
         'spsa': {
@@ -180,6 +178,11 @@ def main():
         },
         'parameters': tune_params,
     }
+
+    if args.depth is not None:
+        tuning_config['depth'] = args.depth
+    else:
+        tuning_config['time_control'] = args.time_control
 
     tuning_path = os.path.join(project_dir, 'tuning.json')
     with open(tuning_path, 'w') as f:

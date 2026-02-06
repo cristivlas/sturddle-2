@@ -213,18 +213,23 @@ class CoordinatorState:
         elo_minus = self.optimizer.elo_estimate(avg_score_minus)
 
         logger.info("=" * 60)
-        logger.info("Iteration %d complete", k)
+        logger.info("Iteration %d complete (%d games)", k, self.total_games_scored)
         logger.info(
-            "Scores: +%.4f (ELO %+.1f) / -%.4f (ELO %+.1f)",
-            avg_score_plus, elo_plus, avg_score_minus, elo_minus,
+            "Scores: +%.4f / -%.4f (diff: %+.4f, ELO diff: %+.1f)",
+            avg_score_plus, avg_score_minus,
+            avg_score_plus - avg_score_minus,
+            elo_plus - elo_minus,
         )
         logger.info("Updated parameters:")
         for name in new_theta:
             param = self.optimizer.params[name]
             engine_val = param.to_engine_value(new_theta[name])
+            step = new_theta[name] - old_theta[name]
+            r = param.upper - param.lower
             logger.info(
-                "  %s: %.4f -> %.4f (engine: %s)",
+                "  %s: %.4f -> %.4f (engine: %s, step: %+.4f, %.1f%% of range)",
                 name, old_theta[name], new_theta[name], engine_val,
+                step, 100.0 * abs(step) / r if r > 0 else 0,
             )
         logger.info("=" * 60)
 
