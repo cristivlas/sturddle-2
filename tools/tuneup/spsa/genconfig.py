@@ -36,7 +36,12 @@ def tuneup_path():
 
 def to_forward_slash(path):
     """Convert path to use forward slashes (cross-platform consistency)."""
-    return str(PurePosixPath(*os.path.normpath(path).replace('\\', '/').split('/')))
+    normalized = os.path.normpath(path).replace('\\', '/')
+    # On Unix/Linux, ensure absolute paths start with /
+    # On Windows, drive letter paths like C:/path are already correct
+    if os.path.isabs(path) and not normalized.startswith('/') and ':' not in normalized[:2]:
+        normalized = '/' + normalized
+    return normalized
 
 
 def abspath(path):
@@ -127,7 +132,10 @@ def main():
 
     # Create project directory
     project_dir = os.path.join(tuneup_path(), args.project)
-    os.makedirs(project_dir, exist_ok=True)
+    if os.path.exists(project_dir):
+        print(f'Error: Project directory already exists: {project_dir}', file=sys.stderr)
+        sys.exit(1)
+    os.makedirs(project_dir, exist_ok=False)
     project_dir_abs = abspath(project_dir)
 
     # Engine command (creates wrapper on Windows)
@@ -191,6 +199,9 @@ def main():
         'book_depth': 8,
         'games_dir': games_dir,
         'log_file': log_file,
+        'parameter_overrides': {
+            '_comment': 'per-machine parameter overrides (e.g., SyzygyPath)',
+        },
     }
 
     worker_path = os.path.join(project_dir, 'worker.json')

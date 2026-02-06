@@ -81,6 +81,10 @@ def build_cutechess_command(worker_config: WorkerConfig,
     depth = tuning_config.get("depth")
     tc = tuning_config.get("time_control", "1+0.1")
 
+    # Get parameter overrides from worker config (exclude _comment)
+    param_overrides = {k: v for k, v in worker_config.parameter_overrides.items()
+                       if not k.startswith('_')}
+
     # Build engine option strings
     def option_args(params: dict) -> list:
         args = []
@@ -91,6 +95,11 @@ def build_cutechess_command(worker_config: WorkerConfig,
             args.append(f"option.{name}={val}")
         # Tunable params
         for name, val in params.items():
+            args.append(f"option.{name}={val}")
+        # Parameter overrides (applied last, highest priority)
+        for name, val in param_overrides.items():
+            if isinstance(val, bool):
+                val = "true" if val else "false"
             args.append(f"option.{name}={val}")
         return args
 

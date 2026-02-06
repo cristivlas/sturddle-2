@@ -131,6 +131,8 @@ class WorkerConfig:
 
     All paths are local to the worker machine:
     engine binary, opening book, games output, log file.
+    parameter_overrides allows overriding specific engine options per machine
+    (e.g., SyzygyPath for different tablebase locations).
     """
     coordinator: str = "http://localhost:8080"
     engine: str = "./sturddle"
@@ -141,6 +143,7 @@ class WorkerConfig:
     book_depth: int = 8
     games_dir: str = "./games"
     log_file: str = "worker.log"
+    parameter_overrides: dict = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, path: str) -> "WorkerConfig":

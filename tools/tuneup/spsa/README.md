@@ -13,7 +13,6 @@ heterogeneous LANs (2-3 machines, mixed Linux/Windows).
 
 ## Prerequisites
 
-- Python 3.8+
 - [cutechess-cli](https://github.com/cutechess/cutechess) installed on each worker machine
 - Engine source tree (for genconfig.py parameter discovery)
 
