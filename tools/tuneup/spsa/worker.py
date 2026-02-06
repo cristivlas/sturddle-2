@@ -222,6 +222,9 @@ def worker_loop(worker_config: WorkerConfig):
     logger.info("Received tuning config: %d parameters",
                 len(tuning_config.get("parameters", {})))
 
+    # Default retry interval when coordinator asks workers to retry
+    default_retry = tuning_config.get("retry_after", 5)
+
     hostname = platform.node()
 
     while True:
@@ -237,7 +240,7 @@ def worker_loop(worker_config: WorkerConfig):
                 logger.info("Tuning complete, shutting down")
                 break
             elif status == "retry":
-                delay = response.get("retry_after", 2)
+                delay = response.get("retry_after", default_retry)
                 logger.debug("No work available, retrying in %ds", delay)
                 time.sleep(delay)
                 continue

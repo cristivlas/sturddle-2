@@ -80,6 +80,8 @@ class TuningConfig:
     depth: Optional[int] = None
     games_per_iteration: int = 200
     output_dir: str = "./spsa_output"
+    # Seconds for workers to wait before retrying when no work available
+    retry_after: int = 5
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
     parameters: Dict[str, Parameter] = field(default_factory=dict)
 
@@ -92,6 +94,7 @@ class TuningConfig:
             "time_control": self.time_control,
             "depth": self.depth,
             "games_per_iteration": self.games_per_iteration,
+            "retry_after": self.retry_after,
             "output_dir": self.output_dir,
             "spsa": asdict(self.spsa),
             "parameters": {
@@ -123,6 +126,7 @@ class TuningConfig:
             time_control=d.get("time_control", "1+0.1"),
             depth=d.get("depth"),
             games_per_iteration=d.get("games_per_iteration", 200),
+            retry_after=d.get("retry_after", 5),
             output_dir=d.get("output_dir", "./spsa_output"),
             spsa=spsa,
             parameters=parameters,

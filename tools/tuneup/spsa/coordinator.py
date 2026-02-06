@@ -130,7 +130,7 @@ class CoordinatorState:
 
             if remaining <= 0:
                 # All games assigned for this iteration, wait for results
-                return {"status": "retry", "retry_after": 2}
+                return {"status": "retry", "retry_after": self.config.retry_after}
 
             if chunk_size <= 0:
                 # Default: give a reasonable chunk
