@@ -47,23 +47,23 @@ def parse_cutechess_output(output: str) -> tuple:
     """
     Parse cutechess-cli output for game results.
 
-    Looks for the score summary line:
+    cutechess-cli prints a running score after each game:
         Score of engine1 vs engine2: W - L - D  [pct]  N
+
+    We need the LAST occurrence (final tally after all games).
 
     Returns:
         (wins, losses, draws) from engine1's perspective.
         engine1 = theta_plus, engine2 = theta_minus.
     """
     pattern = r"Score of .+ vs .+: (\d+) - (\d+) - (\d+)"
-    match = re.search(pattern, output)
-    if not match:
+    matches = re.findall(pattern, output)
+    if not matches:
         raise ValueError(
             f"Could not parse cutechess-cli output:\n{output[-500:]}"
         )
-    wins = int(match.group(1))
-    losses = int(match.group(2))
-    draws = int(match.group(3))
-    return wins, losses, draws
+    wins, losses, draws = matches[-1]
+    return int(wins), int(losses), int(draws)
 
 
 def build_cutechess_command(worker_config: WorkerConfig,
@@ -160,7 +160,7 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict,
     games_dir.mkdir(parents=True, exist_ok=True)
 
     hostname = platform.node()
-    pgn_file = str(games_dir / f"iter_{work.iteration:04d}_{hostname}.pgn")
+    pgn_file = str(games_dir / f"iter_{work.iteration:04d}_{hostname}.pgn").replace("\\", "/")
 
     cmd = build_cutechess_command(
         worker_config, tuning_config, work, pgn_file
@@ -178,13 +178,28 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict,
         raise RuntimeError(f"cutechess-cli exited with code {hex(result.returncode)}")
 
     output = result.stdout
-    logger.debug("cutechess output:\n%s", output)
+    if result.stderr:
+        logger.warning("cutechess-cli stderr: %s", result.stderr.strip()[-500:])
+
+    # Log score lines for diagnostics
+    score_lines = re.findall(r"Score of .+", output)
+    logger.info("cutechess-cli reported %d score line(s)", len(score_lines))
+    for line in score_lines[:-1]:
+        logger.debug("  %s", line)
+    if score_lines:
+        logger.info("Final: %s", score_lines[-1])
 
     wins, losses, draws = parse_cutechess_output(output)
     total = wins + losses + draws
 
     if total == 0:
         raise RuntimeError("No games were played")
+
+    if total != work.num_games:
+        logger.warning(
+            "Expected %d games but got %d (W=%d L=%d D=%d)",
+            work.num_games, total, wins, losses, draws,
+        )
 
     score_plus = (wins + draws * 0.5) / total
     score_minus = (losses + draws * 0.5) / total
@@ -223,7 +238,7 @@ def worker_loop(worker_config: WorkerConfig):
                 break
             elif status == "retry":
                 delay = response.get("retry_after", 2)
-                logger.debug("No work available, retrying in %ds", delay)
+                logger.info("No work available, retrying in %ds", delay)
                 time.sleep(delay)
                 continue
 
@@ -260,7 +275,7 @@ def worker_loop(worker_config: WorkerConfig):
             time.sleep(5)
 
 
-def setup_logging(log_file: str):
+def setup_logging(log_file: str, debug: bool = False):
     """Configure logging to file and stdout."""
     formatter = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(message)s",
@@ -273,7 +288,7 @@ def setup_logging(log_file: str):
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
 
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
 
@@ -282,10 +297,21 @@ def main():
     parser = argparse.ArgumentParser(description="SPSA Tuning Worker")
     parser.add_argument("-c", "--config", required=True,
                         help="Path to worker config JSON")
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable debug logging")
+    parser.add_argument("--clean", action="store_true",
+                        help="Wipe log file before starting")
     args = parser.parse_args()
 
     config = WorkerConfig.from_json(args.config)
-    setup_logging(config.log_file)
+
+    # --clean: remove log file (keep games)
+    if args.clean:
+        log_path = Path(config.log_file)
+        if log_path.exists():
+            log_path.unlink()
+
+    setup_logging(config.log_file, debug=args.debug)
 
     logger.info("Starting worker")
     logger.info("Coordinator: %s", config.coordinator)

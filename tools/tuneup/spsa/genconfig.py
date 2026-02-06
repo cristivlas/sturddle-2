@@ -136,6 +136,7 @@ def main():
         print(f'Error: Project directory already exists: {project_dir}', file=sys.stderr)
         sys.exit(1)
     os.makedirs(project_dir, exist_ok=False)
+    os.makedirs(os.path.join(project_dir, 'logs'), exist_ok=True)
     project_dir_abs = abspath(project_dir)
 
     # Engine command (creates wrapper on Windows)

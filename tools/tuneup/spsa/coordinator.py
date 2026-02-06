@@ -6,7 +6,7 @@ HTTP server that manages SPSA state and distributes work to workers.
 Zero external dependencies — uses only Python stdlib.
 
 Usage:
-    python coordinator.py -c tuning.json [-p 8080] [--resume]
+    python coordinator.py -c tuning.json [-p 8080] [--clean]
 """
 
 import argparse
@@ -469,16 +469,28 @@ def main():
                         help="Path to tuning config JSON")
     parser.add_argument("-p", "--port", type=int, default=8080,
                         help="Server port (default: 8080)")
-    parser.add_argument("--resume", action="store_true",
-                        help="Resume from saved state")
+    parser.add_argument("--clean", action="store_true",
+                        help="Wipe state and logs, start fresh")
     args = parser.parse_args()
 
     config = TuningConfig.from_json(args.config)
 
     output = Path(config.output_dir)
     logs_dir = output / "logs"
+    state_file = output / "spsa_state.json"
+
+    # --clean: remove state and logs
+    if args.clean:
+        if state_file.exists():
+            state_file.unlink()
+        for log in logs_dir.glob("*.log"):
+            log.unlink()
+
     logs_dir.mkdir(parents=True, exist_ok=True)
     setup_logging(logs_dir)
+
+    if args.clean:
+        logger.info("Clean start: state and logs wiped")
 
     logger.info("Starting SPSA coordinator on port %d", args.port)
     logger.info("Config: %s", args.config)
@@ -492,7 +504,7 @@ def main():
     else:
         logger.info("Search: TC %s", config.time_control)
 
-    coordinator = CoordinatorState(config, resume=args.resume)
+    coordinator = CoordinatorState(config, resume=not args.clean)
     CoordinatorHandler.coordinator = coordinator
 
     server = HTTPServer(("0.0.0.0", args.port), CoordinatorHandler)

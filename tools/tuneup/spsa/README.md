@@ -141,14 +141,21 @@ Returns JSON with current iteration, parameter values, and progress.
 
 ## Resuming
 
-If the coordinator is interrupted, restart with `--resume`:
+If the coordinator is interrupted, restarting it will resume the existing session:
 
 ```bash
-python ../../tools/tuneup/spsa/coordinator.py -c tuning.json --resume
+python ../../tools/tuneup/spsa/coordinator.py -c tuning.json
+
 ```
 
 Picks up from the last completed iteration (`spsa_state.json`). Workers
 reconnect automatically.
+
+To reinitialize:
+```bash
+python ../../tools/tuneup/spsa/coordinator.py -c tuning.json --clean
+
+```
 
 ## Project Directory Layout
 
