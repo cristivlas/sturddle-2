@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SPSA Tuning Coordinator</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }}
+        .header {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .header h1 {{
+            font-size: 32px;
+            font-weight: 700;
+        }}
+        .status-badge {{
+            background: {status_color};
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }}
+        .content {{
+            padding: 40px 30px;
+        }}
+        .grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin-bottom: 40px;
+        }}
+        .card {{
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            background: #f9f9f9;
+        }}
+        .card h2 {{
+            font-size: 14px;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 15px;
+        }}
+        .card-value {{
+            font-size: 28px;
+            font-weight: 700;
+            color: #333;
+            font-family: monospace;
+        }}
+        .card-subtext {{
+            font-size: 12px;
+            color: #999;
+            margin-top: 8px;
+        }}
+        .progress-bar {{
+            width: 100%;
+            height: 24px;
+            background: #e0e0e0;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 12px;
+        }}
+        .progress-fill {{
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            color: white;
+            font-weight: 600;
+            min-width: 40px;
+        }}
+        .section {{
+            margin-top: 40px;
+        }}
+        .section h3 {{
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+        th {{
+            background: #f0f0f0;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }}
+        td {{
+            border-bottom: 1px solid #e0e0e0;
+            padding: 12px;
+        }}
+        tr:hover {{
+            background: #f9f9f9;
+        }}
+        .stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }}
+        .stat {{
+            background: white;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            border-radius: 4px;
+        }}
+        .stat-label {{
+            font-size: 12px;
+            color: #999;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }}
+        .stat-value {{
+            font-size: 24px;
+            font-weight: 700;
+            color: #333;
+            font-family: monospace;
+        }}
+        .refresh-info {{
+            text-align: center;
+            color: #999;
+            font-size: 12px;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>SPSA Tuning</h1>
+            <div class="status-badge">{status_text}</div>
+        </div>
+        
+        <div class="content">
+            <!-- Overall Progress -->
+            <div class="grid">
+                <div class="card">
+                    <h2>Iteration Progress</h2>
+                    <div class="card-value">{iteration} / {max_iters}</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: {progress}%;">
+                            {progress:.0f}%
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h2>Games This Iteration</h2>
+                    <div class="card-value">{games_done} / {games_total}</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: {iter_progress}%;">
+                            {iter_progress:.0f}%
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h2>Worker Status</h2>
+                    <div class="card-value">{games_pending}</div>
+                    <div class="card-subtext">games pending completion</div>
+                </div>
+            </div>
+            
+            <!-- Advanced Stats -->
+            <div class="stats-grid">
+                <div class="stat">
+                    <div class="stat-label">Learning Rate (a_k)</div>
+                    <div class="stat-value">{a_k:.6f}</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Perturbation Magnitude (c_k)</div>
+                    <div class="stat-value">{c_k:.6f}</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Total Assigned</div>
+                    <div class="stat-value">{games_assigned}</div>
+                </div>
+            </div>
+            
+            <!-- Current Parameters -->
+            <div class="section">
+                <h3>Current Parameters</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {theta_rows}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Recent History -->
+            {history_section}
+            
+            <div class="refresh-info">
+                This page refreshes every 5 seconds - Last updated: {timestamp}
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Auto-refresh every 5 seconds
+        setTimeout(function() {{
+            location.reload();
+        }}, 5000);
+    </script>
+</body>
+</html>
