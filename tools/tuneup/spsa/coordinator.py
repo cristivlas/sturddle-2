@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 SPSA Tuning Coordinator.
 
@@ -11,7 +12,6 @@ Usage:
 import argparse
 import json
 import logging
-# import os
 import threading
 import time
 from dataclasses import asdict
