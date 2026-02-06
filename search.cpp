@@ -91,6 +91,70 @@ static size_t mem_avail()
 HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE);
 
 
+TranspositionTable::TranspositionTable(const TranspositionTable& other)
+    : _countermoves{other._countermoves[BLACK], other._countermoves[WHITE]}
+    , _killer_moves(other._killer_moves)
+    , _hcounters{other._hcounters[BLACK], other._hcounters[WHITE]}
+#if CAPTURE_HISTORY
+    , _capture_hcounters{other._capture_hcounters[BLACK], other._capture_hcounters[WHITE]}
+#endif
+#if CONTINUATION_HISTORY
+    , _cmh{
+        other._cmh[BLACK] ? std::make_unique<ContinuationTable>(*other._cmh[BLACK]) : nullptr,
+        other._cmh[WHITE] ? std::make_unique<ContinuationTable>(*other._cmh[WHITE]) : nullptr}
+    , _followup{
+        other._followup[BLACK] ? std::make_unique<ContinuationTable>(*other._followup[BLACK]) : nullptr,
+        other._followup[WHITE] ? std::make_unique<ContinuationTable>(*other._followup[WHITE]) : nullptr}
+#endif /* CONTINUATION_HISTORY */
+    , _tid(other._tid)
+    , _iteration(other._iteration)
+    , _eval_depth(other._eval_depth)
+    , _ply_history(other._ply_history)
+    , _w_alpha(other._w_alpha)
+    , _w_beta(other._w_beta)
+    , _reset_window(other._reset_window)
+    , _analysis(other._analysis)
+{
+}
+
+
+TranspositionTable& TranspositionTable::operator=(TranspositionTable other) noexcept
+{
+    swap(other);
+    return *this;
+}
+
+
+void TranspositionTable::swap(TranspositionTable& other) noexcept
+{
+    using std::swap;
+
+    swap(_countermoves[BLACK], other._countermoves[BLACK]);
+    swap(_countermoves[WHITE], other._countermoves[WHITE]);
+    swap(_killer_moves, other._killer_moves);
+    swap(_hcounters[BLACK], other._hcounters[BLACK]);
+    swap(_hcounters[WHITE], other._hcounters[WHITE]);
+#if CAPTURE_HISTORY
+    swap(_capture_hcounters[BLACK], other._capture_hcounters[BLACK]);
+    swap(_capture_hcounters[WHITE], other._capture_hcounters[WHITE]);
+#endif /* CAPTURE_HISTORY */
+#if CONTINUATION_HISTORY
+    swap(_cmh[BLACK], other._cmh[BLACK]);
+    swap(_cmh[WHITE], other._cmh[WHITE]);
+    swap(_followup[BLACK], other._followup[BLACK]);
+    swap(_followup[WHITE], other._followup[WHITE]);
+#endif /* CONTINUATION_HISTORY */
+    swap(_tid, other._tid);
+    swap(_iteration, other._iteration);
+    swap(_eval_depth, other._eval_depth);
+    swap(_ply_history, other._ply_history);
+    swap(_w_alpha, other._w_alpha);
+    swap(_w_beta, other._w_beta);
+    swap(_reset_window, other._reset_window);
+    swap(_analysis, other._analysis);
+}
+
+
 /* static */ size_t TranspositionTable::max_hash_size()
 {
     const size_t cur_size = _table.byte_capacity();
@@ -198,10 +262,15 @@ void TranspositionTable::init(bool new_game)
         _capture_hcounters[WHITE] = {};
     #endif /* CAPTURE_HISTORY */
     #if CONTINUATION_HISTORY
-        _cmh[BLACK].clear();
-        _cmh[WHITE].clear();
-        _followup[BLACK].clear();
-        _followup[WHITE].clear();
+        ASSERT(_cmh[BLACK]);
+        ASSERT(_cmh[WHITE]);
+        ASSERT(_followup[BLACK]);
+        ASSERT(_followup[WHITE]);
+
+        _cmh[BLACK]->clear();
+        _cmh[WHITE]->clear();
+        _followup[BLACK]->clear();
+        _followup[WHITE]->clear();
     #endif /* CONTINUATION_HISTORY */
     }
     else

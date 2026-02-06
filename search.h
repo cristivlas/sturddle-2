@@ -280,16 +280,30 @@ namespace search
         CaptureHistoryTable _capture_hcounters[2]{}; /* Capture history by color */
     #endif /* CAPTURE_HISTORY */
     #if CONTINUATION_HISTORY
-        ContinuationTable _cmh[2]{};       /* counter move history [color] */
-        ContinuationTable _followup[2]{};  /* follow-up history [color] */
+        std::unique_ptr<ContinuationTable> _cmh[2]; /* counter move history [color] */
+        std::unique_ptr<ContinuationTable> _followup[2]; /* follow-up history [color] */
     #endif /* CONTINUATION_HISTORY */
         static HashTable    _table;        /* shared hashtable */
 
         void clear(); /* clear search stats, bump up generation */
 
     public:
-        TranspositionTable() = default;
+        TranspositionTable()
+        {
+        #if CONTINUATION_HISTORY
+            _cmh[chess::BLACK] = std::make_unique<ContinuationTable>();
+            _cmh[chess::WHITE] = std::make_unique<ContinuationTable>();
+            _followup[chess::BLACK] = std::make_unique<ContinuationTable>();
+            _followup[chess::WHITE] = std::make_unique<ContinuationTable>();
+        #endif /* CONTINUATION_HISTORY */
+        }
         ~TranspositionTable() = default;
+
+        TranspositionTable(const TranspositionTable&);
+        TranspositionTable(TranspositionTable&&) = default;
+        TranspositionTable& operator=(TranspositionTable) noexcept;
+
+        void swap(TranspositionTable&) noexcept;
 
         int _tid = 0;
         int16_t _iteration = 0;
@@ -514,25 +528,27 @@ namespace search
             return;
 
         /* Counter move history: index by ctxt._move (opponent's last move) */
+        ASSERT(_cmh[turn]);
         if (ctxt._move)
         {
             const auto prev_pt = ctxt.state().piece_type_at(ctxt._move.to_square());
             if (prev_pt != chess::PieceType::NONE)
             {
-                auto& counts = _cmh[turn][prev_pt][ctxt._move.to_square()].lookup(cur_pt, move);
+                auto& counts = (*_cmh[turn])[prev_pt][ctxt._move.to_square()].lookup(cur_pt, move);
                 counts.first += is_cutoff;
                 ++counts.second;
             }
         }
 
         /* Follow-up history: index by ctxt._parent->_move (our previous move, 2 plies back) */
+        ASSERT(_followup[turn]);
         if (ctxt._parent && ctxt._parent->_move)
         {
             const auto& gp_move = ctxt._parent->_move;
             const auto gp_pt = ctxt._parent->state().piece_type_at(gp_move.to_square());
             if (gp_pt != chess::PieceType::NONE)
             {
-                auto& counts = _followup[turn][gp_pt][gp_move.to_square()].lookup(cur_pt, move);
+                auto& counts = (*_followup[turn])[gp_pt][gp_move.to_square()].lookup(cur_pt, move);
                 counts.first += is_cutoff;
                 ++counts.second;
             }
@@ -550,25 +566,27 @@ namespace search
             return 0;
 
         /* CMH: index by ctxt._move (the move that brought us to this position) */
+        ASSERT(_cmh[turn]);
         if (ctxt._move)
         {
             const auto prev_pt = ctxt.state().piece_type_at(ctxt._move.to_square());
             if (prev_pt != chess::PieceType::NONE)
             {
-                const auto& counts = _cmh[turn][prev_pt][ctxt._move.to_square()].lookup(cur_pt, move);
+                const auto& counts = (*_cmh[turn])[prev_pt][ctxt._move.to_square()].lookup(cur_pt, move);
                 if (counts.second > 0)
                     score += (double(CONTINUATION_HISTORY_WEIGHT) * counts.first) / counts.second;
             }
         }
 
         /* Follow-up: index by ctxt._parent->_move (our own last move, 2 plies back) */
+        ASSERT(_followup[turn]);
         if (ctxt._parent && ctxt._parent->_move)
         {
             const auto& gp_move = ctxt._parent->_move;
             const auto gp_pt = ctxt._parent->state().piece_type_at(gp_move.to_square());
             if (gp_pt != chess::PieceType::NONE)
             {
-                const auto& counts = _followup[turn][gp_pt][gp_move.to_square()].lookup(cur_pt, move);
+                const auto& counts = (*_followup[turn])[gp_pt][gp_move.to_square()].lookup(cur_pt, move);
                 if (counts.second > 0)
                     score += (double(FOLLOWUP_HISTORY_WEIGHT) * counts.first) / counts.second;
             }
