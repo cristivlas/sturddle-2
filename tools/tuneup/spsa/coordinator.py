@@ -116,9 +116,44 @@ class CoordinatorState:
         self.timeout_multiplier = 3.0
         self.min_chunk_timeout = 60.0
         self.max_chunk_timeout = 1800.0
-        self.worker_timeout = 120.0  # seconds without contact = dead
-
+        self.worker_timeout = max(120.0, self._compute_worker_timeout())
         self._prepare_iteration()
+
+    def _compute_worker_timeout(self) -> float:
+        """
+        Compute worker heartbeat timeout dynamically.
+
+        Priority:
+        1) time_control (seconds per game estimate)
+        2) depth (heuristic)
+        """
+        # --- defaults / guardrails ---
+        MIN_T = 30.0
+        MAX_T = 600.0
+        SAFETY = 4.0  # worker can miss ~4 games before considered dead
+
+        cfg = self.config
+
+        # Time control path
+        if cfg.time_control:
+            # Expect formats like "60+0.6", "10+0", "5"
+            tc = cfg.time_control
+            if isinstance(tc, str) and "+" in tc:
+                base, inc = tc.split("+", 1)
+                sec_per_game = float(base) + 40.0 * float(inc)
+            else:
+                sec_per_game = float(tc)
+
+        # Depth path (very rough heuristic)
+        elif cfg.depth is not None:
+            # Tunable: exponential-ish growth with depth
+            sec_per_game = 0.15 * (1.35 ** cfg.depth)
+
+        else:
+            sec_per_game = 10.0  # fallback
+
+        timeout = sec_per_game * SAFETY
+        return max(MIN_T, min(MAX_T, timeout))
 
     def _touch_worker(self, name: str):
         """Register or update a worker's last-seen timestamp."""
@@ -607,10 +642,10 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             for w in data["workers"]:
                 if w["alive"]:
                     status_style = "color: #4CAF50"
-                    status_text = "alive"
+                    status_text = "online"
                 else:
                     status_style = "color: #f44336; font-weight: bold"
-                    status_text = "dead"
+                    status_text = "offline"
                 workers_rows += f"""        <tr>
             <td style="font-family: monospace;">{w["name"]}</td>
             <td style="{status_style}">{status_text}</td>
