@@ -668,15 +668,13 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             history_section = f"""
             <div class="section" style="margin-top: 0;">
                 <h3>Iterations</h3>
-                <div style="max-height: 300px; overflow-y: auto;">
                 <table>
-                    <thead>
-                        <tr>
-                            <th style="position: sticky; top: 0; background: #f0f0f0;">Iteration</th>
-                            <th style="position: sticky; top: 0; background: #f0f0f0;">Score Diff</th>
-                            <th style="position: sticky; top: 0; background: #f0f0f0;">ELO Diff</th>
-                        </tr>
-                    </thead>
+                    <colgroup><col style="width:33%"><col style="width:34%"><col style="width:33%"></colgroup>
+                    <thead><tr><th>Iteration</th><th>Score Diff</th><th>ELO Diff</th></tr></thead>
+                </table>
+                <div style="max-height: 260px; overflow-y: auto;">
+                <table>
+                    <colgroup><col style="width:33%"><col style="width:34%"><col style="width:33%"></colgroup>
                     <tbody>
                         {history_rows}
                     </tbody>
@@ -709,20 +707,17 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             <div class="section" style="margin-top: 0;">
                 <h3>Workers</h3>
                 <table>
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Status</th>
-                            <th>Last Seen</th>
-                            <th>Assigned</th>
-                            <th>Iter Done</th>
-                            <th>Session Done</th>
-                        </tr>
-                    </thead>
+                    <colgroup><col style="width:20%"><col style="width:12%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:17%"></colgroup>
+                    <thead><tr><th>Name</th><th>Status</th><th>Last Seen</th><th>Assigned</th><th>Iter Done</th><th>Session Done</th></tr></thead>
+                </table>
+                <div style="max-height: 260px; overflow-y: auto;">
+                <table>
+                    <colgroup><col style="width:20%"><col style="width:12%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:17%"></colgroup>
                     <tbody>
                         {workers_rows}
                     </tbody>
                 </table>
+                </div>
             </div>
 """
 
