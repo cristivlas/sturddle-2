@@ -585,7 +585,7 @@ class CoordinatorState:
                 "theta": self.optimizer.get_engine_values(),
                 "c_k": self.optimizer.c_k() if not self.optimizer.is_done() else 0,
                 "a_k": self.optimizer.a_k() if not self.optimizer.is_done() else 0,
-                "history": history[-50:] if history else [],
+                "history": list(history) if history else [],
                 "workers": worker_data,
                 "session_start": self.optimizer.state.created_at,
                 "server_start": self.server_start_time,
@@ -655,7 +655,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         history_section = ""
         if data.get("history"):
             history_rows = ""
-            for h in list(reversed(data.get("history", [])))[-10:]:
+            for h in reversed(data.get("history", [])):
                 iter_num = h.get("iteration", "?")
                 score_diff = h.get("score_diff", 0)
                 elo_diff = h.get("elo_diff", 0)
@@ -667,19 +667,21 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
 """
             history_section = f"""
             <div class="section" style="margin-top: 0;">
-                <h3>Recent Iterations</h3>
+                <h3>Iterations</h3>
+                <div style="max-height: 300px; overflow-y: auto;">
                 <table>
                     <thead>
                         <tr>
-                            <th>Iteration</th>
-                            <th>Score Diff</th>
-                            <th>ELO Diff</th>
+                            <th style="position: sticky; top: 0; background: #f0f0f0;">Iteration</th>
+                            <th style="position: sticky; top: 0; background: #f0f0f0;">Score Diff</th>
+                            <th style="position: sticky; top: 0; background: #f0f0f0;">ELO Diff</th>
                         </tr>
                     </thead>
                     <tbody>
                         {history_rows}
                     </tbody>
                 </table>
+                </div>
             </div>
 """
 
