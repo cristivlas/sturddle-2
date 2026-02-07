@@ -111,49 +111,40 @@ class CoordinatorState:
         # Worker registry
         self.workers = {}  # name -> WorkerInfo
 
-        # Timeout tuning
-        self.default_chunk_timeout = 600.0
-        self.timeout_multiplier = 3.0
+        # Time estimates and timeouts
+        self._base_sec_per_game = self._estimate_game_duration()
+        self.chunk_timeout_multiplier = 5.0
         self.min_chunk_timeout = 60.0
-        self.max_chunk_timeout = 1800.0
-        self.worker_timeout = max(120.0, self._compute_worker_timeout())
+        # Max timeout: at least 30 min, or enough for the largest possible chunk
+        max_chunk_games = tuning_config.games_per_iteration // 2
+        self.max_chunk_timeout = max(
+            1800.0,
+            max_chunk_games * self._base_sec_per_game * self.chunk_timeout_multiplier,
+        )
+        self.worker_timeout = max(120.0, self._base_sec_per_game * 4.0)
         self._prepare_iteration()
 
-    def _compute_worker_timeout(self) -> float:
-        """
-        Compute worker heartbeat timeout dynamically.
-
-        Priority:
-        1) time_control (seconds per game estimate)
-        2) depth (heuristic)
-        """
-        # --- defaults / guardrails ---
-        MIN_T = 30.0
-        MAX_T = 600.0
-        SAFETY = 4.0  # worker can miss ~4 games before considered dead
-
+    def _estimate_game_duration(self) -> float:
+        """Estimate wall-clock seconds per game from time control or search depth."""
         cfg = self.config
-
-        # Time control path
         if cfg.time_control:
-            # Expect formats like "60+0.6", "10+0", "5"
             tc = cfg.time_control
             if isinstance(tc, str) and "+" in tc:
                 base, inc = tc.split("+", 1)
-                sec_per_game = float(base) + 40.0 * float(inc)
+                per_side = float(base) + 40.0 * float(inc)
             else:
-                sec_per_game = float(tc)
-
-        # Depth path (very rough heuristic)
+                per_side = float(tc)
+            return 2.0 * per_side  # both sides
         elif cfg.depth is not None:
-            # Tunable: exponential-ish growth with depth
-            sec_per_game = 0.15 * (1.35 ** cfg.depth)
+            return 0.15 * (1.35 ** cfg.depth)
+        return 10.0
 
-        else:
-            sec_per_game = 10.0  # fallback
-
-        timeout = sec_per_game * SAFETY
-        return max(MIN_T, min(MAX_T, timeout))
+    def _worker_sec_per_game(self, worker_name: str) -> float:
+        """Per-game time: observed EWMA speed or config-based fallback."""
+        w = self.workers.get(worker_name)
+        if w and w.games_per_second > 0:
+            return 1.0 / w.games_per_second
+        return self._base_sec_per_game
 
     def _touch_worker(self, name: str):
         """Register or update a worker's last-seen timestamp."""
@@ -173,59 +164,32 @@ class CoordinatorState:
                 if (now - w.last_seen) < self.worker_timeout]
 
     def _chunk_timeout_for(self, worker_name: str, num_games: int) -> float:
-        """Compute per-worker timeout based on observed speed."""
-        w = self.workers.get(worker_name)
-        if w is None or w.games_per_second <= 0:
-            return self.default_chunk_timeout
-        expected = num_games / w.games_per_second
-        timeout = expected * self.timeout_multiplier
+        """Timeout for a chunk based on expected duration."""
+        expected = num_games * self._worker_sec_per_game(worker_name)
+        timeout = expected * self.chunk_timeout_multiplier
         return max(self.min_chunk_timeout, min(self.max_chunk_timeout, timeout))
 
     def _compute_chunk_size(self, worker_name: str, remaining: int) -> int:
         """
-        Adaptive chunk sizing: distribute work proportional to each worker's
-        EWMA speed. Workers that complete chunks faster get larger shares.
+        Split remaining games proportional to worker speed.
 
         Bootstrap (no speed data): split evenly across active workers.
-        Steady state: fraction = my_speed / total_speed of remaining games.
-        Guardrails: cap at 50% of remaining (prevent monopolization),
-        floor at 2, must be even (each game pair = +c vs -c).
+        Capped at 50% of remaining to leave work for other workers.
+        Even-rounding and final clamping handled by get_work().
         """
-        gpi = self.config.games_per_iteration
         active = self._active_workers()
         num_workers = max(1, len(active))
-
-        # Sum of EWMA speeds across all active workers
         total_speed = sum(w.games_per_second for w in active)
 
-        if total_speed <= 0:
-            # Bootstrap: no speed data yet, split evenly
-            chunk = max(2, min(remaining, gpi // (2 * num_workers)))
-            logger.debug(
-                "Chunk for %s: bootstrap, %d workers, chunk=%d, remaining=%d",
-                worker_name, num_workers, chunk, remaining,
-            )
-        else:
-            # Proportional: give this worker its share based on relative speed
+        if total_speed > 0:
             w = self.workers.get(worker_name)
             my_speed = w.games_per_second if (w and w.games_per_second > 0) else (total_speed / num_workers)
-            fraction = my_speed / total_speed
-            chunk = int(remaining * fraction)
-            logger.debug(
-                "Chunk for %s: speed=%.2f, total=%.2f, fraction=%.2f, raw_chunk=%d, remaining=%d",
-                worker_name, my_speed, total_speed, fraction, chunk, remaining,
-            )
-
-        # Cap at 50% of remaining to avoid one worker monopolizing
-        if remaining > 4:
-            chunk = min(chunk, remaining // 2)
+            chunk = int(remaining * my_speed / total_speed)
         else:
-            chunk = remaining
+            chunk = remaining // num_workers
 
-        # Floor at 2, must be even (game pairs)
-        chunk = max(2, chunk)
-        chunk = chunk - (chunk % 2)
-        return min(chunk, remaining)
+        # Cap at 50% to leave work for other workers
+        return min(chunk, max(remaining // 2, 2))
 
     def _prepare_iteration(self):
         """Set up work for the current iteration."""
@@ -352,16 +316,21 @@ class CoordinatorState:
                 )
                 return {"status": "ignored", "reason": "stale iteration"}
 
+            # Reject results for chunks not in pending (reclaimed or unknown)
+            if not result.chunk_id or result.chunk_id not in self.pending_chunks:
+                logger.warning(
+                    "Ignoring result for unknown/reclaimed chunk %s from %s",
+                    result.chunk_id or "?", result.worker or "?",
+                )
+                return {"status": "ignored", "reason": "unknown chunk"}
+
+            chunk = self.pending_chunks.pop(result.chunk_id)
+            elapsed = time.time() - chunk.assign_time
+
             self.games_completed += result.num_games
             self.total_score_plus += result.score_plus * result.num_games
             self.total_score_minus += result.score_minus * result.num_games
             self.total_games_scored += result.num_games
-
-            # Remove pending chunk and compute elapsed time
-            elapsed = 0.0
-            if result.chunk_id and result.chunk_id in self.pending_chunks:
-                chunk = self.pending_chunks.pop(result.chunk_id)
-                elapsed = time.time() - chunk.assign_time
 
             # Update EWMA speed estimate; this drives adaptive chunk sizing
             # so future get_work() calls distribute proportionally
