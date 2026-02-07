@@ -322,12 +322,9 @@ def setup_logging(log_file: str, debug: bool = False):
 
 def main():
     parser = argparse.ArgumentParser(description="SPSA Tuning Worker")
-    parser.add_argument("-c", "--config", required=True,
-                        help="Path to worker config JSON")
-    parser.add_argument("--debug", action="store_true",
-                        help="Enable debug logging")
-    parser.add_argument("--clean", action="store_true",
-                        help="Wipe log file before starting")
+    parser.add_argument("-c", "--config", required=True, help="Path to worker config JSON")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--clean", action="store_true", help="Wipe log file before starting")
     args = parser.parse_args()
 
     config = WorkerConfig.from_json(args.config)

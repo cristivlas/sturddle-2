@@ -796,14 +796,10 @@ def setup_logging(log_dir: Path, debug: bool = False):
 
 def main():
     parser = argparse.ArgumentParser(description="SPSA Tuning Coordinator")
-    parser.add_argument("-c", "--config", required=True,
-                        help="Path to tuning config JSON")
-    parser.add_argument("-p", "--port", type=int, default=8080,
-                        help="Server port (default: 8080)")
-    parser.add_argument("--clean", action="store_true",
-                        help="Wipe state and logs, start fresh")
-    parser.add_argument("--debug", action="store_true",
-                        help="Enable debug logging")
+    parser.add_argument("-c", "--config", required=True, help="Path to tuning config JSON")
+    parser.add_argument("-p", "--port", type=int, default=8080, help="Server port (default: 8080)")
+    parser.add_argument("--clean", action="store_true", help="Wipe state and logs, start fresh")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
 
     config = TuningConfig.from_json(args.config)
