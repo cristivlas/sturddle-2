@@ -576,6 +576,7 @@ class CoordinatorState:
                 "games_per_iteration": gpi,
                 "games_assigned": self.games_assigned,
                 "games_pending": self.games_assigned - self.games_completed,
+                "total_games": self.optimizer.iteration * gpi + self.games_completed,
                 "theta": self.optimizer.get_engine_values(),
                 "c_k": self.optimizer.c_k() if not self.optimizer.is_done() else 0,
                 "a_k": self.optimizer.a_k() if not self.optimizer.is_done() else 0,
@@ -632,7 +633,6 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         is_done = data["is_done"]
         games_done = data["games_completed_in_iteration"]
         games_total = data["games_per_iteration"]
-        games_assigned = data["games_assigned"]
         games_pending = data["games_pending"]
 
         # Build parameter table rows
@@ -737,7 +737,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             games_pending=games_pending,
             a_k=data["a_k"],
             c_k=data["c_k"],
-            games_assigned=games_assigned,
+            total_games=data["total_games"],
             theta_rows=theta_rows,
             history_section=history_section,
             workers_section=workers_section,
