@@ -339,10 +339,14 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
 
     def _render_coordinator_dashboard(self) -> str:
         """Render dashboard from template with data."""
-        template_path = Path(__file__).parent / "dashboard.html"
+        template_path = Path(__file__).parent / "dashboard.tmpl"
 
         if not template_path.exists():
-            return "<h1>Error: dashboard.html template not found</h1>"
+            return "<h1>Error: dashboard.tmpl template not found</h1>"
+
+        chart_js_path = Path(__file__).parent / "chart.umd.min.js"
+        with open(chart_js_path, "r") as f:
+            chart_js = f.read()
 
         with open(template_path) as f:
             template = f.read()
@@ -400,10 +404,14 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             </div>
 """
 
+        # JSON blob for client-side charts
+        history_json = json.dumps(data.get("history", []))
+
         status_color = "#4CAF50" if not is_done else "#2196F3"
         status_text = "COMPLETE" if is_done else "IN PROGRESS"
 
         return template.format(
+            chart_js=chart_js,
             status_color=status_color,
             status_text=status_text,
             iteration=iteration,
@@ -418,6 +426,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             games_assigned=games_assigned,
             theta_rows=theta_rows,
             history_section=history_section,
+            history_json=history_json,
             timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
         )
 
