@@ -237,7 +237,7 @@
             </div>
 
             <!-- Chart + Current Parameters side by side -->
-            <div class="two-col" style="margin-bottom: 20px;">
+            <div class="two-col" style="margin-bottom: 20px; grid-template-columns: 3fr 2fr;">
                 <div class="card">
                     <h2>Theta Values</h2>
                     <canvas id="thetaChart" width="400" height="200"></canvas>
@@ -306,7 +306,11 @@
                         labels: labels,
                         datasets: datasets
                     }},
-                    options: {{ responsive: true, maintainAspectRatio: false }}
+                    options: {{
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {{ legend: {{ position: 'bottom' }} }}
+                    }}
                 }});
             }} catch (e) {{
                 console.error('Failed to render charts', e);
