@@ -236,26 +236,26 @@
                 </div>
             </div>
 
-            <!-- Chart -->
-            <div class="card" style="margin-bottom: 20px;">
-                <h2>Theta Values</h2>
-                <canvas id="thetaChart" width="400" height="200"></canvas>
-            </div>
-
-            <!-- Current Parameters -->
-            <div class="section">
-                <h3>Current Parameters</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Parameter</th>
-                            <th>Value</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {theta_rows}
-                    </tbody>
-                </table>
+            <!-- Chart + Current Parameters side by side -->
+            <div class="two-col" style="margin-bottom: 20px;">
+                <div class="card">
+                    <h2>Theta Values</h2>
+                    <canvas id="thetaChart" width="400" height="200"></canvas>
+                </div>
+                <div class="section" style="margin-top: 0;">
+                    <h3>Current Parameters</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Parameter</th>
+                                <th>Value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {theta_rows}
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             <!-- Workers + Recent History side by side -->

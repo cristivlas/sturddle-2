@@ -34,6 +34,7 @@ class WorkerInfo:
     last_seen: float
     chunks_completed: int = 0
     games_completed: int = 0
+    games_completed_iter: int = 0  # games completed in current iteration
     _speed_ewma: float = 0.0      # exponentially weighted moving average (games/sec)
     _ewma_alpha: float = 0.3      # smoothing factor: higher = more weight on recent
 
@@ -252,6 +253,10 @@ class CoordinatorState:
         self.games_assigned = self.games_completed
         self.pending_chunks = {}
 
+        # Reset per-iteration worker counters
+        for w in self.workers.values():
+            w.games_completed_iter = 0
+
         logger.info(
             "Iteration %d: c_k=%.4f, a_k=%.6f",
             self.optimizer.iteration,
@@ -377,6 +382,7 @@ class CoordinatorState:
                 w = self.workers[result.worker]
                 w.chunks_completed += 1
                 w.games_completed += result.num_games
+                w.games_completed_iter += result.num_games
                 w.update_speed(result.num_games, elapsed)
 
             logger.info(
@@ -512,7 +518,7 @@ class CoordinatorState:
                         "alive": self._is_worker_alive(name),
                         "last_seen_ago": round(now - w.last_seen, 1),
                         "games_completed": w.games_completed,
-                        "games_per_second": round(w.games_per_second, 2),
+                        "games_completed_iter": w.games_completed_iter,
                     }
                     for name, w in self.workers.items()
                 },
@@ -542,14 +548,22 @@ class CoordinatorState:
 
             history = self.optimizer.state.history
 
+            # Compute per-worker assigned (in-flight) games from pending chunks
+            assigned_per_worker = {}
+            for chunk in self.pending_chunks.values():
+                assigned_per_worker[chunk.worker_name] = (
+                    assigned_per_worker.get(chunk.worker_name, 0) + chunk.num_games
+                )
+
             worker_data = []
             for name, w in self.workers.items():
                 worker_data.append({
                     "name": name,
                     "alive": self._is_worker_alive(name),
                     "last_seen_ago": round(now - w.last_seen, 1),
+                    "games_assigned": assigned_per_worker.get(name, 0),
+                    "games_completed_iter": w.games_completed_iter,
                     "games_completed": w.games_completed,
-                    "games_per_second": round(w.games_per_second, 2),
                 })
 
             return {
@@ -677,8 +691,9 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             <td style="font-family: monospace;">{w["name"]}</td>
             <td style="{status_style}">{status_text}</td>
             <td>{w["last_seen_ago"]:.0f}s ago</td>
+            <td>{w["games_assigned"]}</td>
+            <td>{w["games_completed_iter"]}</td>
             <td>{w["games_completed"]}</td>
-            <td>{w["games_per_second"]:.2f}</td>
         </tr>
 """
             workers_section = f"""
@@ -690,8 +705,9 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                             <th>Name</th>
                             <th>Status</th>
                             <th>Last Seen</th>
-                            <th>Games Done</th>
-                            <th>Games/sec</th>
+                            <th>Assigned</th>
+                            <th>Iter Done</th>
+                            <th>Total Done</th>
                         </tr>
                     </thead>
                     <tbody>
