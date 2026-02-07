@@ -703,7 +703,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         workers_section = ""
         if data.get("workers"):
             workers_rows = ""
-            for w in data["workers"]:
+            for w in sorted(data["workers"], key=lambda w: w["games_completed"], reverse=True):
                 if w["alive"]:
                     status_style = "color: #4CAF50"
                     status_text = "online"

@@ -243,17 +243,23 @@
                 </div>
                 <div class="section" style="margin-top: 0;">
                     <h3>Current Parameters</h3>
-                    <table>
+                    <table style="table-layout:fixed; width:100%;">
+                        <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
                         <thead>
                             <tr>
                                 <th>Parameter</th>
                                 <th>Value</th>
                             </tr>
                         </thead>
+                    </table>
+                    <div style="max-height: 260px; overflow-y: auto;">
+                    <table style="table-layout:fixed; width:100%;">
+                        <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
                         <tbody>
                             {theta_rows}
                         </tbody>
                     </table>
+                    </div>
                 </div>
             </div>
 
