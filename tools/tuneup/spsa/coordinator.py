@@ -35,7 +35,7 @@ class WorkerInfo:
     last_seen: float
     chunks_completed: int = 0
     games_completed: int = 0
-    games_completed_iter: int = 0  # games completed in current iteration
+    games_completed_iter: int = 0 # games completed in current iteration
     _speed_ewma: float = 0.0      # exponentially weighted moving average (games/sec)
     _ewma_alpha: float = 0.3      # smoothing factor: higher = more weight on recent
 
@@ -669,22 +669,28 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                 iter_num = h.get("iteration", "?")
                 score_diff = h.get("score_diff", 0)
                 elo_diff = h.get("elo_diff", 0)
+                a_k = h.get("a_k", 0)
+                c_k = h.get("c_k", 0)
                 history_rows += f"""        <tr>
             <td>{iter_num}</td>
             <td>{score_diff:+.4f}</td>
             <td>{elo_diff:+.1f}</td>
+            <td>{a_k:.6f}</td>
+            <td>{c_k:.4f}</td>
         </tr>
 """
             history_section = f"""
             <div class="section" style="margin-top: 0;">
-                <h3>Iterations</h3>
-                <table>
-                    <colgroup><col style="width:33%"><col style="width:34%"><col style="width:33%"></colgroup>
-                    <thead><tr><th>Iteration</th><th>Score Diff</th><th>ELO Diff</th></tr></thead>
+                <h3>History</h3>
+                <div style="padding-right: 17px;">
+                <table style="table-layout:fixed; width:100%;">
+                    <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
+                    <thead><tr><th>Iter</th><th>Score Diff</th><th>ELO Diff</th><th>a_k</th><th>c_k</th></tr></thead>
                 </table>
+                </div>
                 <div style="max-height: 260px; overflow-y: auto;">
-                <table>
-                    <colgroup><col style="width:33%"><col style="width:34%"><col style="width:33%"></colgroup>
+                <table style="table-layout:fixed; width:100%;">
+                    <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
                     <tbody>
                         {history_rows}
                     </tbody>
