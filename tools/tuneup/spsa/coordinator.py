@@ -98,7 +98,7 @@ class CoordinatorState:
             state=state,
         )
 
-        # Current iteration work tracking
+        # Current iteration work tracking (restored from state or reset)
         self.current_delta = None
         self.current_work = None  # WorkItem template for this iteration
         self.games_assigned = 0
@@ -123,6 +123,14 @@ class CoordinatorState:
         )
         self.worker_timeout = max(120.0, self._base_sec_per_game * 4.0)
         self._prepare_iteration()
+
+        # Log if resuming with partial progress
+        if self.games_completed > 0:
+            logger.info(
+                "Resuming iteration %d with %d/%d games already scored",
+                self.optimizer.iteration, self.games_completed,
+                self.config.games_per_iteration,
+            )
 
     def _estimate_game_duration(self) -> float:
         """Estimate wall-clock seconds per game from time control or search depth."""
@@ -205,11 +213,32 @@ class CoordinatorState:
         return min(chunk, max(remaining // 2, 2))
 
     def _prepare_iteration(self):
-        """Set up work for the current iteration."""
+        """Set up work for the current iteration.
+
+        If the persisted state has a delta and partial scores for the
+        current iteration, restore them instead of starting fresh.
+        This lets the coordinator resume a partially-completed iteration
+        after a restart, re-playing only the remaining games.
+        """
         if self.optimizer.is_done():
             return
 
-        self.current_delta = self.optimizer.generate_perturbation()
+        st = self.optimizer.state
+
+        # Restore persisted delta + partial scores, or generate fresh
+        if st.current_delta:
+            self.current_delta = st.current_delta
+            self.games_completed = st.games_completed
+            self.total_score_plus = st.total_score_plus
+            self.total_score_minus = st.total_score_minus
+            self.total_games_scored = st.total_games_scored
+        else:
+            self.current_delta = self.optimizer.generate_perturbation()
+            self.games_completed = 0
+            self.total_score_plus = 0.0
+            self.total_score_minus = 0.0
+            self.total_games_scored = 0
+
         theta_plus, theta_minus = self.optimizer.compute_candidates(
             self.current_delta
         )
@@ -219,11 +248,8 @@ class CoordinatorState:
             theta_minus=theta_minus,
             num_games=0,  # filled per chunk
         )
-        self.games_assigned = 0
-        self.games_completed = 0
-        self.total_score_plus = 0.0
-        self.total_score_minus = 0.0
-        self.total_games_scored = 0
+        # Only assign remaining games (games_completed already scored)
+        self.games_assigned = self.games_completed
         self.pending_chunks = {}
 
         logger.info(
@@ -365,8 +391,21 @@ class CoordinatorState:
             # Check if iteration is complete
             if self.games_completed >= self.config.games_per_iteration:
                 self._complete_iteration()
+            else:
+                # Checkpoint partial progress so a restart doesn't lose it
+                self._sync_and_save()
 
             return {"status": "ok"}
+
+    def _sync_and_save(self):
+        """Sync iteration progress to SPSAState and checkpoint."""
+        st = self.optimizer.state
+        st.current_delta = self.current_delta
+        st.games_completed = self.games_completed
+        st.total_score_plus = self.total_score_plus
+        st.total_score_minus = self.total_score_minus
+        st.total_games_scored = self.total_games_scored
+        self._save_state()
 
     def _complete_iteration(self):
         """Finalize current iteration: update theta, save state, log."""
@@ -415,7 +454,13 @@ class CoordinatorState:
                 )
         logger.info("=" * 60)
 
-        # Checkpoint
+        # Clear iteration progress and checkpoint
+        st = self.optimizer.state
+        st.current_delta = {}
+        st.games_completed = 0
+        st.total_score_plus = 0.0
+        st.total_score_minus = 0.0
+        st.total_games_scored = 0
         self._save_state()
 
         # Prepare next iteration

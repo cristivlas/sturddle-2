@@ -33,12 +33,22 @@ class SPSAState:
     iteration: int = 0
     theta: Dict[str, float] = field(default_factory=dict)
     history: List[dict] = field(default_factory=list)
+    current_delta: Dict[str, int] = field(default_factory=dict)
+    games_completed: int = 0
+    total_score_plus: float = 0.0
+    total_score_minus: float = 0.0
+    total_games_scored: int = 0
 
     def to_dict(self) -> dict:
         return {
             "iteration": self.iteration,
             "theta": dict(self.theta),
             "history": list(self.history),
+            "current_delta": dict(self.current_delta),
+            "games_completed": self.games_completed,
+            "total_score_plus": self.total_score_plus,
+            "total_score_minus": self.total_score_minus,
+            "total_games_scored": self.total_games_scored,
         }
 
     @classmethod
@@ -47,6 +57,11 @@ class SPSAState:
             iteration=d["iteration"],
             theta=dict(d["theta"]),
             history=list(d.get("history", [])),
+            current_delta={k: int(v) for k, v in d.get("current_delta", {}).items()},
+            games_completed=d.get("games_completed", 0),
+            total_score_plus=d.get("total_score_plus", 0.0),
+            total_score_minus=d.get("total_score_minus", 0.0),
+            total_games_scored=d.get("total_games_scored", 0),
         )
 
 
