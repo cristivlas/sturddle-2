@@ -99,6 +99,10 @@ class CoordinatorState:
             state=state,
         )
 
+        # Stamp session start on fresh state
+        if self.optimizer.state.created_at == 0.0:
+            self.optimizer.state.created_at = time.time()
+
         # Current iteration work tracking (restored from state or reset)
         self.current_delta = None
         self.current_work = None  # WorkItem template for this iteration
@@ -123,6 +127,7 @@ class CoordinatorState:
             max_chunk_games * self._base_sec_per_game * self.chunk_timeout_multiplier,
         )
         self.worker_timeout = max(120.0, self._base_sec_per_game * 4.0)
+        self.server_start_time = time.time()
         self._prepare_iteration()
 
         # Log if resuming with partial progress
@@ -582,6 +587,8 @@ class CoordinatorState:
                 "a_k": self.optimizer.a_k() if not self.optimizer.is_done() else 0,
                 "history": history[-50:] if history else [],
                 "workers": worker_data,
+                "session_start": self.optimizer.state.created_at,
+                "server_start": self.server_start_time,
             }
 
 
@@ -707,7 +714,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                             <th>Last Seen</th>
                             <th>Assigned</th>
                             <th>Iter Done</th>
-                            <th>Total Done</th>
+                            <th>Session Done</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -724,6 +731,12 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         status_text = "COMPLETE" if is_done else "IN PROGRESS"
 
         refresh_sec = self.coordinator.config.dashboard_refresh
+        session_start = time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.localtime(data["session_start"])
+        )
+        server_start = time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.localtime(data["server_start"])
+        )
         return self.dashboard_template.format(
             chart_js=self.chart_js,
             status_color=status_color,
@@ -745,6 +758,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             refresh_sec=refresh_sec,
             refresh_ms=refresh_sec * 1000,
             timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+            session_start=session_start,
+            server_start=server_start,
         )
 
     def do_GET(self):

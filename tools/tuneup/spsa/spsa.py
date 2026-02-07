@@ -38,6 +38,7 @@ class SPSAState:
     total_score_plus: float = 0.0
     total_score_minus: float = 0.0
     total_games_scored: int = 0
+    created_at: float = 0.0  # session start timestamp (epoch)
 
     def to_dict(self) -> dict:
         return {
@@ -49,6 +50,7 @@ class SPSAState:
             "total_score_plus": self.total_score_plus,
             "total_score_minus": self.total_score_minus,
             "total_games_scored": self.total_games_scored,
+            "created_at": self.created_at,
         }
 
     @classmethod
@@ -62,6 +64,7 @@ class SPSAState:
             total_score_plus=d.get("total_score_plus", 0.0),
             total_score_minus=d.get("total_score_minus", 0.0),
             total_games_scored=d.get("total_games_scored", 0),
+            created_at=d.get("created_at", 0.0),
         )
 
 
