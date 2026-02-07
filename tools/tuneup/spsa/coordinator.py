@@ -216,7 +216,13 @@ class CoordinatorState:
             chunk = remaining // num_workers
 
         # Cap at 50% to leave work for other workers
-        return min(chunk, max(remaining // 2, 2))
+        chunk = min(chunk, max(remaining // 2, 2))
+
+        # If remainder is too small to split among other workers, take it all
+        if remaining - chunk < num_workers:
+            chunk = remaining
+
+        return chunk
 
     def _prepare_iteration(self):
         """Set up work for the current iteration.
