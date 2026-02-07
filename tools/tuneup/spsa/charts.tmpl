@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SPSA Tuning - Charts</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 12px;
+        }}
+        .container {{
+            max-width: 1400px;
+            height: calc(100vh - 24px);
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }}
+        .header {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 10px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .header h1 {{
+            font-size: 18px;
+            font-weight: 700;
+        }}
+        .status-badge {{
+            background: rgba(255,255,255,0.2);
+            padding: 6px 16px;
+            border-radius: 16px;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: white;
+            text-decoration: none;
+        }}
+        .content {{
+            padding: 10px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            flex: 1;
+            min-height: 0;
+        }}
+        .card {{
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 6px 12px;
+            background: #f9f9f9;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }}
+        .chart-wrap {{
+            position: relative;
+            flex: 1;
+            min-height: 0;
+        }}
+        .two-col {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            flex: 1;
+            min-height: 0;
+        }}
+        .card h2 {{
+            font-size: 11px;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 2px;
+        }}
+        .refresh-info {{
+            padding: 4px 24px;
+            font-size: 10px;
+            color: #999;
+            text-align: center;
+            border-top: 1px solid #eee;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>SPSA Tuning</h1>
+            <a href="/dashboard" class="status-badge">Dashboard</a>
+        </div>
+
+        <div class="content">
+            <div class="card">
+                <h2>Parameter Values</h2>
+                <div class="chart-wrap"><canvas id="thetaChart"></canvas></div>
+            </div>
+            <div class="card">
+                <h2>ELO Difference</h2>
+                <div class="chart-wrap"><canvas id="eloChart"></canvas></div>
+            </div>
+            <div class="two-col">
+                <div class="card">
+                    <h2>Learning Rate (a_k)</h2>
+                    <div class="chart-wrap"><canvas id="akChart"></canvas></div>
+                </div>
+                <div class="card">
+                    <h2>Perturbation Size (c_k)</h2>
+                    <div class="chart-wrap"><canvas id="ckChart"></canvas></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="refresh-info">
+            Generated at {timestamp}
+        </div>
+    </div>
+
+    <script>{chart_js}</script>
+    <script id="history-data" type="application/json">{history_json}</script>
+    <script>
+        (function() {{
+            try {{
+                const raw = document.getElementById('history-data').textContent || '[]';
+                const history = JSON.parse(raw || '[]') || [];
+                if (!history || !history.length) return;
+
+                history.sort((a,b) => (a.iteration||0) - (b.iteration||0));
+                const labels = history.map(h => h.iteration);
+
+                function makeChart(canvasId, data, label, color) {{
+                    new Chart(document.getElementById(canvasId).getContext('2d'), {{
+                        type: 'line',
+                        data: {{
+                            labels: labels,
+                            datasets: [{{
+                                label: label,
+                                data: data,
+                                borderColor: color,
+                                backgroundColor: color + '20',
+                                tension: 0.25,
+                                pointRadius: 1,
+                                borderWidth: 2,
+                                fill: true
+                            }}]
+                        }},
+                        options: {{
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {{ legend: {{ position: 'bottom' }} }}
+                        }}
+                    }});
+                }}
+
+                // Parameter values (multi-series)
+                const thetaKeys = [...new Set(
+                    history.flatMap(h => Object.keys(h.theta || {{}}))
+                )];
+                const thetaDatasets = thetaKeys.map(k => ({{
+                    label: k,
+                    data: history.map(h => (h.theta && k in h.theta) ? h.theta[k] : null),
+                    tension: 0.25,
+                    pointRadius: 1,
+                    borderWidth: 2,
+                }}));
+                new Chart(document.getElementById('thetaChart').getContext('2d'), {{
+                    type: 'line',
+                    data: {{ labels: labels, datasets: thetaDatasets }},
+                    options: {{
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {{ legend: {{ position: 'bottom' }} }}
+                    }}
+                }});
+
+                makeChart('eloChart', history.map(h => h.elo_diff), 'ELO Diff', '#e91e63');
+                makeChart('akChart', history.map(h => h.a_k), 'a_k', '#2196F3');
+                makeChart('ckChart', history.map(h => h.c_k), 'c_k', '#FF9800');
+            }} catch (e) {{
+                console.error('Failed to render charts', e);
+            }}
+        }})();
+    </script>
+</body>
+</html>

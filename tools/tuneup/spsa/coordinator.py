@@ -541,6 +541,11 @@ class CoordinatorState:
         """Tuning config as dict for workers to fetch."""
         return json.loads(self.config.to_json())
 
+    def get_charts_data(self) -> dict:
+        """Full history for the charts page (no slicing)."""
+        with self.lock:
+            return {"history": list(self.optimizer.state.history)}
+
     def get_coordinator_dashboard(self) -> dict:
         """Rich coordinator data for graphical dashboard."""
         now = time.time()
@@ -775,9 +780,30 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             server_start=server_start,
         )
 
+    def _render_charts_page(self) -> str:
+        """Render charts page, re-reading template from disk each request."""
+        template_path = Path(__file__).parent / "charts.tmpl"
+        try:
+            with open(template_path) as f:
+                template = f.read()
+        except FileNotFoundError:
+            return "<h1>Error: charts.tmpl not found</h1>"
+
+        data = self.coordinator.get_charts_data()
+        history_json = json.dumps(data.get("history", []))
+
+        return template.format(
+            chart_js=self.chart_js,
+            history_json=history_json,
+            timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+
     def do_GET(self):
         if self.path in ("", "/", "/dashboard"):
             html = self._render_coordinator_dashboard()
+            self._send_html(html)
+        elif self.path == "/charts":
+            html = self._render_charts_page()
             self._send_html(html)
         elif self.path == "/config":
             self._send_json(self.coordinator.get_tuning_config_dict())

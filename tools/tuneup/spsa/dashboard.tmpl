@@ -23,13 +23,13 @@
         .header {{
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 20px 24px;
+            padding: 10px 24px;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }}
         .header h1 {{
-            font-size: 24px;
+            font-size: 18px;
             font-weight: 700;
         }}
         .status-badge {{
@@ -58,8 +58,8 @@
         }}
         .card canvas {{
             width: 100%;
-            height: 320px;
-            max-height: 400px;
+            height: 380px;
+            max-height: 450px;
             display: block;
         }}
         .card h2 {{
@@ -77,7 +77,7 @@
             font-family: monospace;
         }}
         .card-subtext {{
-            font-size: 11px;
+            font-size: 12px;
             color: #999;
             margin-top: 4px;
         }}
@@ -187,7 +187,10 @@
     <div class="container">
         <div class="header">
             <h1>SPSA Tuning</h1>
-            <div class="status-badge">{status_text}</div>
+            <div>
+                <a href="/charts" class="status-badge" style="text-decoration:none; color:white; background:rgba(255,255,255,0.2);">Charts</a>
+                <span class="status-badge">{status_text}</span>
+            </div>
         </div>
 
         <div class="content">
