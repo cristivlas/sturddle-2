@@ -157,11 +157,24 @@ class CoordinatorState:
         else:
             self.workers[name].last_seen = now
 
-    def _active_workers(self) -> list:
-        """Return list of workers seen within worker_timeout."""
+    def _is_worker_alive(self, name: str) -> bool:
+        """Worker is alive if recently seen or has a pending chunk."""
+        w = self.workers.get(name)
+        if not w:
+            return False
         now = time.time()
+        if (now - w.last_seen) < self.worker_timeout:
+            return True
+        # Still alive if running a chunk that hasn't timed out
+        return any(
+            c.worker_name == name and (now - c.assign_time) < c.timeout
+            for c in self.pending_chunks.values()
+        )
+
+    def _active_workers(self) -> list:
+        """Return list of workers considered alive."""
         return [w for w in self.workers.values()
-                if (now - w.last_seen) < self.worker_timeout]
+                if self._is_worker_alive(w.name)]
 
     def _chunk_timeout_for(self, worker_name: str, num_games: int) -> float:
         """Timeout for a chunk based on expected duration."""
@@ -451,7 +464,7 @@ class CoordinatorState:
                 "a_k": self.optimizer.a_k() if not self.optimizer.is_done() else 0,
                 "workers": {
                     name: {
-                        "alive": (now - w.last_seen) < self.worker_timeout,
+                        "alive": self._is_worker_alive(name),
                         "last_seen_ago": round(now - w.last_seen, 1),
                         "games_completed": w.games_completed,
                         "games_per_second": round(w.games_per_second, 2),
@@ -488,7 +501,7 @@ class CoordinatorState:
             for name, w in self.workers.items():
                 worker_data.append({
                     "name": name,
-                    "alive": (now - w.last_seen) < self.worker_timeout,
+                    "alive": self._is_worker_alive(name),
                     "last_seen_ago": round(now - w.last_seen, 1),
                     "games_completed": w.games_completed,
                     "games_per_second": round(w.games_per_second, 2),
@@ -587,7 +600,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         </tr>
 """
             history_section = f"""
-            <div class="section">
+            <div class="section" style="margin-top: 0;">
                 <h3>Recent Iterations</h3>
                 <table>
                     <thead>
@@ -624,7 +637,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         </tr>
 """
             workers_section = f"""
-            <div class="section">
+            <div class="section" style="margin-top: 0;">
                 <h3>Workers</h3>
                 <table>
                     <thead>
