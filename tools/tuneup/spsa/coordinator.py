@@ -591,7 +591,10 @@ class CoordinatorState:
                 "theta": self.optimizer.get_engine_values(),
                 "c_k": self.optimizer.c_k() if not self.optimizer.is_done() else 0,
                 "a_k": self.optimizer.a_k() if not self.optimizer.is_done() else 0,
-                "history": list(history) if history else [],
+                "history": list(
+                    history[-self.config.dashboard_history:]
+                    if self.config.dashboard_history else history
+                ) if history else [],
                 "workers": worker_data,
                 "session_start": self.optimizer.state.created_at,
                 "server_start": self.server_start_time,
