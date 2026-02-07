@@ -12,9 +12,12 @@ Usage:
 import argparse
 import json
 import logging
+import os
+import tempfile
 import threading
 import time
-from dataclasses import asdict
+import uuid
+from dataclasses import dataclass
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -24,11 +27,52 @@ from spsa import SPSAOptimizer, SPSAState
 logger = logging.getLogger("coordinator")
 
 
+@dataclass
+class WorkerInfo:
+    """Tracked state for a connected worker."""
+    name: str
+    last_seen: float
+    chunks_completed: int = 0
+    games_completed: int = 0
+    _speed_ewma: float = 0.0      # exponentially weighted moving average (games/sec)
+    _ewma_alpha: float = 0.3      # smoothing factor: higher = more weight on recent
+
+    @property
+    def games_per_second(self) -> float:
+        return self._speed_ewma
+
+    def update_speed(self, games: int, elapsed: float):
+        """Update EWMA speed estimate from a completed chunk."""
+        if elapsed <= 0 or games <= 0:
+            return
+        sample = games / elapsed
+        old = self._speed_ewma
+        if self._speed_ewma <= 0:
+            self._speed_ewma = sample  # first observation
+        else:
+            # Blend: alpha * new_sample + (1-alpha) * old_estimate
+            self._speed_ewma = (
+                self._ewma_alpha * sample
+                + (1 - self._ewma_alpha) * self._speed_ewma
+            )
+        logger.debug(
+            "Speed update %s: %d games in %.1fs (%.2f g/s), ewma %.2f -> %.2f",
+            self.name, games, elapsed, sample, old, self._speed_ewma,
+        )
+
+
+@dataclass
+class ChunkInfo:
+    """A single assigned chunk, tracked by unique ID."""
+    chunk_id: str
+    worker_name: str
+    num_games: int
+    assign_time: float
+    timeout: float
+
+
 class CoordinatorState:
     """Thread-safe coordinator state managing one SPSA iteration at a time."""
-
-    # Seconds before an assigned chunk is considered timed-out
-    CHUNK_TIMEOUT = 600
 
     def __init__(self, tuning_config: TuningConfig, resume: bool = False):
         self.config = tuning_config
@@ -62,8 +106,91 @@ class CoordinatorState:
         self.total_score_plus = 0.0
         self.total_score_minus = 0.0
         self.total_games_scored = 0
-        self.pending_chunks = []  # (num_games, assign_time) for timeout tracking
+        self.pending_chunks = {}  # chunk_id -> ChunkInfo
+
+        # Worker registry
+        self.workers = {}  # name -> WorkerInfo
+
+        # Timeout tuning
+        self.default_chunk_timeout = 600.0
+        self.timeout_multiplier = 3.0
+        self.min_chunk_timeout = 60.0
+        self.max_chunk_timeout = 1800.0
+        self.worker_timeout = 120.0  # seconds without contact = dead
+
         self._prepare_iteration()
+
+    def _touch_worker(self, name: str):
+        """Register or update a worker's last-seen timestamp."""
+        if not name:
+            return
+        now = time.time()
+        if name not in self.workers:
+            self.workers[name] = WorkerInfo(name=name, last_seen=now)
+            logger.info("Worker registered: %s", name)
+        else:
+            self.workers[name].last_seen = now
+
+    def _active_workers(self) -> list:
+        """Return list of workers seen within worker_timeout."""
+        now = time.time()
+        return [w for w in self.workers.values()
+                if (now - w.last_seen) < self.worker_timeout]
+
+    def _chunk_timeout_for(self, worker_name: str, num_games: int) -> float:
+        """Compute per-worker timeout based on observed speed."""
+        w = self.workers.get(worker_name)
+        if w is None or w.games_per_second <= 0:
+            return self.default_chunk_timeout
+        expected = num_games / w.games_per_second
+        timeout = expected * self.timeout_multiplier
+        return max(self.min_chunk_timeout, min(self.max_chunk_timeout, timeout))
+
+    def _compute_chunk_size(self, worker_name: str, remaining: int) -> int:
+        """
+        Adaptive chunk sizing: distribute work proportional to each worker's
+        EWMA speed. Workers that complete chunks faster get larger shares.
+
+        Bootstrap (no speed data): split evenly across active workers.
+        Steady state: fraction = my_speed / total_speed of remaining games.
+        Guardrails: cap at 50% of remaining (prevent monopolization),
+        floor at 2, must be even (each game pair = +c vs -c).
+        """
+        gpi = self.config.games_per_iteration
+        active = self._active_workers()
+        num_workers = max(1, len(active))
+
+        # Sum of EWMA speeds across all active workers
+        total_speed = sum(w.games_per_second for w in active)
+
+        if total_speed <= 0:
+            # Bootstrap: no speed data yet, split evenly
+            chunk = max(2, min(remaining, gpi // (2 * num_workers)))
+            logger.debug(
+                "Chunk for %s: bootstrap, %d workers, chunk=%d, remaining=%d",
+                worker_name, num_workers, chunk, remaining,
+            )
+        else:
+            # Proportional: give this worker its share based on relative speed
+            w = self.workers.get(worker_name)
+            my_speed = w.games_per_second if (w and w.games_per_second > 0) else (total_speed / num_workers)
+            fraction = my_speed / total_speed
+            chunk = int(remaining * fraction)
+            logger.debug(
+                "Chunk for %s: speed=%.2f, total=%.2f, fraction=%.2f, raw_chunk=%d, remaining=%d",
+                worker_name, my_speed, total_speed, fraction, chunk, remaining,
+            )
+
+        # Cap at 50% of remaining to avoid one worker monopolizing
+        if remaining > 4:
+            chunk = min(chunk, remaining // 2)
+        else:
+            chunk = remaining
+
+        # Floor at 2, must be even (game pairs)
+        chunk = max(2, chunk)
+        chunk = chunk - (chunk % 2)
+        return min(chunk, remaining)
 
     def _prepare_iteration(self):
         """Set up work for the current iteration."""
@@ -85,7 +212,7 @@ class CoordinatorState:
         self.total_score_plus = 0.0
         self.total_score_minus = 0.0
         self.total_games_scored = 0
-        self.pending_chunks = []
+        self.pending_chunks = {}
 
         logger.info(
             "Iteration %d: c_k=%.4f, a_k=%.6f",
@@ -95,65 +222,81 @@ class CoordinatorState:
         )
 
     def _reclaim_timed_out_chunks(self):
-        """Return timed-out assigned games to the pool."""
+        """Reclaim chunks that have exceeded their per-worker timeout."""
         now = time.time()
-        still_pending = []
-        reclaimed = 0
-        for num_games, assign_time in self.pending_chunks:
-            if now - assign_time > self.CHUNK_TIMEOUT:
-                self.games_assigned -= num_games
-                reclaimed += num_games
-            else:
-                still_pending.append((num_games, assign_time))
-        self.pending_chunks = still_pending
-        if reclaimed:
-            logger.warning("Reclaimed %d timed-out games", reclaimed)
+        timed_out = [cid for cid, chunk in self.pending_chunks.items()
+                     if now - chunk.assign_time > chunk.timeout]
+        for cid in timed_out:
+            chunk = self.pending_chunks.pop(cid)
+            self.games_assigned -= chunk.num_games
+            logger.warning(
+                "Reclaimed chunk %s from %s: %d games (%.0fs elapsed, timeout was %ds)",
+                cid, chunk.worker_name, chunk.num_games,
+                now - chunk.assign_time, int(chunk.timeout),
+            )
 
-    def get_work(self, chunk_size: int = 0) -> dict:
+    def get_work(self, chunk_size: int = 0, worker_name: str = "") -> dict:
         """
         Assign a chunk of games to a worker.
 
+        Flow: touch worker (heartbeat) -> reclaim timed-out chunks ->
+        compute adaptive chunk size -> assign and track.
+
         Args:
             chunk_size: requested games (0 = let coordinator decide)
+            worker_name: worker hostname for tracking
 
         Returns:
             WorkItem dict, or {"status": "done"/"retry"}.
         """
         with self.lock:
+            self._touch_worker(worker_name)
+
             if self.optimizer.is_done():
                 return {"status": "done"}
 
+            # Reclaim games from workers that disappeared mid-chunk
             self._reclaim_timed_out_chunks()
 
             gpi = self.config.games_per_iteration
             remaining = gpi - self.games_assigned
 
             if remaining <= 0:
-                # All games assigned for this iteration, wait for results
                 return {"status": "retry", "retry_after": self.config.retry_after}
 
+            # Adaptive chunk sizing
             if chunk_size <= 0:
-                # Default: give a reasonable chunk
-                chunk_size = max(2, min(remaining, gpi // 4))
+                chunk_size = self._compute_chunk_size(worker_name, remaining)
 
             # Must be even (each game pair is +c vs -c)
             num_games = min(remaining, chunk_size)
             num_games = max(2, num_games - (num_games % 2))
 
+            # Generate unique chunk ID and compute timeout
+            chunk_id = uuid.uuid4().hex[:12]
+            timeout = self._chunk_timeout_for(worker_name, num_games)
+
             self.games_assigned += num_games
-            self.pending_chunks.append((num_games, time.time()))
+            self.pending_chunks[chunk_id] = ChunkInfo(
+                chunk_id=chunk_id,
+                worker_name=worker_name,
+                num_games=num_games,
+                assign_time=time.time(),
+                timeout=timeout,
+            )
 
             work = WorkItem(
                 iteration=self.current_work.iteration,
                 theta_plus=self.current_work.theta_plus,
                 theta_minus=self.current_work.theta_minus,
                 num_games=num_games,
+                chunk_id=chunk_id,
             )
 
             logger.info(
-                "Assigned %d games (iter %d, %d/%d assigned)",
-                num_games, work.iteration,
-                self.games_assigned, gpi,
+                "Assigned %d games to %s [%s] (iter %d, %d/%d, timeout=%ds)",
+                num_games, worker_name or "?", chunk_id,
+                work.iteration, self.games_assigned, gpi, int(timeout),
             )
             return work.to_dict()
 
@@ -165,6 +308,8 @@ class CoordinatorState:
             {"status": "ok"} or {"status": "ignored", ...} if stale.
         """
         with self.lock:
+            self._touch_worker(result.worker)
+
             if result.iteration != self.optimizer.iteration:
                 logger.warning(
                     "Ignoring stale result for iteration %d (current: %d)",
@@ -177,17 +322,27 @@ class CoordinatorState:
             self.total_score_minus += result.score_minus * result.num_games
             self.total_games_scored += result.num_games
 
-            # Remove matching pending chunk
-            for i, (n, _) in enumerate(self.pending_chunks):
-                if n == result.num_games:
-                    self.pending_chunks.pop(i)
-                    break
+            # Remove pending chunk and compute elapsed time
+            elapsed = 0.0
+            if result.chunk_id and result.chunk_id in self.pending_chunks:
+                chunk = self.pending_chunks.pop(result.chunk_id)
+                elapsed = time.time() - chunk.assign_time
+
+            # Update EWMA speed estimate; this drives adaptive chunk sizing
+            # so future get_work() calls distribute proportionally
+            if result.worker and result.worker in self.workers:
+                w = self.workers[result.worker]
+                w.chunks_completed += 1
+                w.games_completed += result.num_games
+                w.update_speed(result.num_games, elapsed)
 
             logger.info(
-                "Result: iter %d, %d games, +%.3f / -%.3f (%d/%d done)",
+                "Result: iter %d, %d games from %s [%s], +%.3f / -%.3f (%d/%d done, %.1fs)",
                 result.iteration, result.num_games,
+                result.worker or "?", result.chunk_id or "?",
                 result.score_plus, result.score_minus,
                 self.games_completed, self.config.games_per_iteration,
+                elapsed,
             )
 
             # Check if iteration is complete
@@ -231,6 +386,16 @@ class CoordinatorState:
                 name, old_theta[name], new_theta[name], engine_val,
                 step, 100.0 * abs(step) / r if r > 0 else 0,
             )
+
+        # Log worker stats
+        active = self._active_workers()
+        if active:
+            logger.info("Worker stats:")
+            for w in active:
+                logger.info(
+                    "  %s: %d games, %.2f games/sec",
+                    w.name, w.games_completed, w.games_per_second,
+                )
         logger.info("=" * 60)
 
         # Checkpoint
@@ -246,12 +411,30 @@ class CoordinatorState:
                 logger.info("  %s = %s", name, val)
 
     def _save_state(self):
-        """Persist SPSA state to disk."""
-        with open(self.state_file, "w") as f:
-            json.dump(self.optimizer.state.to_dict(), f, indent=2)
+        """Persist SPSA state atomically: write temp file, then rename.
+
+        On POSIX os.replace is atomic. On Windows it's not strictly atomic
+        but it is an overwrite-or-fail operation, avoiding partial writes.
+        """
+        state_dir = self.state_file.parent
+        try:
+            fd, tmp_path = tempfile.mkstemp(
+                suffix=".tmp", prefix="spsa_state_", dir=state_dir
+            )
+            with os.fdopen(fd, "w") as f:
+                json.dump(self.optimizer.state.to_dict(), f, indent=2)
+            os.replace(tmp_path, self.state_file)
+        except Exception:
+            logger.exception("Failed to save state to %s", self.state_file)
+            # Clean up temp file on failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     def get_status(self) -> dict:
         """Current tuning status for display."""
+        now = time.time()
         with self.lock:
             return {
                 "iteration": self.optimizer.iteration,
@@ -262,6 +445,16 @@ class CoordinatorState:
                 "games_per_iteration": self.config.games_per_iteration,
                 "c_k": self.optimizer.c_k() if not self.optimizer.is_done() else 0,
                 "a_k": self.optimizer.a_k() if not self.optimizer.is_done() else 0,
+                "workers": {
+                    name: {
+                        "alive": (now - w.last_seen) < self.worker_timeout,
+                        "last_seen_ago": round(now - w.last_seen, 1),
+                        "games_completed": w.games_completed,
+                        "games_per_second": round(w.games_per_second, 2),
+                    }
+                    for name, w in self.workers.items()
+                },
+                "pending_chunks": len(self.pending_chunks),
             }
 
     def get_tuning_config_dict(self) -> dict:
@@ -270,6 +463,7 @@ class CoordinatorState:
 
     def get_coordinator_dashboard(self) -> dict:
         """Rich coordinator data for graphical dashboard."""
+        now = time.time()
         with self.lock:
             pct_complete = 0
             if not self.optimizer.is_done():
@@ -286,6 +480,16 @@ class CoordinatorState:
 
             history = self.optimizer.state.history
 
+            worker_data = []
+            for name, w in self.workers.items():
+                worker_data.append({
+                    "name": name,
+                    "alive": (now - w.last_seen) < self.worker_timeout,
+                    "last_seen_ago": round(now - w.last_seen, 1),
+                    "games_completed": w.games_completed,
+                    "games_per_second": round(w.games_per_second, 2),
+                })
+
             return {
                 "iteration": self.optimizer.iteration,
                 "max_iterations": self.optimizer.max_iterations,
@@ -300,6 +504,7 @@ class CoordinatorState:
                 "c_k": self.optimizer.c_k() if not self.optimizer.is_done() else 0,
                 "a_k": self.optimizer.a_k() if not self.optimizer.is_done() else 0,
                 "history": history[-50:] if history else [],
+                "workers": worker_data,
             }
 
 
@@ -308,6 +513,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the coordinator."""
 
     coordinator: CoordinatorState  # set on class before server starts
+    dashboard_template: str = ""   # cached at startup
+    chart_js: str = ""             # cached at startup
 
     def log_message(self, format, *args):
         # Route http.server logs through our logger
@@ -326,7 +533,6 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         return json.loads(body) if body else {}
 
-
     def _send_html(self, html: str, status: int = 200):
         """Send HTML response."""
         body = html.encode()
@@ -336,20 +542,10 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-
     def _render_coordinator_dashboard(self) -> str:
-        """Render dashboard from template with data."""
-        template_path = Path(__file__).parent / "dashboard.tmpl"
-
-        if not template_path.exists():
-            return "<h1>Error: dashboard.tmpl template not found</h1>"
-
-        chart_js_path = Path(__file__).parent / "chart.umd.min.js"
-        with open(chart_js_path, "r") as f:
-            chart_js = f.read()
-
-        with open(template_path) as f:
-            template = f.read()
+        """Render dashboard from cached template with live data."""
+        if not self.dashboard_template:
+            return "<h1>Error: dashboard template not loaded</h1>"
 
         data = self.coordinator.get_coordinator_dashboard()
 
@@ -367,8 +563,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         theta_rows = ""
         for name, value in data["theta"].items():
             theta_rows += f"""        <tr>
-            <td style="font-family: monospace; padding: 8px;">{name}</td>
-            <td style="font-family: monospace; text-align: right; padding: 8px;">{value}</td>
+            <td style="font-family: monospace;">{name}</td>
+            <td style="font-family: monospace;">{value}</td>
         </tr>
 """
 
@@ -381,9 +577,9 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                 score_diff = h.get("score_diff", 0)
                 elo_diff = h.get("elo_diff", 0)
                 history_rows += f"""        <tr>
-            <td style="padding: 8px; text-align: center;">{iter_num}</td>
-            <td style="padding: 8px; text-align: center;">{score_diff:+.4f}</td>
-            <td style="padding: 8px; text-align: center;">{elo_diff:+.1f}</td>
+            <td>{iter_num}</td>
+            <td>{score_diff:+.4f}</td>
+            <td>{elo_diff:+.1f}</td>
         </tr>
 """
             history_section = f"""
@@ -404,14 +600,54 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             </div>
 """
 
+        # Build workers section
+        workers_section = ""
+        if data.get("workers"):
+            workers_rows = ""
+            for w in data["workers"]:
+                if w["alive"]:
+                    status_style = "color: #4CAF50"
+                    status_text = "alive"
+                else:
+                    status_style = "color: #f44336; font-weight: bold"
+                    status_text = "dead"
+                workers_rows += f"""        <tr>
+            <td style="font-family: monospace;">{w["name"]}</td>
+            <td style="{status_style}">{status_text}</td>
+            <td>{w["last_seen_ago"]:.0f}s ago</td>
+            <td>{w["games_completed"]}</td>
+            <td>{w["games_per_second"]:.2f}</td>
+        </tr>
+"""
+            workers_section = f"""
+            <div class="section">
+                <h3>Workers</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Status</th>
+                            <th>Last Seen</th>
+                            <th>Games Done</th>
+                            <th>Games/sec</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {workers_rows}
+                    </tbody>
+                </table>
+            </div>
+"""
+
         # JSON blob for client-side charts
         history_json = json.dumps(data.get("history", []))
 
         status_color = "#4CAF50" if not is_done else "#2196F3"
         status_text = "COMPLETE" if is_done else "IN PROGRESS"
 
-        return template.format(
-            chart_js=chart_js,
+        refresh_sec = self.coordinator.config.dashboard_refresh
+        return self.dashboard_template.format(
+            chart_js=self.chart_js,
             status_color=status_color,
             status_text=status_text,
             iteration=iteration,
@@ -426,7 +662,10 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             games_assigned=games_assigned,
             theta_rows=theta_rows,
             history_section=history_section,
+            workers_section=workers_section,
             history_json=history_json,
+            refresh_sec=refresh_sec,
+            refresh_ms=refresh_sec * 1000,
             timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
         )
 
@@ -441,12 +680,12 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
-
     def do_POST(self):
         if self.path == "/work":
             data = self._read_json()
             chunk_size = data.get("chunk_size", 0)
-            result = self.coordinator.get_work(chunk_size)
+            worker_name = data.get("worker", "")
+            result = self.coordinator.get_work(chunk_size, worker_name)
             self._send_json(result)
         elif self.path == "/result":
             data = self._read_json()
@@ -457,7 +696,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             self.send_error(404)
 
 
-def setup_logging(log_dir: Path):
+def setup_logging(log_dir: Path, debug: bool = False):
     """Configure logging to file and stdout."""
     log_file = log_dir / "coordinator.log"
 
@@ -472,7 +711,7 @@ def setup_logging(log_dir: Path):
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
 
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
 
@@ -485,6 +724,8 @@ def main():
                         help="Server port (default: 8080)")
     parser.add_argument("--clean", action="store_true",
                         help="Wipe state and logs, start fresh")
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable debug logging")
     args = parser.parse_args()
 
     config = TuningConfig.from_json(args.config)
@@ -501,10 +742,25 @@ def main():
             log.unlink()
 
     logs_dir.mkdir(parents=True, exist_ok=True)
-    setup_logging(logs_dir)
+    setup_logging(logs_dir, debug=args.debug)
 
     if args.clean:
         logger.info("Clean start: state and logs wiped")
+
+    # Cache dashboard template and chart.js at startup
+    spsa_dir = Path(__file__).parent
+    template_path = spsa_dir / "dashboard.tmpl"
+    chart_js_path = spsa_dir / "chart.umd.min.js"
+
+    if template_path.exists():
+        with open(template_path) as f:
+            CoordinatorHandler.dashboard_template = f.read()
+    else:
+        logger.warning("dashboard.tmpl not found, dashboard disabled")
+
+    if chart_js_path.exists():
+        with open(chart_js_path) as f:
+            CoordinatorHandler.chart_js = f.read()
 
     logger.info("Starting SPSA coordinator on port %d", args.port)
     logger.info("Config: %s", args.config)

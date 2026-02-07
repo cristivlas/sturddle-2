@@ -8,7 +8,7 @@ an engine wrapper batch file, ready for hand-editing.
 
 Usage:
     python genconfig.py <project_name> [-D 8] [-H 256] [-T 1]
-                        [-b 10000] [-g 200] [param_names... | all]
+                        [-i 100] [-g 100] [param_names... | all]
 
 Creates:
     tuneup/<project_name>/
@@ -107,10 +107,10 @@ def main():
                         help='Engine hash table size in MB (default: 256)')
     parser.add_argument('-T', '--threads', type=int, default=1,
                         help='Engine threads (default: 1)')
-    parser.add_argument('-b', '--budget', type=int, default=10000,
-                        help='Total games budget (default: 10000)')
-    parser.add_argument('-g', '--games-per-iteration', type=int, default=200,
-                        help='Games per SPSA iteration (default: 200)')
+    parser.add_argument('-i', '--iterations', type=int, default=100,
+                        help='Number of SPSA iterations (default: 100)')
+    parser.add_argument('-g', '--games-per-iteration', type=int, default=100,
+                        help='Games per SPSA iteration (default: 100)')
     parser.add_argument('-c', '--spsa-c', type=float, default=0.05,
                         help='SPSA perturbation size as fraction of range (default: 0.05)')
     parser.add_argument('-a', '--spsa-a', type=float, default=0.5,
@@ -169,7 +169,7 @@ def main():
         'games_per_iteration': args.games_per_iteration,
         'output_dir': project_dir_abs,
         'spsa': {
-            'budget': args.budget,
+            'budget': args.iterations * args.games_per_iteration,
             'a': args.spsa_a,
             'c': args.spsa_c,
             'A_ratio': 0.1,
@@ -181,8 +181,16 @@ def main():
 
     if args.depth is not None:
         tuning_config['depth'] = args.depth
+        # Depth mode: short games, refresh often
+        tuning_config['dashboard_refresh'] = 10
     else:
         tuning_config['time_control'] = args.time_control
+        # Estimate refresh from TC: parse base time, use ~2x as refresh
+        try:
+            base_time = float(args.time_control.split('+')[0])
+            tuning_config['dashboard_refresh'] = max(10, int(base_time * 2))
+        except (ValueError, IndexError):
+            tuning_config['dashboard_refresh'] = 60
 
     tuning_path = os.path.join(project_dir, 'tuning.json')
     with open(tuning_path, 'w') as f:
@@ -214,9 +222,9 @@ def main():
         f.write('\n')
 
     # Summary
-    iterations = args.budget // args.games_per_iteration
+    budget = args.iterations * args.games_per_iteration
     print(f'Project created: {project_dir_abs}/')
-    print(f'  tuning.json   - {len(tune_params)} parameters, {args.budget} games, {iterations} iterations')
+    print(f'  tuning.json   - {len(tune_params)} parameters, {args.iterations} iterations, {budget} games')
     print(f'  worker.json   - concurrency={worker_config["concurrency"]}, engine={engine_cmd}')
     print()
     print('Next steps:')

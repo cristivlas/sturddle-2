@@ -7,7 +7,8 @@ heterogeneous LANs (2-3 machines, mixed Linux/Windows).
 ## Architecture
 
 - **Coordinator**: HTTP server managing SPSA state. Generates perturbations,
-  distributes work, collects scores, updates parameters.
+  distributes work, collects scores, updates parameters. Tracks worker health
+  via implicit heartbeat and adapts chunk sizes to worker throughput.
 - **Workers**: Poll the coordinator for game batches, run cutechess-cli locally,
   report scores back. Each worker saves PGNs and logs locally.
 
@@ -23,7 +24,7 @@ heterogeneous LANs (2-3 machines, mixed Linux/Windows).
 From the repo root:
 
 ```bash
-python tools/tuneup/spsa/genconfig.py my-test -D 8 -b 2000 -g 100
+python tools/tuneup/spsa/genconfig.py my-test -D 8 -i 50 -g 100
 ```
 
 This creates `tuneup/my-test/` with:
@@ -38,23 +39,24 @@ Options:
 - `-t` — time control, e.g. `1+0.1` (default)
 - `-H` — hash table size in MB (default: 256)
 - `-T` — engine threads (default: 1)
-- `-b` — total games budget (default: 10000)
-- `-g` — games per SPSA iteration (default: 200)
-- `-c` — SPSA perturbation magnitude (default: 2.0)
-- `-a` — SPSA learning rate (default: 1.0)
+- `-i` — number of SPSA iterations (default: 100)
+- `-g` — games per SPSA iteration (default: 100)
+- `-c` — SPSA perturbation as fraction of range (default: 0.05 = 5%)
+- `-a` — SPSA learning rate (default: 0.5)
 
 ### 2. Review and edit configs
 
 Open `tuneup/my-test/tuning.json` and adjust:
 - Remove parameters you don't want to tune
 - Adjust bounds (`lower`/`upper`) if needed
-- Tweak SPSA hyperparameters (`a`, `c`, `budget`, etc.)
+- Tweak SPSA hyperparameters (`a`, `c`, etc.)
 
 Open `tuneup/my-test/worker.json` and verify:
 - `engine` path is correct
-- `opening_book` path is correct (defaults to absolute path to `tuneup/books/8moves_v3.pgn`)
+- `opening_book` path is correct (defaults to `tuneup/books/8moves_v3.pgn`)
 - `concurrency` matches your CPU count
 - `cutechess_cli` is in your PATH (or set full path)
+- `parameter_overrides` for machine-specific options (e.g., `SyzygyPath`)
 
 ### 3. Start the coordinator
 
@@ -97,7 +99,10 @@ The coordinator binds to `0.0.0.0:8080` and accepts connections from any worker.
   "book_format": "pgn",
   "book_depth": 8,
   "games_dir": "/home/user/spsa/my-test/games",
-  "log_file": "/home/user/spsa/my-test/worker.log"
+  "log_file": "/home/user/spsa/my-test/logs/worker.log",
+  "parameter_overrides": {
+    "SyzygyPath": "/home/user/syzygy/3-4-5/"
+  }
 }
 ```
 
@@ -107,27 +112,36 @@ The coordinator binds to `0.0.0.0:8080` and accepts connections from any worker.
 python /path/to/tools/tuneup/spsa/worker.py -c worker.json
 ```
 
-Workers self-balance: faster machines with higher concurrency naturally process
-more game batches.
+Workers can come and go freely. The coordinator tracks each worker's throughput
+and adapts chunk sizes proportionally — faster machines get more work.
+
+## Dashboard
+
+Open `http://coordinator-ip:8080/` in a browser for a live dashboard showing:
+- Overall progress and current iteration
+- Current parameter values
+- Worker status (alive/dead, games/sec throughput)
+- Recent iteration history with score and ELO diffs
+- Parameter convergence charts
+
+The dashboard auto-refreshes at an interval set by `dashboard_refresh` in
+tuning.json (default: based on time control).
 
 ## Monitoring
 
 ### Coordinator logs
 
-The coordinator prints iteration progress to stdout and to
-`logs/coordinator.log` in the project directory:
+The coordinator logs iteration progress with parameter step sizes:
 
 ```
-Iteration 42: c_k=1.8234, a_k=0.012345
-Assigned 50 games (iter 42, 50/200 assigned)
-Result: iter 42, 50 games, +0.530 / -0.470 (50/200 done)
-...
 ============================================================
-Iteration 42 complete
-Scores: +0.5250 (ELO +17.4) / -0.4750 (ELO -17.4)
+Iteration 5 complete (100 games)
+Scores: +0.5250 / -0.4750 (diff: +0.0500, ELO diff: +34.8)
 Updated parameters:
-  ParamA: 100.0000 -> 102.3400 (engine: 102)
-  ParamB: 0.5000 -> 0.4820 (engine: 0.482)
+  NULL_MOVE_MARGIN: 65.0000 -> 68.1200 (engine: 68, step: +3.1200, 7.8% of range)
+Worker stats:
+  dragon: 72 games, 0.85 games/sec
+  ariadne: 28 games, 0.33 games/sec
 ============================================================
 ```
 
@@ -137,24 +151,32 @@ Updated parameters:
 curl http://localhost:8080/status
 ```
 
-Returns JSON with current iteration, parameter values, and progress.
+Returns JSON with current iteration, parameter values, worker stats, and progress.
 
-## Resuming
+## Resuming and Clean Start
 
-If the coordinator is interrupted, restarting it will resume the existing session:
+Resume is the default. Restarting the coordinator picks up from the last
+completed iteration (`spsa_state.json`). Workers reconnect automatically.
 
 ```bash
 python ../../tools/tuneup/spsa/coordinator.py -c tuning.json
-
 ```
 
-Picks up from the last completed iteration (`spsa_state.json`). Workers
-reconnect automatically.
-
-To reinitialize:
+To wipe state and logs, start fresh:
 ```bash
 python ../../tools/tuneup/spsa/coordinator.py -c tuning.json --clean
+```
 
+Worker logs can also be cleaned:
+```bash
+python ../../tools/tuneup/spsa/worker.py -c worker.json --clean
+```
+
+## Debug Mode
+
+For verbose worker output (all cutechess-cli score lines, full output):
+```bash
+python ../../tools/tuneup/spsa/worker.py -c worker.json --debug
 ```
 
 ## Project Directory Layout
@@ -168,12 +190,10 @@ tuneup/my-test/
   engine.bat            # engine wrapper (Windows)
   spsa_state.json       # checkpoint (auto-generated)
   logs/
-    coordinator.log     # theta progression, iteration results
+    coordinator.log     # iteration results, parameter updates
+    worker.log          # worker activity log
   games/
-    iter_0001_PC1.pgn   # PGNs from each iteration (per worker)
-    iter_0002_PC1.pgn
-    ...
-  worker.log            # worker activity log
+    games.pgn           # all PGNs (appended by cutechess-cli)
 ```
 
 ## Configuration Reference
@@ -186,17 +206,19 @@ tuneup/my-test/
 | `engine.fixed_options` | Fixed UCI options (Hash, Threads, etc.) | `{}` |
 | `time_control` | Time control string | `"1+0.1"` |
 | `depth` | Fixed search depth (overrides time_control if set) | `null` |
-| `games_per_iteration` | Games per SPSA iteration | `200` |
+| `games_per_iteration` | Games per SPSA iteration | `100` |
 | `output_dir` | Coordinator output (logs, checkpoint) | project dir |
-| `spsa.budget` | Total games budget | `10000` |
-| `spsa.a` | Learning rate | `1.0` |
-| `spsa.c` | Perturbation magnitude | `2.0` |
+| `retry_after` | Worker retry interval in seconds | `5` |
+| `dashboard_refresh` | Dashboard auto-refresh in seconds | `10` |
+| `spsa.budget` | Total games budget (iterations * games_per_iteration) | `10000` |
+| `spsa.a` | Learning rate | `0.5` |
+| `spsa.c` | Perturbation as fraction of parameter range | `0.05` |
 | `spsa.A_ratio` | Stabilization constant (fraction of max iterations) | `0.1` |
 | `spsa.alpha` | Learning rate decay exponent | `0.602` |
 | `spsa.gamma` | Perturbation decay exponent | `0.101` |
-| `parameters.<name>.init` | Initial value | — |
-| `parameters.<name>.lower` | Lower bound | — |
-| `parameters.<name>.upper` | Upper bound | — |
+| `parameters.<name>.init` | Initial value | -- |
+| `parameters.<name>.lower` | Lower bound | -- |
+| `parameters.<name>.upper` | Upper bound | -- |
 | `parameters.<name>.type` | `"int"` or `"float"` | `"int"` |
 
 ### worker.json (per-machine)
@@ -212,14 +234,32 @@ tuneup/my-test/
 | `book_depth` | Opening book depth in plies | `8` |
 | `games_dir` | Absolute path for PGN output | auto-detected |
 | `log_file` | Absolute path to worker log | auto-detected |
+| `parameter_overrides` | Per-machine engine options (e.g., SyzygyPath) | `{}` |
 
 ## SPSA Algorithm
 
-The tuner uses standard SPSA with Bernoulli perturbations:
+The tuner uses range-scaled SPSA with Bernoulli perturbations:
 
 - Each iteration generates a random +/-1 vector delta
-- Two engine configs are created: theta + c_k * delta and theta - c_k * delta
-- Games are played between them; scores are used to estimate the gradient
-- Parameters are updated: theta += a_k * gradient_estimate
-- Learning rates decay: a_k = a/(A+k+1)^alpha, c_k = c/(k+1)^gamma
+- Perturbation is scaled by parameter range: `c_k * delta * (upper - lower)`
+- Two engine configs are created: `theta + perturbation` and `theta - perturbation`
+- Games are played between them; scores estimate the gradient
+- Update is scaled by range: `theta += a_k * gradient * (upper - lower)`
+- This ensures consistent behavior across parameters with different ranges
+- Learning rates decay: `a_k = a/(A+k+1)^alpha`, `c_k = c/(k+1)^gamma`
 - Integer parameters are rounded after update but tracked as floats internally
+
+## Work Distribution
+
+The coordinator uses adaptive work assignment:
+
+- **Chunk sizing**: Proportional to each worker's observed throughput (games/sec).
+  New workers with no history get an equal share. No single worker gets more
+  than 50% of remaining games for an iteration.
+- **Adaptive timeout**: Chunk timeouts are based on observed worker speed
+  (3x expected completion time), not hardcoded. Falls back to 600s for
+  workers with no speed data.
+- **Worker tracking**: Workers are identified by hostname. The coordinator
+  tracks each worker's throughput, games completed, and last-seen time.
+  Workers that haven't contacted the coordinator in 120 seconds are marked dead
+  and their chunks are reclaimed.

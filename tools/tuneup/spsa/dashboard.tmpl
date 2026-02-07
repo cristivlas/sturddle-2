@@ -116,10 +116,11 @@
             width: 100%;
             border-collapse: collapse;
         }}
+        th, td {{
+            padding: 12px;
+        }}
         th {{
             background: #f0f0f0;
-            padding: 12px;
-            text-align: left;
             font-weight: 600;
             font-size: 12px;
             color: #666;
@@ -128,7 +129,12 @@
         }}
         td {{
             border-bottom: 1px solid #e0e0e0;
-            padding: 12px;
+        }}
+        th:first-child, td:first-child {{
+            text-align: left;
+        }}
+        th:not(:first-child), td:not(:first-child) {{
+            text-align: right;
         }}
         tr:hover {{
             background: #f9f9f9;
@@ -248,20 +254,22 @@
                 </table>
             </div>
 
+            <!-- Workers -->
+            {workers_section}
+
             <!-- Recent History -->
             {history_section}
 
             <div class="refresh-info">
-                This page refreshes every 5 seconds - Last updated: {timestamp}
+                This page refreshes every {refresh_sec} seconds - Last updated: {timestamp}
             </div>
         </div>
     </div>
 
     <script>
-        // Auto-refresh every 5 seconds
         setTimeout(function() {{
             location.reload();
-        }}, 5000);
+        }}, {refresh_ms});
     </script>
     <script>{chart_js}</script>
     <script id="history-data" type="application/json">{history_json}</script>

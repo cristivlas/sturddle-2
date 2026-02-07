@@ -129,9 +129,13 @@ def build_cutechess_command(worker_config: WorkerConfig,
         if book_depth:
             cmd += [f"plies={book_depth}"]
         cmd += ["order=random"]
+        cmd += ["policy=round"]
 
     # Number of games (rounds = games/2 for alternating colors)
     num_rounds = max(1, work.num_games // 2)
+    assert(work.num_games)
+    assert(num_rounds)
+
     cmd += ["-rounds", str(num_rounds)]
     cmd += ["-games", "2"]  # 2 games per round (color swap)
     cmd += ["-repeat"]
@@ -159,8 +163,7 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict,
     games_dir = Path(worker_config.games_dir)
     games_dir.mkdir(parents=True, exist_ok=True)
 
-    hostname = platform.node()
-    pgn_file = str(games_dir / f"iter_{work.iteration:04d}_{hostname}.pgn").replace("\\", "/")
+    pgn_file = str(games_dir / "games.pgn").replace("\\", "/")
 
     cmd = build_cutechess_command(
         worker_config, tuning_config, work, pgn_file
@@ -173,13 +176,21 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict,
     )
 
     if result.returncode != 0:
-        logger.error(f"cutechess-cli failed (rc={hex(result.returncode)})")
-        logger.error("stderr: %s", result.stderr[-500:] if result.stderr else "(empty)")
+        logger.error("cutechess-cli failed (rc=%s)", hex(result.returncode))
+        logger.error("stdout (last 1000 chars): %s",
+                      result.stdout[-1000:] if result.stdout else "(empty)")
+        logger.error("stderr (last 1000 chars): %s",
+                      result.stderr[-1000:] if result.stderr else "(empty)")
         raise RuntimeError(f"cutechess-cli exited with code {hex(result.returncode)}")
 
     output = result.stdout
     if result.stderr:
-        logger.warning("cutechess-cli stderr: %s", result.stderr.strip()[-500:])
+        logger.warning("cutechess-cli stderr: %s", result.stderr.strip()[-1000:])
+
+    # Log all output lines that mention errors or crashes
+    for line in output.splitlines():
+        if any(kw in line.lower() for kw in ("abandoned", "error", "crash", "disconnect", "timeout", "illegal", "terminated", "forfeit")):
+            logger.warning("cutechess: %s", line.strip())
 
     # Log score lines for diagnostics
     score_lines = re.findall(r"Score of .+", output)
@@ -194,6 +205,18 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict,
 
     if total == 0:
         raise RuntimeError("No games were played")
+
+    # Abort if too many games failed — results would be noise
+    min_completion = 0.5
+    if total < work.num_games * min_completion:
+        logger.error(
+            "Only %d/%d games completed (W=%d L=%d D=%d) — aborting chunk",
+            total, work.num_games, wins, losses, draws,
+        )
+        raise RuntimeError(
+            f"Only {total}/{work.num_games} games completed "
+            f"({total/work.num_games:.0%}), minimum is {min_completion:.0%}"
+        )
 
     if total != work.num_games:
         logger.warning(
@@ -263,6 +286,8 @@ def worker_loop(worker_config: WorkerConfig):
                 "score_plus": score_plus,
                 "score_minus": score_minus,
                 "num_games": work.num_games,
+                "chunk_id": work.chunk_id,
+                "worker": hostname,
             }
             resp = http_post(f"{base_url}/result", result)
             logger.info("Result submitted: %s", resp.get("status"))
@@ -274,9 +299,8 @@ def worker_loop(worker_config: WorkerConfig):
             logger.error("cutechess-cli timed out")
             time.sleep(2)
         except Exception as e:
-            logger.error("Error: %s", e, exc_info=True)
-            time.sleep(5)
-
+            logger.exception("Terminating.")
+            break
 
 def setup_logging(log_file: str, debug: bool = False):
     """Configure logging to file and stdout."""

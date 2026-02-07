@@ -82,6 +82,8 @@ class TuningConfig:
     output_dir: str = "./spsa_output"
     # Seconds for workers to wait before retrying when no work available
     retry_after: int = 5
+    # Dashboard auto-refresh interval in seconds
+    dashboard_refresh: int = 10
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
     parameters: Dict[str, Parameter] = field(default_factory=dict)
 
@@ -95,6 +97,7 @@ class TuningConfig:
             "depth": self.depth,
             "games_per_iteration": self.games_per_iteration,
             "retry_after": self.retry_after,
+            "dashboard_refresh": self.dashboard_refresh,
             "output_dir": self.output_dir,
             "spsa": asdict(self.spsa),
             "parameters": {
@@ -127,6 +130,7 @@ class TuningConfig:
             depth=d.get("depth"),
             games_per_iteration=d.get("games_per_iteration", 200),
             retry_after=d.get("retry_after", 5),
+            dashboard_refresh=d.get("dashboard_refresh", 10),
             output_dir=d.get("output_dir", "./spsa_output"),
             spsa=spsa,
             parameters=parameters,
@@ -169,13 +173,15 @@ class WorkItem:
     theta_plus: Dict[str, Any]   # param_name -> engine value
     theta_minus: Dict[str, Any]  # param_name -> engine value
     num_games: int
+    chunk_id: str = ""           # unique chunk identifier
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "WorkItem":
-        return cls(**d)
+        return cls(**{k: v for k, v in d.items()
+                      if k in cls.__dataclass_fields__})
 
 
 @dataclass
@@ -185,6 +191,8 @@ class WorkResult:
     score_plus: float   # win rate for theta_plus side
     score_minus: float  # win rate for theta_minus side
     num_games: int
+    chunk_id: str = ""  # echoed from WorkItem
+    worker: str = ""    # worker hostname
 
     def to_dict(self) -> dict:
         return asdict(self)
