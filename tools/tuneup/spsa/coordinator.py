@@ -19,6 +19,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from pathlib import Path
 
 from config import TuningConfig, WorkItem, WorkResult
@@ -872,7 +873,11 @@ def main():
     coordinator = CoordinatorState(config, resume=not args.clean)
     CoordinatorHandler.coordinator = coordinator
 
-    server = HTTPServer(("0.0.0.0", args.port), CoordinatorHandler)
+    # Threaded so dashboard renders don't block worker requests
+    class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+
+    server = ThreadedHTTPServer(("0.0.0.0", args.port), CoordinatorHandler)
     logger.info("Coordinator ready, waiting for workers...")
 
     try:
