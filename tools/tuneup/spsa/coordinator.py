@@ -683,6 +683,8 @@ class CoordinatorState:
                     history[-self.config.dashboard_history:]
                     if self.config.dashboard_history else history
                 ) if history else [],
+                "history_total": len(history),
+                "dashboard_history": self.config.dashboard_history,
                 "workers": worker_data,
                 "session_start": self.optimizer.state.created_at,
                 "server_start": self.server_start_time,
@@ -761,6 +763,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             theta_json=json.dumps(data.get("theta", {})),
             workers_json=json.dumps(data.get("workers", [])),
             history_json=json.dumps(data.get("history", [])),
+            history_total=data["history_total"],
+            dashboard_history=data["dashboard_history"] or "all",
             timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
             session_start=session_start,
             server_start=server_start,
@@ -877,7 +881,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                     "theta": data.get("theta", {}),
                     "workers": data.get("workers", []),
                     "last_history": history[-1] if history else None,
-                    "history_len": len(history),
+                    "history_len": data["history_total"],
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                 })
                 self.wfile.write(f"data: {payload}\n\n".encode())
