@@ -1011,15 +1011,18 @@ def main():
                 break
             iter_k = coordinator.optimizer.iteration
             if not coordinator.optimizer.is_done():
+                can_restart = sys.platform != "win32"
                 try:
-                    restart = " and restart" if sys.platform != "win32" else ""
-                    answer = input(
-                        f"\nWait for iteration {iter_k} to complete{restart}? [y/N] "
-                    ).strip().lower()
+                    if can_restart:
+                        prompt = f"\nWait for iteration {iter_k}? [r]estart / [s]top / [N]o "
+                    else:
+                        prompt = f"\nWait for iteration {iter_k} to complete? [s]top / [N]o "
+                    answer = input(prompt).strip().lower()
                 except (EOFError, KeyboardInterrupt):
                     answer = ""
-                if answer == "y":
+                if answer in ("r", "s") if can_restart else answer == "s":
                     coordinator.draining = True
+                    coordinator._restart = (answer == "r")
                     coordinator._notify_dashboard()
                     logger.info(
                         "Draining — waiting for iteration %d to complete "
@@ -1036,7 +1039,7 @@ def main():
 
     coordinator._save_state()
     server.server_close()
-    if coordinator.draining and sys.platform != "win32":
+    if coordinator.draining and getattr(coordinator, '_restart', False):
         logger.info("Restarting coordinator...")
         os.execv(sys.executable, [sys.executable] + sys.argv)
     else:
