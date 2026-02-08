@@ -163,6 +163,7 @@ class WorkerConfig:
     games_dir: str = "./games"
     log_file: str = "worker.log"
     max_chunk_size: int = 0  # max games per chunk (0 = unlimited)
+    http_retry_timeout: int = 300  # seconds to retry on connection errors
     parameter_overrides: dict = field(default_factory=dict)
     # cutechess-cli overrides: tc, depth, etc. (not UCI options)
     cutechess_overrides: dict = field(default_factory=dict)

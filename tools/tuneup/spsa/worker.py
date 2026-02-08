@@ -32,15 +32,29 @@ def http_get(url: str) -> dict:
         return json.loads(resp.read())
 
 
-def http_post(url: str, data: dict) -> dict:
-    """POST JSON, return parsed JSON response."""
+def http_post(url: str, data: dict, retry_timeout: int = 0) -> dict:
+    """POST JSON, return parsed JSON response.
+
+    On connection errors, retries with exponential backoff for up to
+    retry_timeout seconds (0 = no retry).
+    """
     body = json.dumps(data).encode()
-    req = urllib.request.Request(
-        url, data=body, method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
+    deadline = time.monotonic() + retry_timeout
+    delay = 1
+    while True:
+        req = urllib.request.Request(
+            url, data=body, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read())
+        except (ConnectionError, TimeoutError, urllib.error.URLError) as e:
+            if time.monotonic() + delay > deadline:
+                raise
+            logger.warning("Connection error (%s), retrying in %ds...", e, delay)
+            time.sleep(delay)
+            delay = min(delay * 2, 30)
 
 
 def parse_cutechess_output(output: str) -> tuple:
@@ -256,6 +270,7 @@ def worker_loop(worker_config: WorkerConfig):
 
     # Default retry interval when coordinator asks workers to retry
     default_retry = tuning_config.get("retry_after", 5)
+    retry_timeout = worker_config.http_retry_timeout
 
     hostname = platform.node()
 
@@ -272,7 +287,7 @@ def worker_loop(worker_config: WorkerConfig):
             }
             if cc_overrides:
                 work_request["cutechess_overrides"] = cc_overrides
-            response = http_post(f"{base_url}/work", work_request)
+            response = http_post(f"{base_url}/work", work_request, retry_timeout)
 
             status = response.get("status")
             if status == "done":
@@ -305,7 +320,7 @@ def worker_loop(worker_config: WorkerConfig):
                 "chunk_id": work.chunk_id,
                 "worker": hostname,
             }
-            resp = http_post(f"{base_url}/result", result)
+            resp = http_post(f"{base_url}/result", result, retry_timeout)
             logger.info("Result submitted: %s", resp.get("status"))
 
         except urllib.error.URLError as e:
