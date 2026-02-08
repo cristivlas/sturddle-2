@@ -17,7 +17,7 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from pathlib import Path
@@ -38,6 +38,7 @@ class WorkerInfo:
     games_completed_iter: int = 0 # games completed in current iteration
     _speed_ewma: float = 0.0      # exponentially weighted moving average (games/sec)
     _ewma_alpha: float = 0.3      # smoothing factor: higher = more weight on recent
+    cutechess_overrides: dict = field(default_factory=dict)  # worker-local tc/depth
 
     @property
     def games_per_second(self) -> float:
@@ -139,19 +140,24 @@ class CoordinatorState:
                 self.config.games_per_iteration,
             )
 
-    def _estimate_game_duration(self) -> float:
-        """Estimate wall-clock seconds per game from time control or search depth."""
+    def _estimate_game_duration(self, overrides: dict = None) -> float:
+        """Estimate wall-clock seconds per game from time control or search depth.
+
+        Worker-local cutechess_overrides take priority over tuning config.
+        """
         cfg = self.config
-        if cfg.time_control:
-            tc = cfg.time_control
+        depth = overrides.get("depth") if overrides else cfg.depth
+        tc = overrides.get("tc") if overrides else cfg.time_control
+
+        if depth is not None:
+            return 0.15 * (1.35 ** depth)
+        if tc:
             if isinstance(tc, str) and "+" in tc:
                 base, inc = tc.split("+", 1)
                 per_side = float(base) + 40.0 * float(inc)
             else:
                 per_side = float(tc)
             return 2.0 * per_side  # both sides
-        elif cfg.depth is not None:
-            return 0.15 * (1.35 ** cfg.depth)
         return 10.0
 
     def _worker_sec_per_game(self, worker_name: str) -> float:
@@ -159,6 +165,8 @@ class CoordinatorState:
         w = self.workers.get(worker_name)
         if w and w.games_per_second > 0:
             return 1.0 / w.games_per_second
+        if w and w.cutechess_overrides:
+            return self._estimate_game_duration(w.cutechess_overrides)
         return self._base_sec_per_game
 
     def _touch_worker(self, name: str):
@@ -290,7 +298,8 @@ class CoordinatorState:
                 now - chunk.assign_time, int(chunk.timeout),
             )
 
-    def get_work(self, chunk_size: int = 0, worker_name: str = "") -> dict:
+    def get_work(self, chunk_size: int = 0, worker_name: str = "",
+                 cutechess_overrides: dict = None) -> dict:
         """
         Assign a chunk of games to a worker.
 
@@ -306,6 +315,8 @@ class CoordinatorState:
         """
         with self.lock:
             self._touch_worker(worker_name)
+            if cutechess_overrides and worker_name in self.workers:
+                self.workers[worker_name].cutechess_overrides = cutechess_overrides
 
             if self.optimizer.is_done():
                 return {"status": "done"}
@@ -817,7 +828,10 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             data = self._read_json()
             chunk_size = data.get("chunk_size", 0)
             worker_name = data.get("worker", "")
-            result = self.coordinator.get_work(chunk_size, worker_name)
+            cc_overrides = data.get("cutechess_overrides")
+            result = self.coordinator.get_work(
+                chunk_size, worker_name, cc_overrides
+            )
             self._send_json(result)
         elif self.path == "/result":
             data = self._read_json()

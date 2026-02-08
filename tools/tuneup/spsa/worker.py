@@ -259,13 +259,20 @@ def worker_loop(worker_config: WorkerConfig):
 
     hostname = platform.node()
 
+    # Collect cutechess overrides to send to coordinator (for timeout estimation)
+    cc_overrides = {k: v for k, v in worker_config.cutechess_overrides.items()
+                    if not k.startswith('_')}
+
     while True:
         try:
             # Request work
-            response = http_post(
-                f"{base_url}/work",
-                {"chunk_size": worker_config.max_chunk_size, "worker": hostname},
-            )
+            work_request = {
+                "chunk_size": worker_config.max_chunk_size,
+                "worker": hostname,
+            }
+            if cc_overrides:
+                work_request["cutechess_overrides"] = cc_overrides
+            response = http_post(f"{base_url}/work", work_request)
 
             status = response.get("status")
             if status == "done":
