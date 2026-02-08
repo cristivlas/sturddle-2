@@ -330,12 +330,13 @@ class CoordinatorState:
             if remaining <= 0:
                 return {"status": "retry", "retry_after": self.config.retry_after}
 
-            # Adaptive chunk sizing
-            if chunk_size <= 0:
-                chunk_size = self._compute_chunk_size(worker_name, remaining)
+            # Adaptive chunk sizing; worker's max_chunk_size is a ceiling
+            adaptive = self._compute_chunk_size(worker_name, remaining)
+            if chunk_size > 0:
+                adaptive = min(adaptive, chunk_size)
 
             # Must be even (each game pair is +c vs -c)
-            num_games = min(remaining, chunk_size)
+            num_games = min(remaining, adaptive)
             num_games = max(2, num_games - (num_games % 2))
 
             # Generate unique chunk ID and compute timeout

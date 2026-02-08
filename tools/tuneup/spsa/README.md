@@ -17,6 +17,13 @@ heterogeneous LANs (2-3 machines, mixed Linux/Windows).
 - [cutechess-cli](https://github.com/cutechess/cutechess) installed on each worker machine
 - Engine source tree (for genconfig.py parameter discovery)
 
+**Windows stack size caveat**: Using `main.py` directly (via the `engine.bat`
+wrapper) is convenient because it avoids a full packaged build, but `python.exe`
+has a limited default stack. At higher search depths this can cause stack
+overflows in the C extension. On Linux, thread stacks grow on demand so this
+is not an issue. If you see crashes on Windows, use a full build instead (see
+`tools/build.py`) — it configures a sufficiently large stack for the executable.
+
 ## Quick Start (single machine)
 
 ### 1. Generate a tuning project
@@ -234,7 +241,9 @@ tuneup/my-test/
 | `book_depth` | Opening book depth in plies | `8` |
 | `games_dir` | Absolute path for PGN output | auto-detected |
 | `log_file` | Absolute path to worker log | auto-detected |
-| `parameter_overrides` | Per-machine engine options (e.g., SyzygyPath) | `{}` |
+| `max_chunk_size` | Max games per chunk (0 = unlimited) | `0` |
+| `parameter_overrides` | Per-machine UCI engine options (e.g., SyzygyPath) | `{}` |
+| `cutechess_overrides` | Per-machine cutechess-cli overrides (`tc`, `depth`) | `{}` |
 
 ## SPSA Algorithm
 
@@ -256,10 +265,78 @@ The coordinator uses adaptive work assignment:
 - **Chunk sizing**: Proportional to each worker's observed throughput (games/sec).
   New workers with no history get an equal share. No single worker gets more
   than 50% of remaining games for an iteration.
-- **Adaptive timeout**: Chunk timeouts are based on observed worker speed
-  (3x expected completion time), not hardcoded. Falls back to 600s for
-  workers with no speed data.
+- **Adaptive timeout**: Chunk timeouts scale with expected completion time
+  (5x multiplier, clamped between 60s and 30min). See below for how game
+  duration is estimated.
 - **Worker tracking**: Workers are identified by hostname. The coordinator
   tracks each worker's throughput, games completed, and last-seen time.
   Workers that haven't contacted the coordinator in 120 seconds are marked dead
   and their chunks are reclaimed.
+
+### Timeout and Completion Estimates
+
+The coordinator estimates per-game wall-clock time to drive chunk timeouts
+and completion estimates. Three sources, in priority order:
+
+1. **Observed EWMA speed** — after a worker completes its first chunk, the
+   coordinator tracks an exponentially weighted moving average of games/sec.
+   This is the primary signal and adapts to actual hardware speed.
+2. **Worker cutechess overrides** — if a worker reports `cutechess_overrides`
+   (see below) and has no EWMA data yet, the coordinator estimates from the
+   worker's local `tc` or `depth` override.
+3. **Tuning config defaults** — falls back to the session-level `time_control`
+   or `depth` from `tuning.json`.
+
+Duration heuristics:
+- Time control `base+inc`: `2 * (base + 40 * inc)` seconds (both sides,
+  assuming ~40 moves per game).
+- Fixed depth `D`: `0.15 * 1.35^D` seconds (empirical exponential fit).
+
+## Worker Overrides
+
+Workers support two kinds of overrides for machine-specific differences:
+
+### `parameter_overrides` — UCI engine options
+
+Override or add UCI options sent to the engine. Useful for paths or settings
+that vary per machine. These are applied as `option.Name=value` arguments
+to cutechess-cli, after fixed options and tunable parameters.
+
+```json
+{
+  "parameter_overrides": {
+    "SyzygyPath": "/home/user/syzygy/3-4-5/",
+    "EvalFile": "/home/user/nets/nn.nnue"
+  }
+}
+```
+
+### `cutechess_overrides` — search control (tc/depth)
+
+Override the session-level time control or search depth for this worker.
+This is useful when workers have different hardware speeds and you want
+finer control, or when testing locally at a different depth than the
+session default.
+
+```json
+{
+  "cutechess_overrides": {
+    "depth": 6
+  }
+}
+```
+
+Or to override time control:
+
+```json
+{
+  "cutechess_overrides": {
+    "tc": "0.5+0.05"
+  }
+}
+```
+
+The worker sends these overrides to the coordinator on each work request,
+so the coordinator can adjust its timeout estimates accordingly. This is
+backwards compatible: old coordinators ignore the extra field, and old
+workers that don't send overrides work unchanged with new coordinators.
