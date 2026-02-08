@@ -49,6 +49,8 @@
             flex: 1;
             overflow-y: auto;
             min-height: 0;
+            display: flex;
+            flex-direction: column;
         }}
         .grid {{
             display: grid;
@@ -179,6 +181,21 @@
         @media (max-width: 700px) {{
             .two-col {{ grid-template-columns: 1fr; }}
         }}
+        .bottom-panel {{
+            flex: 1;
+            min-height: 0;
+            grid-template-rows: 1fr;
+        }}
+        .bottom-panel > .section {{
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }}
+        .bottom-panel > .section > div:last-child {{
+            flex: 1;
+            min-height: 0;
+            max-height: none !important;
+        }}
         .refresh-info {{
             padding: 4px 24px;
             font-size: 12px;
@@ -274,7 +291,7 @@
             </div>
 
             <!-- Workers + Recent History side by side -->
-            <div class="two-col">
+            <div class="two-col bottom-panel">
                 {workers_section}
                 {history_section}
             </div>
