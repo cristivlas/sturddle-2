@@ -87,22 +87,52 @@
             font-size: 12px;
             color: #666;
             white-space: nowrap;
+            min-width: 100px;
+        }}
+        .search-nav {{
+            display: flex;
+            gap: 4px;
+        }}
+        .nav-button {{
+            width: 32px;
+            height: 32px;
+            background: #f0f0f0;
+            color: #666;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }}
+        .nav-button:hover {{
+            background: #e0e0e0;
+            color: #333;
+        }}
+        .nav-button:disabled {{
+            opacity: 0.3;
+            cursor: not-allowed;
         }}
         .clear-button {{
-            padding: 10px 20px;
-            background: #f44336;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 12px;
-            font-weight: 600;
+            width: 32px;
+            height: 32px;
+            background: #f0f0f0;
+            color: #666;
+            border: 1px solid #e0e0e0;
+            border-radius: 50%;
+            font-size: 18px;
+            font-weight: bold;
             cursor: pointer;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
         }}
         .clear-button:hover {{
-            background: #d32f2f;
+            background: #e0e0e0;
+            color: #333;
         }}
         .log-container {{
             flex: 1;
@@ -111,24 +141,45 @@
             border-radius: 8px;
             overflow: auto;
             background: #1e1e1e;
-            padding: 16px;
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             font-size: 13px;
             line-height: 1.6;
+        }}
+        .log-entry {{
+            display: flex;
+            align-items: flex-start;
+        }}
+        .log-entry:hover {{
+            background: rgba(255, 255, 255, 0.05);
+        }}
+        .line-number {{
+            color: #858585;
+            text-align: right;
+            padding: 0 16px;
+            min-width: 60px;
+            user-select: none;
+            flex-shrink: 0;
+            background: #252526;
+            position: sticky;
+            left: 0;
         }}
         .log-line {{
             color: #d4d4d4;
             white-space: pre-wrap;
             word-wrap: break-word;
+            flex: 1;
+            padding: 0 16px 0 8px;
         }}
-        .log-line.hidden {{
-            display: none;
+        .log-line mark {{
+            background: rgba(255, 235, 59, 0.3);
+            color: inherit;
+            padding: 1px 2px;
+            border-radius: 2px;
         }}
-        .log-line.highlight {{
-            background: rgba(255, 235, 59, 0.2);
-            border-left: 3px solid #ffeb3b;
-            padding-left: 8px;
-            margin-left: -11px;
+        .log-line mark.current {{
+            background: rgba(255, 152, 0, 0.5);
+            border: 1px solid #ff9800;
+            padding: 0px 1px;
         }}
         .log-line-error {{
             color: #f48771;
@@ -164,9 +215,13 @@
 
         <div class="content">
             <div class="search-bar">
-                <input type="text" id="searchInput" class="search-input" placeholder="Search logs... (e.g., 'ERROR', 'Worker', 'iteration')">
-                <span class="search-stats" id="searchStats">Showing <span id="visibleLines">{total_lines}</span> of {total_lines} lines</span>
-                <button class="clear-button" onclick="clearSearch()">Clear</button>
+                <input type="text" id="searchInput" class="search-input" placeholder="Search logs...">
+                <span class="search-stats" id="searchStats"></span>
+                <div class="search-nav">
+                    <button class="nav-button" id="prevButton" onclick="navigatePrev()" title="Previous match (Shift+Enter)">↑</button>
+                    <button class="nav-button" id="nextButton" onclick="navigateNext()" title="Next match (Enter)">↓</button>
+                </div>
+                <button class="clear-button" onclick="clearSearch()" title="Clear search">×</button>
             </div>
 
             <div class="log-container" id="logContainer">
@@ -182,53 +237,160 @@
     <script>
         const searchInput = document.getElementById('searchInput');
         const logContainer = document.getElementById('logContainer');
-        const logLines = document.querySelectorAll('.log-line');
-        const visibleLinesSpan = document.getElementById('visibleLines');
-        const totalLines = {total_lines};
+        const searchStats = document.getElementById('searchStats');
+        const prevButton = document.getElementById('prevButton');
+        const nextButton = document.getElementById('nextButton');
+
+        let originalContent = [];
+        let matches = [];
+        let currentMatchIndex = -1;
+
+        // Add line numbers dynamically
+        const logLines = Array.from(logContainer.querySelectorAll('.log-line'));
+        logLines.forEach((line, index) => {{
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+
+            const lineNum = document.createElement('div');
+            lineNum.className = 'line-number';
+            lineNum.textContent = index + 1;
+
+            line.parentNode.insertBefore(entry, line);
+            entry.appendChild(lineNum);
+            entry.appendChild(line);
+        }});
+
+        // Store original content on load
+        document.querySelectorAll('.log-entry .log-line').forEach(line => {{
+            originalContent.push({{
+                element: line,
+                text: line.textContent
+            }});
+        }});
 
         // Auto-scroll to bottom on load
         logContainer.scrollTop = logContainer.scrollHeight;
 
+        // Escape regex special characters
+        function escapeRegex(str) {{
+            return str.replace(/[.*+?^${{}}()|[\]\\]/g, '\\$&');
+        }}
+
         // Search functionality
         searchInput.addEventListener('input', function() {{
-            const query = this.value.toLowerCase();
-            let visibleCount = 0;
+            performSearch();
+        }});
 
-            logLines.forEach(line => {{
-                const text = line.textContent.toLowerCase();
-                if (query === '' || text.includes(query)) {{
-                    line.classList.remove('hidden');
-                    line.classList.toggle('highlight', query !== '' && text.includes(query));
-                    visibleCount++;
-                }} else {{
-                    line.classList.add('hidden');
-                    line.classList.remove('highlight');
+        function performSearch() {{
+            const query = searchInput.value;
+            matches = [];
+            currentMatchIndex = -1;
+
+            if (query === '') {{
+                // Restore original content
+                originalContent.forEach(item => {{
+                    item.element.innerHTML = item.text;
+                }});
+                searchStats.textContent = '';
+                prevButton.disabled = true;
+                nextButton.disabled = true;
+                return;
+            }}
+
+            // Search and highlight matches
+            const regex = new RegExp('(' + escapeRegex(query) + ')', 'gi');
+
+            originalContent.forEach((item, lineIndex) => {{
+                const text = item.text;
+                let lastIndex = 0;
+                let html = '';
+                let match;
+                let matchCount = 0;
+
+                const regexCopy = new RegExp(regex.source, regex.flags);
+
+                while ((match = regexCopy.exec(text)) !== null) {{
+                    html += text.substring(lastIndex, match.index);
+                    html += '<mark data-line="' + lineIndex + '" data-match="' + matchCount + '">' + match[0] + '</mark>';
+                    matches.push({{ line: lineIndex, match: matchCount, element: item.element }});
+                    lastIndex = match.index + match[0].length;
+                    matchCount++;
                 }}
+                html += text.substring(lastIndex);
+
+                item.element.innerHTML = html;
             }});
 
-            visibleLinesSpan.textContent = visibleCount;
-
-            // Auto-scroll to first match when searching
-            if (query !== '') {{
-                const firstVisible = document.querySelector('.log-line.highlight');
-                if (firstVisible) {{
-                    firstVisible.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-                }}
+            // Update stats
+            if (matches.length > 0) {{
+                currentMatchIndex = 0;
+                highlightCurrentMatch();
+                searchStats.textContent = '1 of ' + matches.length;
+                prevButton.disabled = false;
+                nextButton.disabled = false;
+            }} else {{
+                searchStats.textContent = 'No matches';
+                prevButton.disabled = true;
+                nextButton.disabled = true;
             }}
-        }});
+        }}
+
+        function highlightCurrentMatch() {{
+            if (currentMatchIndex < 0 || currentMatchIndex >= matches.length) return;
+
+            // Remove previous current highlight
+            document.querySelectorAll('mark.current').forEach(m => m.classList.remove('current'));
+
+            // Highlight current match
+            const current = matches[currentMatchIndex];
+            const mark = current.element.querySelector('mark[data-line="' + current.line + '"][data-match="' + current.match + '"]');
+            if (mark) {{
+                mark.classList.add('current');
+                mark.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+            }}
+
+            // Update stats
+            searchStats.textContent = (currentMatchIndex + 1) + ' of ' + matches.length;
+        }}
+
+        function navigateNext() {{
+            if (matches.length === 0) return;
+            currentMatchIndex = (currentMatchIndex + 1) % matches.length;
+            highlightCurrentMatch();
+        }}
+
+        function navigatePrev() {{
+            if (matches.length === 0) return;
+            currentMatchIndex = (currentMatchIndex - 1 + matches.length) % matches.length;
+            highlightCurrentMatch();
+        }}
 
         // Clear search
         function clearSearch() {{
             searchInput.value = '';
-            searchInput.dispatchEvent(new Event('input'));
+            performSearch();
             logContainer.scrollTop = logContainer.scrollHeight;
         }}
+
+        // Keyboard shortcuts
+        searchInput.addEventListener('keydown', function(e) {{
+            if (e.key === 'Enter') {{
+                e.preventDefault();
+                if (e.shiftKey) {{
+                    navigatePrev();
+                }} else {{
+                    navigateNext();
+                }}
+            }}
+        }});
 
         // Focus search on Ctrl+F or Cmd+F
         document.addEventListener('keydown', function(e) {{
             if ((e.ctrlKey || e.metaKey) && e.key === 'f') {{
                 e.preventDefault();
                 searchInput.focus();
+            }} else if (e.key === 'Escape') {{
+                clearSearch();
             }}
         }});
     </script>
