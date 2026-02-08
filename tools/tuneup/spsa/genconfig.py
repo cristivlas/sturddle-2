@@ -9,6 +9,7 @@ an engine wrapper batch file, ready for hand-editing.
 Usage:
     python genconfig.py <project_name> [-D 8] [-H 256] [-T 1]
                         [-i 100] [-g 100] [param_names... | all]
+    python genconfig.py <project_name> -w   # worker.json only (no engine needed)
 
 Creates:
     tuneup/<project_name>/
@@ -23,7 +24,6 @@ import os
 import sys
 import sysconfig
 import warnings
-from pathlib import PurePosixPath
 
 
 def root_path():
@@ -49,10 +49,6 @@ def abspath(path):
     return to_forward_slash(os.path.abspath(path))
 
 
-sys.path.append(root_path())
-from chess_engine import get_param_info
-
-
 def get_engine_cmd(project_dir):
     """
     Get engine command for worker config.
@@ -73,65 +69,25 @@ def get_engine_cmd(project_dir):
 
 
 def main():
-    # Enumerate available engine parameters
-    params = {}
-    groups = set()
-
-    for name, (val, lo, hi, grp, normal) in get_param_info().items():
-        if grp == 'Settings':
-            continue
-        groups.add(grp)
-        if normal:
-            unscaled_val = val
-            val = 2 * (val - lo) / (hi - lo) - 1
-            if val < -1 or val > 1:
-                raise ValueError(f'{name}: {val} (unscaled: {unscaled_val}) is out of range')
-            params[name] = (val, -1.0, 1.0, grp, 'float')
-        else:
-            ptype = 'float' if isinstance(val, float) else 'int'
-            params[name] = (val, lo, hi, grp, ptype)
-
-    tunable = ['all'] + sorted(params.keys())
-
-    parser = argparse.ArgumentParser(
-        description='Generate SPSA tuning project from engine parameters.'
-    )
+    parser = argparse.ArgumentParser(description='Generate SPSA tuning project from engine parameters.')
     parser.add_argument('project', help='Project name (creates tuneup/<project>/)')
-    parser.add_argument('tune', choices=tunable, nargs='*', default='all',
-                        help='Parameter names to tune (or "all")')
-    parser.add_argument('-t', '--time-control', default='1+0.1',
-                        help='Time control (default: 1+0.1)')
-    parser.add_argument('-D', '--depth', type=int, default=None,
-                        help='Fixed search depth (overrides time control)')
-    parser.add_argument('-H', '--hash', type=int, default=256,
-                        help='Engine hash table size in MB (default: 256)')
-    parser.add_argument('-T', '--threads', type=int, default=1,
-                        help='Engine threads (default: 1)')
-    parser.add_argument('-i', '--iterations', type=int, default=100,
-                        help='Number of SPSA iterations (default: 100)')
-    parser.add_argument('-g', '--games-per-iteration', type=int, default=100,
-                        help='Games per SPSA iteration (default: 100)')
-    parser.add_argument('-c', '--spsa-c', type=float, default=0.05,
-                        help='SPSA perturbation size as fraction of range (default: 0.05)')
-    parser.add_argument('-a', '--spsa-a', type=float, default=0.5,
-                        help='SPSA learning rate (default: 0.5)')
-
+    parser.add_argument('tune', nargs='*', default='all', help='Parameter names to tune (or "all")')
+    parser.add_argument('-w', '--worker-only', action='store_true', help='Generate worker.json only (no engine needed)')
+    parser.add_argument('-t', '--time-control', default='1+0.1', help='Time control (default: 1+0.1)')
+    parser.add_argument('-D', '--depth', type=int, default=None, help='Fixed search depth (overrides time control)')
+    parser.add_argument('-H', '--hash', type=int, default=256, help='Engine hash size in MB (default: 256)')
+    parser.add_argument('-T', '--threads', type=int, default=1, help='Engine threads (default: 1)')
+    parser.add_argument('-i', '--iterations', type=int, default=100, help='SPSA iterations (default: 100)')
+    parser.add_argument('-g', '--games-per-iteration', type=int, default=100, help='Games per iteration (default: 100)')
+    parser.add_argument('-c', '--spsa-c', type=float, default=0.05, help='SPSA perturbation size (default: 0.05)')
+    parser.add_argument('-a', '--spsa-a', type=float, default=0.5, help='SPSA learning rate (default: 0.5)')
     args = parser.parse_args()
 
-    # Resolve 'all' and build tune list
-    if not isinstance(args.tune, list):
-        args.tune = [args.tune]
-
-    all_names = sorted(params.keys())
-    tune_names = set()
-    for p in args.tune:
-        if p == 'all':
-            tune_names.update(all_names)
-        else:
-            tune_names.add(p)
-
     # Create project directory
-    project_dir = os.path.join(tuneup_path(), args.project)
+    if os.path.isabs(args.project):
+        project_dir = args.project
+    else:
+        project_dir = os.path.join(tuneup_path(), args.project)
     if os.path.exists(project_dir):
         print(f'Error: Project directory already exists: {project_dir}', file=sys.stderr)
         sys.exit(1)
@@ -145,57 +101,90 @@ def main():
     # Default book path (absolute, forward slashes)
     default_book = abspath(os.path.join(tuneup_path(), 'books', '8moves_v3.pgn'))
 
-    # Build tunable params
+    # --- tuning.json (session-level, shared) ---
     tune_params = {}
-    for name in sorted(tune_names):
-        val, lo, hi, grp, ptype = params[name]
-        tune_params[name] = {
-            'init': val,
-            'lower': lo,
-            'upper': hi,
-            'type': ptype,
+
+    if not args.worker_only:
+        sys.path.append(root_path())
+        from chess_engine import get_param_info
+
+        params = {}
+        for name, (val, lo, hi, grp, normal) in get_param_info().items():
+            if grp == 'Settings':
+                continue
+            if normal:
+                unscaled_val = val
+                val = 2 * (val - lo) / (hi - lo) - 1
+                if val < -1 or val > 1:
+                    raise ValueError(f'{name}: {val} (unscaled: {unscaled_val}) is out of range')
+                params[name] = (val, -1.0, 1.0, grp, 'float')
+            else:
+                ptype = 'float' if isinstance(val, float) else 'int'
+                params[name] = (val, lo, hi, grp, ptype)
+
+        # Resolve 'all' and build tune list
+        if not isinstance(args.tune, list):
+            args.tune = [args.tune]
+
+        all_names = sorted(params.keys())
+        tune_names = set()
+        for p in args.tune:
+            if p == 'all':
+                tune_names.update(all_names)
+            elif p in params:
+                tune_names.add(p)
+            else:
+                print(f'Error: Unknown parameter: {p}', file=sys.stderr)
+                print(f'Available: {", ".join(all_names)}', file=sys.stderr)
+                sys.exit(1)
+
+        # Build tunable params
+        for name in sorted(tune_names):
+            val, lo, hi, grp, ptype = params[name]
+            tune_params[name] = {
+                'init': val,
+                'lower': lo,
+                'upper': hi,
+                'type': ptype,
+            }
+
+        tuning_config = {
+            'engine': {
+                'protocol': 'uci',
+                'fixed_options': {
+                    'Hash': args.hash,
+                    'Threads': args.threads,
+                    'OwnBook': False,
+                },
+            },
+            'games_per_iteration': args.games_per_iteration,
+            'output_dir': project_dir_abs,
+            'spsa': {
+                'budget': args.iterations * args.games_per_iteration,
+                'a': args.spsa_a,
+                'c': args.spsa_c,
+                'A_ratio': 0.1,
+                'alpha': 0.602,
+                'gamma': 0.101,
+            },
+            'parameters': tune_params,
         }
 
-    # --- tuning.json (session-level, shared) ---
-    tuning_config = {
-        'engine': {
-            'protocol': 'uci',
-            'fixed_options': {
-                'Hash': args.hash,
-                'Threads': args.threads,
-                'OwnBook': False,
-            },
-        },
-        'games_per_iteration': args.games_per_iteration,
-        'output_dir': project_dir_abs,
-        'spsa': {
-            'budget': args.iterations * args.games_per_iteration,
-            'a': args.spsa_a,
-            'c': args.spsa_c,
-            'A_ratio': 0.1,
-            'alpha': 0.602,
-            'gamma': 0.101,
-        },
-        'parameters': tune_params,
-    }
+        if args.depth is not None:
+            tuning_config['depth'] = args.depth
+            tuning_config['dashboard_refresh'] = 10
+        else:
+            tuning_config['time_control'] = args.time_control
+            try:
+                base_time = float(args.time_control.split('+')[0])
+                tuning_config['dashboard_refresh'] = max(10, int(base_time * 2))
+            except (ValueError, IndexError):
+                tuning_config['dashboard_refresh'] = 60
 
-    if args.depth is not None:
-        tuning_config['depth'] = args.depth
-        # Depth mode: short games, refresh often
-        tuning_config['dashboard_refresh'] = 10
-    else:
-        tuning_config['time_control'] = args.time_control
-        # Estimate refresh from TC: parse base time, use ~2x as refresh
-        try:
-            base_time = float(args.time_control.split('+')[0])
-            tuning_config['dashboard_refresh'] = max(10, int(base_time * 2))
-        except (ValueError, IndexError):
-            tuning_config['dashboard_refresh'] = 60
-
-    tuning_path = os.path.join(project_dir, 'tuning.json')
-    with open(tuning_path, 'w') as f:
-        json.dump(tuning_config, f, indent=2)
-        f.write('\n')
+        tuning_path = os.path.join(project_dir, 'tuning.json')
+        with open(tuning_path, 'w') as f:
+            json.dump(tuning_config, f, indent=2)
+            f.write('\n')
 
     # --- worker.json (per-machine, local) ---
     games_dir = abspath(os.path.join(project_dir, 'games'))
@@ -222,21 +211,25 @@ def main():
         f.write('\n')
 
     # Summary
-    budget = args.iterations * args.games_per_iteration
     print(f'Project created: {project_dir_abs}/')
-    print(f'  tuning.json   - {len(tune_params)} parameters, {args.iterations} iterations, {budget} games')
+    if not args.worker_only:
+        budget = args.iterations * args.games_per_iteration
+        print(f'  tuning.json   - {len(tune_params)} parameters, {args.iterations} iterations, {budget} games')
     print(f'  worker.json   - concurrency={worker_config["concurrency"]}, engine={engine_cmd}')
     print()
     print('Next steps:')
-    print(f'  1. Review and edit tuning.json and worker.json')
+    print(f'  1. Review and edit {"worker.json" if args.worker_only else "tuning.json and worker.json"}')
     print(f'  2. cd {project_dir_abs}')
 
     coordinator_py = abspath(os.path.join(root_path(), 'tools', 'tuneup', 'spsa', 'coordinator.py'))
     worker_py = abspath(os.path.join(root_path(), 'tools', 'tuneup', 'spsa', 'worker.py'))
-    print(f'  3. python {coordinator_py} -c tuning.json')
-    print(f'  4. python {worker_py} -c worker.json')
+    if not args.worker_only:
+        print(f'  3. python {coordinator_py} -c tuning.json')
+        print(f'  4. python {worker_py} -c worker.json')
+    else:
+        print(f'  3. python {worker_py} -c worker.json')
 
-    if not tune_params:
+    if not args.worker_only and not tune_params:
         warnings.warn('No tunable parameters selected!')
 
 
