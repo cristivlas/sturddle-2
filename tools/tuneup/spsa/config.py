@@ -161,6 +161,8 @@ class WorkerConfig:
     log_file: str = "worker.log"
     max_chunk_size: int = 0  # max games per chunk (0 = unlimited)
     parameter_overrides: dict = field(default_factory=dict)
+    # cutechess-cli overrides: tc, depth, etc. (not UCI options)
+    cutechess_overrides: dict = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, path: str) -> "WorkerConfig":

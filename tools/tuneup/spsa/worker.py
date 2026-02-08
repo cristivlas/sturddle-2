@@ -82,6 +82,15 @@ def build_cutechess_command(worker_config: WorkerConfig,
     depth = tuning_config.get("depth")
     tc = tuning_config.get("time_control", "1+0.1")
 
+    # Apply worker-local cutechess-cli overrides
+    cc_overrides = worker_config.cutechess_overrides
+    if "depth" in cc_overrides:
+        depth = cc_overrides["depth"]
+        logger.info("Worker override: depth=%s", depth)
+    if "tc" in cc_overrides:
+        tc = cc_overrides["tc"]
+        logger.info("Worker override: tc=%s", tc)
+
     # Get parameter overrides from worker config (exclude _comment)
     param_overrides = {k: v for k, v in worker_config.parameter_overrides.items()
                        if not k.startswith('_')}
