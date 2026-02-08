@@ -138,6 +138,7 @@
         td {{
             border-bottom: 1px solid #e0e0e0;
             font-size: 13px;
+            white-space: nowrap;
         }}
         th:first-child, td:first-child {{
             text-align: left;
@@ -282,9 +283,7 @@
                     <div style="max-height: 260px; overflow-y: auto;">
                     <table style="table-layout:fixed; width:100%;">
                         <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
-                        <tbody>
-                            {theta_rows}
-                        </tbody>
+                        <tbody id="thetaBody"></tbody>
                     </table>
                     </div>
                 </div>
@@ -292,8 +291,34 @@
 
             <!-- Workers + Recent History side by side -->
             <div class="two-col bottom-panel">
-                {workers_section}
-                {history_section}
+                <div class="section" style="margin-top: 0;">
+                    <h3>Workers</h3>
+                    <table>
+                        <colgroup><col style="width:20%"><col style="width:12%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:17%"></colgroup>
+                        <thead><tr><th>Name</th><th>Status</th><th>Last Seen</th><th>Assigned</th><th>Iter Done</th><th>Session Done</th></tr></thead>
+                    </table>
+                    <div style="max-height: 260px; overflow-y: auto;">
+                    <table>
+                        <colgroup><col style="width:20%"><col style="width:12%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:17%"></colgroup>
+                        <tbody id="workersBody"></tbody>
+                    </table>
+                    </div>
+                </div>
+                <div class="section" style="margin-top: 0;">
+                    <h3>History</h3>
+                    <div style="padding-right: 17px; flex-shrink: 0;">
+                    <table style="table-layout:fixed; width:100%;">
+                        <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
+                        <thead><tr><th>Iter</th><th>Score Diff</th><th>ELO Diff</th><th>a_k</th><th>c_k</th></tr></thead>
+                    </table>
+                    </div>
+                    <div style="max-height: 260px; overflow-y: auto;">
+                    <table style="table-layout:fixed; width:100%;">
+                        <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
+                        <tbody id="historyBody"></tbody>
+                    </table>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -309,6 +334,59 @@
     </script>
     <script>{chart_js}</script>
     <script id="history-data" type="application/json">{history_json}</script>
+    <script id="theta-data" type="application/json">{theta_json}</script>
+    <script id="workers-data" type="application/json">{workers_json}</script>
+    <script>
+        // Populate parameters table
+        (function() {{
+            const theta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}'  );
+            const tbody = document.getElementById('thetaBody');
+            for (const [name, value] of Object.entries(theta)) {{
+                const tr = document.createElement('tr');
+                tr.innerHTML = '<td style="font-family:monospace;">' + name + '</td>'
+                             + '<td style="font-family:monospace;">' + value + '</td>';
+                tbody.appendChild(tr);
+            }}
+        }})();
+
+        // Populate workers table
+        (function() {{
+            const workers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
+            workers.sort((a, b) => b.games_completed - a.games_completed);
+            const tbody = document.getElementById('workersBody');
+            workers.forEach(w => {{
+                const alive = w.alive;
+                const style = alive ? 'color:#4CAF50' : 'color:#f44336;font-weight:bold';
+                const status = alive ? 'online' : 'timed out';
+                const tr = document.createElement('tr');
+                tr.innerHTML = '<td style="font-family:monospace;">' + w.name + '</td>'
+                             + '<td style="' + style + '">' + status + '</td>'
+                             + '<td>' + Math.round(w.last_seen_ago) + 's ago</td>'
+                             + '<td>' + w.games_assigned + '</td>'
+                             + '<td>' + w.games_completed_iter + '</td>'
+                             + '<td>' + w.games_completed + '</td>';
+                tbody.appendChild(tr);
+            }});
+        }})();
+
+        // Populate history table
+        (function() {{
+            const history = JSON.parse(document.getElementById('history-data').textContent || '[]');
+            history.sort((a, b) => (b.iteration || 0) - (a.iteration || 0));
+            const tbody = document.getElementById('historyBody');
+            history.forEach(h => {{
+                const tr = document.createElement('tr');
+                const sd = (h.score_diff >= 0 ? '+' : '') + h.score_diff.toFixed(4);
+                const ed = (h.elo_diff >= 0 ? '+' : '') + h.elo_diff.toFixed(1);
+                tr.innerHTML = '<td>' + (h.iteration || '?') + '</td>'
+                             + '<td>' + sd + '</td>'
+                             + '<td>' + ed + '</td>'
+                             + '<td>' + h.a_k.toFixed(6) + '</td>'
+                             + '<td>' + h.c_k.toFixed(4) + '</td>';
+                tbody.appendChild(tr);
+            }});
+        }})();
+    </script>
     <script>
         (function() {{
             try {{

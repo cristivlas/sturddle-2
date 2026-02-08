@@ -274,14 +274,17 @@ The coordinator uses adaptive work assignment:
   Workers that haven't contacted the coordinator in 120 seconds are marked dead
   and their chunks are reclaimed.
 - **Work stealing**: When a fast worker requests work but all games are
-  assigned, the coordinator can reclaim a chunk from a significantly slower
-  worker and reassign it. This prevents fast workers from sitting idle while
-  slow workers hold large chunks near the end of an iteration. Stealing only
-  triggers when both workers have observed speed data, the target is at least
-  2x slower, and the chunk is still early (< 25% of expected time elapsed).
+  assigned, the coordinator can reclaim a chunk from a slower worker and
+  reassign it. This prevents fast workers from sitting idle while slow (or
+  dead) workers hold chunks. Stealing requires the requesting worker to
+  have observed speed data (at least one completed chunk), be faster than
+  the holder, and be able to finish the chunk in less time than has already
+  elapsed. After a coordinator restart, stealing is disabled until workers
+  complete their first chunks and build up speed estimates — this prevents
+  thrashing between workers with identical config-based fallback estimates.
   The slow worker continues running the stolen chunk, but its result is
-  discarded (unknown chunk ID). Enabled by default; set `work_stealing: false`
-  in `tuning.json` to disable.
+  discarded (unknown chunk ID). Enabled by default; set `work_stealing:
+  false` in `tuning.json` to disable.
 
 ### Timeout and Completion Estimates
 

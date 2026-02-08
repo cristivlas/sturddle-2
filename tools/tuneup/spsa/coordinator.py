@@ -289,9 +289,12 @@ class CoordinatorState:
     def _try_steal_chunk(self, worker_name: str) -> bool:
         """Try to reclaim a chunk from a slower worker for reassignment.
 
-        Steals only when both workers have observed speed data, the target
-        is at least 2x slower, and the chunk is still early (< 25% of
-        expected time elapsed).  Returns True if games were freed up.
+        Steals when the requesting worker could finish the chunk in less
+        time than has already elapsed since the chunk was assigned.
+        Requires the requesting worker to have observed EWMA speed data
+        (at least one completed chunk) to prevent thrashing when all
+        workers use the same config-based fallback estimate.
+        Returns True if games were freed up.
         """
         if not self.pending_chunks:
             return False
@@ -307,17 +310,18 @@ class CoordinatorState:
         best_games = 0
 
         for cid, chunk in self.pending_chunks.items():
-            slow = self.workers.get(chunk.worker_name)
-            if not slow or slow.games_per_second <= 0:
+            if chunk.worker_name == worker_name:
                 continue
 
-            slow_spg = 1.0 / slow.games_per_second
-            if slow_spg < fast_spg * 2:
+            # Only steal if we're faster than the holder
+            slow = self.workers.get(chunk.worker_name)
+            if slow and slow.games_per_second >= fast.games_per_second:
                 continue
 
             elapsed = now - chunk.assign_time
-            expected = chunk.num_games * slow_spg
-            if expected <= 0 or elapsed / expected >= 0.25:
+            fast_estimate = chunk.num_games * fast_spg
+
+            if fast_estimate >= elapsed:
                 continue
 
             if chunk.num_games > best_games:
@@ -435,8 +439,8 @@ class CoordinatorState:
 
             if result.iteration != self.optimizer.iteration:
                 logger.warning(
-                    "Ignoring stale result for iteration %d (current: %d)",
-                    result.iteration, self.optimizer.iteration,
+                    "Ignoring stale result for iteration %d from %s (current: %d)",
+                    result.iteration, result.worker or "?", self.optimizer.iteration,
                 )
                 return {"status": "ignored", "reason": "stale iteration"}
 
@@ -719,103 +723,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
 
         data = self.coordinator.get_coordinator_dashboard()
 
-        progress = data["progress_pct"]
-        iter_progress = data["current_iteration_progress_pct"]
-        iteration = data["iteration"]
-        max_iters = data["max_iterations"]
         is_done = data["is_done"]
-        games_done = data["games_completed_in_iteration"]
-        games_total = data["games_per_iteration"]
-        games_pending = data["games_pending"]
-
-        # Build parameter table rows
-        theta_rows = ""
-        for name, value in data["theta"].items():
-            theta_rows += f"""        <tr>
-            <td style="font-family: monospace;">{name}</td>
-            <td style="font-family: monospace;">{value}</td>
-        </tr>
-"""
-
-        # Build history section
-        history_section = ""
-        if data.get("history"):
-            history_rows = ""
-            for h in reversed(data.get("history", [])):
-                iter_num = h.get("iteration", "?")
-                score_diff = h.get("score_diff", 0)
-                elo_diff = h.get("elo_diff", 0)
-                a_k = h.get("a_k", 0)
-                c_k = h.get("c_k", 0)
-                history_rows += f"""        <tr>
-            <td>{iter_num}</td>
-            <td>{score_diff:+.4f}</td>
-            <td>{elo_diff:+.1f}</td>
-            <td>{a_k:.6f}</td>
-            <td>{c_k:.4f}</td>
-        </tr>
-"""
-            history_section = f"""
-            <div class="section" style="margin-top: 0;">
-                <h3>History</h3>
-                <div style="padding-right: 17px;">
-                <table style="table-layout:fixed; width:100%;">
-                    <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
-                    <thead><tr><th>Iter</th><th>Score Diff</th><th>ELO Diff</th><th>a_k</th><th>c_k</th></tr></thead>
-                </table>
-                </div>
-                <div style="max-height: 260px; overflow-y: auto;">
-                <table style="table-layout:fixed; width:100%;">
-                    <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
-                    <tbody>
-                        {history_rows}
-                    </tbody>
-                </table>
-                </div>
-            </div>
-"""
-
-        # Build workers section
-        workers_section = ""
-        if data.get("workers"):
-            workers_rows = ""
-            for w in sorted(data["workers"], key=lambda w: w["games_completed"], reverse=True):
-                if w["alive"]:
-                    status_style = "color: #4CAF50"
-                    status_text = "online"
-                else:
-                    status_style = "color: #f44336; font-weight: bold"
-                    status_text = "offline"
-                workers_rows += f"""        <tr>
-            <td style="font-family: monospace;">{w["name"]}</td>
-            <td style="{status_style}">{status_text}</td>
-            <td>{w["last_seen_ago"]:.0f}s ago</td>
-            <td>{w["games_assigned"]}</td>
-            <td>{w["games_completed_iter"]}</td>
-            <td>{w["games_completed"]}</td>
-        </tr>
-"""
-            workers_section = f"""
-            <div class="section" style="margin-top: 0;">
-                <h3>Workers</h3>
-                <table>
-                    <colgroup><col style="width:20%"><col style="width:12%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:17%"></colgroup>
-                    <thead><tr><th>Name</th><th>Status</th><th>Last Seen</th><th>Assigned</th><th>Iter Done</th><th>Session Done</th></tr></thead>
-                </table>
-                <div style="max-height: 260px; overflow-y: auto;">
-                <table>
-                    <colgroup><col style="width:20%"><col style="width:12%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:17%"></colgroup>
-                    <tbody>
-                        {workers_rows}
-                    </tbody>
-                </table>
-                </div>
-            </div>
-"""
-
-        # JSON blob for client-side charts
-        history_json = json.dumps(data.get("history", []))
-
         status_color = "#4CAF50" if not is_done else "#2196F3"
         status_text = "COMPLETE" if is_done else "IN PROGRESS"
 
@@ -831,20 +739,19 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             chart_js=self.chart_js,
             status_color=status_color,
             status_text=status_text,
-            iteration=iteration,
-            max_iters=max_iters,
-            progress=progress,
-            games_done=games_done,
-            games_total=games_total,
-            iter_progress=iter_progress,
-            games_pending=games_pending,
+            iteration=data["iteration"],
+            max_iters=data["max_iterations"],
+            progress=data["progress_pct"],
+            games_done=data["games_completed_in_iteration"],
+            games_total=data["games_per_iteration"],
+            iter_progress=data["current_iteration_progress_pct"],
+            games_pending=data["games_pending"],
             a_k=data["a_k"],
             c_k=data["c_k"],
             total_games=data["total_games"],
-            theta_rows=theta_rows,
-            history_section=history_section,
-            workers_section=workers_section,
-            history_json=history_json,
+            theta_json=json.dumps(data.get("theta", {})),
+            workers_json=json.dumps(data.get("workers", [])),
+            history_json=json.dumps(data.get("history", [])),
             refresh_sec=refresh_sec,
             refresh_ms=refresh_sec * 1000,
             timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
