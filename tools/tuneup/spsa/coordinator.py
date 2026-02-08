@@ -228,8 +228,8 @@ class CoordinatorState:
         else:
             chunk = remaining // num_workers
 
-        # Cap at 50% to leave work for other workers
-        chunk = min(chunk, max(remaining // 2, 2))
+        # Cap to leave work for other workers
+        chunk = min(chunk, max(remaining // max(2, num_workers), 2))
 
         # If remainder is too small to split among other workers, take it all
         if remaining - chunk < num_workers:
