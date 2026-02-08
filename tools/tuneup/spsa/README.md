@@ -217,6 +217,7 @@ tuneup/my-test/
 | `output_dir` | Coordinator output (logs, checkpoint) | project dir |
 | `retry_after` | Worker retry interval in seconds | `5` |
 | `dashboard_refresh` | Dashboard auto-refresh in seconds | `10` |
+| `work_stealing` | Reclaim chunks from slow workers for fast idle ones | `true` |
 | `spsa.budget` | Total games budget (iterations * games_per_iteration) | `10000` |
 | `spsa.a` | Learning rate | `0.5` |
 | `spsa.c` | Perturbation as fraction of parameter range | `0.05` |
@@ -272,6 +273,15 @@ The coordinator uses adaptive work assignment:
   tracks each worker's throughput, games completed, and last-seen time.
   Workers that haven't contacted the coordinator in 120 seconds are marked dead
   and their chunks are reclaimed.
+- **Work stealing**: When a fast worker requests work but all games are
+  assigned, the coordinator can reclaim a chunk from a significantly slower
+  worker and reassign it. This prevents fast workers from sitting idle while
+  slow workers hold large chunks near the end of an iteration. Stealing only
+  triggers when both workers have observed speed data, the target is at least
+  2x slower, and the chunk is still early (< 25% of expected time elapsed).
+  The slow worker continues running the stolen chunk, but its result is
+  discarded (unknown chunk ID). Enabled by default; set `work_stealing: false`
+  in `tuning.json` to disable.
 
 ### Timeout and Completion Estimates
 

@@ -284,6 +284,56 @@ class CoordinatorState:
             self.optimizer.a_k(),
         )
 
+    def _try_steal_chunk(self, worker_name: str) -> bool:
+        """Try to reclaim a chunk from a slower worker for reassignment.
+
+        Steals only when both workers have observed speed data, the target
+        is at least 2x slower, and the chunk is still early (< 25% of
+        expected time elapsed).  Returns True if games were freed up.
+        """
+        if not self.pending_chunks:
+            return False
+
+        fast = self.workers.get(worker_name)
+        if not fast or fast.games_per_second <= 0:
+            return False
+
+        fast_spg = 1.0 / fast.games_per_second
+        now = time.time()
+
+        best_cid = None
+        best_games = 0
+
+        for cid, chunk in self.pending_chunks.items():
+            slow = self.workers.get(chunk.worker_name)
+            if not slow or slow.games_per_second <= 0:
+                continue
+
+            slow_spg = 1.0 / slow.games_per_second
+            if slow_spg < fast_spg * 2:
+                continue
+
+            elapsed = now - chunk.assign_time
+            expected = chunk.num_games * slow_spg
+            if expected <= 0 or elapsed / expected >= 0.25:
+                continue
+
+            if chunk.num_games > best_games:
+                best_cid = cid
+                best_games = chunk.num_games
+
+        if best_cid is None:
+            return False
+
+        chunk = self.pending_chunks.pop(best_cid)
+        self.games_assigned -= chunk.num_games
+        logger.info(
+            "Work steal: reclaimed %d games from %s [%s] for %s (%.0fs into chunk)",
+            chunk.num_games, chunk.worker_name, best_cid,
+            worker_name, now - chunk.assign_time,
+        )
+        return True
+
     def _reclaim_timed_out_chunks(self):
         """Reclaim chunks that have exceeded their per-worker timeout."""
         now = time.time()
@@ -328,7 +378,11 @@ class CoordinatorState:
             remaining = gpi - self.games_assigned
 
             if remaining <= 0:
-                return {"status": "retry", "retry_after": self.config.retry_after}
+                # Try work stealing: reclaim a chunk from a slower worker
+                if self.config.work_stealing and self._try_steal_chunk(worker_name):
+                    remaining = gpi - self.games_assigned
+                else:
+                    return {"status": "retry", "retry_after": self.config.retry_after}
 
             # Adaptive chunk sizing; worker's max_chunk_size is a ceiling
             adaptive = self._compute_chunk_size(worker_name, remaining)

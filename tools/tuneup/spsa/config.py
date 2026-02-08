@@ -86,6 +86,7 @@ class TuningConfig:
     dashboard_refresh: int = 10
     # Max history entries sent to the dashboard (0 = unlimited)
     dashboard_history: int = 100
+    work_stealing: bool = True
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
     parameters: Dict[str, Parameter] = field(default_factory=dict)
 
@@ -101,6 +102,7 @@ class TuningConfig:
             "retry_after": self.retry_after,
             "dashboard_refresh": self.dashboard_refresh,
             "output_dir": self.output_dir,
+            "work_stealing": self.work_stealing,
             "spsa": asdict(self.spsa),
             "parameters": {
                 name: {
@@ -135,6 +137,7 @@ class TuningConfig:
             dashboard_refresh=d.get("dashboard_refresh", 10),
             dashboard_history=d.get("dashboard_history", 100),
             output_dir=d.get("output_dir", "./spsa_output"),
+            work_stealing=d.get("work_stealing", True),
             spsa=spsa,
             parameters=parameters,
         )
