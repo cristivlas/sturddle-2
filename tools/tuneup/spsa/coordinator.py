@@ -83,6 +83,7 @@ class CoordinatorState:
         self.config = tuning_config
         self.lock = threading.Lock()
         self.dashboard_changed = threading.Condition()
+        self.dashboard_version = 0
 
         output = Path(tuning_config.output_dir)
         self.logs_dir = output / "logs"
@@ -358,6 +359,7 @@ class CoordinatorState:
     def _notify_dashboard(self):
         """Wake up any SSE listeners so they push fresh data immediately."""
         with self.dashboard_changed:
+            self.dashboard_version += 1
             self.dashboard_changed.notify_all()
 
     def get_work(self, chunk_size: int = 0, worker_name: str = "",
@@ -845,11 +847,18 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.end_headers()
 
-        changed = self.coordinator.dashboard_changed
-        max_interval = self.coordinator.config.dashboard_refresh
+        coord = self.coordinator
+        changed = coord.dashboard_changed
+        max_interval = coord.config.dashboard_refresh
+        last_version = -1  # force first send
         try:
             while True:
-                data = self.coordinator.get_coordinator_dashboard()
+                with changed:
+                    if coord.dashboard_version == last_version:
+                        changed.wait(timeout=max_interval)
+                    last_version = coord.dashboard_version
+
+                data = coord.get_coordinator_dashboard()
                 is_done = data["is_done"]
                 history = data.get("history", [])
                 payload = json.dumps({
@@ -873,9 +882,6 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                 })
                 self.wfile.write(f"data: {payload}\n\n".encode())
                 self.wfile.flush()
-                # Wait for state change or timeout (fallback heartbeat)
-                with changed:
-                    changed.wait(timeout=max_interval)
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass  # client disconnected
 
