@@ -82,6 +82,7 @@ class CoordinatorState:
     def __init__(self, tuning_config: TuningConfig, resume: bool = False):
         self.config = tuning_config
         self.lock = threading.Lock()
+        self.dashboard_changed = threading.Condition()
 
         output = Path(tuning_config.output_dir)
         self.logs_dir = output / "logs"
@@ -354,6 +355,11 @@ class CoordinatorState:
                 now - chunk.assign_time, int(chunk.timeout),
             )
 
+    def _notify_dashboard(self):
+        """Wake up any SSE listeners so they push fresh data immediately."""
+        with self.dashboard_changed:
+            self.dashboard_changed.notify_all()
+
     def get_work(self, chunk_size: int = 0, worker_name: str = "",
                  cutechess_overrides: dict = None) -> dict:
         """
@@ -425,6 +431,7 @@ class CoordinatorState:
                 num_games, worker_name or "?", chunk_id,
                 work.iteration, self.games_assigned, gpi, int(timeout),
             )
+            self._notify_dashboard()
             return work.to_dict()
 
     def submit_result(self, result: WorkResult) -> dict:
@@ -485,6 +492,7 @@ class CoordinatorState:
                 # Checkpoint partial progress so a restart doesn't lose it
                 self._sync_and_save()
 
+            self._notify_dashboard()
             return {"status": "ok"}
 
     def _sync_and_save(self):
@@ -727,7 +735,6 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         status_color = "#4CAF50" if not is_done else "#2196F3"
         status_text = "COMPLETE" if is_done else "IN PROGRESS"
 
-        refresh_sec = self.coordinator.config.dashboard_refresh
         session_start = time.strftime(
             "%Y-%m-%d %H:%M:%S", time.localtime(data["session_start"])
         )
@@ -752,8 +759,6 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             theta_json=json.dumps(data.get("theta", {})),
             workers_json=json.dumps(data.get("workers", [])),
             history_json=json.dumps(data.get("history", [])),
-            refresh_sec=refresh_sec,
-            refresh_ms=refresh_sec * 1000,
             timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
             session_start=session_start,
             server_start=server_start,
@@ -827,10 +832,59 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
         )
 
+    def _handle_sse(self):
+        """Stream dashboard updates as Server-Sent Events.
+
+        Sends live data plus only the latest history entry (to keep
+        payloads small).  The client appends new history entries and
+        falls back to a full page reload if it detects a gap.
+        """
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        changed = self.coordinator.dashboard_changed
+        max_interval = self.coordinator.config.dashboard_refresh
+        try:
+            while True:
+                data = self.coordinator.get_coordinator_dashboard()
+                is_done = data["is_done"]
+                history = data.get("history", [])
+                payload = json.dumps({
+                    "status_color": "#2196F3" if is_done else "#4CAF50",
+                    "status_text": "COMPLETE" if is_done else "IN PROGRESS",
+                    "iteration": data["iteration"],
+                    "max_iters": data["max_iterations"],
+                    "progress": data["progress_pct"],
+                    "games_done": data["games_completed_in_iteration"],
+                    "games_total": data["games_per_iteration"],
+                    "iter_progress": data["current_iteration_progress_pct"],
+                    "games_pending": data["games_pending"],
+                    "a_k": data["a_k"],
+                    "c_k": data["c_k"],
+                    "total_games": data["total_games"],
+                    "theta": data.get("theta", {}),
+                    "workers": data.get("workers", []),
+                    "last_history": history[-1] if history else None,
+                    "history_len": len(history),
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                })
+                self.wfile.write(f"data: {payload}\n\n".encode())
+                self.wfile.flush()
+                # Wait for state change or timeout (fallback heartbeat)
+                with changed:
+                    changed.wait(timeout=max_interval)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass  # client disconnected
+
     def do_GET(self):
         if self.path in ("", "/", "/dashboard"):
             html = self._render_coordinator_dashboard()
             self._send_html(html)
+        elif self.path == "/sse":
+            self._handle_sse()
         elif self.path == "/charts":
             html = self._render_charts_page()
             self._send_html(html)

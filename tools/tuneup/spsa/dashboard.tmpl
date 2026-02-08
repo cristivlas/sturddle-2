@@ -214,7 +214,7 @@
             <div>
                 <a href="/charts" class="status-badge" style="text-decoration:none; color:white; background:rgba(255,255,255,0.2);">Charts</a>
                 <a href="/logs" class="status-badge" style="text-decoration:none; color:white; background:rgba(255,255,255,0.2);">Logs</a>
-                <span class="status-badge">{status_text}</span>
+                <span class="status-badge" id="statusBadge">{status_text}</span>
             </div>
         </div>
 
@@ -223,9 +223,9 @@
             <div class="grid">
                 <div class="card">
                     <h2>Iteration Progress</h2>
-                    <div class="card-value">{iteration} / {max_iters}</div>
+                    <div class="card-value" id="iterValue">{iteration} / {max_iters}</div>
                     <div class="progress-bar">
-                        <div class="progress-fill" style="width: {progress}%;">
+                        <div class="progress-fill" id="iterFill" style="width: {progress}%;">
                             {progress:.0f}%
                         </div>
                     </div>
@@ -233,9 +233,9 @@
 
                 <div class="card">
                     <h2>Games This Iteration</h2>
-                    <div class="card-value">{games_done} / {games_total}</div>
+                    <div class="card-value" id="gamesValue">{games_done} / {games_total}</div>
                     <div class="progress-bar">
-                        <div class="progress-fill" style="width: {iter_progress}%;">
+                        <div class="progress-fill" id="gamesFill" style="width: {iter_progress}%;">
                             {iter_progress:.0f}%
                         </div>
                     </div>
@@ -243,7 +243,7 @@
 
                 <div class="card">
                     <h2>Work Status</h2>
-                    <div class="card-value">{games_pending}</div>
+                    <div class="card-value" id="pendingValue">{games_pending}</div>
                     <div class="card-subtext">games pending completion</div>
                 </div>
             </div>
@@ -252,15 +252,15 @@
             <div class="stats-grid">
                 <div class="stat">
                     <div class="stat-label">Learning Rate (a_k)</div>
-                    <div class="stat-value">{a_k:.6f}</div>
+                    <div class="stat-value" id="akValue">{a_k:.6f}</div>
                 </div>
                 <div class="stat">
                     <div class="stat-label">Perturbation (c_k)</div>
-                    <div class="stat-value">{c_k:.6f}</div>
+                    <div class="stat-value" id="ckValue">{c_k:.6f}</div>
                 </div>
                 <div class="stat">
                     <div class="stat-label">Total Games</div>
-                    <div class="stat-value">{total_games}</div>
+                    <div class="stat-value" id="totalGamesValue">{total_games}</div>
                 </div>
             </div>
 
@@ -322,42 +322,35 @@
             </div>
         </div>
 
-        <div class="refresh-info">
-            Session created {session_start} &middot; Last started {server_start} &middot; Refreshes every {refresh_sec}s &middot; {timestamp}
+        <div class="refresh-info" id="footerInfo">
+            Session created {session_start} &middot; Last started {server_start} &middot; Updated {timestamp}
         </div>
     </div>
 
-    <script>
-        setTimeout(function() {{
-            location.reload();
-        }}, {refresh_ms});
-    </script>
     <script>{chart_js}</script>
     <script id="history-data" type="application/json">{history_json}</script>
     <script id="theta-data" type="application/json">{theta_json}</script>
     <script id="workers-data" type="application/json">{workers_json}</script>
     <script>
-        // Populate parameters table
-        (function() {{
-            const theta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}'  );
+        // --- Reusable table builders ---
+        function renderTheta(theta) {{
             const tbody = document.getElementById('thetaBody');
+            tbody.innerHTML = '';
             for (const [name, value] of Object.entries(theta)) {{
                 const tr = document.createElement('tr');
                 tr.innerHTML = '<td style="font-family:monospace;">' + name + '</td>'
                              + '<td style="font-family:monospace;">' + value + '</td>';
                 tbody.appendChild(tr);
             }}
-        }})();
+        }}
 
-        // Populate workers table
-        (function() {{
-            const workers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
+        function renderWorkers(workers) {{
             workers.sort((a, b) => b.games_completed - a.games_completed);
             const tbody = document.getElementById('workersBody');
+            tbody.innerHTML = '';
             workers.forEach(w => {{
-                const alive = w.alive;
-                const style = alive ? 'color:#4CAF50' : 'color:#f44336;font-weight:bold';
-                const status = alive ? 'online' : 'timed out';
+                const style = w.alive ? 'color:#4CAF50' : 'color:#f44336;font-weight:bold';
+                const status = w.alive ? 'online' : 'timed out';
                 const tr = document.createElement('tr');
                 tr.innerHTML = '<td style="font-family:monospace;">' + w.name + '</td>'
                              + '<td style="' + style + '">' + status + '</td>'
@@ -367,40 +360,47 @@
                              + '<td>' + w.games_completed + '</td>';
                 tbody.appendChild(tr);
             }});
-        }})();
+        }}
 
-        // Populate history table
-        (function() {{
-            const history = JSON.parse(document.getElementById('history-data').textContent || '[]');
+        function historyRow(h) {{
+            const sd = (h.score_diff >= 0 ? '+' : '') + h.score_diff.toFixed(4);
+            const ed = (h.elo_diff >= 0 ? '+' : '') + h.elo_diff.toFixed(1);
+            const tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + (h.iteration ?? '?') + '</td>'
+                         + '<td>' + sd + '</td>'
+                         + '<td>' + ed + '</td>'
+                         + '<td>' + h.a_k.toFixed(6) + '</td>'
+                         + '<td>' + h.c_k.toFixed(4) + '</td>';
+            return tr;
+        }}
+
+        function renderHistory(history) {{
             history.sort((a, b) => (b.iteration || 0) - (a.iteration || 0));
             const tbody = document.getElementById('historyBody');
-            history.forEach(h => {{
-                const tr = document.createElement('tr');
-                const sd = (h.score_diff >= 0 ? '+' : '') + h.score_diff.toFixed(4);
-                const ed = (h.elo_diff >= 0 ? '+' : '') + h.elo_diff.toFixed(1);
-                tr.innerHTML = '<td>' + (h.iteration || '?') + '</td>'
-                             + '<td>' + sd + '</td>'
-                             + '<td>' + ed + '</td>'
-                             + '<td>' + h.a_k.toFixed(6) + '</td>'
-                             + '<td>' + h.c_k.toFixed(4) + '</td>';
-                tbody.appendChild(tr);
-            }});
-        }})();
-    </script>
-    <script>
+            tbody.innerHTML = '';
+            history.forEach(h => tbody.appendChild(historyRow(h)));
+        }}
+
+        // --- Initial render from baked-in data ---
+        const initTheta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}');
+        const initWorkers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
+        const initHistory = JSON.parse(document.getElementById('history-data').textContent || '[]');
+
+        renderTheta(initTheta);
+        renderWorkers(initWorkers);
+        renderHistory(initHistory);
+
+        // --- Chart ---
+        let thetaChart = null;
         (function() {{
             try {{
-                const raw = document.getElementById('history-data').textContent || '[]';
-                const history = JSON.parse(raw || '[]') || [];
-                if (!history || !history.length) return;
+                const history = initHistory.slice().sort((a,b) => (a.iteration||0) - (b.iteration||0));
+                if (!history.length) return;
 
-                history.sort((a,b)=> (a.iteration||0) - (b.iteration||0));
                 const labels = history.map(h => h.iteration);
-
                 const thetaKeys = [...new Set(
-                    history.flatMap(h => Object.keys(h.theta || {{ }}))
+                    history.flatMap(h => Object.keys(h.theta || {{}}))
                 )];
-
                 const datasets = thetaKeys.map(k => ({{
                     label: k,
                     data: history.map(h => (h.theta && k in h.theta) ? h.theta[k] : null),
@@ -410,12 +410,9 @@
                 }}));
 
                 const ctx = document.getElementById('thetaChart').getContext('2d');
-                new Chart(ctx, {{
+                thetaChart = new Chart(ctx, {{
                     type: 'line',
-                    data: {{
-                        labels: labels,
-                        datasets: datasets
-                    }},
+                    data: {{ labels, datasets }},
                     options: {{
                         responsive: true,
                         maintainAspectRatio: false,
@@ -423,9 +420,73 @@
                     }}
                 }});
             }} catch (e) {{
-                console.error('Failed to render charts', e);
+                console.error('Failed to render chart', e);
             }}
         }})();
+
+        // --- SSE live updates ---
+        let knownHistoryLen = initHistory.length;
+        const sessionStart = '{session_start}';
+        const serverStart = '{server_start}';
+
+        const sse = new EventSource('/sse');
+        sse.onmessage = function(event) {{
+            const d = JSON.parse(event.data);
+
+            // Cards
+            document.getElementById('iterValue').textContent = d.iteration + ' / ' + d.max_iters;
+            document.getElementById('iterFill').style.width = d.progress + '%';
+            document.getElementById('iterFill').textContent = Math.round(d.progress) + '%';
+            document.getElementById('gamesValue').textContent = d.games_done + ' / ' + d.games_total;
+            document.getElementById('gamesFill').style.width = d.iter_progress + '%';
+            document.getElementById('gamesFill').textContent = Math.round(d.iter_progress) + '%';
+            document.getElementById('pendingValue').textContent = d.games_pending;
+
+            // Stats
+            document.getElementById('akValue').textContent = d.a_k.toFixed(6);
+            document.getElementById('ckValue').textContent = d.c_k.toFixed(6);
+            document.getElementById('totalGamesValue').textContent = d.total_games;
+
+            // Status badge
+            const badge = document.getElementById('statusBadge');
+            badge.textContent = d.status_text;
+            badge.style.background = d.status_color;
+
+            // Tables
+            renderTheta(d.theta);
+            renderWorkers(d.workers);
+
+            // History: append new entry if iteration completed
+            if (d.history_len > knownHistoryLen) {{
+                if (d.history_len - knownHistoryLen > 1) {{
+                    // Missed entries — full reload to resync
+                    location.reload();
+                    return;
+                }}
+                if (d.last_history) {{
+                    // Prepend to table (newest first)
+                    const tbody = document.getElementById('historyBody');
+                    tbody.insertBefore(historyRow(d.last_history), tbody.firstChild);
+
+                    // Update chart
+                    if (thetaChart && d.last_history.theta) {{
+                        thetaChart.data.labels.push(d.last_history.iteration);
+                        thetaChart.data.datasets.forEach(ds => {{
+                            const val = (d.last_history.theta && ds.label in d.last_history.theta)
+                                ? d.last_history.theta[ds.label] : null;
+                            ds.data.push(val);
+                        }});
+                        thetaChart.update();
+                    }}
+                }}
+                knownHistoryLen = d.history_len;
+            }}
+
+            // Footer
+            document.getElementById('footerInfo').innerHTML =
+                'Session created ' + sessionStart + ' &middot; Last started ' + serverStart
+                + ' &middot; Updated ' + d.timestamp;
+        }};
     </script>
 </body>
 </html>
