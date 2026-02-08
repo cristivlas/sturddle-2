@@ -396,7 +396,7 @@ class CoordinatorState:
 
             if remaining <= 0:
                 if self.draining:
-                    return {"status": "done"}
+                    return {"status": "retry", "retry_after": self.config.retry_after}
                 # Try work stealing: reclaim a chunk from a slower worker
                 if self.config.work_stealing and self._try_steal_chunk(worker_name):
                     remaining = gpi - self.games_assigned
