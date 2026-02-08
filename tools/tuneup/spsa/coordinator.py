@@ -14,7 +14,6 @@ import json
 import logging
 import os
 import sys
-import tempfile
 import threading
 import time
 import uuid
@@ -581,26 +580,17 @@ class CoordinatorState:
                 logger.info("  %s = %s", name, val)
 
     def _save_state(self):
-        """Persist SPSA state atomically: write temp file, then rename.
+        """Persist SPSA state with backup of previous version.
 
-        On POSIX os.replace is atomic. On Windows it's not strictly atomic
-        but it is an overwrite-or-fail operation, avoiding partial writes.
+        Renames current state to .bak before writing new state.
+        If the write fails, .bak is available for manual recovery.
+        Raises on failure — continuing would risk overwriting the good .bak.
         """
-        state_dir = self.state_file.parent
-        try:
-            fd, tmp_path = tempfile.mkstemp(
-                suffix=".tmp", prefix="spsa_state_", dir=state_dir
-            )
-            with os.fdopen(fd, "w") as f:
-                json.dump(self.optimizer.state.to_dict(), f, indent=2)
-            os.replace(tmp_path, self.state_file)
-        except Exception:
-            logger.exception("Failed to save state to %s", self.state_file)
-            # Clean up temp file on failure
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+        backup_file = self.state_file.with_suffix(".bak")
+        if self.state_file.exists():
+            os.replace(self.state_file, backup_file)
+        with open(self.state_file, "w") as f:
+            json.dump(self.optimizer.state.to_dict(), f, indent=2)
 
     def get_status(self) -> dict:
         """Current tuning status for display."""
