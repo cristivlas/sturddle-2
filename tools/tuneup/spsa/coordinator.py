@@ -868,12 +868,64 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
         )
 
+    def _render_logs_page(self) -> str:
+        """Render logs page with coordinator logs."""
+        template_path = Path(__file__).parent / "logs.tmpl"
+        try:
+            with open(template_path) as f:
+                template = f.read()
+        except FileNotFoundError:
+            return "<h1>Error: logs.tmpl not found</h1>"
+
+        # Read log file
+        log_file = self.coordinator.logs_dir / "coordinator.log"
+        log_lines_html = ""
+        total_lines = 0
+
+        try:
+            if log_file.exists():
+                with open(log_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.rstrip('\n\r')
+                        # Escape HTML special characters
+                        line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+                        # Add color coding based on log level
+                        css_class = "log-line"
+                        if "[ERROR]" in line:
+                            css_class += " log-line-error"
+                        elif "[WARNING]" in line:
+                            css_class += " log-line-warning"
+                        elif "[INFO]" in line:
+                            css_class += " log-line-info"
+                        elif "[DEBUG]" in line:
+                            css_class += " log-line-debug"
+
+                        log_lines_html += f'<div class="{css_class}">{line}</div>\n'
+                        total_lines += 1
+            else:
+                log_lines_html = '<div class="log-line">Log file not found</div>'
+                total_lines = 1
+        except Exception as e:
+            log_lines_html = f'<div class="log-line log-line-error">Error reading log file: {str(e)}</div>'
+            total_lines = 1
+
+        return template.format(
+            version=VERSION,
+            log_lines=log_lines_html,
+            total_lines=total_lines,
+            timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+
     def do_GET(self):
         if self.path in ("", "/", "/dashboard"):
             html = self._render_coordinator_dashboard()
             self._send_html(html)
         elif self.path == "/charts":
             html = self._render_charts_page()
+            self._send_html(html)
+        elif self.path == "/logs":
+            html = self._render_logs_page()
             self._send_html(html)
         elif self.path == "/config":
             self._send_json(self.coordinator.get_tuning_config_dict())
