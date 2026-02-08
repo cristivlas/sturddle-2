@@ -180,11 +180,11 @@
             .two-col {{ grid-template-columns: 1fr; }}
         }}
         .refresh-info {{
-            text-align: center;
+            padding: 4px 24px;
+            font-size: 10px;
             color: #999;
-            font-size: 12px;
-            padding: 8px 24px;
-            border-top: 1px solid #e0e0e0;
+            text-align: center;
+            border-top: 1px solid #eee;
             flex-shrink: 0;
         }}
     </style>
@@ -278,10 +278,10 @@
                 {workers_section}
                 {history_section}
             </div>
+        </div>
 
-            <div class="refresh-info">
-                Session created {session_start} &middot; Last started {server_start} &middot; Refreshes every {refresh_sec}s &middot; {timestamp}
-            </div>
+        <div class="refresh-info">
+            Session created {session_start} &middot; Last started {server_start} &middot; Refreshes every {refresh_sec}s &middot; {timestamp}
         </div>
     </div>
 

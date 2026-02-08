@@ -680,7 +680,6 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the coordinator."""
 
     coordinator: CoordinatorState  # set on class before server starts
-    dashboard_template: str = ""   # cached at startup
     chart_js: str = ""             # cached at startup
 
     def log_message(self, format, *args):
@@ -710,9 +709,13 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _render_coordinator_dashboard(self) -> str:
-        """Render dashboard from cached template with live data."""
-        if not self.dashboard_template:
-            return "<h1>Error: dashboard template not loaded</h1>"
+        """Render dashboard, re-reading template from disk each request."""
+        template_path = Path(__file__).parent / "dashboard.tmpl"
+        try:
+            with open(template_path) as f:
+                dashboard_template = f.read()
+        except FileNotFoundError:
+            return "<h1>Error: dashboard.tmpl not found</h1>"
 
         data = self.coordinator.get_coordinator_dashboard()
 
@@ -823,7 +826,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         server_start = time.strftime(
             "%Y-%m-%d %H:%M:%S", time.localtime(data["server_start"])
         )
-        return self.dashboard_template.format(
+        return dashboard_template.format(
             version=VERSION,
             chart_js=self.chart_js,
             status_color=status_color,
@@ -1000,16 +1003,9 @@ def main():
     if args.clean:
         logger.info("Clean start: state and logs wiped")
 
-    # Cache dashboard template and chart.js at startup
+    # Cache chart.js at startup (large, doesn't change)
     spsa_dir = Path(__file__).parent
-    template_path = spsa_dir / "dashboard.tmpl"
     chart_js_path = spsa_dir / "chart.umd.min.js"
-
-    if template_path.exists():
-        with open(template_path) as f:
-            CoordinatorHandler.dashboard_template = f.read()
-    else:
-        logger.warning("dashboard.tmpl not found, dashboard disabled")
 
     if chart_js_path.exists():
         with open(chart_js_path) as f:
