@@ -255,7 +255,7 @@ def worker_loop(worker_config: WorkerConfig):
             # Request work
             response = http_post(
                 f"{base_url}/work",
-                {"chunk_size": 0, "worker": hostname},
+                {"chunk_size": worker_config.max_chunk_size, "worker": hostname},
             )
 
             status = response.get("status")

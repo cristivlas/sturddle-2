@@ -159,6 +159,7 @@ class WorkerConfig:
     book_depth: int = 8
     games_dir: str = "./games"
     log_file: str = "worker.log"
+    max_chunk_size: int = 0  # max games per chunk (0 = unlimited)
     parameter_overrides: dict = field(default_factory=dict)
 
     @classmethod
