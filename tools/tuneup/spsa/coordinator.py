@@ -25,6 +25,8 @@ from pathlib import Path
 from config import TuningConfig, WorkItem, WorkResult
 from spsa import SPSAOptimizer, SPSAState
 
+VERSION = "1.0.0"
+
 logger = logging.getLogger("coordinator")
 
 
@@ -822,6 +824,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             "%Y-%m-%d %H:%M:%S", time.localtime(data["server_start"])
         )
         return self.dashboard_template.format(
+            version=VERSION,
             chart_js=self.chart_js,
             status_color=status_color,
             status_text=status_text,
@@ -859,6 +862,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         history_json = json.dumps(data.get("history", []))
 
         return template.format(
+            version=VERSION,
             chart_js=self.chart_js,
             history_json=history_json,
             timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
