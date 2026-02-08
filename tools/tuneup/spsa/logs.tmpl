@@ -201,6 +201,10 @@
             border-top: 1px solid #eee;
             flex-shrink: 0;
         }}
+        @media (max-width: 700px) {{
+            .header {{ flex-wrap: wrap; gap: 6px; justify-content: center; }}
+            .container {{ height: auto; min-height: 100vh; }}
+        }}
     </style>
 </head>
 <body>

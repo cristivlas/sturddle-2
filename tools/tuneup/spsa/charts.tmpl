@@ -78,7 +78,7 @@
             grid-template-columns: 1fr 1fr;
             gap: 8px;
             flex: 1;
-            min-height: 0;
+            min-height: 200px;
         }}
         .card h2 {{
             font-size: 11px;
@@ -94,6 +94,11 @@
             color: #999;
             text-align: center;
             border-top: 1px solid #eee;
+        }}
+        @media (max-width: 700px) {{
+            .header {{ flex-wrap: wrap; gap: 6px; justify-content: center; }}
+            .container {{ height: auto; min-height: 100vh; }}
+            .two-col {{ grid-template-columns: 1fr; }}
         }}
     </style>
 </head>

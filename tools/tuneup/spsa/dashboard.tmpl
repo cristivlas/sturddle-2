@@ -180,7 +180,10 @@
             gap: 16px;
         }}
         @media (max-width: 700px) {{
-            .two-col {{ grid-template-columns: 1fr; }}
+            .header {{ flex-wrap: wrap; gap: 6px; justify-content: center; }}
+            .container {{ height: auto; min-height: 100vh; }}
+            .two-col, .two-col[style] {{ grid-template-columns: 1fr !important; }}
+            .stats-grid {{ grid-template-columns: 1fr 1fr; }}
         }}
         .bottom-panel {{
             flex: 1;
