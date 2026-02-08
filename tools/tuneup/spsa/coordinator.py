@@ -214,7 +214,7 @@ class CoordinatorState:
         Split remaining games proportional to worker speed.
 
         Bootstrap (no speed data): split evenly across active workers.
-        Capped at 50% of remaining to leave work for other workers.
+        Capped to leave work for other workers.
         Even-rounding and final clamping handled by get_work().
         """
         active = self._active_workers()
