@@ -1012,42 +1012,45 @@ def main():
     server = ThreadedHTTPServer(("0.0.0.0", args.port), CoordinatorHandler)
     logger.info("Coordinator ready, waiting for workers...")
 
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        # First Ctrl+C: offer graceful drain
-        iter_k = coordinator.optimizer.iteration
-        if not coordinator.optimizer.is_done():
-            try:
-                restart = " and restart" if sys.platform != "win32" else ""
-                answer = input(
-                    f"\nWait for iteration {iter_k} to complete{restart}? [y/N] "
-                ).strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                answer = ""
-
-            if answer == "y":
-                coordinator.draining = True
-                coordinator._notify_dashboard()
-                logger.info(
-                    "Draining — waiting for iteration %d to complete "
-                    "(Ctrl+C again to force stop)...", iter_k,
-                )
+    while True:
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            if coordinator.draining:
+                logger.info("Force stop.")
+                break
+            iter_k = coordinator.optimizer.iteration
+            if not coordinator.optimizer.is_done():
                 try:
-                    coordinator.drain_complete.wait()
-                    coordinator._save_state()
-                    server.server_close()
-                    if sys.platform != "win32":
-                        logger.info("Restarting coordinator...")
-                        os.execv(sys.executable, [sys.executable] + sys.argv)
-                    else:
-                        logger.info("Iteration complete, shutting down.")
-                        return
-                except KeyboardInterrupt:
-                    logger.info("Force stop.")
+                    restart = " and restart" if sys.platform != "win32" else ""
+                    answer = input(
+                        f"\nWait for iteration {iter_k} to complete{restart}? [y/N] "
+                    ).strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    answer = ""
+                if answer == "y":
+                    coordinator.draining = True
+                    coordinator._notify_dashboard()
+                    logger.info(
+                        "Draining — waiting for iteration %d to complete "
+                        "(Ctrl+C again to force stop)...", iter_k,
+                    )
+                    def drain_watcher():
+                        coordinator.drain_complete.wait()
+                        server.shutdown()
+                    threading.Thread(target=drain_watcher, daemon=True).start()
+                    continue
+            break
+        else:
+            break  # serve_forever returned normally (drain complete)
 
-        coordinator._save_state()
-        server.shutdown()
+    coordinator._save_state()
+    server.server_close()
+    if coordinator.draining and sys.platform != "win32":
+        logger.info("Restarting coordinator...")
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    else:
+        logger.info("Shutting down.")
 
 
 if __name__ == "__main__":
