@@ -13,6 +13,7 @@ import argparse
 import json
 import logging
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -84,6 +85,8 @@ class CoordinatorState:
         self.lock = threading.Lock()
         self.dashboard_changed = threading.Condition()
         self.dashboard_version = 0
+        self.draining = False
+        self.drain_complete = threading.Event()
 
         output = Path(tuning_config.output_dir)
         self.logs_dir = output / "logs"
@@ -392,6 +395,8 @@ class CoordinatorState:
             remaining = gpi - self.games_assigned
 
             if remaining <= 0:
+                if self.draining:
+                    return {"status": "done"}
                 # Try work stealing: reclaim a chunk from a slower worker
                 if self.config.work_stealing and self._try_steal_chunk(worker_name):
                     remaining = gpi - self.games_assigned
@@ -564,7 +569,10 @@ class CoordinatorState:
         self._save_state()
 
         # Prepare next iteration
-        if not self.optimizer.is_done():
+        if self.draining:
+            logger.info("Drain complete after iteration %d", k)
+            self.drain_complete.set()
+        elif not self.optimizer.is_done():
             self._prepare_iteration()
         else:
             logger.info("SPSA tuning complete after %d iterations", k + 1)
@@ -1007,7 +1015,37 @@ def main():
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
+        # First Ctrl+C: offer graceful drain
+        iter_k = coordinator.optimizer.iteration
+        if not coordinator.optimizer.is_done():
+            try:
+                restart = " and restart" if sys.platform != "win32" else ""
+                answer = input(
+                    f"\nWait for iteration {iter_k} to complete{restart}? [y/N] "
+                ).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = ""
+
+            if answer == "y":
+                coordinator.draining = True
+                coordinator._notify_dashboard()
+                logger.info(
+                    "Draining — waiting for iteration %d to complete "
+                    "(Ctrl+C again to force stop)...", iter_k,
+                )
+                try:
+                    coordinator.drain_complete.wait()
+                    coordinator._save_state()
+                    server.server_close()
+                    if sys.platform != "win32":
+                        logger.info("Restarting coordinator...")
+                        os.execv(sys.executable, [sys.executable] + sys.argv)
+                    else:
+                        logger.info("Iteration complete, shutting down.")
+                        return
+                except KeyboardInterrupt:
+                    logger.info("Force stop.")
+
         coordinator._save_state()
         server.shutdown()
 
