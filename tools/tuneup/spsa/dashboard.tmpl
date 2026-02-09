@@ -460,7 +460,12 @@
             renderTheta(d.theta);
             renderWorkers(d.workers);
 
-            // History: append new entry if iteration completed
+            // History: detect reset (--clean) or missed entries, append new
+            if (d.history_len < knownHistoryLen) {{
+                // Server history shrunk (restart with --clean) — resync
+                location.reload();
+                return;
+            }}
             if (d.history_len > knownHistoryLen) {{
                 if (d.history_len - knownHistoryLen > 1) {{
                     // Missed entries — full reload to resync
