@@ -35,10 +35,10 @@ class SPSAState:
     history: List[dict] = field(default_factory=list)
     current_delta: Dict[str, int] = field(default_factory=dict)
     games_completed: int = 0
-    total_score_plus: float = 0.0
-    total_score_minus: float = 0.0
-    total_games_scored: int = 0
-    created_at: float = 0.0  # session start timestamp (epoch)
+    total_wins: int = 0       # games won by theta_plus
+    total_draws: int = 0      # drawn games
+    total_losses: int = 0     # games lost by theta_plus (= won by theta_minus)
+    created_at: float = 0.0   # session start timestamp (epoch)
 
     def to_dict(self) -> dict:
         return {
@@ -47,9 +47,9 @@ class SPSAState:
             "history": list(self.history),
             "current_delta": dict(self.current_delta),
             "games_completed": self.games_completed,
-            "total_score_plus": self.total_score_plus,
-            "total_score_minus": self.total_score_minus,
-            "total_games_scored": self.total_games_scored,
+            "total_wins": self.total_wins,
+            "total_draws": self.total_draws,
+            "total_losses": self.total_losses,
             "created_at": self.created_at,
         }
 
@@ -61,9 +61,9 @@ class SPSAState:
             history=list(d.get("history", [])),
             current_delta={k: int(v) for k, v in d.get("current_delta", {}).items()},
             games_completed=d.get("games_completed", 0),
-            total_score_plus=d.get("total_score_plus", 0.0),
-            total_score_minus=d.get("total_score_minus", 0.0),
-            total_games_scored=d.get("total_games_scored", 0),
+            total_wins=d.get("total_wins", 0),
+            total_draws=d.get("total_draws", 0),
+            total_losses=d.get("total_losses", 0),
             created_at=d.get("created_at", 0.0),
         )
 

@@ -117,9 +117,9 @@ class CoordinatorState:
         self.current_work = None  # WorkItem template for this iteration
         self.games_assigned = 0
         self.games_completed = 0
-        self.total_score_plus = 0.0
-        self.total_score_minus = 0.0
-        self.total_games_scored = 0
+        self.total_wins = 0
+        self.total_draws = 0
+        self.total_losses = 0
         self.pending_chunks = {}  # chunk_id -> ChunkInfo
 
         # Worker registry
@@ -217,7 +217,6 @@ class CoordinatorState:
         Split remaining games proportional to worker speed.
 
         Bootstrap (no speed data): split evenly across active workers.
-        Capped to leave work for other workers.
         Even-rounding and final clamping handled by get_work().
         """
         active = self._active_workers()
@@ -229,35 +228,13 @@ class CoordinatorState:
             my_speed = w.games_per_second if (w and w.games_per_second > 0) else (total_speed / num_workers)
             chunk = int(remaining * my_speed / total_speed)
         else:
-            chunk = min(remaining // num_workers, self.config.bootstrap_chunk_size)
+            chunk = remaining // num_workers
 
-        # Cap to leave work for other workers
-        chunk = min(chunk, max(remaining // max(2, num_workers), 2))
-
-        # TODO: time-based cap so no single chunk blocks an iteration
-        # for too long.  Uncomment and add max_chunk_seconds to config.
-        # chunk = min(chunk, max(self._max_games_by_time(worker_name), 2))
-
-        # If remainder is too small to split among other workers, take it all
+        # If remainder is too small to split, take it all
         if remaining - chunk < num_workers:
             chunk = remaining
 
         return chunk
-
-    # TODO: time-based chunk cap — uses EWMA speed when available,
-    # falls back to tc/depth estimate from _estimate_game_duration.
-    # Add max_chunk_seconds: float = 0 to TuningConfig to enable.
-    #
-    # def _max_games_by_time(self, worker_name: str) -> int:
-    #     """Max games that fit within max_chunk_seconds."""
-    #     w = self.workers.get(worker_name)
-    #     if w and w.games_per_second > 0:
-    #         sec_per_game = 1.0 / w.games_per_second
-    #     else:
-    #         sec_per_game = self._estimate_game_duration(
-    #             w.cutechess_overrides if w else None
-    #         )
-    #     return int(self.config.max_chunk_seconds / sec_per_game)
 
     def _prepare_iteration(self):
         """Set up work for the current iteration.
@@ -272,19 +249,19 @@ class CoordinatorState:
 
         st = self.optimizer.state
 
-        # Restore persisted delta + partial scores, or generate fresh
+        # Restore persisted delta + partial game counts, or generate fresh
         if st.current_delta:
             self.current_delta = st.current_delta
             self.games_completed = st.games_completed
-            self.total_score_plus = st.total_score_plus
-            self.total_score_minus = st.total_score_minus
-            self.total_games_scored = st.total_games_scored
+            self.total_wins = st.total_wins
+            self.total_draws = st.total_draws
+            self.total_losses = st.total_losses
         else:
             self.current_delta = self.optimizer.generate_perturbation()
             self.games_completed = 0
-            self.total_score_plus = 0.0
-            self.total_score_minus = 0.0
-            self.total_games_scored = 0
+            self.total_wins = 0
+            self.total_draws = 0
+            self.total_losses = 0
 
         theta_plus, theta_minus = self.optimizer.compute_candidates(
             self.current_delta
@@ -491,9 +468,9 @@ class CoordinatorState:
             elapsed = time.time() - chunk.assign_time
 
             self.games_completed += result.num_games
-            self.total_score_plus += result.score_plus * result.num_games
-            self.total_score_minus += result.score_minus * result.num_games
-            self.total_games_scored += result.num_games
+            self.total_wins += result.wins
+            self.total_draws += result.draws
+            self.total_losses += result.losses
 
             # Update EWMA speed estimate; this drives adaptive chunk sizing
             # so future get_work() calls distribute proportionally
@@ -505,10 +482,10 @@ class CoordinatorState:
                 w.update_speed(result.num_games, elapsed)
 
             logger.info(
-                "Result: iter %d, %d games from %s [%s], +%.3f / -%.3f (%d/%d done, %.1fs)",
+                "Result: iter %d, %d games from %s [%s], W=%d D=%d L=%d (%d/%d done, %.1fs)",
                 result.iteration, result.num_games,
                 result.worker or "?", result.chunk_id or "?",
-                result.score_plus, result.score_minus,
+                result.wins, result.draws, result.losses,
                 self.games_completed, self.config.games_per_iteration,
                 elapsed,
             )
@@ -528,15 +505,16 @@ class CoordinatorState:
         st = self.optimizer.state
         st.current_delta = self.current_delta
         st.games_completed = self.games_completed
-        st.total_score_plus = self.total_score_plus
-        st.total_score_minus = self.total_score_minus
-        st.total_games_scored = self.total_games_scored
+        st.total_wins = self.total_wins
+        st.total_draws = self.total_draws
+        st.total_losses = self.total_losses
         self._save_state()
 
     def _complete_iteration(self):
         """Finalize current iteration: update theta, save state, log."""
-        avg_score_plus = self.total_score_plus / self.total_games_scored
-        avg_score_minus = self.total_score_minus / self.total_games_scored
+        total = self.total_wins + self.total_draws + self.total_losses
+        avg_score_plus = (self.total_wins + 0.5 * self.total_draws) / total
+        avg_score_minus = (self.total_losses + 0.5 * self.total_draws) / total
 
         k = self.optimizer.iteration
         old_theta = dict(self.optimizer.theta)
@@ -550,7 +528,8 @@ class CoordinatorState:
         elo_minus = self.optimizer.elo_estimate(avg_score_minus)
 
         logger.info("=" * 60)
-        logger.info("Iteration %d complete (%d games)", k, self.total_games_scored)
+        logger.info("Iteration %d complete (%d games, W=%d D=%d L=%d)",
+                     k, total, self.total_wins, self.total_draws, self.total_losses)
         logger.info(
             "Scores: +%.4f / -%.4f (diff: %+.4f, ELO diff: %+.1f)",
             avg_score_plus, avg_score_minus,
@@ -584,9 +563,9 @@ class CoordinatorState:
         st = self.optimizer.state
         st.current_delta = {}
         st.games_completed = 0
-        st.total_score_plus = 0.0
-        st.total_score_minus = 0.0
-        st.total_games_scored = 0
+        st.total_wins = 0
+        st.total_draws = 0
+        st.total_losses = 0
         self._save_state()
 
         # Prepare next iteration

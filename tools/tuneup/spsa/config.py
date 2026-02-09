@@ -87,7 +87,6 @@ class TuningConfig:
     # Max history entries sent to the dashboard (0 = unlimited)
     dashboard_history: int = 100
     work_stealing: bool = True
-    bootstrap_chunk_size: int = 100
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
     parameters: Dict[str, Parameter] = field(default_factory=dict)
 
@@ -104,7 +103,6 @@ class TuningConfig:
             "dashboard_refresh": self.dashboard_refresh,
             "output_dir": self.output_dir,
             "work_stealing": self.work_stealing,
-            "bootstrap_chunk_size": self.bootstrap_chunk_size,
             "spsa": asdict(self.spsa),
             "parameters": {
                 name: {
@@ -140,7 +138,6 @@ class TuningConfig:
             dashboard_history=d.get("dashboard_history", 100),
             output_dir=d.get("output_dir", "./spsa_output"),
             work_stealing=d.get("work_stealing", True),
-            bootstrap_chunk_size=d.get("bootstrap_chunk_size", 100),
             spsa=spsa,
             parameters=parameters,
         )
@@ -165,7 +162,8 @@ class WorkerConfig:
     book_depth: int = 8
     games_dir: str = "./games"
     log_file: str = "worker.log"
-    max_chunk_size: int = 0  # max games per chunk (0 = unlimited)
+    max_chunk_size: int = 0  # hard cap on games per chunk (0 = unlimited)
+    max_rounds_per_chunk: int = 10  # cap = concurrency * this * 2 (0 = unlimited)
     http_retry_timeout: int = 300  # seconds to retry on connection errors
     parameter_overrides: dict = field(default_factory=dict)
     # cutechess-cli overrides: tc, depth, etc. (not UCI options)
@@ -199,11 +197,12 @@ class WorkItem:
 
 @dataclass
 class WorkResult:
-    """Results reported by a worker for a batch (scores only, PGNs saved locally)."""
+    """Results reported by a worker for a batch (game counts, PGNs saved locally)."""
     iteration: int
-    score_plus: float   # win rate for theta_plus side
-    score_minus: float  # win rate for theta_minus side
-    num_games: int
+    wins: int           # games won by theta_plus side
+    draws: int          # drawn games
+    losses: int         # games lost by theta_plus side (= won by theta_minus)
+    num_games: int      # actual games completed
     chunk_id: str = ""  # echoed from WorkItem
     worker: str = ""    # worker hostname
 

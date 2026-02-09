@@ -130,11 +130,11 @@ def build_cutechess_command(worker_config: WorkerConfig,
     cmd = [worker_config.cutechess_cli]
 
     # Engine 1: theta_plus
-    cmd += ["-engine", f"cmd={engine_cmd}"]
+    cmd += ["-engine", f"cmd={engine_cmd}", "name=theta_plus"]
     cmd += option_args(work.theta_plus)
 
     # Engine 2: theta_minus
-    cmd += ["-engine", f"cmd={engine_cmd}"]
+    cmd += ["-engine", f"cmd={engine_cmd}", "name=theta_minus"]
     cmd += option_args(work.theta_minus)
 
     # Common settings
@@ -176,12 +176,13 @@ def build_cutechess_command(worker_config: WorkerConfig,
 def run_games(worker_config: WorkerConfig, tuning_config: dict,
               work: WorkItem) -> tuple:
     """
-    Run cutechess-cli and return (score_plus, score_minus).
+    Run cutechess-cli and return (wins, draws, losses).
 
     PGNs are saved directly by cutechess-cli into worker's games_dir.
 
-    score_plus = win rate for engine1 (theta_plus)
-    score_minus = win rate for engine2 (theta_minus)
+    wins   = games won by engine1 (theta_plus)
+    draws  = drawn games
+    losses = games lost by engine1 (= won by theta_minus)
     """
     games_dir = Path(worker_config.games_dir)
     games_dir.mkdir(parents=True, exist_ok=True)
@@ -247,15 +248,12 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict,
             work.num_games, total, wins, losses, draws,
         )
 
-    score_plus = (wins + draws * 0.5) / total
-    score_minus = (losses + draws * 0.5) / total
-
     logger.info(
-        "Results: +%d -%d =%d (score_plus=%.3f, score_minus=%.3f)",
-        wins, losses, draws, score_plus, score_minus,
+        "Results: W=%d D=%d L=%d (%d games)",
+        wins, draws, losses, total,
     )
 
-    return score_plus, score_minus
+    return wins, draws, losses
 
 
 def worker_loop(worker_config: WorkerConfig):
@@ -278,11 +276,19 @@ def worker_loop(worker_config: WorkerConfig):
     cc_overrides = {k: v for k, v in worker_config.cutechess_overrides.items()
                     if not k.startswith('_')}
 
+    # Compute effective chunk size cap from max_rounds_per_chunk and concurrency
+    chunk_size_cap = worker_config.max_chunk_size  # hard cap (0 = unlimited)
+    if worker_config.max_rounds_per_chunk > 0:
+        rounds_cap = worker_config.max_rounds_per_chunk * worker_config.concurrency * 2
+        chunk_size_cap = min(chunk_size_cap, rounds_cap) if chunk_size_cap > 0 else rounds_cap
+    logger.info("Chunk size cap: %d games (%d rounds x %d concurrency)",
+                chunk_size_cap, worker_config.max_rounds_per_chunk, worker_config.concurrency)
+
     while True:
         try:
             # Request work
             work_request = {
-                "chunk_size": worker_config.max_chunk_size,
+                "chunk_size": chunk_size_cap,
                 "worker": hostname,
             }
             if cc_overrides:
@@ -307,16 +313,17 @@ def worker_loop(worker_config: WorkerConfig):
             )
 
             # Run the games
-            score_plus, score_minus = run_games(
+            wins, draws, losses = run_games(
                 worker_config, tuning_config, work
             )
 
             # Report results (PGNs saved locally by cutechess-cli)
             result = {
                 "iteration": work.iteration,
-                "score_plus": score_plus,
-                "score_minus": score_minus,
-                "num_games": work.num_games,
+                "wins": wins,
+                "draws": draws,
+                "losses": losses,
+                "num_games": wins + draws + losses,
                 "chunk_id": work.chunk_id,
                 "worker": hostname,
             }
