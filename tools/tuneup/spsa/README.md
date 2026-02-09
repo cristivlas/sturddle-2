@@ -286,16 +286,22 @@ The tuner uses range-scaled SPSA with Bernoulli perturbations:
 
 The coordinator uses adaptive work assignment:
 
-- **Chunk sizing**: Proportional to each worker's observed throughput (games/sec).
-  New workers with no history get an equal share. Workers cap their own chunk
-  size via `max_rounds_per_chunk` (default 10): cap = concurrency × rounds × 2.
+- **Chunk sizing**: The coordinator splits remaining games proportional to
+  each worker's observed throughput (EWMA games/sec). New workers with no
+  history get an equal share. Workers may cap chunk size locally via
+  `max_chunk_size` (hard cap) and/or `max_rounds_per_chunk` (default 10,
+  cap = concurrency × rounds × 2); if both are set the smaller wins. The
+  worker sends this cap to the coordinator, which uses
+  `min(adaptive, worker_cap)`. When the remainder is too small to split
+  meaningfully the coordinator assigns it all to the requesting worker.
 - **Adaptive timeout**: Chunk timeouts scale with expected completion time
-  (5x multiplier, clamped between 60s and 30min). See below for how game
-  duration is estimated.
+  (5× multiplier, floor 60s, ceiling max(30min, largest-possible-chunk × 5)).
+  See below for how game duration is estimated.
 - **Worker tracking**: Workers are identified by hostname. The coordinator
   tracks each worker's throughput, games completed, and last-seen time.
-  Workers that haven't contacted the coordinator in 120 seconds are marked dead
-  and their chunks are reclaimed.
+  A worker is considered alive if it was seen within the worker timeout
+  (max(120s, base_sec_per_game × 4)), or if it has a pending chunk that
+  has not yet timed out. Timed-out workers' chunks are reclaimed.
 - **Work stealing**: When a fast worker requests work but all games are
   assigned, the coordinator can reclaim a chunk from a slower worker and
   reassign it. This prevents fast workers from sitting idle while slow (or
