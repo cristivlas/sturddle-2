@@ -242,7 +242,8 @@ tuneup/my-test/
 | `book_depth` | Opening book depth in plies | `8` |
 | `games_dir` | Absolute path for PGN output | auto-detected |
 | `log_file` | Absolute path to worker log | auto-detected |
-| `max_chunk_size` | Max games per chunk (0 = unlimited) | `0` |
+| `max_chunk_size` | Hard cap on games per chunk (0 = unlimited) | `0` |
+| `max_rounds_per_chunk` | Cap = concurrency × this × 2 (0 = unlimited) | `10` |
 | `parameter_overrides` | Per-machine UCI engine options (e.g., SyzygyPath) | `{}` |
 | `cutechess_overrides` | Per-machine cutechess-cli overrides (`tc`, `depth`) | `{}` |
 
@@ -264,8 +265,8 @@ The tuner uses range-scaled SPSA with Bernoulli perturbations:
 The coordinator uses adaptive work assignment:
 
 - **Chunk sizing**: Proportional to each worker's observed throughput (games/sec).
-  New workers with no history get an equal share. No single worker gets more
-  than 50% of remaining games for an iteration.
+  New workers with no history get an equal share. Workers cap their own chunk
+  size via `max_rounds_per_chunk` (default 10): cap = concurrency × rounds × 2.
 - **Adaptive timeout**: Chunk timeouts scale with expected completion time
   (5x multiplier, clamped between 60s and 30min). See below for how game
   duration is estimated.
