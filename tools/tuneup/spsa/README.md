@@ -179,6 +179,24 @@ Worker logs can also be cleaned:
 python ../../tools/tuneup/spsa/worker.py -c worker.json --clean
 ```
 
+### Live-Patching via Restart (Linux)
+
+On Linux, pressing Ctrl+C during a run offers a **restart** option (`r`) that
+drains the current iteration, saves state, then re-execs the coordinator
+process via `os.execv`. Because the new process re-reads `tuning.json` and
+reloads all Python modules from disk, this allows live-patching of a running
+tuning session without losing progress:
+
+1. Edit `tuning.json` (e.g. change `work_stealing`, `min_steal_games`, etc.)
+   and/or modify coordinator source code.
+2. Press Ctrl+C in the coordinator terminal.
+3. Choose `r` (restart). The coordinator waits for the current iteration to
+   finish, checkpoints, and restarts with the updated code and config.
+
+Workers are unaffected — they simply retry until the new coordinator comes up
+(governed by `http_retry_timeout`, default 300s). This is not available on
+Windows because `os.execv` does not replace the process in-place there.
+
 ## Debug Mode
 
 For verbose worker output (all cutechess-cli score lines, full output):
@@ -217,7 +235,10 @@ tuneup/my-test/
 | `output_dir` | Coordinator output (logs, checkpoint) | project dir |
 | `retry_after` | Worker retry interval in seconds | `5` |
 | `dashboard_refresh` | Dashboard auto-refresh in seconds | `10` |
+| `dashboard_history` | Max iteration history entries sent to dashboard (0 = unlimited) | `100` |
 | `work_stealing` | Reclaim chunks from slow workers for fast idle ones | `true` |
+| `min_steal_games` | Minimum chunk size eligible for work stealing | `6` |
+| `min_steal_elapsed` | Seconds a chunk must be in-flight before it can be stolen | `30.0` |
 | `spsa.budget` | Total games budget (iterations * games_per_iteration) | `10000` |
 | `spsa.a` | Learning rate | `0.5` |
 | `spsa.c` | Perturbation as fraction of parameter range | `0.05` |
@@ -244,6 +265,7 @@ tuneup/my-test/
 | `log_file` | Absolute path to worker log | auto-detected |
 | `max_chunk_size` | Hard cap on games per chunk (0 = unlimited) | `0` |
 | `max_rounds_per_chunk` | Cap = concurrency × this × 2 (0 = unlimited) | `10` |
+| `http_retry_timeout` | Seconds to retry on coordinator connection errors | `300` |
 | `parameter_overrides` | Per-machine UCI engine options (e.g., SyzygyPath) | `{}` |
 | `cutechess_overrides` | Per-machine cutechess-cli overrides (`tc`, `depth`) | `{}` |
 
@@ -277,10 +299,18 @@ The coordinator uses adaptive work assignment:
 - **Work stealing**: When a fast worker requests work but all games are
   assigned, the coordinator can reclaim a chunk from a slower worker and
   reassign it. This prevents fast workers from sitting idle while slow (or
-  dead) workers hold chunks. Stealing requires the requesting worker to
-  have observed speed data (at least one completed chunk), be faster than
-  the holder, and be able to finish the chunk in less time than has already
-  elapsed. After a coordinator restart, stealing is disabled until workers
+  dead) workers hold chunks. A chunk is eligible for stealing only when all
+  of the following hold:
+  - The chunk has at least `min_steal_games` games (default 6) — tiny
+    tail-end chunks are not worth the overhead of stealing and discarding.
+  - The chunk has been in-flight for at least `min_steal_elapsed` seconds
+    (default 30) — freshly assigned chunks are likely to finish soon.
+  - The requesting worker has observed speed data (at least one completed
+    chunk) and is faster than the current holder.
+  - The requesting worker could finish the entire chunk in less time than
+    has already elapsed since assignment.
+
+  After a coordinator restart, stealing is naturally disabled until workers
   complete their first chunks and build up speed estimates — this prevents
   thrashing between workers with identical config-based fallback estimates.
   The slow worker continues running the stolen chunk, but its result is
