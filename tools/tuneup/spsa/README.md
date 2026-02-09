@@ -1,7 +1,7 @@
 # Distributed SPSA Tuner
 
 A distributed SPSA (Simultaneous Perturbation Stochastic Approximation) tuner
-for chess engines, using cutechess-cli to run games. Designed for small
+for the Sturddle chess engine, using cutechess-cli to run games. Designed for small
 heterogeneous LANs (2-3 machines, mixed Linux/Windows).
 
 ## Architecture
@@ -127,12 +127,12 @@ and adapts chunk sizes proportionally — faster machines get more work.
 Open `http://coordinator-ip:8080/` in a browser for a live dashboard showing:
 - Overall progress and current iteration
 - Current parameter values
-- Worker status (alive/dead, games/sec throughput)
+- Worker status (online / timed out, assigned and completed work etc.)
 - Recent iteration history with score and ELO diffs
 - Parameter convergence charts
 
-The dashboard auto-refreshes at an interval set by `dashboard_refresh` in
-tuning.json (default: based on time control).
+The dashboard auto-refreshes using Server-Sent Events (SSE) and failover to an
+interval set by `dashboard_refresh` in tuning.json.
 
 ## Monitoring
 
@@ -181,7 +181,7 @@ python ../../tools/tuneup/spsa/worker.py -c worker.json --clean
 
 ### Live-Patching via Restart (Linux)
 
-On Linux, pressing Ctrl+C during a run offers a **restart** option (`r`) that
+On Linux, pressing Ctrl+C during a Coordinator run offers a **restart** option (`r`) that
 drains the current iteration, saves state, then re-execs the coordinator
 process via `os.execv`. Because the new process re-reads `tuning.json` and
 reloads all Python modules from disk, this allows live-patching of a running
@@ -349,8 +349,7 @@ to cutechess-cli, after fixed options and tunable parameters.
 ```json
 {
   "parameter_overrides": {
-    "SyzygyPath": "/home/user/syzygy/3-4-5/",
-    "EvalFile": "/home/user/nets/nn.nnue"
+    "SyzygyPath": "/home/user/syzygy/3-4-5/"
   }
 }
 ```
