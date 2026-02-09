@@ -471,8 +471,8 @@ class CoordinatorState:
 
             if result.iteration != self.optimizer.iteration:
                 logger.warning(
-                    "Ignoring stale result for iteration %d from %s (current: %d)",
-                    result.iteration, result.worker or "?", self.optimizer.iteration,
+                    "Ignoring stale result (%d games) for iteration %d from %s (current: %d)",
+                    result.num_games, result.iteration, result.worker or "?", self.optimizer.iteration,
                 )
                 return {"status": "ignored", "reason": "stale iteration"}
 
