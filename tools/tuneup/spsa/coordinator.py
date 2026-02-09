@@ -228,7 +228,7 @@ class CoordinatorState:
             my_speed = w.games_per_second if (w and w.games_per_second > 0) else (total_speed / num_workers)
             chunk = int(remaining * my_speed / total_speed)
         else:
-            chunk = remaining // num_workers
+            chunk = min(remaining // num_workers, self.config.bootstrap_chunk_size)
 
         # Cap to leave work for other workers
         chunk = min(chunk, max(remaining // max(2, num_workers), 2))
