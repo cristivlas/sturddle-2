@@ -1065,8 +1065,8 @@ def main():
     server.server_close()
     if coordinator.draining and coordinator._restart:
         logger.info("Restarting coordinator...")
-        restart_args = [a for a in sys.argv if a != "--clean"]
-        os.execv(sys.executable, [sys.executable] + restart_args)
+        restart_cmd = [sys.argv[0], "-c", args.config, "-p", str(args.port)]
+        os.execv(sys.executable, [sys.executable] + restart_cmd)
     else:
         logger.info("Shutting down.")
 
