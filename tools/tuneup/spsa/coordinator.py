@@ -233,11 +233,30 @@ class CoordinatorState:
         # Cap to leave work for other workers
         chunk = min(chunk, max(remaining // max(2, num_workers), 2))
 
+        # TODO: time-based cap so no single chunk blocks an iteration
+        # for too long.  Uncomment and add max_chunk_seconds to config.
+        # chunk = min(chunk, max(self._max_games_by_time(worker_name), 2))
+
         # If remainder is too small to split among other workers, take it all
         if remaining - chunk < num_workers:
             chunk = remaining
 
         return chunk
+
+    # TODO: time-based chunk cap — uses EWMA speed when available,
+    # falls back to tc/depth estimate from _estimate_game_duration.
+    # Add max_chunk_seconds: float = 0 to TuningConfig to enable.
+    #
+    # def _max_games_by_time(self, worker_name: str) -> int:
+    #     """Max games that fit within max_chunk_seconds."""
+    #     w = self.workers.get(worker_name)
+    #     if w and w.games_per_second > 0:
+    #         sec_per_game = 1.0 / w.games_per_second
+    #     else:
+    #         sec_per_game = self._estimate_game_duration(
+    #             w.cutechess_overrides if w else None
+    #         )
+    #     return int(self.config.max_chunk_seconds / sec_per_game)
 
     def _prepare_iteration(self):
         """Set up work for the current iteration.
