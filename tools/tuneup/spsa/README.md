@@ -2,7 +2,7 @@
 
 A distributed SPSA (Simultaneous Perturbation Stochastic Approximation) tuner
 for the Sturddle chess engine, using cutechess-cli to run games. Designed for small
-heterogeneous LANs (2-3 machines, mixed Linux/Windows).
+heterogeneous LANs, mixed Linux/Windows.
 
 ## Architecture
 
