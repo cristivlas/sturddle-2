@@ -173,8 +173,7 @@ def build_cutechess_command(worker_config: WorkerConfig,
     return cmd
 
 
-def run_games(worker_config: WorkerConfig, tuning_config: dict,
-              work: WorkItem) -> tuple:
+def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) -> tuple:
     """
     Run cutechess-cli and return (wins, draws, losses).
 

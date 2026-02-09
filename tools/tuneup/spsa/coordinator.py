@@ -310,8 +310,21 @@ class CoordinatorState:
         best_cid = None
         best_games = 0
 
+        min_games = self.config.min_steal_games
+        min_elapsed = self.config.min_steal_elapsed
+
         for cid, chunk in self.pending_chunks.items():
             if chunk.worker_name == worker_name:
+                continue
+
+            # Never steal tiny chunks — not worth the overhead
+            if chunk.num_games < min_games:
+                continue
+
+            elapsed = now - chunk.assign_time
+
+            # Don't steal freshly-assigned chunks
+            if elapsed < min_elapsed:
                 continue
 
             # Only steal if we're faster than the holder
@@ -319,7 +332,6 @@ class CoordinatorState:
             if slow and slow.games_per_second >= fast.games_per_second:
                 continue
 
-            elapsed = now - chunk.assign_time
             fast_estimate = chunk.num_games * fast_spg
 
             if fast_estimate >= elapsed:

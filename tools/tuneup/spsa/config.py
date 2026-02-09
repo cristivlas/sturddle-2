@@ -87,6 +87,8 @@ class TuningConfig:
     # Max history entries sent to the dashboard (0 = unlimited)
     dashboard_history: int = 100
     work_stealing: bool = True
+    min_steal_games: int = 6          # never steal chunks smaller than this
+    min_steal_elapsed: float = 30.0   # seconds before a chunk becomes stealable
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
     parameters: Dict[str, Parameter] = field(default_factory=dict)
 
@@ -103,6 +105,8 @@ class TuningConfig:
             "dashboard_refresh": self.dashboard_refresh,
             "output_dir": self.output_dir,
             "work_stealing": self.work_stealing,
+            "min_steal_games": self.min_steal_games,
+            "min_steal_elapsed": self.min_steal_elapsed,
             "spsa": asdict(self.spsa),
             "parameters": {
                 name: {
@@ -138,6 +142,8 @@ class TuningConfig:
             dashboard_history=d.get("dashboard_history", 100),
             output_dir=d.get("output_dir", "./spsa_output"),
             work_stealing=d.get("work_stealing", True),
+            min_steal_games=d.get("min_steal_games", 6),
+            min_steal_elapsed=d.get("min_steal_elapsed", 30.0),
             spsa=spsa,
             parameters=parameters,
         )
