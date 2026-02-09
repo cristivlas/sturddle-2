@@ -85,6 +85,7 @@ class CoordinatorState:
         self.dashboard_changed = threading.Condition()
         self.dashboard_version = 0
         self.draining = False
+        self._restart = False
         self.drain_complete = threading.Event()
 
         output = Path(tuning_config.output_dir)
@@ -414,6 +415,8 @@ class CoordinatorState:
 
             if remaining <= 0:
                 if self.draining:
+                    if not self._restart:
+                        return {"status": "done"}
                     return {"status": "retry", "retry_after": self.config.retry_after}
                 # Try work stealing: reclaim a chunk from a slower worker
                 if self.config.work_stealing and self._try_steal_chunk(worker_name):
@@ -1047,6 +1050,8 @@ def main():
                         "Draining — waiting for iteration %d to complete "
                         "(Ctrl+C again to force stop)...", iter_k,
                     )
+                    # Break out of serve_forever() once the drain completes;
+                    # needs a thread because serve_forever() blocks.
                     def drain_watcher():
                         coordinator.drain_complete.wait()
                         server.shutdown()
@@ -1058,9 +1063,10 @@ def main():
 
     coordinator._save_state()
     server.server_close()
-    if coordinator.draining and getattr(coordinator, '_restart', False):
+    if coordinator.draining and coordinator._restart:
         logger.info("Restarting coordinator...")
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        restart_args = [a for a in sys.argv if a != "--clean"]
+        os.execv(sys.executable, [sys.executable] + restart_args)
     else:
         logger.info("Shutting down.")
 
