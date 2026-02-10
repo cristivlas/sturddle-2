@@ -6,11 +6,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        :root {{
+            --accent-start: #667eea;
+            --accent-end: #764ba2;
+        }}
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%);
             min-height: 100vh;
             padding: 12px;
+            transition: background 1s ease;
         }}
         .container {{
             max-width: 1400px;
@@ -24,12 +29,13 @@
             flex-direction: column;
         }}
         .header {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%);
             color: white;
             padding: 10px 24px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            transition: background 1s ease;
         }}
         .header h1 {{
             font-size: 18px;
@@ -51,10 +57,10 @@
             text-decoration: none;
         }}
         .content {{
-            padding: 10px 24px;
+            padding: 20px 24px;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 12px;
             flex: 1;
             min-height: 0;
         }}
@@ -103,6 +109,21 @@
             a[href="/logs"] {{ display: none; }}
         }}
     </style>
+    <!-- Time-of-day theme (keep in sync across dashboard/charts/logs templates) -->
+    <script>
+        function applyTimeTheme() {{
+            var h = new Date().getHours();
+            var s, e;
+            if      (h >= 6  && h < 12) {{ s = '#5ba0b5'; e = '#82c4d8'; }}
+            else if (h >= 12 && h < 18) {{ s = '#667eea'; e = '#764ba2'; }}
+            else if (h >= 18 && h < 22) {{ s = '#c0766d'; e = '#8e6399'; }}
+            else                        {{ s = '#3d4f7c'; e = '#1a1a2e'; }}
+            document.documentElement.style.setProperty('--accent-start', s);
+            document.documentElement.style.setProperty('--accent-end', e);
+        }}
+        applyTimeTheme();
+        setInterval(applyTimeTheme, 3600000);
+    </script>
 </head>
 <body>
     <div class="container">

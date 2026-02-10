@@ -6,11 +6,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        :root {{
+            --accent-start: #667eea;
+            --accent-end: #764ba2;
+        }}
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%);
             min-height: 100vh;
             padding: 12px;
+            transition: background 1s ease;
         }}
         .container {{
             max-width: 1400px;
@@ -24,25 +29,32 @@
             flex-direction: column;
         }}
         .header {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%);
             color: white;
             padding: 10px 24px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            transition: background 1s ease;
         }}
         .header h1 {{
             font-size: 18px;
             font-weight: 700;
         }}
+        .header-buttons {{
+            display: flex;
+            gap: 8px;
+        }}
         .status-badge {{
-            background: {status_color};
+            background: rgba(255,255,255,0.2);
             padding: 6px 16px;
             border-radius: 16px;
             font-weight: 600;
             font-size: 12px;
             text-transform: uppercase;
             letter-spacing: 1px;
+            color: white;
+            text-decoration: none;
         }}
         .content {{
             padding: 20px 24px;
@@ -99,7 +111,7 @@
         }}
         .progress-fill {{
             height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(90deg, var(--accent-start) 0%, var(--accent-end) 100%);
             transition: width 0.3s ease;
             display: flex;
             align-items: center;
@@ -117,7 +129,7 @@
             font-weight: 700;
             margin-bottom: 10px;
             color: #333;
-            border-bottom: 2px solid #667eea;
+            border-bottom: 2px solid var(--accent-start);
             padding-bottom: 6px;
         }}
         table {{
@@ -157,7 +169,7 @@
         }}
         .stat {{
             background: white;
-            border-left: 4px solid #667eea;
+            border-left: 4px solid var(--accent-start);
             padding: 10px 14px;
             border-radius: 4px;
         }}
@@ -210,15 +222,30 @@
             flex-shrink: 0;
         }}
     </style>
+    <!-- Time-of-day theme (keep in sync across dashboard/charts/logs templates) -->
+    <script>
+        function applyTimeTheme() {{
+            var h = new Date().getHours();
+            var s, e;
+            if      (h >= 6  && h < 12) {{ s = '#5ba0b5'; e = '#82c4d8'; }}
+            else if (h >= 12 && h < 18) {{ s = '#667eea'; e = '#764ba2'; }}
+            else if (h >= 18 && h < 22) {{ s = '#c0766d'; e = '#8e6399'; }}
+            else                        {{ s = '#3d4f7c'; e = '#1a1a2e'; }}
+            document.documentElement.style.setProperty('--accent-start', s);
+            document.documentElement.style.setProperty('--accent-end', e);
+        }}
+        applyTimeTheme();
+        setInterval(applyTimeTheme, 3600000);
+    </script>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>Sturddle SPSA Tuner {version}</h1>
-            <div>
-                <a href="/charts" class="status-badge" style="text-decoration:none; color:white; background:rgba(255,255,255,0.2);">Charts</a>
-                <a href="/logs" class="status-badge" style="text-decoration:none; color:white; background:rgba(255,255,255,0.2);">Logs</a>
-                <span class="status-badge" id="statusBadge">{status_text}</span>
+            <div class="header-buttons">
+                <a href="/charts" class="status-badge">Charts</a>
+                <a href="/logs" class="status-badge">Logs</a>
+                <span class="status-badge" id="statusBadge" style="background:{status_color}">{status_text}</span>
             </div>
         </div>
 
@@ -246,7 +273,7 @@
                 </div>
 
                 <div class="card">
-                    <h2>Work Status</h2>
+                    <h2>Scheduled Work</h2>
                     <div class="card-value" id="pendingValue">{games_pending}</div>
                     <div class="card-subtext">games pending completion</div>
                 </div>
@@ -309,7 +336,7 @@
                     </div>
                 </div>
                 <div class="section" style="margin-top: 0;">
-                    <h3>History (latest {dashboard_history})</h3>
+                    <h3 id="historyTitle">History (latest {dashboard_history})</h3>
                     <div style="padding-right: 17px; flex-shrink: 0;">
                     <table style="table-layout:fixed; width:100%;">
                         <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
@@ -385,6 +412,12 @@
             history.forEach(h => tbody.appendChild(historyRow(h)));
         }}
 
+        function updateHistoryTitle(total) {{
+            var shown = document.getElementById('historyBody').children.length;
+            var el = document.getElementById('historyTitle');
+            if (el) el.textContent = 'History (' + shown + ' of ' + total + ' iterations)';
+        }}
+
         // --- Initial render from baked-in data ---
         const initTheta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}');
         const initWorkers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
@@ -393,6 +426,7 @@
         renderTheta(initTheta);
         renderWorkers(initWorkers);
         renderHistory(initHistory);
+        updateHistoryTitle({history_total});
 
         // --- Chart ---
         let thetaChart = null;
@@ -490,6 +524,8 @@
                 }}
                 knownHistoryLen = d.history_len;
             }}
+
+            updateHistoryTitle(d.history_len);
 
             // Footer
             document.getElementById('footerInfo').innerHTML =
