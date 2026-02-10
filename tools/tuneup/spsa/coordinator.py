@@ -74,6 +74,7 @@ class ChunkInfo:
     num_games: int
     assign_time: float
     timeout: float
+    expected_duration: float = 0.0
 
 
 class CoordinatorState:
@@ -290,56 +291,41 @@ class CoordinatorState:
     def _try_steal_chunk(self, worker_name: str) -> bool:
         """Try to reclaim a chunk from a slower worker for reassignment.
 
-        Steals when the requesting worker could finish the chunk in less
-        time than has already elapsed since the chunk was assigned.
-        Requires the requesting worker to have observed EWMA speed data
-        (at least one completed chunk) to prevent thrashing when all
-        workers use the same config-based fallback estimate.
+        Compares the fast worker's redo-from-scratch time against the
+        slow worker's expected_duration recorded at assignment time.
+        Steal if: the holder is overdue and we're faster, or we can
+        finish before the holder's original deadline.
+
         Returns True if games were freed up.
         """
         if not self.pending_chunks:
             return False
 
-        fast = self.workers.get(worker_name)
-        if not fast or fast.games_per_second <= 0:
-            return False
-
-        fast_spg = 1.0 / fast.games_per_second
+        fast_spg = self._worker_sec_per_game(worker_name)
         now = time.time()
 
         best_cid = None
-        best_games = 0
-
-        min_games = self.config.min_steal_games
-        min_elapsed = self.config.min_steal_elapsed
+        best_saving = 0.0
 
         for cid, chunk in self.pending_chunks.items():
             if chunk.worker_name == worker_name:
                 continue
 
-            # Never steal tiny chunks — not worth the overhead
-            if chunk.num_games < min_games:
-                continue
-
             elapsed = now - chunk.assign_time
+            expected = chunk.expected_duration
+            fast_total = chunk.num_games * fast_spg
 
-            # Don't steal freshly-assigned chunks
-            if elapsed < min_elapsed:
+            overdue = elapsed > expected
+            if overdue and fast_total < expected:
+                saving = expected - fast_total
+            elif fast_total + elapsed < expected:
+                saving = expected - elapsed - fast_total
+            else:
                 continue
 
-            # Only steal if we're faster than the holder
-            slow = self.workers.get(chunk.worker_name)
-            if slow and slow.games_per_second >= fast.games_per_second:
-                continue
-
-            fast_estimate = chunk.num_games * fast_spg
-
-            if fast_estimate >= elapsed:
-                continue
-
-            if chunk.num_games > best_games:
+            if saving > best_saving:
                 best_cid = cid
-                best_games = chunk.num_games
+                best_saving = saving
 
         if best_cid is None:
             return False
@@ -347,9 +333,10 @@ class CoordinatorState:
         chunk = self.pending_chunks.pop(best_cid)
         self.games_assigned -= chunk.num_games
         logger.info(
-            "Work steal: reclaimed %d games from %s [%s] for %s (%.0fs into chunk)",
+            "Work steal: reclaimed %d games from %s [%s] for %s "
+            "(%.0fs elapsed, est. saving %.1fs)",
             chunk.num_games, chunk.worker_name, best_cid,
-            worker_name, now - chunk.assign_time,
+            worker_name, now - chunk.assign_time, best_saving,
         )
         return True
 
@@ -425,6 +412,7 @@ class CoordinatorState:
             # Generate unique chunk ID and compute timeout
             chunk_id = uuid.uuid4().hex[:12]
             timeout = self._chunk_timeout_for(worker_name, num_games)
+            expected_duration = num_games * self._worker_sec_per_game(worker_name)
 
             self.games_assigned += num_games
             self.pending_chunks[chunk_id] = ChunkInfo(
@@ -433,6 +421,7 @@ class CoordinatorState:
                 num_games=num_games,
                 assign_time=time.time(),
                 timeout=timeout,
+                expected_duration=expected_duration,
             )
 
             work = WorkItem(

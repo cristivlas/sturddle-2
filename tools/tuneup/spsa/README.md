@@ -193,7 +193,7 @@ process via `os.execv`. Because the new process re-reads `tuning.json` and
 reloads all Python modules from disk, this allows live-patching of a running
 tuning session without losing progress:
 
-1. Edit `tuning.json` (e.g. change `work_stealing`, `min_steal_games`, etc.)
+1. Edit `tuning.json` (e.g. change `work_stealing`, etc.)
    and/or modify coordinator source code.
 2. Press Ctrl+C in the coordinator terminal.
 3. Choose `r` (restart). The coordinator waits for the current iteration to
@@ -243,8 +243,6 @@ tuneup/my-test/
 | `dashboard_refresh` | Dashboard auto-refresh in seconds | `10` |
 | `dashboard_history` | Max iteration history entries sent to dashboard (0 = unlimited) | `100` |
 | `work_stealing` | Reclaim chunks from slow workers for fast idle ones | `true` |
-| `min_steal_games` | Minimum chunk size eligible for work stealing | `6` |
-| `min_steal_elapsed` | Seconds a chunk must be in-flight before it can be stolen | `30.0` |
 | `spsa.budget` | Total games budget (iterations * games_per_iteration) | `10000` |
 | `spsa.a` | Learning rate | `0.5` |
 | `spsa.c` | Perturbation as fraction of parameter range | `0.05` |
@@ -311,23 +309,19 @@ The coordinator uses adaptive work assignment:
 - **Work stealing**: When a fast worker requests work but all games are
   assigned, the coordinator can reclaim a chunk from a slower worker and
   reassign it. This prevents fast workers from sitting idle while slow (or
-  dead) workers hold chunks. A chunk is eligible for stealing only when all
-  of the following hold:
-  - The chunk has at least `min_steal_games` games (default 6) — tiny
-    tail-end chunks are not worth the overhead of stealing and discarding.
-  - The chunk has been in-flight for at least `min_steal_elapsed` seconds
-    (default 30) — freshly assigned chunks are likely to finish soon.
-  - The requesting worker has observed speed data (at least one completed
-    chunk) and is faster than the current holder.
-  - The requesting worker could finish the entire chunk in less time than
-    has already elapsed since assignment.
+  dead) workers hold chunks. Each chunk records its `expected_duration`
+  at assignment time. A steal is allowed when either:
+  - The holder is **overdue** (`elapsed > expected_duration`) and the
+    stealer's estimated time for the chunk is less than `expected_duration`.
+  - The stealer can finish the chunk before the holder's original deadline:
+    `fast_total + elapsed < expected_duration`.
 
-  After a coordinator restart, stealing is naturally disabled until workers
-  complete their first chunks and build up speed estimates — this prevents
-  thrashing between workers with identical config-based fallback estimates.
-  The slow worker continues running the stolen chunk, but its result is
-  discarded (unknown chunk ID). Enabled by default; set `work_stealing:
-  false` in `tuning.json` to disable.
+  Same-speed workers never steal from each other: in the non-overdue case
+  the holder's head start makes the deadline impossible to beat; in the
+  overdue case equal estimates block the steal. The slow worker continues
+  running the stolen chunk, but its result is discarded (unknown chunk ID).
+  Enabled by default; set `work_stealing: false` in `tuning.json` to
+  disable.
 
 ### Timeout and Completion Estimates
 
