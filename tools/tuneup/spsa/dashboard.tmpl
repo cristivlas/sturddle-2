@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SPSA Tuning Coordinator</title>
+    <title>Sturddle SPSA Tuner {version}</title>
+    <link rel="icon" href="/static/chess.ico">
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
@@ -533,9 +534,12 @@
 
             updateHistoryTitle(d.history_len);
 
+            // Theme
+            applyTimeTheme();
+
             // Footer
             document.getElementById('footerInfo').innerHTML =
-                'Session created ' + sessionStart + ' &middot; Last started ' + serverStart
+                'Session created ' + sessionStart + ' &middot; Last started ' + d.server_start
                 + ' &middot; Updated ' + d.timestamp;
         }};
     </script>

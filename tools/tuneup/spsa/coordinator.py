@@ -12,6 +12,7 @@ Usage:
 import argparse
 import json
 import logging
+import mimetypes
 import os
 import sys
 import threading
@@ -122,6 +123,7 @@ class CoordinatorState:
         self.total_draws = 0
         self.total_losses = 0
         self.pending_chunks = {}  # chunk_id -> ChunkInfo
+        self.stolen_chunks = {}   # stolen_cid -> replacement_cid
 
         # Worker registry
         self.workers = {}  # name -> WorkerInfo
@@ -276,6 +278,7 @@ class CoordinatorState:
         # Only assign remaining games (games_completed already scored)
         self.games_assigned = self.games_completed
         self.pending_chunks = {}
+        self.stolen_chunks = {}
 
         # Reset per-iteration worker counters
         for w in self.workers.values():
@@ -288,7 +291,7 @@ class CoordinatorState:
             self.optimizer.a_k(),
         )
 
-    def _try_steal_chunk(self, worker_name: str) -> bool:
+    def _try_steal_chunk(self, worker_name: str) -> str | None:
         """Try to reclaim a chunk from a slower worker for reassignment.
 
         Compares the fast worker's redo-from-scratch time against the
@@ -296,10 +299,10 @@ class CoordinatorState:
         Steal if: the holder is overdue and we're faster, or we can
         finish before the holder's original deadline.
 
-        Returns True if games were freed up.
+        Returns the stolen chunk_id, or None.
         """
         if not self.pending_chunks:
-            return False
+            return None
 
         fast_spg = self._worker_sec_per_game(worker_name)
         now = time.time()
@@ -310,6 +313,8 @@ class CoordinatorState:
         for cid, chunk in self.pending_chunks.items():
             if chunk.worker_name == worker_name:
                 continue
+            if cid in self.stolen_chunks.values():
+                continue
 
             elapsed = now - chunk.assign_time
             expected = chunk.expected_duration
@@ -318,9 +323,21 @@ class CoordinatorState:
             overdue = elapsed > expected
             if overdue and fast_total < expected:
                 saving = expected - fast_total
+                logger.debug(
+                    "Work steal: candidate %s [%s] %d games (overdue) — elapsed=%.1fs expected=%.1fs fast=%.1fs saving=%.1fs",
+                    chunk.worker_name, cid, chunk.num_games, elapsed, expected, fast_total, saving,
+                )
             elif fast_total + elapsed < expected:
                 saving = expected - elapsed - fast_total
+                logger.debug(
+                    "Work steal: candidate %s [%s] %d games — elapsed=%.1fs expected=%.1fs fast=%.1fs saving=%.1fs",
+                    chunk.worker_name, cid, chunk.num_games, elapsed, expected, fast_total, saving,
+                )
             else:
+                logger.debug(
+                    "Work steal: skip %s [%s] %d games — elapsed=%.1fs expected=%.1fs fast=%.1fs",
+                    chunk.worker_name, cid, chunk.num_games, elapsed, expected, fast_total,
+                )
                 continue
 
             if saving > best_saving:
@@ -328,17 +345,16 @@ class CoordinatorState:
                 best_saving = saving
 
         if best_cid is None:
-            return False
+            return None
 
         chunk = self.pending_chunks.pop(best_cid)
         self.games_assigned -= chunk.num_games
         logger.info(
-            "Work steal: reclaimed %d games from %s [%s] for %s "
-            "(%.0fs elapsed, est. saving %.1fs)",
+            "Work steal: %d games from %s [%s] for %s (%.0fs elapsed, est. saving %.1fs)",
             chunk.num_games, chunk.worker_name, best_cid,
             worker_name, now - chunk.assign_time, best_saving,
         )
-        return True
+        return best_cid
 
     def _reclaim_timed_out_chunks(self):
         """Reclaim chunks that have exceeded their per-worker timeout."""
@@ -388,6 +404,7 @@ class CoordinatorState:
 
             gpi = self.config.games_per_iteration
             remaining = gpi - self.games_assigned
+            stolen_cid = None
 
             if remaining <= 0:
                 if self.draining:
@@ -395,7 +412,9 @@ class CoordinatorState:
                         return {"status": "done"}
                     return {"status": "retry", "retry_after": self.config.retry_after}
                 # Try work stealing: reclaim a chunk from a slower worker
-                if self.config.work_stealing and self._try_steal_chunk(worker_name):
+                if self.config.work_stealing:
+                    stolen_cid = self._try_steal_chunk(worker_name)
+                if stolen_cid:
                     remaining = gpi - self.games_assigned
                 else:
                     return {"status": "retry", "retry_after": self.config.retry_after}
@@ -424,6 +443,10 @@ class CoordinatorState:
                 expected_duration=expected_duration,
             )
 
+            # Record steal race so either finisher can resolve it
+            if stolen_cid:
+                self.stolen_chunks[stolen_cid] = chunk_id
+
             work = WorkItem(
                 iteration=self.current_work.iteration,
                 theta_plus=self.current_work.theta_plus,
@@ -450,45 +473,51 @@ class CoordinatorState:
         with self.lock:
             self._touch_worker(result.worker)
 
+            if not result.chunk_id or not result.worker:
+                logger.error("Malformed result: %s", result)
+                return {"status": "ignored", "reason": "malformed result"}
+
             if result.iteration != self.optimizer.iteration:
                 logger.warning(
                     "Ignoring stale result (%d games) for iteration %d from %s (current: %d)",
-                    result.num_games, result.iteration, result.worker or "?", self.optimizer.iteration,
+                    result.num_games, result.iteration, result.worker, self.optimizer.iteration,
                 )
                 return {"status": "ignored", "reason": "stale iteration"}
 
-            # Reject results for chunks not in pending (reclaimed or unknown)
-            if not result.chunk_id or result.chunk_id not in self.pending_chunks:
-                logger.warning(
-                    "Ignoring result for unknown/reclaimed chunk %s from %s",
-                    result.chunk_id or "?", result.worker or "?",
-                )
+            # Resolve chunk: pending (normal), stolen (replaced), or unknown
+            chunk = None
+            if result.chunk_id in self.pending_chunks:
+                chunk = self.pending_chunks.pop(result.chunk_id)
+            elif result.chunk_id in self.stolen_chunks:
+                replacement_cid = self.stolen_chunks.pop(result.chunk_id)
+                if replacement_cid in self.pending_chunks:
+                    self.pending_chunks.pop(replacement_cid)
+                    logger.info("Got [%s] from [%s], cancelled [%s]", result.chunk_id, result.worker, replacement_cid)
+                else:
+                    return {"status": "ignored", "reason": f"replaced by {replacement_cid}"}
+            else:
+                logger.warning("Ignoring result for unknown/reclaimed chunk %s from %s", result.chunk_id, result.worker)
                 return {"status": "ignored", "reason": "unknown chunk"}
-
-            chunk = self.pending_chunks.pop(result.chunk_id)
-            elapsed = time.time() - chunk.assign_time
 
             self.games_completed += result.num_games
             self.total_wins += result.wins
             self.total_draws += result.draws
             self.total_losses += result.losses
 
-            # Update EWMA speed estimate; this drives adaptive chunk sizing
-            # so future get_work() calls distribute proportionally
-            if result.worker and result.worker in self.workers:
+            if result.worker in self.workers:
                 w = self.workers[result.worker]
                 w.chunks_completed += 1
                 w.games_completed += result.num_games
                 w.games_completed_iter += result.num_games
-                w.update_speed(result.num_games, elapsed)
+                if chunk:
+                    w.update_speed(result.num_games, time.time() - chunk.assign_time)
 
             logger.info(
-                "Result: iter %d, %d games from %s [%s], W=%d D=%d L=%d (%d/%d done, %.1fs)",
+                "Result: iter %d, %d games from %s [%s], W=%d D=%d L=%d (%d/%d done)",
                 result.iteration, result.num_games,
-                result.worker or "?", result.chunk_id or "?",
+                result.worker, result.chunk_id,
                 result.wins, result.draws, result.losses,
                 self.games_completed, self.config.games_per_iteration,
-                elapsed,
             )
 
             # Check if iteration is complete
@@ -697,6 +726,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
 
     coordinator: CoordinatorState  # set on class before server starts
     chart_js: str = ""             # cached at startup
+    static_dir: str = ""           # set from config
 
     def log_message(self, format, *args):
         # Route http.server logs through our logger
@@ -721,6 +751,31 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_static(self):
+        """Serve static files from configured static_dir."""
+        if not self.static_dir:
+            self.send_error(404)
+            return
+        if not self.path.startswith("/static/"):
+            self.send_error(404)
+            return
+        rel = self.path[len("/static/"):]
+        # Resolve and prevent path traversal
+        base = Path(self.static_dir).resolve()
+        target = (base / rel).resolve()
+        if not str(target).startswith(str(base)) or not target.is_file():
+            self.send_error(404)
+            return
+        mime = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        with open(target, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "public, max-age=86400")
         self.end_headers()
         self.wfile.write(body)
 
@@ -883,6 +938,10 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                     "last_history": history[-1] if history else None,
                     "history_len": data["history_total"],
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "server_start": time.strftime(
+                        "%Y-%m-%d %H:%M:%S",
+                        time.localtime(data["server_start"]),
+                    ),
                 })
                 self.wfile.write(f"data: {payload}\n\n".encode())
                 self.wfile.flush()
@@ -901,6 +960,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         elif self.path == "/logs":
             html = self._render_logs_page()
             self._send_html(html)
+        elif self.path.startswith("/static/"):
+            self._serve_static()
         elif self.path == "/config":
             self._send_json(self.coordinator.get_tuning_config_dict())
         elif self.path == "/status":
@@ -982,6 +1043,9 @@ def main():
         with open(chart_js_path) as f:
             CoordinatorHandler.chart_js = f.read()
 
+    if getattr(config, "static_dir", ""):
+        CoordinatorHandler.static_dir = config.static_dir
+
     logger.info("Starting SPSA coordinator on port %d", args.port)
     logger.info("Config: %s", args.config)
     logger.info("Output: %s", config.output_dir)
@@ -1026,10 +1090,7 @@ def main():
                     coordinator.draining = True
                     coordinator._restart = (answer == "r")
                     coordinator._notify_dashboard()
-                    logger.info(
-                        "Draining — waiting for iteration %d to complete "
-                        "(Ctrl+C again to force stop)...", iter_k,
-                    )
+                    logger.info("Draining — waiting for iteration %d to complete (Ctrl+C again to force stop)...", iter_k)
                     # Break out of serve_forever() once the drain completes;
                     # needs a thread because serve_forever() blocks.
                     def drain_watcher():
