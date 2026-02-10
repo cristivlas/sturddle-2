@@ -191,12 +191,18 @@
             grid-template-columns: 1fr 1fr;
             gap: 16px;
         }}
+        .params-tbl {{
+            table-layout: fixed;
+            width: 100%;
+        }}
         @media (max-width: 700px), (max-height: 500px) {{
             .header {{ flex-wrap: wrap; gap: 6px; justify-content: center; }}
             .container {{ height: auto; min-height: 100vh; }}
             .two-col, .two-col[style] {{ grid-template-columns: 1fr !important; }}
             .stats-grid {{ grid-template-columns: 1fr 1fr; }}
             a[href="/logs"] {{ display: none; }}
+            th, td {{ padding: 6px 4px; font-size: 11px; }}
+            .params-tbl {{ table-layout: auto; }}
         }}
         .bottom-panel {{
             flex: 1;
@@ -302,7 +308,7 @@
                 </div>
                 <div class="section" style="margin-top: 0;">
                     <h3>Current Parameters</h3>
-                    <table style="table-layout:fixed; width:100%;">
+                    <table class="params-tbl">
                         <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
                         <thead>
                             <tr>
@@ -312,7 +318,7 @@
                         </thead>
                     </table>
                     <div style="max-height: 260px; overflow-y: auto;">
-                    <table style="table-layout:fixed; width:100%;">
+                    <table class="params-tbl">
                         <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
                         <tbody id="thetaBody"></tbody>
                     </table>
@@ -324,20 +330,20 @@
             <div class="two-col bottom-panel">
                 <div class="section" style="margin-top: 0;">
                     <h3>Workers</h3>
-                    <table>
-                        <colgroup><col style="width:20%"><col style="width:12%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:17%"></colgroup>
-                        <thead><tr><th>Name</th><th>Status</th><th>Last Seen</th><th>Assigned</th><th>Iter Done</th><th>Session Done</th></tr></thead>
+                    <table style="table-layout:fixed; width:100%;">
+                        <colgroup><col style="width:18%"><col style="width:14%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:17%"></colgroup>
+                        <thead><tr><th>Name</th><th>Status</th><th>Seen</th><th>Assigned</th><th>Iter</th><th>Session</th></tr></thead>
                     </table>
                     <div style="max-height: 260px; overflow-y: auto;">
-                    <table>
-                        <colgroup><col style="width:20%"><col style="width:12%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:17%"></colgroup>
+                    <table style="table-layout:fixed; width:100%;">
+                        <colgroup><col style="width:18%"><col style="width:14%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:17%"></colgroup>
                         <tbody id="workersBody"></tbody>
                     </table>
                     </div>
                 </div>
                 <div class="section" style="margin-top: 0;">
                     <h3 id="historyTitle">History (latest {dashboard_history})</h3>
-                    <div style="padding-right: 17px; flex-shrink: 0;">
+                    <div style="flex-shrink: 0;">
                     <table style="table-layout:fixed; width:100%;">
                         <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
                         <thead><tr><th>Iter</th><th>Score Diff</th><th>ELO Diff</th><th>a_k</th><th>c_k</th></tr></thead>
@@ -369,8 +375,8 @@
             tbody.innerHTML = '';
             for (const [name, value] of Object.entries(theta)) {{
                 const tr = document.createElement('tr');
-                tr.innerHTML = '<td style="font-family:monospace;">' + name + '</td>'
-                             + '<td style="font-family:monospace;">' + value + '</td>';
+                tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + name + '">' + name + '</td>'
+                             + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + value + '</td>';
                 tbody.appendChild(tr);
             }}
         }}
@@ -383,7 +389,7 @@
                 const style = w.alive ? 'color:#4CAF50' : 'color:#f44336;font-weight:bold';
                 const status = w.alive ? 'online' : 'timed out';
                 const tr = document.createElement('tr');
-                tr.innerHTML = '<td style="font-family:monospace;">' + w.name + '</td>'
+                tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + w.name + '">' + w.name + '</td>'
                              + '<td style="' + style + '">' + status + '</td>'
                              + '<td>' + Math.round(w.last_seen_ago) + 's ago</td>'
                              + '<td>' + w.games_assigned + '</td>'
