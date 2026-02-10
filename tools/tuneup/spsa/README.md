@@ -134,9 +134,11 @@ Open `http://coordinator-ip:8080/` in a browser for a live dashboard showing:
 The dashboard auto-refreshes using Server-Sent Events (SSE) and failover to an
 interval set by `dashboard_refresh` in tuning.json.
 
-![Progress and worker status](dash-3.png)
-![Current parameters and workers](dash-1.png)
-![Convergence charts](dash-2.png)
+<table><tr>
+<td><img src="dash-3.png" alt="Progress" width="250"></td>
+<td><img src="dash-1.png" alt="Parameters and workers" width="250"></td>
+<td><img src="dash-2.png" alt="Charts" width="250"></td>
+</tr></table>
 
 ## Monitoring
 
