@@ -15,7 +15,7 @@ heterogeneous LANs, mixed Linux/Windows.
 ## Prerequisites
 
 - [cutechess-cli](https://github.com/cutechess/cutechess) installed on each worker machine
-- Engine source tree (for genconfig.py parameter discovery)
+- Engine build prepped for tuning (see [Tuning the Engine](../../../README.md#tuning-the-engine) in the main README)
 
 **Windows stack size caveat**: Using `main.py` directly (via the `engine.bat`
 wrapper) is convenient because it avoids a full packaged build, but `python.exe`
@@ -133,6 +133,10 @@ Open `http://coordinator-ip:8080/` in a browser for a live dashboard showing:
 
 The dashboard auto-refreshes using Server-Sent Events (SSE) and failover to an
 interval set by `dashboard_refresh` in tuning.json.
+
+![Progress and worker status](dash-3.png)
+![Current parameters and workers](dash-1.png)
+![Convergence charts](dash-2.png)
 
 ## Monitoring
 

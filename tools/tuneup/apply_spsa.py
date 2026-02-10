@@ -12,7 +12,7 @@ Parameters not found in config.h (e.g. piece weights, piece-square
 tables) are listed with their engine-space values for manual review.
 
 Usage:
-    python apply_spsa.py <spsa_state.json | project_dir> [--config config.h]
+    python apply_spsa.py <spsa_state.json | project_dir> [--config config.h] [--finalize]
 """
 
 import argparse
@@ -50,8 +50,11 @@ def denormalize(name, theta_val):
     return int(round(theta_val))
 
 
-def update_config(config_file, engine_values):
+def update_config(config_file, engine_values, finalize=False):
     """Patch DECLARE_PARAM/DECLARE_VALUE/DECLARE_NORMAL lines in config.h.
+
+    If finalize is True, also converts DECLARE_PARAM/DECLARE_NORMAL back to
+    DECLARE_VALUE for the tuned parameters.
 
     Returns set of parameter names that were successfully updated.
     """
@@ -59,6 +62,7 @@ def update_config(config_file, engine_values):
         lines = f.readlines()
 
     updated = set()
+    finalized = set()
     updated_lines = []
 
     for line in lines:
@@ -86,13 +90,21 @@ def update_config(config_file, engine_values):
                     if line != original_line:
                         updated.add(name)
                         logging.info(f"Updated: {original_line.strip()} -> {line.strip()}")
+
+                    if finalize and macro != 'DECLARE_VALUE':
+                        line = line.replace(macro, 'DECLARE_VALUE', 1)
+                        finalized.add(name)
+
                     break
         updated_lines.append(line)
 
-    if updated:
+    if updated or finalized:
         with open(config_file, 'w') as f:
             f.writelines(updated_lines)
-        logging.info(f"Patched {len(updated)} parameter(s) in {config_file}")
+        if updated:
+            logging.info(f"Patched {len(updated)} parameter(s) in {config_file}")
+        if finalized:
+            logging.info(f"Finalized {len(finalized)} parameter(s) to DECLARE_VALUE")
     else:
         logging.info(f"No changes to {config_file}")
 
@@ -106,6 +118,8 @@ def main():
     parser.add_argument('state', help='Path to spsa_state.json or SPSA project directory')
     parser.add_argument('--config', default=os.path.join(root_path(), 'config.h'),
                         help='Path to config.h (default: <project_root>/config.h)')
+    parser.add_argument('--finalize', action='store_true',
+                        help='Convert DECLARE_PARAM/DECLARE_NORMAL back to DECLARE_VALUE for tuned parameters')
     args = parser.parse_args()
 
     # Resolve state file path
@@ -136,7 +150,7 @@ def main():
         engine_values[name] = denormalize(name, val)
 
     # Patch config.h
-    updated = update_config(args.config, engine_values)
+    updated = update_config(args.config, engine_values, finalize=args.finalize)
 
     # Report params not found in config.h
     not_found = {name: engine_values[name] for name in engine_values if name not in updated}

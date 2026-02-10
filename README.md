@@ -40,25 +40,39 @@ CFLAGS="march=armv8.2-a+fp16"
 
 
 ## Tuning the Engine
-There are two ways to tune parameters defined in `config.h`:
-- Using https://chess-tuning-tools.readthedocs.io/en/latest/
-- or using the Lakas optimizer https://github.com/fsmosca/Lakas
+
+Search and evaluation parameters are defined in `config.h` using tuning macros
+(`DECLARE_VALUE`, `DECLARE_PARAM`, etc.). Edit `config.h` to select which parameters
+to expose for tuning — see the comments in the file for the available macros and options.
+
+Build the engine. On POSIX systems, building just the python module is sufficient and faster:
+<code>CC=clang++ CFLAGS=-march=native python3 setup.py build_ext --inplace</code>
+On Windows, a full build via `tools/build.py` is recommended due to default stack size
+limitations in `python.exe` that can cause crashes at higher search depths.
+
+Run `./main.py` and enter the `uci` command. Tunable parameters will be listed in the output.
+
+### Chess Tuning Tools / Lakas
+
+- https://chess-tuning-tools.readthedocs.io/en/latest/
+- or the Lakas optimizer https://github.com/fsmosca/Lakas
 
 1) Install the preferred tool and `cutechess-cli`.
 
-2) Edit the `config.h` file, and replace `DECLARE_VALUE` with `DECLARE_PARAM` for the parameters to be tuned.
-3) Build the python module:
-<code>CC=clang++ CFLAGS=-march=native NATIVE_UCI=1 python3 setup.py build_ext --inplace</code>
-Run `./main.py`, and enter the `uci` command. The parameters of interest should be listed in the output.
-Quit the engine.
-
-*NOTE*: the **NATIVE_UCI** flag is no longer required, older version used a Python implementation of the UCI protocol,
-the default is now to use the "native" C++ implementation.
-
-4) Run `tuneup/gentune.py` to generate a JSON configuration file for chess-tuning-tools, or
+2) Run `tuneup/gentune.py` to generate a JSON configuration file for chess-tuning-tools, or
 `tuneup/genlakas.py` to generate a wrapper script to invoke the Lakas optimizer.
 
-5) Run the optimizer. Once the optimizer converges, edit the `config.h` file, and change the values
-of the parameters; change `DECLARE_PARAM` back to `DECLARE_VALUE`.
+3) Run the optimizer. Once the optimizer converges, run `tools/tuneup/apply_lakas.py`
+to apply the results to `config.h`, or edit it manually; change `DECLARE_PARAM` back
+to `DECLARE_VALUE`.
+
+### Distributed SPSA Tuner (Experimental)
+
+Starting with version 2.5.1, a distributed SPSA tuner is available. It uses a
+coordinator/worker architecture designed for small heterogeneous LANs and provides
+a live web dashboard for monitoring progress.
+
+See [tools/tuneup/spsa/README.md](tools/tuneup/spsa/README.md) for setup and usage.
+Use `tools/tuneup/apply_spsa.py` to apply tuning results from `spsa_state.json` to `config.h`.
 
 
