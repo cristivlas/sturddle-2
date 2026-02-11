@@ -89,6 +89,8 @@ class TuningConfig:
     work_stealing: bool = True
     overdue_factor: float = 2.0
     worker_idle_timeout: float = 120.0
+    chunk_timeout_multiplier: float = 5.0
+    min_chunk_timeout: float = 60.0
     # Directory for static assets (favicon, etc.); empty = disabled
     static_dir: str = ""
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
@@ -109,6 +111,8 @@ class TuningConfig:
             "work_stealing": self.work_stealing,
             "overdue_factor": self.overdue_factor,
             "worker_idle_timeout": self.worker_idle_timeout,
+            "chunk_timeout_multiplier": self.chunk_timeout_multiplier,
+            "min_chunk_timeout": self.min_chunk_timeout,
             "static_dir": self.static_dir,
             "spsa": asdict(self.spsa),
             "parameters": {
@@ -147,6 +151,8 @@ class TuningConfig:
             work_stealing=d.get("work_stealing", True),
             overdue_factor=d.get("overdue_factor", 2.0),
             worker_idle_timeout=d.get("worker_idle_timeout", 120.0),
+            chunk_timeout_multiplier=d.get("chunk_timeout_multiplier", 5.0),
+            min_chunk_timeout=d.get("min_chunk_timeout", 60.0),
             static_dir=d.get("static_dir", ""),
             spsa=spsa,
             parameters=parameters,

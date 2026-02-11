@@ -132,13 +132,11 @@ class CoordinatorState:
 
         # Time estimates and timeouts
         self._base_sec_per_game = self._estimate_game_duration()
-        self.chunk_timeout_multiplier = 5.0
-        self.min_chunk_timeout = 60.0
         # Max timeout: at least 30 min, or enough for the largest possible chunk
         max_chunk_games = tuning_config.games_per_iteration // 2
         self.max_chunk_timeout = max(
             1800.0,
-            max_chunk_games * self._base_sec_per_game * self.chunk_timeout_multiplier,
+            max_chunk_games * self._base_sec_per_game * self.config.chunk_timeout_multiplier,
         )
         self.server_start_time = time.time()
         self._prepare_iteration()
@@ -182,8 +180,7 @@ class CoordinatorState:
 
     def _touch_worker(self, name: str):
         """Register or update a worker's last-seen timestamp."""
-        if not name:
-            return
+        assert name, "worker name required (enforced at HTTP boundary)"
         now = time.time()
         if name not in self.workers:
             self.workers[name] = WorkerInfo(name=name, last_seen=now)
@@ -217,8 +214,8 @@ class CoordinatorState:
     def _chunk_timeout_for(self, worker_name: str, num_games: int) -> float:
         """Timeout for a chunk based on expected duration."""
         expected = num_games * self._worker_sec_per_game(worker_name)
-        timeout = expected * self.chunk_timeout_multiplier
-        return max(self.min_chunk_timeout, min(self.max_chunk_timeout, timeout))
+        timeout = expected * self.config.chunk_timeout_multiplier
+        return max(self.config.min_chunk_timeout, min(self.max_chunk_timeout, timeout))
 
     def _compute_chunk_size(self, worker_name: str, remaining: int) -> int:
         """
@@ -313,7 +310,7 @@ class CoordinatorState:
         now = time.time()
 
         best_cid = None
-        best_saving = self.min_chunk_timeout / 4
+        best_saving = self.config.min_chunk_timeout / 4
 
         for cid, chunk in self.pending_chunks.items():
             if chunk.worker_name == worker_name:
@@ -379,8 +376,7 @@ class CoordinatorState:
             self.dashboard_version += 1
             self.dashboard_changed.notify_all()
 
-    def get_work(self, chunk_size: int = 0, worker_name: str = "",
-                 cutechess_overrides: dict = None) -> dict:
+    def get_work(self, chunk_size: int, worker_name: str, cutechess_overrides: dict) -> dict:
         """
         Assign a chunk of games to a worker.
 
@@ -410,6 +406,12 @@ class CoordinatorState:
             for cid in stale:
                 chunk = self.pending_chunks.pop(cid)
                 self.games_assigned -= chunk.num_games
+                # Clean up any steal race involving this chunk
+                stolen_cid = next((k for k, v in self.stolen_chunks.items() if v == cid), None)
+                if stolen_cid:
+                    self.stolen_chunks.pop(stolen_cid)
+                if cid in self.stolen_chunks:
+                    self.stolen_chunks.pop(cid)
                 logger.info("Reclaimed [%s] (%d games) from %s", cid, chunk.num_games, worker_name)
 
             gpi = self.config.games_per_iteration
@@ -440,7 +442,9 @@ class CoordinatorState:
                     adaptive = min(adaptive, chunk_size)
                 num_games = min(remaining, adaptive)
 
-            # Must be even (each game pair is +c vs -c)
+            # Must be even (each game pair is +c vs -c); rounds down
+            if num_games % 2 != 0:
+                logger.warning("Odd game count %d, rounding down to %d", num_games, num_games - 1)
             num_games = max(2, num_games - (num_games % 2))
 
             # Generate unique chunk ID and compute timeout
@@ -998,9 +1002,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                 self._send_json({"status": "error", "reason": "worker name required"})
                 return
             cc_overrides = data.get("cutechess_overrides")
-            result = self.coordinator.get_work(
-                chunk_size, worker_name, cc_overrides
-            )
+            result = self.coordinator.get_work(chunk_size, worker_name, cc_overrides)
             self._send_json(result)
         elif self.path == "/result":
             data = self._read_json()
