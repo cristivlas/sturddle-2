@@ -149,6 +149,7 @@ if platform.startswith('win'):
         args += [
             '-Wno-deprecated-declarations',
             '-Wno-unused-command-line-argument',
+            '-Wno-unused-label',
             '-Wno-unused-variable',
             '-Wno-nan-infinity-disabled',
         ]
