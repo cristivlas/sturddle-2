@@ -488,10 +488,15 @@ class CoordinatorState:
             chunk = None
             if result.chunk_id in self.pending_chunks:
                 chunk = self.pending_chunks.pop(result.chunk_id)
+                stolen_cid = next((k for k, v in self.stolen_chunks.items() if v == result.chunk_id), None)
+                if stolen_cid:
+                    self.stolen_chunks.pop(stolen_cid)
+                    logger.debug("Replacement [%s] from [%s] won against [%s]", result.chunk_id, result.worker, stolen_cid)
             elif result.chunk_id in self.stolen_chunks:
                 replacement_cid = self.stolen_chunks.pop(result.chunk_id)
                 if replacement_cid in self.pending_chunks:
-                    self.pending_chunks.pop(replacement_cid)
+                    replacement = self.pending_chunks.pop(replacement_cid)
+                    self.games_assigned -= replacement.num_games
                     logger.info("Got [%s] from [%s], cancelled [%s]", result.chunk_id, result.worker, replacement_cid)
                 else:
                     return {"status": "ignored", "reason": f"replaced by {replacement_cid}"}
