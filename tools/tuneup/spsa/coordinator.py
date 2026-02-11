@@ -313,7 +313,7 @@ class CoordinatorState:
         now = time.time()
 
         best_cid = None
-        best_saving = 0.0
+        best_saving = self.min_chunk_timeout / 4
 
         for cid, chunk in self.pending_chunks.items():
             if chunk.worker_name == worker_name:
