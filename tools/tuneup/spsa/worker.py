@@ -269,7 +269,7 @@ def worker_loop(worker_config: WorkerConfig):
     default_retry = tuning_config.get("retry_after", 5)
     retry_timeout = worker_config.http_retry_timeout
 
-    hostname = platform.node()
+    hostname = worker_config.name or platform.node()
 
     # Collect cutechess overrides to send to coordinator (for timeout estimation)
     cc_overrides = {k: v for k, v in worker_config.cutechess_overrides.items()

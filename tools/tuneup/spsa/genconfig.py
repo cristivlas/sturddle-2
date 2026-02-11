@@ -21,6 +21,7 @@ Creates:
 import argparse
 import json
 import os
+import platform
 import sys
 import sysconfig
 import warnings
@@ -191,6 +192,7 @@ def main():
     log_file = abspath(os.path.join(project_dir, 'logs', 'worker.log'))
 
     worker_config = {
+        'name': platform.node(),
         'coordinator': 'http://localhost:8080',
         'engine': engine_cmd,
         'cutechess_cli': 'cutechess-cli',

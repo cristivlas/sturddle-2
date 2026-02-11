@@ -220,6 +220,24 @@
             min-height: 0;
             max-height: none !important;
         }}
+        /* Thin scrollbars for all scrollable areas */
+        .content, .content div {{
+            scrollbar-width: thin;
+            scrollbar-color: rgba(0,0,0,0.25) transparent;
+        }}
+        .content::-webkit-scrollbar, .content div::-webkit-scrollbar {{
+            width: 6px;
+        }}
+        .content::-webkit-scrollbar-track, .content div::-webkit-scrollbar-track {{
+            background: transparent;
+        }}
+        .content::-webkit-scrollbar-thumb, .content div::-webkit-scrollbar-thumb {{
+            background: rgba(0,0,0,0.25);
+            border-radius: 3px;
+        }}
+        .content::-webkit-scrollbar-thumb:hover, .content div::-webkit-scrollbar-thumb:hover {{
+            background: rgba(0,0,0,0.4);
+        }}
         .refresh-info {{
             padding: 4px 24px;
             font-size: 12px;

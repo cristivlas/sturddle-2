@@ -135,9 +135,9 @@ The dashboard auto-refreshes using Server-Sent Events (SSE) and failover to an
 interval set by `dashboard_refresh` in tuning.json.
 
 <table><tr>
-<td><img src="screenshots/dash-3.png" alt="Progress" width="250"></td>
 <td><img src="screenshots/dash-1.png" alt="Parameters and workers" width="250"></td>
 <td><img src="screenshots/dash-2.png" alt="Charts" width="250"></td>
+<td><img src="screenshots/dash-3.png" alt="Progress" width="250"></td>
 </tr></table>
 
 ## Monitoring
@@ -243,7 +243,6 @@ tuneup/my-test/
 | `dashboard_refresh` | Dashboard auto-refresh in seconds | `10` |
 | `dashboard_history` | Max iteration history entries sent to dashboard (0 = unlimited) | `100` |
 | `work_stealing` | Reclaim chunks from slow workers for fast idle ones | `true` |
-| `max_pending_per_worker` | Max outstanding chunks per worker (0 = unlimited) | `2` |
 | `static_dir` | Directory for static assets (favicon, etc.); empty = disabled | `""` |
 | `spsa.budget` | Total games budget (iterations * games_per_iteration) | `10000` |
 | `spsa.a` | Learning rate | `0.5` |

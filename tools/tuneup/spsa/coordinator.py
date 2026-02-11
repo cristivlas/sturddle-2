@@ -125,7 +125,9 @@ class CoordinatorState:
         self.pending_chunks = {}  # chunk_id -> ChunkInfo
         self.stolen_chunks = {}   # stolen_cid -> replacement_cid
 
-        # Worker registry
+        # Worker registry: keyed by self-reported name (hostname or worker config
+        # "name" field).  Fine for trusted homelab / LAN setups; a public-facing
+        # deployment would need IP-based validation or auth tokens.
         self.workers = {}  # name -> WorkerInfo
 
         # Time estimates and timeouts
@@ -400,12 +402,12 @@ class CoordinatorState:
             # Reclaim games from workers that disappeared mid-chunk
             self._reclaim_timed_out_chunks()
 
-            cap = self.config.max_pending_per_worker
-            if cap > 0 and worker_name:
-                pending = sum(1 for c in self.pending_chunks.values() if c.worker_name == worker_name)
-                if pending >= cap:
-                    logger.debug("Throttling %s: %d pending chunks (cap %d)", worker_name, pending, cap)
-                    return {"status": "retry", "retry_after": self.config.retry_after}
+            assert worker_name
+            stale = [cid for cid, c in self.pending_chunks.items() if c.worker_name == worker_name]
+            for cid in stale:
+                chunk = self.pending_chunks.pop(cid)
+                self.games_assigned -= chunk.num_games
+                logger.info("Reclaimed [%s] (%d games) from %s", cid, chunk.num_games, worker_name)
 
             gpi = self.config.games_per_iteration
             remaining = gpi - self.games_assigned
@@ -501,7 +503,7 @@ class CoordinatorState:
                 stolen_cid = next((k for k, v in self.stolen_chunks.items() if v == result.chunk_id), None)
                 if stolen_cid:
                     self.stolen_chunks.pop(stolen_cid)
-                    logger.debug("Replacement [%s] from %s won against [%s]", result.chunk_id, result.worker, stolen_cid)
+                    logger.info("Replacement [%s] from %s won against [%s]", result.chunk_id, result.worker, stolen_cid)
             elif result.chunk_id in self.stolen_chunks:
                 replacement_cid = self.stolen_chunks.pop(result.chunk_id)
                 if replacement_cid in self.pending_chunks:
@@ -989,6 +991,9 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             data = self._read_json()
             chunk_size = data.get("chunk_size", 0)
             worker_name = data.get("worker", "")
+            if not worker_name:
+                self._send_json({"status": "error", "reason": "worker name required"})
+                return
             cc_overrides = data.get("cutechess_overrides")
             result = self.coordinator.get_work(
                 chunk_size, worker_name, cc_overrides
