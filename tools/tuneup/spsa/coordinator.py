@@ -291,7 +291,7 @@ class CoordinatorState:
             self.optimizer.a_k(),
         )
 
-    def _try_steal_chunk(self, worker_name: str) -> str | None:
+    def _try_steal_chunk(self, worker_name: str) -> tuple[str, int] | None:
         """Try to reclaim a chunk from a slower worker for reassignment.
 
         Compares the fast worker's redo-from-scratch time against the
@@ -299,7 +299,7 @@ class CoordinatorState:
         Steal if: the holder is overdue and we're faster, or we can
         finish before the holder's original deadline.
 
-        Returns the stolen chunk_id, or None.
+        Returns (stolen_chunk_id, num_games), or None.
         """
         if not self.pending_chunks:
             return None
@@ -324,19 +324,19 @@ class CoordinatorState:
             if overdue and fast_total < expected:
                 saving = expected - fast_total
                 logger.debug(
-                    "Work steal: candidate %s [%s] %d games (overdue) — elapsed=%.1fs expected=%.1fs fast=%.1fs saving=%.1fs",
-                    chunk.worker_name, cid, chunk.num_games, elapsed, expected, fast_total, saving,
+                    "Work steal: %s eyeing %s [%s] %d games (overdue) — elapsed=%.1fs expected=%.1fs fast=%.1fs saving=%.1fs",
+                    worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected, fast_total, saving,
                 )
             elif fast_total + elapsed < expected:
                 saving = expected - elapsed - fast_total
                 logger.debug(
-                    "Work steal: candidate %s [%s] %d games — elapsed=%.1fs expected=%.1fs fast=%.1fs saving=%.1fs",
-                    chunk.worker_name, cid, chunk.num_games, elapsed, expected, fast_total, saving,
+                    "Work steal: %s eyeing %s [%s] %d games — elapsed=%.1fs expected=%.1fs fast=%.1fs saving=%.1fs",
+                    worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected, fast_total, saving,
                 )
             else:
                 logger.debug(
-                    "Work steal: skip %s [%s] %d games — elapsed=%.1fs expected=%.1fs fast=%.1fs",
-                    chunk.worker_name, cid, chunk.num_games, elapsed, expected, fast_total,
+                    "Work steal: %s skip %s [%s] %d games — elapsed=%.1fs expected=%.1fs fast=%.1fs",
+                    worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected, fast_total,
                 )
                 continue
 
@@ -354,7 +354,7 @@ class CoordinatorState:
             chunk.num_games, chunk.worker_name, best_cid,
             worker_name, now - chunk.assign_time, best_saving,
         )
-        return best_cid
+        return best_cid, chunk.num_games
 
     def _reclaim_timed_out_chunks(self):
         """Reclaim chunks that have exceeded their per-worker timeout."""
@@ -405,6 +405,7 @@ class CoordinatorState:
             gpi = self.config.games_per_iteration
             remaining = gpi - self.games_assigned
             stolen_cid = None
+            stolen_games = 0
 
             if remaining <= 0:
                 if self.draining:
@@ -412,20 +413,24 @@ class CoordinatorState:
                         return {"status": "done"}
                     return {"status": "retry", "retry_after": self.config.retry_after}
                 # Try work stealing: reclaim a chunk from a slower worker
+                steal = None
                 if self.config.work_stealing:
-                    stolen_cid = self._try_steal_chunk(worker_name)
-                if stolen_cid:
+                    steal = self._try_steal_chunk(worker_name)
+                if steal:
+                    stolen_cid, stolen_games = steal
                     remaining = gpi - self.games_assigned
                 else:
                     return {"status": "retry", "retry_after": self.config.retry_after}
 
-            # Adaptive chunk sizing; worker's max_chunk_size is a ceiling
-            adaptive = self._compute_chunk_size(worker_name, remaining)
-            if chunk_size > 0:
-                adaptive = min(adaptive, chunk_size)
+            if stolen_cid:
+                num_games = stolen_games
+            else:
+                adaptive = self._compute_chunk_size(worker_name, remaining)
+                if chunk_size > 0:
+                    adaptive = min(adaptive, chunk_size)
+                num_games = min(remaining, adaptive)
 
             # Must be even (each game pair is +c vs -c)
-            num_games = min(remaining, adaptive)
             num_games = max(2, num_games - (num_games % 2))
 
             # Generate unique chunk ID and compute timeout
