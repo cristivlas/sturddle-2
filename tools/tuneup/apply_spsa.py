@@ -45,9 +45,18 @@ def denormalize(name, theta_val):
     if p:
         _default_val, lo, hi, _grp, normal = p
         if normal:
-            return int(round((theta_val + 1) * (hi - lo) / 2 + lo))
+            engine_val = int(round((theta_val + 1) * (hi - lo) / 2 + lo))
+            logging.info(f"  {name}: theta={theta_val:+.4f} -> engine={engine_val} (normalized from [{lo}, {hi}])")
+            return engine_val
+        else:
+            engine_val = int(round(theta_val))
+            logging.info(f"  {name}: theta={theta_val} -> engine={engine_val} (non-normalized)")
+            return engine_val
 
-    return int(round(theta_val))
+    # Parameter not found in engine metadata
+    engine_val = int(round(theta_val))
+    logging.info(f"  {name}: theta={theta_val} -> engine={engine_val} (unknown parameter, using theta directly)")
+    return engine_val
 
 
 def update_config(config_file, engine_values, finalize=False):
@@ -56,12 +65,15 @@ def update_config(config_file, engine_values, finalize=False):
     If finalize is True, also converts DECLARE_PARAM/DECLARE_NORMAL back to
     DECLARE_VALUE for the tuned parameters.
 
-    Returns set of parameter names that were successfully updated.
+    Returns (updated, found) where:
+        updated: set of parameter names that were changed
+        found: set of parameter names that were found in config.h
     """
     with open(config_file, 'r') as f:
         lines = f.readlines()
 
     updated = set()
+    found = set()
     finalized = set()
     updated_lines = []
 
@@ -74,6 +86,7 @@ def update_config(config_file, engine_values, finalize=False):
                 )
                 match = pattern.search(line)
                 if match:
+                    found.add(name)
                     before = match.group(1)
                     old_val = match.group(2)
                     after = match.group(3)
@@ -108,7 +121,7 @@ def update_config(config_file, engine_values, finalize=False):
     else:
         logging.info(f"No changes to {config_file}")
 
-    return updated
+    return updated, found
 
 
 def main():
@@ -145,15 +158,23 @@ def main():
     logging.info(f"State at iteration {iteration}, {len(theta)} parameter(s)")
 
     # Convert all theta values to engine-space integers
+    logging.info(f"Denormalizing {len(theta)} parameter(s):")
     engine_values = {}
     for name, val in theta.items():
         engine_values[name] = denormalize(name, val)
 
     # Patch config.h
-    updated = update_config(args.config, engine_values, finalize=args.finalize)
+    updated, found = update_config(args.config, engine_values, finalize=args.finalize)
+
+    # Report params that match current values (no change needed)
+    unchanged = {name: engine_values[name] for name in found if name not in updated}
+    if unchanged:
+        logging.info(f"{len(unchanged)} parameter(s) already at target value:")
+        for name, val in sorted(unchanged.items()):
+            print(f"  {name} = {val}")
 
     # Report params not found in config.h
-    not_found = {name: engine_values[name] for name in engine_values if name not in updated}
+    not_found = {name: engine_values[name] for name in engine_values if name not in found}
     if not_found:
         logging.info(f"{len(not_found)} parameter(s) not found in {args.config}:")
         for name, val in sorted(not_found.items()):
