@@ -7,7 +7,7 @@ Two config files:
 """
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, MISSING
 from typing import Any, Dict, Optional
 
 
@@ -91,6 +91,9 @@ class TuningConfig:
     worker_idle_timeout: float = 120.0
     chunk_timeout_multiplier: float = 5.0
     min_chunk_timeout: float = 60.0
+    # Floor for expected chunk duration; accounts for per-chunk overhead
+    # (process startup, UCI init) not captured by per-game EWMA
+    min_expected_duration: float = 5.0
     # Directory for static assets (favicon, etc.); empty = disabled
     static_dir: str = ""
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
@@ -139,24 +142,17 @@ class TuningConfig:
         for name, pdict in d.get("parameters", {}).items():
             parameters[name] = Parameter(name=name, **pdict)
 
-        return cls(
-            engine=engine,
-            time_control=d.get("time_control", "1+0.1"),
-            depth=d.get("depth"),
-            games_per_iteration=d.get("games_per_iteration", 200),
-            retry_after=d.get("retry_after", 5),
-            dashboard_refresh=d.get("dashboard_refresh", 10),
-            dashboard_history=d.get("dashboard_history", 100),
-            output_dir=d.get("output_dir", "./spsa_output"),
-            work_stealing=d.get("work_stealing", True),
-            overdue_factor=d.get("overdue_factor", 2.0),
-            worker_idle_timeout=d.get("worker_idle_timeout", 120.0),
-            chunk_timeout_multiplier=d.get("chunk_timeout_multiplier", 5.0),
-            min_chunk_timeout=d.get("min_chunk_timeout", 60.0),
-            static_dir=d.get("static_dir", ""),
-            spsa=spsa,
-            parameters=parameters,
-        )
+        # Pull scalar fields from JSON, falling back to dataclass defaults
+        fields = cls.__dataclass_fields__
+        skip = {"engine", "spsa", "parameters"}
+        kwargs = {}
+        for name, f in fields.items():
+            if name in skip:
+                continue
+            default = None if f.default is MISSING else f.default
+            kwargs[name] = d.get(name, default)
+
+        return cls(engine=engine, spsa=spsa, parameters=parameters, **kwargs)
 
 
 @dataclass

@@ -315,6 +315,10 @@
                     <div class="stat-value" id="ckValue">{c_k:.6f}</div>
                 </div>
                 <div class="stat">
+                    <div class="stat-label">Avg / Iteration</div>
+                    <div class="stat-value" id="avgIterValue">--</div>
+                </div>
+                <div class="stat">
                     <div class="stat-label">Total Games</div>
                     <div class="stat-value" id="totalGamesValue">{total_games}</div>
                 </div>
@@ -405,10 +409,16 @@
             const tbody = document.getElementById('workersBody');
             tbody.innerHTML = '';
             workers.forEach(w => {{
-                const style = w.alive ? 'color:#4CAF50' : 'color:#f44336;font-weight:bold';
-                const status = w.alive ? 'online' : 'timed out';
+                var style, status;
+                if (w.status === 1) {{ style = 'color:#FF9800;font-weight:bold'; status = 'overdue'; }}
+                else if (w.status === 2 || !w.alive) {{ style = 'color:#f44336;font-weight:bold'; status = 'timed out'; }}
+                else {{ style = 'color:#4CAF50'; status = 'online'; }}
+                var tip = w.name;
+                if (w.sec_per_game != null) tip += ' | ' + w.sec_per_game.toFixed(1) + ' sec/game';
+                if (w.chunk_eta > 0) tip += ' | ETA ~' + formatDuration(w.chunk_eta * 1000);
                 const tr = document.createElement('tr');
-                tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + w.name + '">' + w.name + '</td>'
+                tr.title = tip;
+                tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + w.name + '</td>'
                              + '<td style="' + style + '">' + status + '</td>'
                              + '<td>' + Math.round(w.last_seen_ago) + 's ago</td>'
                              + '<td>' + w.games_assigned + '</td>'
@@ -444,6 +454,7 @@
         }}
 
         // --- Initial render from baked-in data ---
+        const sessionStart = '{session_start}';
         const initTheta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}');
         const initWorkers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
         const initHistory = JSON.parse(document.getElementById('history-data').textContent || '[]');
@@ -452,6 +463,7 @@
         renderWorkers(initWorkers);
         renderHistory(initHistory);
         updateHistoryTitle({history_total});
+        updateETA({total_games}, {games_done}, {games_total}, {iteration}, {max_iters});
 
         // --- Chart ---
         let thetaChart = null;
@@ -487,9 +499,46 @@
             }}
         }})();
 
+        // --- ETA estimation ---
+        function parseLocalTimestamp(s) {{
+            // Parse "YYYY-MM-DD HH:MM:SS" as local time
+            var p = s.split(/[- :]/);
+            return new Date(p[0], p[1]-1, p[2], p[3], p[4], p[5]).getTime();
+        }}
+        function formatDuration(ms) {{
+            if (!ms || !isFinite(ms) || ms < 0) return '--';
+            var sec = Math.round(ms / 1000);
+            if (sec < 120) return sec + 's';
+            var min = Math.round(sec / 60);
+            if (min < 120) return min + 'm';
+            var hrs = (min / 60).toFixed(1);
+            if (hrs < 48) return hrs + 'h';
+            return (min / 1440).toFixed(1) + 'd';
+        }}
+        function updateETA(totalGames, gamesDone, gamesTotal, iteration, maxIters) {{
+            var elapsed = Date.now() - parseLocalTimestamp(sessionStart);
+            var etaIter = '', etaSession = '';
+            if (elapsed > 10000 && totalGames > 0) {{
+                var msPerGame = elapsed / totalGames;
+                var gamesLeftIter = Math.max(0, gamesTotal - gamesDone);
+                var gamesLeftTotal = gamesLeftIter + Math.max(0, maxIters - iteration) * gamesTotal;
+                var fi = formatDuration(gamesLeftIter * msPerGame);
+                var fs = formatDuration(gamesLeftTotal * msPerGame);
+                if (fi !== '--') etaIter = fi;
+                if (fs !== '--') etaSession = fs;
+            }}
+            var iterEl = document.getElementById('iterValue');
+            var gamesEl = document.getElementById('gamesValue');
+            iterEl.innerHTML = iteration + ' / ' + maxIters
+                + (etaSession ? ' <span style="font-size:14px;color:#999;font-weight:normal">~' + etaSession + ' left</span>' : '');
+            gamesEl.innerHTML = gamesDone + ' / ' + gamesTotal
+                + (etaIter ? ' <span style="font-size:14px;color:#999;font-weight:normal">~' + etaIter + ' left</span>' : '');
+            document.getElementById('avgIterValue').textContent =
+                iteration > 0 ? formatDuration(elapsed / iteration) : '--';
+        }}
+
         // --- SSE live updates ---
         let knownHistoryLen = {history_total};
-        const sessionStart = '{session_start}';
         const serverStart = '{server_start}';
 
         const sse = new EventSource('/sse');
@@ -497,10 +546,8 @@
             const d = JSON.parse(event.data);
 
             // Cards
-            document.getElementById('iterValue').textContent = d.iteration + ' / ' + d.max_iters;
             document.getElementById('iterFill').style.width = d.progress + '%';
             document.getElementById('iterFill').textContent = Math.round(d.progress) + '%';
-            document.getElementById('gamesValue').textContent = d.games_done + ' / ' + d.games_total;
             document.getElementById('gamesFill').style.width = d.iter_progress + '%';
             document.getElementById('gamesFill').textContent = Math.round(d.iter_progress) + '%';
             document.getElementById('pendingValue').textContent = d.games_pending;
@@ -554,6 +601,9 @@
 
             // Theme
             applyTimeTheme();
+
+            // ETA
+            updateETA(d.total_games, d.games_done, d.games_total, d.iteration, d.max_iters);
 
             // Footer
             document.getElementById('footerInfo').innerHTML =

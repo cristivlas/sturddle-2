@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from enum import Enum
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from pathlib import Path
@@ -31,6 +32,12 @@ VERSION = "1.0.1"
 logger = logging.getLogger("coordinator")
 
 
+class WorkerStatus(Enum):
+    ONLINE = 0
+    OVERDUE = 1
+    TIMED_OUT = 2
+
+
 @dataclass
 class WorkerInfo:
     """Tracked state for a connected worker."""
@@ -39,31 +46,34 @@ class WorkerInfo:
     chunks_completed: int = 0
     games_completed: int = 0
     games_completed_iter: int = 0 # games completed in current iteration
-    _speed_ewma: float = 0.0      # exponentially weighted moving average (games/sec)
+    _spg_ewma: float = 0.0        # exponentially weighted moving average (sec/game)
     _ewma_alpha: float = 0.3      # smoothing factor: higher = more weight on recent
     cutechess_overrides: dict = field(default_factory=dict)  # worker-local tc/depth
 
     @property
+    def sec_per_game(self) -> float:
+        return self._spg_ewma
+
+    @property
     def games_per_second(self) -> float:
-        return self._speed_ewma
+        return 1.0 / self._spg_ewma if self._spg_ewma > 0 else 0.0
 
     def update_speed(self, games: int, elapsed: float):
         """Update EWMA speed estimate from a completed chunk."""
         if elapsed <= 0 or games <= 0:
             return
-        sample = games / elapsed
-        old = self._speed_ewma
-        if self._speed_ewma <= 0:
-            self._speed_ewma = sample  # first observation
+        sample = elapsed / games
+        old = self._spg_ewma
+        if self._spg_ewma <= 0:
+            self._spg_ewma = sample  # first observation
         else:
-            # Blend: alpha * new_sample + (1-alpha) * old_estimate
-            self._speed_ewma = (
+            self._spg_ewma = (
                 self._ewma_alpha * sample
-                + (1 - self._ewma_alpha) * self._speed_ewma
+                + (1 - self._ewma_alpha) * self._spg_ewma
             )
         logger.debug(
-            "Speed update %s: %d games in %.1fs (%.2f g/s), ewma %.2f -> %.2f",
-            self.name, games, elapsed, sample, old, self._speed_ewma,
+            "Speed update %s: %d games in %.1fs (%.2f s/g), ewma %.2f -> %.2f",
+            self.name, games, elapsed, sample, old, self._spg_ewma,
         )
 
 
@@ -170,10 +180,10 @@ class CoordinatorState:
         return 10.0
 
     def _worker_sec_per_game(self, worker_name: str) -> float:
-        """Per-game time: observed EWMA speed or config-based fallback."""
+        """Per-game time: observed EWMA or config-based fallback."""
         w = self.workers.get(worker_name)
-        if w and w.games_per_second > 0:
-            return 1.0 / w.games_per_second
+        if w and w.sec_per_game > 0:
+            return w.sec_per_game
         if w and w.cutechess_overrides:
             return self._estimate_game_duration(w.cutechess_overrides)
         return self._base_sec_per_game
@@ -191,25 +201,38 @@ class CoordinatorState:
     def _is_overdue(self, now: float, assign_time: float, expected: float) -> bool:
         return (now - assign_time) > expected * self.config.overdue_factor
 
-    def _is_worker_alive(self, name: str) -> bool:
-        """Worker with chunks is alive if at least one is not overdue;
-        idle worker is alive if seen within worker_idle_timeout."""
+    def _worker_status(self, name: str) -> WorkerStatus:
+        """Determine worker health: online, overdue, or timed out."""
         w = self.workers.get(name)
         if not w:
-            return False
+            return WorkerStatus.TIMED_OUT
         now = time.time()
         chunks = [c for c in self.pending_chunks.values() if c.worker_name == name]
-        if chunks:
-            return any(
-                not self._is_overdue(now, c.assign_time, c.expected_duration)
-                for c in chunks
-            )
-        return (now - w.last_seen) < self.config.worker_idle_timeout
+        if not chunks:
+            if (now - w.last_seen) < self.config.worker_idle_timeout:
+                return WorkerStatus.ONLINE
+            return WorkerStatus.TIMED_OUT
+        if not any(now - c.assign_time < c.timeout for c in chunks):
+            return WorkerStatus.TIMED_OUT
+        if all(self._is_overdue(now, c.assign_time, c.expected_duration) for c in chunks):
+            return WorkerStatus.OVERDUE
+        return WorkerStatus.ONLINE
+
+    def _is_worker_alive(self, name: str) -> bool:
+        return self._worker_status(name) != WorkerStatus.TIMED_OUT
 
     def _active_workers(self) -> list:
         """Return list of workers considered alive."""
         return [w for w in self.workers.values()
                 if self._is_worker_alive(w.name)]
+
+    def _chunk_eta_per_worker(self, now: float) -> dict[str, float]:
+        """Sum of remaining expected seconds per worker across pending chunks."""
+        eta = {}
+        for chunk in self.pending_chunks.values():
+            remaining = max(0, chunk.expected_duration - (now - chunk.assign_time))
+            eta[chunk.worker_name] = eta.get(chunk.worker_name, 0) + remaining
+        return eta
 
     def _chunk_timeout_for(self, worker_name: str, num_games: int) -> float:
         """Timeout for a chunk based on expected duration."""
@@ -442,15 +465,19 @@ class CoordinatorState:
                     adaptive = min(adaptive, chunk_size)
                 num_games = min(remaining, adaptive)
 
-            # Must be even (each game pair is +c vs -c); rounds down
-            if num_games % 2 != 0:
-                logger.warning("Odd game count %d, rounding down to %d", num_games, num_games - 1)
-            num_games = max(2, num_games - (num_games % 2))
+            if num_games == 0:
+                return {"status": "retry", "retry_after": self.config.retry_after}
+
+            # Must be even (each game pair is +c vs -c); round up
+            num_games += num_games % 2
 
             # Generate unique chunk ID and compute timeout
             chunk_id = uuid.uuid4().hex[:12]
             timeout = self._chunk_timeout_for(worker_name, num_games)
-            expected_duration = num_games * self._worker_sec_per_game(worker_name)
+            expected_duration = max(
+                self.config.min_expected_duration,
+                num_games * self._worker_sec_per_game(worker_name),
+            )
 
             self.games_assigned += num_games
             self.pending_chunks[chunk_id] = ChunkInfo(
@@ -651,6 +678,7 @@ class CoordinatorState:
         """Current tuning status for display."""
         now = time.time()
         with self.lock:
+            eta_per_worker = self._chunk_eta_per_worker(now)
             return {
                 "iteration": self.optimizer.iteration,
                 "max_iterations": self.optimizer.max_iterations,
@@ -663,9 +691,12 @@ class CoordinatorState:
                 "workers": {
                     name: {
                         "alive": self._is_worker_alive(name),
+                        "status": self._worker_status(name).value,
                         "last_seen_ago": round(now - w.last_seen, 1),
                         "games_completed": w.games_completed,
                         "games_completed_iter": w.games_completed_iter,
+                        "sec_per_game": round(self._worker_sec_per_game(name), 1),
+                        "chunk_eta": round(eta_per_worker.get(name, 0), 0),
                     }
                     for name, w in self.workers.items()
                 },
@@ -707,15 +738,19 @@ class CoordinatorState:
                     assigned_per_worker.get(chunk.worker_name, 0) + chunk.num_games
                 )
 
+            eta_per_worker = self._chunk_eta_per_worker(now)
             worker_data = []
             for name, w in self.workers.items():
                 worker_data.append({
                     "name": name,
                     "alive": self._is_worker_alive(name),
+                    "status": self._worker_status(name).value,
                     "last_seen_ago": round(now - w.last_seen, 1),
                     "games_assigned": assigned_per_worker.get(name, 0),
                     "games_completed_iter": w.games_completed_iter,
                     "games_completed": w.games_completed,
+                    "sec_per_game": round(self._worker_sec_per_game(name), 1),
+                    "chunk_eta": round(eta_per_worker.get(name, 0), 0),
                 })
 
             return {
