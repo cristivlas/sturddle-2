@@ -243,6 +243,8 @@ tuneup/my-test/
 | `dashboard_refresh` | Dashboard auto-refresh in seconds | `10` |
 | `dashboard_history` | Max iteration history entries sent to dashboard (0 = unlimited) | `100` |
 | `work_stealing` | Reclaim chunks from slow workers for fast idle ones | `true` |
+| `max_pending_per_worker` | Max outstanding chunks per worker (0 = unlimited) | `2` |
+| `static_dir` | Directory for static assets (favicon, etc.); empty = disabled | `""` |
 | `spsa.budget` | Total games budget (iterations * games_per_iteration) | `10000` |
 | `spsa.a` | Learning rate | `0.5` |
 | `spsa.c` | Perturbation as fraction of parameter range | `0.05` |

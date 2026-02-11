@@ -87,6 +87,7 @@ class TuningConfig:
     # Max history entries sent to the dashboard (0 = unlimited)
     dashboard_history: int = 100
     work_stealing: bool = True
+    max_pending_per_worker: int = 2
     # Directory for static assets (favicon, etc.); empty = disabled
     static_dir: str = ""
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
@@ -105,6 +106,7 @@ class TuningConfig:
             "dashboard_refresh": self.dashboard_refresh,
             "output_dir": self.output_dir,
             "work_stealing": self.work_stealing,
+            "max_pending_per_worker": self.max_pending_per_worker,
             "static_dir": self.static_dir,
             "spsa": asdict(self.spsa),
             "parameters": {
@@ -141,6 +143,7 @@ class TuningConfig:
             dashboard_history=d.get("dashboard_history", 100),
             output_dir=d.get("output_dir", "./spsa_output"),
             work_stealing=d.get("work_stealing", True),
+            max_pending_per_worker=d.get("max_pending_per_worker", 2),
             static_dir=d.get("static_dir", ""),
             spsa=spsa,
             parameters=parameters,
