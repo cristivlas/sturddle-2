@@ -140,7 +140,6 @@ class CoordinatorState:
             1800.0,
             max_chunk_games * self._base_sec_per_game * self.chunk_timeout_multiplier,
         )
-        self.worker_timeout = max(120.0, self._base_sec_per_game * 4.0)
         self.server_start_time = time.time()
         self._prepare_iteration()
 
@@ -192,19 +191,23 @@ class CoordinatorState:
         else:
             self.workers[name].last_seen = now
 
+    def _is_overdue(self, now: float, assign_time: float, expected: float) -> bool:
+        return (now - assign_time) > expected * self.config.overdue_factor
+
     def _is_worker_alive(self, name: str) -> bool:
-        """Worker is alive if recently seen or has a pending chunk."""
+        """Worker with chunks is alive if at least one is not overdue;
+        idle worker is alive if seen within worker_idle_timeout."""
         w = self.workers.get(name)
         if not w:
             return False
         now = time.time()
-        if (now - w.last_seen) < self.worker_timeout:
-            return True
-        # Still alive if running a chunk that hasn't timed out
-        return any(
-            c.worker_name == name and (now - c.assign_time) < c.timeout
-            for c in self.pending_chunks.values()
-        )
+        chunks = [c for c in self.pending_chunks.values() if c.worker_name == name]
+        if chunks:
+            return any(
+                not self._is_overdue(now, c.assign_time, c.expected_duration)
+                for c in chunks
+            )
+        return (now - w.last_seen) < self.config.worker_idle_timeout
 
     def _active_workers(self) -> list:
         """Return list of workers considered alive."""
@@ -320,7 +323,7 @@ class CoordinatorState:
             expected = chunk.expected_duration
             fast_total = chunk.num_games * fast_spg
 
-            overdue = elapsed > expected
+            overdue = self._is_overdue(now, chunk.assign_time, expected)
             if overdue and fast_total < expected:
                 saving = expected - fast_total
                 logger.debug(

@@ -243,6 +243,8 @@ tuneup/my-test/
 | `dashboard_refresh` | Dashboard auto-refresh in seconds | `10` |
 | `dashboard_history` | Max iteration history entries sent to dashboard (0 = unlimited) | `100` |
 | `work_stealing` | Reclaim chunks from slow workers for fast idle ones | `true` |
+| `overdue_factor` | Multiplier on expected duration to declare a chunk overdue | `2.0` |
+| `worker_idle_timeout` | Seconds before an idle worker (no chunks) is considered dead | `120.0` |
 | `static_dir` | Directory for static assets (favicon, etc.); empty = disabled | `""` |
 | `spsa.budget` | Total games budget (iterations * games_per_iteration) | `10000` |
 | `spsa.a` | Learning rate | `0.5` |

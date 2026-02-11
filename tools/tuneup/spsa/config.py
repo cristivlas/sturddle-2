@@ -87,6 +87,8 @@ class TuningConfig:
     # Max history entries sent to the dashboard (0 = unlimited)
     dashboard_history: int = 100
     work_stealing: bool = True
+    overdue_factor: float = 2.0
+    worker_idle_timeout: float = 120.0
     # Directory for static assets (favicon, etc.); empty = disabled
     static_dir: str = ""
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
@@ -105,6 +107,8 @@ class TuningConfig:
             "dashboard_refresh": self.dashboard_refresh,
             "output_dir": self.output_dir,
             "work_stealing": self.work_stealing,
+            "overdue_factor": self.overdue_factor,
+            "worker_idle_timeout": self.worker_idle_timeout,
             "static_dir": self.static_dir,
             "spsa": asdict(self.spsa),
             "parameters": {
@@ -141,6 +145,8 @@ class TuningConfig:
             dashboard_history=d.get("dashboard_history", 100),
             output_dir=d.get("output_dir", "./spsa_output"),
             work_stealing=d.get("work_stealing", True),
+            overdue_factor=d.get("overdue_factor", 2.0),
+            worker_idle_timeout=d.get("worker_idle_timeout", 120.0),
             static_dir=d.get("static_dir", ""),
             spsa=spsa,
             parameters=parameters,
