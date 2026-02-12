@@ -27,7 +27,7 @@ from pathlib import Path
 from config import TuningConfig, WorkItem, WorkResult
 from spsa import SPSAOptimizer, SPSAState
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 logger = logging.getLogger("coordinator")
 
@@ -640,14 +640,14 @@ class CoordinatorState:
             elo_plus - elo_minus,
         )
         logger.info("Updated parameters:")
+        display = self._get_display_values()
         for name in new_theta:
             param = self.optimizer.params[name]
-            engine_val = param.to_engine_value(new_theta[name])
             step = new_theta[name] - old_theta[name]
             r = param.upper - param.lower
             logger.info(
                 "  %s: %.4f -> %.4f (engine: %s, step: %+.4f, %.1f%% of range)",
-                name, old_theta[name], new_theta[name], engine_val,
+                name, old_theta[name], new_theta[name], display[name],
                 step, 100.0 * abs(step) / r if r > 0 else 0,
             )
 
@@ -680,7 +680,7 @@ class CoordinatorState:
         else:
             logger.info("SPSA tuning complete after %d iterations", k + 1)
             logger.info("Final parameters:")
-            for name, val in self.optimizer.get_engine_values().items():
+            for name, val in self._get_display_values().items():
                 logger.info("  %s = %s", name, val)
 
     def _save_state(self):
@@ -705,7 +705,7 @@ class CoordinatorState:
                 "iteration": self.optimizer.iteration,
                 "max_iterations": self.optimizer.max_iterations,
                 "is_done": self.optimizer.is_done(),
-                "theta": self.optimizer.get_engine_values(),
+                "theta": self._get_display_values(),
                 "games_completed": self.games_completed,
                 "games_per_iteration": self.config.games_per_iteration,
                 "c_k": self.optimizer.c_k() if not self.optimizer.is_done() else 0,
@@ -733,6 +733,23 @@ class CoordinatorState:
         """Full history for the charts page (no slicing)."""
         with self.lock:
             return {"history": list(self.optimizer.state.history)}
+
+    def _has_normalized_params(self) -> bool:
+        """Check if any parameters are normalized (have original range info)."""
+        return any(getattr(p, 'is_normalized', False) for p in self.config.parameters.values())
+
+    def _get_display_values(self) -> dict:
+        """Engine-space display values: denormalized integers for normalized params."""
+        result = {}
+        for name, val in self.optimizer.theta.items():
+            param = self.config.parameters.get(name)
+            if param and getattr(param, 'is_normalized', False):
+                result[name] = param.denormalize(val)
+            elif param:
+                result[name] = param.to_engine_value(val)
+            else:
+                result[name] = val
+        return result
 
     def get_coordinator_dashboard(self) -> dict:
         """Rich coordinator data for graphical dashboard."""
@@ -775,7 +792,8 @@ class CoordinatorState:
                     "chunk_eta": round(eta_per_worker.get(name, 0), 0),
                 })
 
-            return {
+            has_normalized = self._has_normalized_params()
+            result = {
                 "iteration": self.optimizer.iteration,
                 "max_iterations": self.optimizer.max_iterations,
                 "is_done": self.optimizer.is_done(),
@@ -786,7 +804,7 @@ class CoordinatorState:
                 "games_assigned": self._games_assigned(),
                 "games_pending": self._games_in_flight(),
                 "total_games": self.optimizer.iteration * gpi + self.games_completed,
-                "theta": self.optimizer.get_engine_values(),
+                "theta": self._get_display_values(),
                 "c_k": self.optimizer.c_k() if not self.optimizer.is_done() else 0,
                 "a_k": self.optimizer.a_k() if not self.optimizer.is_done() else 0,
                 "history": list(
@@ -798,7 +816,11 @@ class CoordinatorState:
                 "workers": worker_data,
                 "session_start": self.optimizer.state.created_at,
                 "server_start": self.server_start_time,
+                "has_normalized": has_normalized,
             }
+            if has_normalized:
+                result["theta_internal"] = dict(self.optimizer.theta)
+            return result
 
 
 
@@ -897,6 +919,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             c_k=data["c_k"],
             total_games=data["total_games"],
             theta_json=json.dumps(data.get("theta", {})),
+            theta_internal_json=json.dumps(data.get("theta_internal", {})),
+            has_normalized=json.dumps(data.get("has_normalized", False)),
             workers_json=json.dumps(data.get("workers", [])),
             history_json=json.dumps(data.get("history", [])),
             history_total=data["history_total"],
@@ -1001,7 +1025,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                 data = coord.get_coordinator_dashboard()
                 is_done = data["is_done"]
                 history = data.get("history", [])
-                payload = json.dumps({
+                sse_data = {
                     "status_color": "#2196F3" if is_done else "#4CAF50",
                     "status_text": "COMPLETE" if is_done else "IN PROGRESS",
                     "iteration": data["iteration"],
@@ -1023,7 +1047,10 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                         "%Y-%m-%d %H:%M:%S",
                         time.localtime(data["server_start"]),
                     ),
-                })
+                }
+                if "theta_internal" in data:
+                    sse_data["theta_internal"] = data["theta_internal"]
+                payload = json.dumps(sse_data)
                 self.wfile.write(f"data: {payload}\n\n".encode())
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):

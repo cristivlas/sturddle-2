@@ -159,15 +159,8 @@ def main():
                 p['original_upper'] = orig_hi
             tune_params[name] = p
 
-        # Compute dashboard refresh from time control
-        if args.depth is not None:
-            dashboard_refresh = 10
-        else:
-            try:
-                base_time = float(args.time_control.split('+')[0])
-                dashboard_refresh = max(10, int(base_time * 2))
-            except (ValueError, IndexError):
-                dashboard_refresh = 60
+        # SSE heartbeat interval (real updates push immediately)
+        dashboard_refresh = 60
 
         parameters = {
             name: Parameter(name=name, **p) for name, p in tune_params.items()

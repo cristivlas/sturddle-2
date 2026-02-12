@@ -101,7 +101,7 @@ class TuningConfig:
     # Seconds for workers to wait before retrying when no work available
     retry_after: int = 5
     # Dashboard auto-refresh interval in seconds
-    dashboard_refresh: int = 10
+    dashboard_refresh: int = 60
     # Max history entries sent to the dashboard (0 = unlimited)
     dashboard_history: int = 100
     work_stealing: bool = True

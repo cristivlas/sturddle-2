@@ -330,7 +330,14 @@
                     <canvas id="thetaChart" width="400" height="200"></canvas>
                 </div>
                 <div class="section" style="margin-top: 0;">
-                    <h3>Current Parameters</h3>
+                    <h3 style="display:flex;align-items:baseline;gap:8px;">Current Parameters
+                        <span id="thetaToggle" style="display:none;font-size:0;line-height:0;margin-left:auto;">
+                            <span id="togInternal" onclick="setThetaView(true)"
+                                style="font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid #ccc;border-radius:4px 0 0 4px;font-weight:600;letter-spacing:0;text-transform:none;">Internal</span><span
+                                id="togEngine" onclick="setThetaView(false)"
+                                style="font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid #ccc;border-left:none;border-radius:0 4px 4px 0;font-weight:600;letter-spacing:0;text-transform:none;">Engine</span>
+                        </span>
+                    </h3>
                     <table class="params-tbl">
                         <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
                         <thead>
@@ -390,17 +397,44 @@
     <script>{chart_js}</script>
     <script id="history-data" type="application/json">{history_json}</script>
     <script id="theta-data" type="application/json">{theta_json}</script>
+    <script id="theta-internal-data" type="application/json">{theta_internal_json}</script>
     <script id="workers-data" type="application/json">{workers_json}</script>
     <script>
-        // --- Reusable table builders ---
+        // --- Normalized/internal toggle ---
+        var hasNormalized = {has_normalized};
+        var showInternal = true;
+        var currentTheta = {{}};
+        var currentThetaInternal = {{}};
+
         function renderTheta(theta) {{
             const tbody = document.getElementById('thetaBody');
             tbody.innerHTML = '';
             for (const [name, value] of Object.entries(theta)) {{
                 const tr = document.createElement('tr');
+                var display = (typeof value === 'number' && !Number.isInteger(value)) ? value.toFixed(6) : value;
                 tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + name + '">' + name + '</td>'
-                             + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + value + '</td>';
+                             + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + display + '</td>';
                 tbody.appendChild(tr);
+            }}
+        }}
+
+        function setThetaView(internal) {{
+            showInternal = internal;
+            var ti = document.getElementById('togInternal');
+            var te = document.getElementById('togEngine');
+            ti.style.background = internal ? '#667eea' : '';
+            ti.style.color = internal ? '#fff' : '#666';
+            ti.style.borderColor = internal ? '#667eea' : '#ccc';
+            te.style.background = internal ? '' : '#667eea';
+            te.style.color = internal ? '#666' : '#fff';
+            te.style.borderColor = internal ? '#ccc' : '#667eea';
+            renderTheta(internal ? currentThetaInternal : currentTheta);
+        }}
+
+        function initToggle() {{
+            if (hasNormalized) {{
+                document.getElementById('thetaToggle').style.display = '';
+                setThetaView(true);
             }}
         }}
 
@@ -456,10 +490,14 @@
         // --- Initial render from baked-in data ---
         const sessionStart = '{session_start}';
         const initTheta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}');
+        const initThetaInternal = JSON.parse(document.getElementById('theta-internal-data').textContent || '{{}}');
         const initWorkers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
         const initHistory = JSON.parse(document.getElementById('history-data').textContent || '[]');
 
-        renderTheta(initTheta);
+        currentTheta = initTheta;
+        currentThetaInternal = Object.keys(initThetaInternal).length ? initThetaInternal : initTheta;
+        initToggle();
+        renderTheta(hasNormalized ? currentThetaInternal : currentTheta);
         renderWorkers(initWorkers);
         renderHistory(initHistory);
         updateHistoryTitle({history_total});
@@ -563,7 +601,9 @@
             badge.style.background = d.status_color;
 
             // Tables
-            renderTheta(d.theta);
+            currentTheta = d.theta;
+            if (d.theta_internal) currentThetaInternal = d.theta_internal;
+            renderTheta(showInternal ? currentThetaInternal : currentTheta);
             renderWorkers(d.workers);
 
             // History: detect reset (--clean) or missed entries, append new
