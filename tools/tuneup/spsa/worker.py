@@ -199,12 +199,16 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
     )
 
     if result.returncode != 0:
-        logger.error("cutechess-cli failed (rc=%s)", hex(result.returncode))
+        rc = result.returncode
+        logger.error("cutechess-cli failed (rc=%s)", hex(rc))
         logger.error("stdout (last 1000 chars): %s",
                       result.stdout[-1000:] if result.stdout else "(empty)")
         logger.error("stderr (last 1000 chars): %s",
                       result.stderr[-1000:] if result.stderr else "(empty)")
-        raise RuntimeError(f"cutechess-cli exited with code {hex(result.returncode)}")
+        # Windows STATUS_ACCESS_VIOLATION (0xc0000005, signed: -1073741819)
+        if rc == -1073741819:
+            raise OSError(f"cutechess-cli access violation ({hex(rc)})")
+        raise RuntimeError(f"cutechess-cli exited with code {hex(rc)}")
 
     output = result.stdout
     if result.stderr:
@@ -335,6 +339,8 @@ def worker_loop(worker_config: WorkerConfig):
         except subprocess.TimeoutExpired:
             logger.error("cutechess-cli timed out")
             time.sleep(2)
+        except OSError as e:
+            logger.error("%s, retrying", e)
         except Exception as e:
             logger.exception("Terminating.")
             break

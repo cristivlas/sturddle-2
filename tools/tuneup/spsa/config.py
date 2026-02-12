@@ -91,9 +91,7 @@ class TuningConfig:
     worker_idle_timeout: float = 120.0
     chunk_timeout_factor: float = 2.5
     min_chunk_timeout: float = 60.0
-    # Floor for expected chunk duration; accounts for per-chunk overhead
-    # (process startup, UCI init) not captured by per-game EWMA
-    min_expected_duration: float = 30.0
+    min_chunk_expected_duration: float = 60.0
     # Directory for static assets (favicon, etc.); empty = disabled
     static_dir: str = ""
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
@@ -117,7 +115,7 @@ class TuningConfig:
             "worker_idle_timeout": self.worker_idle_timeout,
             "chunk_timeout_factor": self.chunk_timeout_factor,
             "min_chunk_timeout": self.min_chunk_timeout,
-            "min_expected_duration": self.min_expected_duration,
+            "min_chunk_expected_duration": self.min_chunk_expected_duration,
             "static_dir": self.static_dir,
             "spsa": asdict(self.spsa),
             "parameters": {

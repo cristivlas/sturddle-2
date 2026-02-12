@@ -247,7 +247,7 @@ tuneup/my-test/
 | `worker_idle_timeout` | Seconds before an idle worker (no chunks) is considered dead | `120.0` |
 | `chunk_timeout_factor` | Factor on expected duration for chunk timeout | `2.5` |
 | `min_chunk_timeout` | Minimum chunk timeout in seconds | `60.0` |
-| `min_expected_duration` | Floor for expected chunk duration (covers per-chunk overhead) | `30.0` |
+| `min_chunk_expected_duration` | Floor for expected chunk duration | `60.0` |
 | `static_dir` | Directory for static assets (favicon, etc.); empty = disabled | `""` |
 | `spsa.budget` | Total games budget (iterations * games_per_iteration) | `10000` |
 | `spsa.a` | Learning rate | `0.5` |

@@ -183,24 +183,17 @@ class CoordinatorState:
         return sum(c.num_games for c in self.pending_chunks.values())
 
     def _games_assigned(self) -> int:
-        """Total games accounted for: completed + in-flight.
-
-        Computed from ground truth (games_completed + pending_chunks)
-        instead of an incremental counter, to avoid drift from
-        release/steal/cancel mismatches.
-        """
-        assigned = self.games_completed + self._games_in_flight()
-        logger.debug("games_assigned=%d (completed=%d, in_flight=%d, pending_chunks=%d)",
-                      assigned, self.games_completed, self._games_in_flight(), len(self.pending_chunks))
-        return assigned
+        """Completed + in-flight games (computed from ground truth)."""
+        return self.games_completed + self._games_in_flight()
 
     def _worker_sec_per_game(self, worker_name: str) -> float:
         """Per-game time: observed EWMA or config-based fallback."""
         w = self.workers.get(worker_name)
-        if w and w.sec_per_game > 0:
-            return w.sec_per_game
-        if w and w.cutechess_overrides:
-            return self._estimate_game_duration(w.cutechess_overrides)
+        if w:
+            if w.sec_per_game > 0:
+                return w.sec_per_game
+            if w.cutechess_overrides:
+                return self._estimate_game_duration(w.cutechess_overrides)
         return self._base_sec_per_game
 
     def _touch_worker(self, name: str):
@@ -355,7 +348,10 @@ class CoordinatorState:
         now = time.time()
 
         best_cid = None
-        best_saving = self.config.min_chunk_timeout / 4
+        # Saving must exceed per-chunk startup overhead. EWMA tracks
+        # per-game time so the fixed cost (process spawn, engine init)
+        # is amortized away in large chunks and not visible in the estimate.
+        best_saving = self.config.min_chunk_expected_duration
 
         for cid, chunk in self.pending_chunks.items():
             if chunk.worker_name == worker_name:
@@ -375,7 +371,7 @@ class CoordinatorState:
                 break
 
             # Don't speed-steal from freshly assigned chunks (prevents chain stealing)
-            if elapsed < self.config.min_expected_duration:
+            if elapsed < self.config.min_chunk_expected_duration:
                 continue
 
             if new_expected + elapsed < expected:
@@ -457,29 +453,31 @@ class CoordinatorState:
             # Reclaim games from workers that disappeared mid-chunk
             self._reclaim_timed_out_chunks()
 
+            # Worker reconnected: release its old chunks and reset EWMA
             stale = [cid for cid, c in self.pending_chunks.items() if c.worker_name == worker_name]
-            for cid in stale:
-                self._release_chunk(cid, "worker %s reconnected" % worker_name)
+            if stale:
+                for cid in stale:
+                    self._release_chunk(cid, "worker %s reconnected" % worker_name)
+                w = self.workers.get(worker_name)
+                if w:
+                    w._spg_ewma = 0.0
 
             gpi = self.config.games_per_iteration
             remaining = gpi - self._games_assigned()
-            logger.info("get_work: %s, remaining=%d, completed=%d, in_flight=%d",
-                        worker_name, remaining, self.games_completed, self._games_in_flight())
+            logger.debug("get_work: %s, remaining=%d, completed=%d, in_flight=%d",
+                         worker_name, remaining, self.games_completed, self._games_in_flight())
             stolen_cid = None
             stolen_games = 0
 
             if remaining <= 0:
-                if self.draining:
-                    if not self._restart:
-                        return {"status": "done"}
-                    return {"status": "retry", "retry_after": self.config.retry_after}
-                # Try work stealing: reclaim a chunk from a slower worker
                 steal = None
                 if self.config.work_stealing:
                     steal = self._try_steal_chunk(worker_name)
                 if steal:
                     stolen_cid, stolen_games = steal
                     remaining = gpi - self._games_assigned()
+                elif self.draining and not self._restart:
+                    return {"status": "done"}
                 else:
                     return {"status": "retry", "retry_after": self.config.retry_after}
 
@@ -501,7 +499,7 @@ class CoordinatorState:
             chunk_id = uuid.uuid4().hex[:12]
             timeout = self._chunk_timeout_for(worker_name, num_games)
             expected_duration = max(
-                self.config.min_expected_duration,
+                self.config.min_chunk_expected_duration,
                 num_games * self._worker_sec_per_game(worker_name),
             )
 
