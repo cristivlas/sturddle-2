@@ -19,6 +19,13 @@ class Parameter:
     lower: float
     upper: float
     type: str = "int"  # "int" or "float"
+    # Original range for normalized parameters (where lower/upper are [-1, 1])
+    original_lower: Optional[float] = None
+    original_upper: Optional[float] = None
+
+    @property
+    def is_normalized(self) -> bool:
+        return self.original_lower is not None
 
     def clamp(self, value: float) -> float:
         return max(self.lower, min(self.upper, value))
@@ -35,6 +42,17 @@ class Parameter:
         if self.type == "int":
             return int(round(v))
         return v
+
+    def denormalize(self, theta_val: float) -> int:
+        """Convert theta value to engine-space integer.
+
+        For normalized parameters, maps from [-1,1] to [original_lower, original_upper].
+        For non-normalized parameters, rounds to int.
+        """
+        if self.is_normalized:
+            lo, hi = self.original_lower, self.original_upper
+            return int(round((theta_val + 1) * (hi - lo) / 2 + lo))
+        return int(round(theta_val))
 
 
 @dataclass
@@ -101,6 +119,14 @@ class TuningConfig:
         return self.spsa.budget // self.games_per_iteration
 
     def to_json(self) -> str:
+        def _param_dict(p: Parameter) -> dict:
+            d = {"init": p.init, "lower": p.lower, "upper": p.upper, "type": p.type}
+            if p.original_lower is not None:
+                d["original_lower"] = p.original_lower
+            if p.original_upper is not None:
+                d["original_upper"] = p.original_upper
+            return d
+
         d = {
             "engine": asdict(self.engine),
             "time_control": self.time_control,
@@ -119,15 +145,11 @@ class TuningConfig:
             "static_dir": self.static_dir,
             "spsa": asdict(self.spsa),
             "parameters": {
-                name: {
-                    "init": p.init,
-                    "lower": p.lower,
-                    "upper": p.upper,
-                    "type": p.type,
-                }
-                for name, p in self.parameters.items()
+                name: _param_dict(p) for name, p in self.parameters.items()
             },
         }
+        # Omit None values for cleaner output
+        d = {k: v for k, v in d.items() if v is not None}
         return json.dumps(d, indent=2)
 
     @classmethod

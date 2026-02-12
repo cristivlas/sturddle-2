@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 """
-Apply SPSA tuning results to config.h.
+Apply SPSA tuning results to config.h using tuning.json for parameter metadata.
 
-Reads spsa_state.json (produced by the SPSA coordinator) and updates
-DECLARE_PARAM / DECLARE_VALUE / DECLARE_NORMAL lines in config.h.
-
-Handles both normalized (DECLARE_NORMAL, values in [-1,1]) and
-non-normalized parameters, converting all to engine-space integers.
-
-Parameters not found in config.h (e.g. piece weights, piece-square
-tables) are listed with their engine-space values for manual review.
+Unlike apply_spsa.py, this does not require loading the chess engine — all
+parameter metadata (including original ranges for normalized parameters) is
+read from tuning.json.
 
 Usage:
-    python apply_spsa.py <spsa_state.json | project_dir> [--config config.h] [--finalize]
+    python apply.py <project_dir> [--config config.h] [--finalize]
+    python apply.py <project_dir> --state alt_state.json [--config config.h]
 """
 
 import argparse
@@ -22,40 +18,26 @@ import os
 import re
 import sys
 
+from config import TuningConfig
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-def root_path():
-    return os.path.abspath(os.path.join(os.path.split(sys.argv[0])[0], '../..'))
-
-
-sys.path.append(root_path())
-from chess_engine import get_param_info
-
-params = get_param_info()
-
-
-def denormalize(name, theta_val):
+def denormalize(param, theta_val):
     """Convert a theta value to engine-space integer.
 
-    For normalized parameters (DECLARE_NORMAL), maps from [-1,1] to [lo,hi].
-    For non-normalized parameters, rounds to int.
+    For normalized parameters (with original_lower/original_upper), maps
+    from [-1,1] to the original range.  For non-normalized parameters,
+    rounds to int.
     """
-    p = params.get(name)
-    if p:
-        _default_val, lo, hi, _grp, normal = p
-        if normal:
-            engine_val = int(round((theta_val + 1) * (hi - lo) / 2 + lo))
-            logging.info(f"  {name}: theta={theta_val:+.4f} -> engine={engine_val} (normalized from [{lo}, {hi}])")
-            return engine_val
-        else:
-            engine_val = int(round(theta_val))
-            logging.info(f"  {name}: theta={theta_val} -> engine={engine_val} (non-normalized)")
-            return engine_val
+    if param.is_normalized:
+        lo, hi = param.original_lower, param.original_upper
+        engine_val = int(round((theta_val + 1) * (hi - lo) / 2 + lo))
+        logging.info(f"  {param.name}: theta={theta_val:+.4f} -> engine={engine_val} (normalized from [{lo}, {hi}])")
+        return engine_val
 
-    # Parameter not found in engine metadata
     engine_val = int(round(theta_val))
-    logging.info(f"  {name}: theta={theta_val} -> engine={engine_val} (unknown parameter, using theta directly)")
+    logging.info(f"  {param.name}: theta={theta_val} -> engine={engine_val}")
     return engine_val
 
 
@@ -126,25 +108,34 @@ def update_config(config_file, engine_values, finalize=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Apply SPSA tuning results to config.h.'
+        description='Apply SPSA tuning results to config.h (using tuning.json for parameter metadata).'
     )
-    parser.add_argument('state', help='Path to spsa_state.json or SPSA project directory')
-    parser.add_argument('--config', default=os.path.join(root_path(), 'config.h'),
-                        help='Path to config.h (default: <project_root>/config.h)')
-    parser.add_argument('--finalize', action='store_true',
-                        help='Convert DECLARE_PARAM/DECLARE_NORMAL back to DECLARE_VALUE for tuned parameters')
+    parser.add_argument('project', help='Path to SPSA project directory (containing tuning.json)')
+    parser.add_argument('--state', default=None, help='Path to spsa_state.json (default: <project>/spsa_state.json)')
+    parser.add_argument('--config', default='config.h', help='Path to config.h (default: config.h)')
+    parser.add_argument('--finalize', action='store_true', help='Convert DECLARE_PARAM/DECLARE_NORMAL to DECLARE_VALUE')
     args = parser.parse_args()
 
-    # Resolve state file path
-    state_path = args.state
-    if os.path.isdir(state_path):
-        state_path = os.path.join(state_path, 'spsa_state.json')
+    project_dir = args.project
+    if not os.path.isdir(project_dir):
+        logging.error(f"Project directory not found: {project_dir}")
+        sys.exit(1)
 
+    # Load tuning config for parameter metadata
+    tuning_path = os.path.join(project_dir, 'tuning.json')
+    if not os.path.exists(tuning_path):
+        logging.error(f"Tuning config not found: {tuning_path}")
+        sys.exit(1)
+
+    tuning = TuningConfig.from_json(tuning_path)
+    logging.info(f"Loaded tuning config: {len(tuning.parameters)} parameter(s)")
+
+    # Load SPSA state
+    state_path = args.state or os.path.join(project_dir, 'spsa_state.json')
     if not os.path.exists(state_path):
         logging.error(f"State file not found: {state_path}")
         sys.exit(1)
 
-    # Load SPSA state
     logging.info(f"Loading state from {state_path}")
     with open(state_path) as f:
         state = json.load(f)
@@ -161,7 +152,13 @@ def main():
     logging.info(f"Denormalizing {len(theta)} parameter(s):")
     engine_values = {}
     for name, val in theta.items():
-        engine_values[name] = denormalize(name, val)
+        param = tuning.parameters.get(name)
+        if param:
+            engine_values[name] = denormalize(param, val)
+        else:
+            engine_val = int(round(val))
+            logging.info(f"  {name}: theta={val} -> engine={engine_val} (not in tuning config)")
+            engine_values[name] = engine_val
 
     # Patch config.h
     updated, found = update_config(args.config, engine_values, finalize=args.finalize)

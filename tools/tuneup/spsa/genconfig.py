@@ -124,10 +124,10 @@ def main():
                 val = 2 * (val - lo) / (hi - lo) - 1
                 if val < -1 or val > 1:
                     raise ValueError(f'{name}: {val} (unscaled: {unscaled_val}) is out of range')
-                params[name] = (val, -1.0, 1.0, grp, 'float')
+                params[name] = (val, -1.0, 1.0, grp, 'float', lo, hi)
             else:
                 ptype = 'float' if isinstance(val, float) else 'int'
-                params[name] = (val, lo, hi, grp, ptype)
+                params[name] = (val, lo, hi, grp, ptype, None, None)
 
         # Resolve 'all' and build tune list
         if not isinstance(args.tune, list):
@@ -147,13 +147,17 @@ def main():
 
         # Build tunable params
         for name in sorted(tune_names):
-            val, lo, hi, grp, ptype = params[name]
-            tune_params[name] = {
+            val, lo, hi, grp, ptype, orig_lo, orig_hi = params[name]
+            p = {
                 'init': val,
                 'lower': lo,
                 'upper': hi,
                 'type': ptype,
             }
+            if orig_lo is not None:
+                p['original_lower'] = orig_lo
+                p['original_upper'] = orig_hi
+            tune_params[name] = p
 
         # Compute dashboard refresh from time control
         if args.depth is not None:
