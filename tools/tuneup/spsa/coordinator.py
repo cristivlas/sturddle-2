@@ -379,19 +379,25 @@ class CoordinatorState:
         )
         return best_cid, chunk.num_games
 
+    def _release_chunk(self, cid: str, reason: str):
+        """Remove a chunk from pending tracking and clean up stolen_chunks."""
+        chunk = self.pending_chunks.pop(cid)
+        self.games_assigned -= chunk.num_games
+        stolen_cid = next((k for k, v in self.stolen_chunks.items() if v == cid), None)
+        if stolen_cid:
+            self.stolen_chunks.pop(stolen_cid)
+        if cid in self.stolen_chunks:
+            self.stolen_chunks.pop(cid)
+        logger.warning("Released [%s] (%d games) from %s: %s", cid, chunk.num_games, chunk.worker_name, reason)
+
     def _reclaim_timed_out_chunks(self):
         """Reclaim chunks that have exceeded their per-worker timeout."""
         now = time.time()
-        timed_out = [cid for cid, chunk in self.pending_chunks.items()
-                     if now - chunk.assign_time > chunk.timeout]
-        for cid in timed_out:
-            chunk = self.pending_chunks.pop(cid)
-            self.games_assigned -= chunk.num_games
-            logger.warning(
-                "Reclaimed chunk %s from %s: %d games (%.0fs elapsed, timeout was %ds)",
-                cid, chunk.worker_name, chunk.num_games,
-                now - chunk.assign_time, int(chunk.timeout),
-            )
+        timed_out = [(cid, now - c.assign_time, c.timeout)
+                     for cid, c in self.pending_chunks.items()
+                     if now - c.assign_time > c.timeout]
+        for cid, elapsed, timeout in timed_out:
+            self._release_chunk(cid, "timed out (%.0fs elapsed, timeout %ds)" % (elapsed, int(timeout)))
 
     def _notify_dashboard(self):
         """Wake up any SSE listeners so they push fresh data immediately."""
@@ -413,6 +419,7 @@ class CoordinatorState:
         Returns:
             WorkItem dict, or {"status": "done"/"retry"}.
         """
+        assert worker_name, "worker_name required; enforced at HTTP boundary"
         with self.lock:
             self._touch_worker(worker_name)
             if cutechess_overrides and worker_name in self.workers:
@@ -424,18 +431,9 @@ class CoordinatorState:
             # Reclaim games from workers that disappeared mid-chunk
             self._reclaim_timed_out_chunks()
 
-            assert worker_name
             stale = [cid for cid, c in self.pending_chunks.items() if c.worker_name == worker_name]
             for cid in stale:
-                chunk = self.pending_chunks.pop(cid)
-                self.games_assigned -= chunk.num_games
-                # Clean up any steal race involving this chunk
-                stolen_cid = next((k for k, v in self.stolen_chunks.items() if v == cid), None)
-                if stolen_cid:
-                    self.stolen_chunks.pop(stolen_cid)
-                if cid in self.stolen_chunks:
-                    self.stolen_chunks.pop(cid)
-                logger.info("Reclaimed [%s] (%d games) from %s", cid, chunk.num_games, worker_name)
+                self._release_chunk(cid, "worker %s reconnected" % worker_name)
 
             gpi = self.config.games_per_iteration
             remaining = gpi - self.games_assigned

@@ -93,7 +93,7 @@ class TuningConfig:
     min_chunk_timeout: float = 60.0
     # Floor for expected chunk duration; accounts for per-chunk overhead
     # (process startup, UCI init) not captured by per-game EWMA
-    min_expected_duration: float = 5.0
+    min_expected_duration: float = 10.0
     # Directory for static assets (favicon, etc.); empty = disabled
     static_dir: str = ""
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
