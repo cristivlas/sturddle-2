@@ -73,6 +73,5 @@ coordinator/worker architecture designed for small heterogeneous LANs and provid
 a live web dashboard for monitoring progress.
 
 See [tools/tuneup/spsa/README.md](tools/tuneup/spsa/README.md) for setup and usage.
-Use `tools/tuneup/apply_spsa.py` to apply tuning results from `spsa_state.json` to `config.h`.
-
+Use `tools/tuneup/spsa/apply.py` to apply tuning results from `spsa_state.json` to `config.h`.
 
