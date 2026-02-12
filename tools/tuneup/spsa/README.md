@@ -237,16 +237,17 @@ tuneup/my-test/
 | `engine.fixed_options` | Fixed UCI options (Hash, Threads, etc.) | `{}` |
 | `time_control` | Time control string | `"1+0.1"` |
 | `depth` | Fixed search depth (overrides time_control if set) | `null` |
-| `games_per_iteration` | Games per SPSA iteration | `100` |
-| `output_dir` | Coordinator output (logs, checkpoint) | project dir |
+| `games_per_iteration` | Games per SPSA iteration | `200` |
+| `output_dir` | Coordinator output (logs, checkpoint) | `"./spsa_output"` |
 | `retry_after` | Worker retry interval in seconds | `5` |
 | `dashboard_refresh` | Dashboard auto-refresh in seconds | `10` |
 | `dashboard_history` | Max iteration history entries sent to dashboard (0 = unlimited) | `100` |
 | `work_stealing` | Reclaim chunks from slow workers for fast idle ones | `true` |
-| `overdue_factor` | Multiplier on expected duration to declare a chunk overdue | `2.0` |
+| `overdue_factor` | Factor on expected duration to declare a chunk overdue | `1.25` |
 | `worker_idle_timeout` | Seconds before an idle worker (no chunks) is considered dead | `120.0` |
-| `chunk_timeout_multiplier` | Multiplier on expected duration for chunk timeout | `5.0` |
+| `chunk_timeout_factor` | Factor on expected duration for chunk timeout | `2.5` |
 | `min_chunk_timeout` | Minimum chunk timeout in seconds | `60.0` |
+| `min_expected_duration` | Floor for expected chunk duration (covers per-chunk overhead) | `30.0` |
 | `static_dir` | Directory for static assets (favicon, etc.); empty = disabled | `""` |
 | `spsa.budget` | Total games budget (iterations * games_per_iteration) | `10000` |
 | `spsa.a` | Learning rate | `0.5` |
@@ -311,7 +312,7 @@ The coordinator uses adaptive work assignment:
   A worker is considered alive if it was seen within the worker timeout
   (max(120s, base_sec_per_game × 4)), or if it has a pending chunk that
   has not yet timed out. Timed-out workers' chunks are reclaimed.
-- **Work stealing**: When a fast worker requests work but all games are
+- **Work stealing** (optional, on by default): When a fast worker requests work but all games are
   assigned, the coordinator can reclaim a chunk from a slower worker and
   reassign it. This prevents fast workers from sitting idle while slow (or
   dead) workers hold chunks. Each chunk records its `expected_duration`

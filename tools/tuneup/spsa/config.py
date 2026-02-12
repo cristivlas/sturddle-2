@@ -87,13 +87,13 @@ class TuningConfig:
     # Max history entries sent to the dashboard (0 = unlimited)
     dashboard_history: int = 100
     work_stealing: bool = True
-    overdue_factor: float = 2.0
+    overdue_factor: float = 1.25
     worker_idle_timeout: float = 120.0
-    chunk_timeout_multiplier: float = 5.0
+    chunk_timeout_factor: float = 2.5
     min_chunk_timeout: float = 60.0
     # Floor for expected chunk duration; accounts for per-chunk overhead
     # (process startup, UCI init) not captured by per-game EWMA
-    min_expected_duration: float = 10.0
+    min_expected_duration: float = 30.0
     # Directory for static assets (favicon, etc.); empty = disabled
     static_dir: str = ""
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
@@ -110,12 +110,14 @@ class TuningConfig:
             "games_per_iteration": self.games_per_iteration,
             "retry_after": self.retry_after,
             "dashboard_refresh": self.dashboard_refresh,
+            "dashboard_history": self.dashboard_history,
             "output_dir": self.output_dir,
             "work_stealing": self.work_stealing,
             "overdue_factor": self.overdue_factor,
             "worker_idle_timeout": self.worker_idle_timeout,
-            "chunk_timeout_multiplier": self.chunk_timeout_multiplier,
+            "chunk_timeout_factor": self.chunk_timeout_factor,
             "min_chunk_timeout": self.min_chunk_timeout,
+            "min_expected_duration": self.min_expected_duration,
             "static_dir": self.static_dir,
             "spsa": asdict(self.spsa),
             "parameters": {

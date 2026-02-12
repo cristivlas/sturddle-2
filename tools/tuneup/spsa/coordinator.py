@@ -127,7 +127,6 @@ class CoordinatorState:
         # Current iteration work tracking (restored from state or reset)
         self.current_delta = None
         self.current_work = None  # WorkItem template for this iteration
-        self.games_assigned = 0
         self.games_completed = 0
         self.total_wins = 0
         self.total_draws = 0
@@ -146,7 +145,7 @@ class CoordinatorState:
         max_chunk_games = tuning_config.games_per_iteration // 2
         self.max_chunk_timeout = max(
             1800.0,
-            max_chunk_games * self._base_sec_per_game * self.config.chunk_timeout_multiplier,
+            max_chunk_games * self._base_sec_per_game * self.config.chunk_timeout_factor,
         )
         self.server_start_time = time.time()
         self._prepare_iteration()
@@ -178,6 +177,22 @@ class CoordinatorState:
                 per_side = float(tc)
             return 2.0 * per_side  # both sides
         return 10.0
+
+    def _games_in_flight(self) -> int:
+        """Games currently assigned to workers (pending results)."""
+        return sum(c.num_games for c in self.pending_chunks.values())
+
+    def _games_assigned(self) -> int:
+        """Total games accounted for: completed + in-flight.
+
+        Computed from ground truth (games_completed + pending_chunks)
+        instead of an incremental counter, to avoid drift from
+        release/steal/cancel mismatches.
+        """
+        assigned = self.games_completed + self._games_in_flight()
+        logger.debug("games_assigned=%d (completed=%d, in_flight=%d, pending_chunks=%d)",
+                      assigned, self.games_completed, self._games_in_flight(), len(self.pending_chunks))
+        return assigned
 
     def _worker_sec_per_game(self, worker_name: str) -> float:
         """Per-game time: observed EWMA or config-based fallback."""
@@ -237,7 +252,7 @@ class CoordinatorState:
     def _chunk_timeout_for(self, worker_name: str, num_games: int) -> float:
         """Timeout for a chunk based on expected duration."""
         expected = num_games * self._worker_sec_per_game(worker_name)
-        timeout = expected * self.config.chunk_timeout_multiplier
+        timeout = expected * self.config.chunk_timeout_factor
         return max(self.config.min_chunk_timeout, min(self.max_chunk_timeout, timeout))
 
     def _compute_chunk_size(self, worker_name: str, remaining: int) -> int:
@@ -245,18 +260,27 @@ class CoordinatorState:
         Split remaining games proportional to worker speed.
 
         Bootstrap (no speed data): split evenly across active workers.
+        Unproven workers (no EWMA) get a small bootstrap chunk so they
+        establish a speed estimate before receiving full-sized work.
         Even-rounding and final clamping handled by get_work().
         """
         active = self._active_workers()
         num_workers = max(1, len(active))
         total_speed = sum(w.games_per_second for w in active)
 
+        w = self.workers.get(worker_name)
+        bootstrap = w and w.sec_per_game <= 0
+
         if total_speed > 0:
-            w = self.workers.get(worker_name)
             my_speed = w.games_per_second if (w and w.games_per_second > 0) else (total_speed / num_workers)
             chunk = int(remaining * my_speed / total_speed)
         else:
             chunk = remaining // num_workers
+
+        # Cap unproven workers until they establish an EWMA
+        if bootstrap:
+            cap = max(10, int(self.config.min_chunk_timeout / self._base_sec_per_game))
+            chunk = min(chunk, cap)
 
         # If remainder is too small to split, take it all
         if remaining - chunk < num_workers:
@@ -300,8 +324,6 @@ class CoordinatorState:
             theta_minus=theta_minus,
             num_games=0,  # filled per chunk
         )
-        # Only assign remaining games (games_completed already scored)
-        self.games_assigned = self.games_completed
         self.pending_chunks = {}
         self.stolen_chunks = {}
 
@@ -329,7 +351,7 @@ class CoordinatorState:
         if not self.pending_chunks:
             return None
 
-        fast_spg = self._worker_sec_per_game(worker_name)
+        spg = self._worker_sec_per_game(worker_name)
         now = time.time()
 
         best_cid = None
@@ -341,25 +363,31 @@ class CoordinatorState:
 
             elapsed = now - chunk.assign_time
             expected = chunk.expected_duration
-            fast_total = chunk.num_games * fast_spg
+            new_expected = chunk.num_games * spg
 
             overdue = self._is_overdue(now, chunk.assign_time, expected)
-            if overdue and fast_total < expected:
-                saving = expected - fast_total
-                logger.debug(
-                    "Work steal: %s eyeing %s [%s] %d games (overdue) — elapsed=%.1fs expected=%.1fs fast=%.1fs saving=%.1fs",
-                    worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected, fast_total, saving,
+            if overdue:
+                logger.warning(
+                    "Work steal: %s taking %s [%s] %d games (overdue) — elapsed=%.1fs expected=%.1fs",
+                    worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected,
                 )
-            elif fast_total + elapsed < expected:
-                saving = expected - elapsed - fast_total
+                best_cid = cid
+                break
+
+            # Don't speed-steal from freshly assigned chunks (prevents chain stealing)
+            if elapsed < self.config.min_expected_duration:
+                continue
+
+            if new_expected + elapsed < expected:
+                saving = expected - elapsed - new_expected
                 logger.debug(
-                    "Work steal: %s eyeing %s [%s] %d games — elapsed=%.1fs expected=%.1fs fast=%.1fs saving=%.1fs",
-                    worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected, fast_total, saving,
+                    "Work steal: %s eyeing %s [%s] %d games — elapsed=%.1fs expected=%.1fs new=%.1fs saving=%.1fs",
+                    worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected, new_expected, saving,
                 )
             else:
                 logger.debug(
-                    "Work steal: %s skip %s [%s] %d games — elapsed=%.1fs expected=%.1fs fast=%.1fs",
-                    worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected, fast_total,
+                    "Work steal: %s skip %s [%s] %d games — elapsed=%.1fs expected=%.1fs new=%.1fs",
+                    worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected, new_expected,
                 )
                 continue
 
@@ -371,18 +399,16 @@ class CoordinatorState:
             return None
 
         chunk = self.pending_chunks.pop(best_cid)
-        self.games_assigned -= chunk.num_games
         logger.info(
-            "Work steal: %d games from %s [%s] for %s (%.0fs elapsed, est. saving %.1fs)",
+            "Work steal: %d games from %s [%s] for %s (%.0fs elapsed, est. saving %.1fs, %.2f s/g)",
             chunk.num_games, chunk.worker_name, best_cid,
-            worker_name, now - chunk.assign_time, best_saving,
+            worker_name, now - chunk.assign_time, best_saving, spg,
         )
         return best_cid, chunk.num_games
 
     def _release_chunk(self, cid: str, reason: str):
         """Remove a chunk from pending tracking and clean up stolen_chunks."""
         chunk = self.pending_chunks.pop(cid)
-        self.games_assigned -= chunk.num_games
         stolen_cid = next((k for k, v in self.stolen_chunks.items() if v == cid), None)
         if stolen_cid:
             self.stolen_chunks.pop(stolen_cid)
@@ -436,7 +462,9 @@ class CoordinatorState:
                 self._release_chunk(cid, "worker %s reconnected" % worker_name)
 
             gpi = self.config.games_per_iteration
-            remaining = gpi - self.games_assigned
+            remaining = gpi - self._games_assigned()
+            logger.info("get_work: %s, remaining=%d, completed=%d, in_flight=%d",
+                        worker_name, remaining, self.games_completed, self._games_in_flight())
             stolen_cid = None
             stolen_games = 0
 
@@ -451,7 +479,7 @@ class CoordinatorState:
                     steal = self._try_steal_chunk(worker_name)
                 if steal:
                     stolen_cid, stolen_games = steal
-                    remaining = gpi - self.games_assigned
+                    remaining = gpi - self._games_assigned()
                 else:
                     return {"status": "retry", "retry_after": self.config.retry_after}
 
@@ -477,7 +505,6 @@ class CoordinatorState:
                 num_games * self._worker_sec_per_game(worker_name),
             )
 
-            self.games_assigned += num_games
             self.pending_chunks[chunk_id] = ChunkInfo(
                 chunk_id=chunk_id,
                 worker_name=worker_name,
@@ -502,7 +529,7 @@ class CoordinatorState:
             logger.info(
                 "Assigned %d games to %s [%s] (iter %d, %d/%d, timeout=%ds)",
                 num_games, worker_name or "?", chunk_id,
-                work.iteration, self.games_assigned, gpi, int(timeout),
+                work.iteration, self._games_assigned(), gpi, int(timeout),
             )
             self._notify_dashboard()
             return work.to_dict()
@@ -540,8 +567,7 @@ class CoordinatorState:
                 replacement_cid = self.stolen_chunks.pop(result.chunk_id)
                 if replacement_cid in self.pending_chunks:
                     replacement = self.pending_chunks.pop(replacement_cid)
-                    self.games_assigned -= replacement.num_games
-                    logger.info("Got [%s] from %s, cancelled [%s]", result.chunk_id, result.worker, replacement_cid)
+                    logger.info("Got [%s] from %s, cancelled [%s] (%d games)", result.chunk_id, result.worker, replacement_cid, replacement.num_games)
                 else:
                     return {"status": "ignored", "reason": f"replaced by {replacement_cid}"}
             else:
@@ -759,8 +785,8 @@ class CoordinatorState:
                 "current_iteration_progress_pct": min(100, pct_games),
                 "games_completed_in_iteration": self.games_completed,
                 "games_per_iteration": gpi,
-                "games_assigned": self.games_assigned,
-                "games_pending": self.games_assigned - self.games_completed,
+                "games_assigned": self._games_assigned(),
+                "games_pending": self._games_in_flight(),
                 "total_games": self.optimizer.iteration * gpi + self.games_completed,
                 "theta": self.optimizer.get_engine_values(),
                 "c_k": self.optimizer.c_k() if not self.optimizer.is_done() else 0,

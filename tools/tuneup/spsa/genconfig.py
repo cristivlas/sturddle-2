@@ -26,6 +26,10 @@ import sys
 import sysconfig
 import warnings
 
+from config import (
+    EngineConfig, SPSAConfig, TuningConfig, Parameter,
+)
+
 
 def root_path():
     return os.path.abspath(os.path.join(os.path.split(sys.argv[0])[0], '..', '..', '..'))
@@ -74,14 +78,16 @@ def main():
     parser.add_argument('project', help='Project name (creates tuneup/<project>/)')
     parser.add_argument('tune', nargs='*', default='all', help='Parameter names to tune (or "all")')
     parser.add_argument('-w', '--worker-only', action='store_true', help='Generate worker.json only (no engine needed)')
-    parser.add_argument('-t', '--time-control', default='1+0.1', help='Time control (default: 1+0.1)')
-    parser.add_argument('-D', '--depth', type=int, default=None, help='Fixed search depth (overrides time control)')
+    _tc = TuningConfig()
+    _spsa = SPSAConfig()
+    parser.add_argument('-t', '--time-control', default=_tc.time_control, help=f'Time control (default: {_tc.time_control})')
+    parser.add_argument('-D', '--depth', type=int, default=_tc.depth, help='Fixed search depth (overrides time control)')
     parser.add_argument('-H', '--hash', type=int, default=256, help='Engine hash size in MB (default: 256)')
     parser.add_argument('-T', '--threads', type=int, default=1, help='Engine threads (default: 1)')
     parser.add_argument('-i', '--iterations', type=int, default=100, help='SPSA iterations (default: 100)')
-    parser.add_argument('-g', '--games-per-iteration', type=int, default=100, help='Games per iteration (default: 100)')
-    parser.add_argument('-c', '--spsa-c', type=float, default=0.05, help='SPSA perturbation size (default: 0.05)')
-    parser.add_argument('-a', '--spsa-a', type=float, default=0.5, help='SPSA learning rate (default: 0.5)')
+    parser.add_argument('-g', '--games-per-iteration', type=int, default=_tc.games_per_iteration, help=f'Games per iteration (default: {_tc.games_per_iteration})')
+    parser.add_argument('-c', '--spsa-c', type=float, default=_spsa.c, help=f'SPSA perturbation size (default: {_spsa.c})')
+    parser.add_argument('-a', '--spsa-a', type=float, default=_spsa.a, help=f'SPSA learning rate (default: {_spsa.a})')
     args = parser.parse_args()
 
     # Create project directory
@@ -149,42 +155,45 @@ def main():
                 'type': ptype,
             }
 
-        tuning_config = {
-            'engine': {
-                'protocol': 'uci',
-                'fixed_options': {
+        # Compute dashboard refresh from time control
+        if args.depth is not None:
+            dashboard_refresh = 10
+        else:
+            try:
+                base_time = float(args.time_control.split('+')[0])
+                dashboard_refresh = max(10, int(base_time * 2))
+            except (ValueError, IndexError):
+                dashboard_refresh = 60
+
+        parameters = {
+            name: Parameter(name=name, **p) for name, p in tune_params.items()
+        }
+
+        tuning_config = TuningConfig(
+            engine=EngineConfig(
+                protocol='uci',
+                fixed_options={
                     'Hash': args.hash,
                     'Threads': args.threads,
                     'OwnBook': False,
                 },
-            },
-            'games_per_iteration': args.games_per_iteration,
-            'output_dir': project_dir_abs,
-            'spsa': {
-                'budget': args.iterations * args.games_per_iteration,
-                'a': args.spsa_a,
-                'c': args.spsa_c,
-                'A_ratio': 0.1,
-                'alpha': 0.602,
-                'gamma': 0.101,
-            },
-            'parameters': tune_params,
-        }
-
-        if args.depth is not None:
-            tuning_config['depth'] = args.depth
-            tuning_config['dashboard_refresh'] = 10
-        else:
-            tuning_config['time_control'] = args.time_control
-            try:
-                base_time = float(args.time_control.split('+')[0])
-                tuning_config['dashboard_refresh'] = max(10, int(base_time * 2))
-            except (ValueError, IndexError):
-                tuning_config['dashboard_refresh'] = 60
+            ),
+            time_control=args.time_control,
+            depth=args.depth,
+            games_per_iteration=args.games_per_iteration,
+            output_dir=project_dir_abs,
+            dashboard_refresh=dashboard_refresh,
+            spsa=SPSAConfig(
+                budget=args.iterations * args.games_per_iteration,
+                a=args.spsa_a,
+                c=args.spsa_c,
+            ),
+            parameters=parameters,
+        )
 
         tuning_path = os.path.join(project_dir, 'tuning.json')
         with open(tuning_path, 'w') as f:
-            json.dump(tuning_config, f, indent=2)
+            f.write(tuning_config.to_json())
             f.write('\n')
 
     # --- worker.json (per-machine, local) ---
