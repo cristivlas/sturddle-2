@@ -583,7 +583,12 @@ class CoordinatorState:
                 w.games_completed += result.num_games
                 w.games_completed_iter += result.num_games
                 if chunk:
-                    w.update_speed(result.num_games, time.time() - chunk.assign_time)
+                    # Skip EWMA update for small chunks where startup overhead
+                    # dominates and would drag the speed estimate down, causing
+                    # progressively smaller allocations (death spiral).
+                    spg = w.sec_per_game or self._base_sec_per_game
+                    if w.sec_per_game <= 0 or result.num_games * spg >= self.config.min_chunk_expected_duration:
+                        w.update_speed(result.num_games, time.time() - chunk.assign_time)
 
             logger.info(
                 "Result: iter %d, %d games from %s [%s], W=%d D=%d L=%d (%d/%d done)",
