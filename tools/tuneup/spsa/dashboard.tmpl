@@ -403,7 +403,7 @@
     <script>
         // --- Normalized/internal toggle ---
         var hasNormalized = {has_normalized};
-        var showInternal = true;
+        var showInternal = localStorage.getItem('thetaView') !== 'engine';
         var currentTheta = {{}};
         var currentThetaInternal = {{}};
 
@@ -421,6 +421,7 @@
 
         function setThetaView(internal) {{
             showInternal = internal;
+            localStorage.setItem('thetaView', internal ? 'internal' : 'engine');
             var accent = getComputedStyle(document.documentElement).getPropertyValue('--accent-start').trim();
             var ti = document.getElementById('togInternal');
             var te = document.getElementById('togEngine');
@@ -436,7 +437,7 @@
         function initToggle() {{
             if (hasNormalized) {{
                 document.getElementById('thetaToggle').style.display = '';
-                setThetaView(true);
+                setThetaView(showInternal);
             }}
         }}
 

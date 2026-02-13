@@ -56,6 +56,37 @@
             letter-spacing: 1px;
             color: white;
             text-decoration: none;
+            cursor: pointer;
+        }}
+        .card-header {{
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+        }}
+        .card-header .caret {{
+            font-size: 10px;
+            color: #999;
+            margin-right: 6px;
+            transition: transform 0.2s;
+        }}
+        .card.collapsed .card-header .caret {{
+            transform: rotate(-90deg);
+        }}
+        .card.collapsed > *:not(.card-header) {{
+            display: none;
+        }}
+        .card.collapsed {{
+            flex: 0 0 auto;
+        }}
+        .card.collapsed h2 {{
+            color: #aaa;
+        }}
+        .card.last-on .card-header {{
+            cursor: default;
+        }}
+        .card.last-on .caret {{
+            visibility: hidden;
         }}
         .content {{
             padding: 20px 24px;
@@ -85,7 +116,20 @@
             grid-template-columns: 1fr 1fr;
             gap: 8px;
             flex: 1;
-            min-height: 200px;
+            min-height: 0;
+        }}
+        .sub-card {{
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }}
+        .sub-card h2 {{
+            font-size: 11px;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 2px;
         }}
         .card h2 {{
             font-size: 11px;
@@ -106,7 +150,8 @@
             .header {{ flex-wrap: wrap; gap: 6px; justify-content: center; }}
             .container {{ height: auto; min-height: 100vh; }}
             .two-col {{ grid-template-columns: 1fr; }}
-            .card {{ min-height: 250px; }}
+            .card {{ min-height: 200px; }}
+            .card.collapsed {{ min-height: 0; }}
             a[href="/logs"] {{ display: none; }}
         }}
     </style>
@@ -136,23 +181,26 @@
             </div>
         </div>
 
-        <div class="content">
-            <div class="card">
-                <h2>Parameter Values</h2>
+        <div class="content" id="chartContent">
+            <div class="card" data-chart="params">
+                <div class="card-header" onclick="toggleChart('params')"><span class="caret">&#9660;</span><h2>Parameter Values</h2></div>
                 <div class="chart-wrap"><canvas id="thetaChart"></canvas></div>
             </div>
-            <div class="card">
-                <h2>ELO Difference</h2>
+            <div class="card" data-chart="elo">
+                <div class="card-header" onclick="toggleChart('elo')"><span class="caret">&#9660;</span><h2>ELO Difference</h2></div>
                 <div class="chart-wrap"><canvas id="eloChart"></canvas></div>
             </div>
-            <div class="two-col">
-                <div class="card">
-                    <h2>Learning Rate (a_k)</h2>
-                    <div class="chart-wrap"><canvas id="akChart"></canvas></div>
-                </div>
-                <div class="card">
-                    <h2>Perturbation Size (c_k)</h2>
-                    <div class="chart-wrap"><canvas id="ckChart"></canvas></div>
+            <div class="card" data-chart="rates">
+                <div class="card-header" onclick="toggleChart('rates')"><span class="caret">&#9660;</span><h2>SPSA Coefficients</h2></div>
+                <div class="two-col">
+                    <div class="sub-card">
+                        <h2>Learning Rate (a_k)</h2>
+                        <div class="chart-wrap"><canvas id="akChart"></canvas></div>
+                    </div>
+                    <div class="sub-card">
+                        <h2>Perturbation Size (c_k)</h2>
+                        <div class="chart-wrap"><canvas id="ckChart"></canvas></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -161,6 +209,39 @@
             Generated at {timestamp}
         </div>
     </div>
+
+    <script>
+        var chartVis = {{ params: true, elo: true, rates: true }};
+        try {{
+            var saved = JSON.parse(localStorage.getItem('chartVis'));
+            if (saved) {{
+                for (var k in saved) if (k in chartVis) chartVis[k] = saved[k];
+                if (!Object.values(chartVis).some(Boolean)) chartVis.params = true;
+            }}
+        }} catch(e) {{}}
+
+        function countOn() {{
+            return Object.values(chartVis).filter(Boolean).length;
+        }}
+
+        function applyVis() {{
+            var onCount = countOn();
+            document.querySelectorAll('[data-chart]').forEach(function(card) {{
+                var key = card.getAttribute('data-chart');
+                card.classList.toggle('collapsed', !chartVis[key]);
+                card.classList.toggle('last-on', chartVis[key] && onCount === 1);
+            }});
+            localStorage.setItem('chartVis', JSON.stringify(chartVis));
+        }}
+
+        function toggleChart(key) {{
+            if (chartVis[key] && countOn() <= 1) return;
+            chartVis[key] = !chartVis[key];
+            applyVis();
+        }}
+
+        document.addEventListener('DOMContentLoaded', applyVis);
+    </script>
 
     <script>{chart_js}</script>
     <script id="history-data" type="application/json">{history_json}</script>

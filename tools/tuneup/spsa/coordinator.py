@@ -6,7 +6,7 @@ HTTP server that manages SPSA state and distributes work to workers.
 Zero external dependencies — uses only Python stdlib.
 
 Usage:
-    python coordinator.py -c tuning.json [-p 8080] [--clean]
+    python coordinator.py -c tuning.json [-p 8080] [--clean] [--debug]
 """
 
 import argparse
@@ -671,7 +671,7 @@ class CoordinatorState:
         active = self._active_workers()
         if active:
             logger.info("Worker stats:")
-            for w in active:
+            for w in sorted(active, key=lambda w: w.games_per_second, reverse=True):
                 logger.info(
                     "  %s: %d games, %.2f games/sec",
                     w.name, w.games_completed, w.games_per_second,
@@ -1195,6 +1195,7 @@ def main():
     server = ThreadedHTTPServer(("0.0.0.0", args.port), CoordinatorHandler)
     logger.info("Coordinator ready, waiting for workers...")
 
+    restart_debug = False
     while True:
         try:
             server.serve_forever()
@@ -1207,15 +1208,16 @@ def main():
                 can_restart = sys.platform != "win32"
                 try:
                     if can_restart:
-                        prompt = f"\nWait for iteration {iter_k}? [r]estart / [s]top / [N]o "
+                        prompt = f"\nWait for iteration {iter_k}? [r]estart / [d]ebug restart / [s]top / [N]o "
                     else:
                         prompt = f"\nWait for iteration {iter_k} to complete? [s]top / [N]o "
                     answer = input(prompt).strip().lower()
                 except (EOFError, KeyboardInterrupt):
                     answer = ""
-                if answer in ("r", "s") if can_restart else answer == "s":
+                if answer in ("r", "d", "s") if can_restart else answer == "s":
                     coordinator.draining = True
-                    coordinator._restart = (answer == "r")
+                    coordinator._restart = answer in ("r", "d")
+                    restart_debug = (answer == "d")
                     coordinator._notify_dashboard()
                     logger.info("Draining — waiting for iteration %d to complete (Ctrl+C again to force stop)...", iter_k)
                     # Break out of serve_forever() once the drain completes;
@@ -1232,8 +1234,10 @@ def main():
     coordinator._save_state()
     server.server_close()
     if coordinator.draining and coordinator._restart:
-        logger.info("Restarting coordinator...")
+        logger.info("Restarting coordinator%s...", " in debug mode" if restart_debug else "")
         restart_cmd = [sys.argv[0], "-c", args.config, "-p", str(args.port)]
+        if restart_debug:
+            restart_cmd.append("--debug")
         os.execv(sys.executable, [sys.executable] + restart_cmd)
     else:
         logger.info("Shutting down.")
