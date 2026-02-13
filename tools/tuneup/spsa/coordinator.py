@@ -1192,6 +1192,13 @@ def main():
     class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
         daemon_threads = True
 
+        def handle_error(self, _request, client_address):
+            exc = sys.exc_info()[1]
+            if isinstance(exc, ConnectionError):
+                logger.warning("Connection error from %s: %s", client_address, exc)
+            else:
+                logger.error("Request error from %s:", client_address, exc_info=True)
+
     server = ThreadedHTTPServer(("0.0.0.0", args.port), CoordinatorHandler)
     logger.info("Coordinator ready, waiting for workers...")
 

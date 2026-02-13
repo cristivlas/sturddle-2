@@ -82,12 +82,6 @@
         .card.collapsed h2 {{
             color: #aaa;
         }}
-        .card.last-on .card-header {{
-            cursor: default;
-        }}
-        .card.last-on .caret {{
-            visibility: hidden;
-        }}
         .content {{
             padding: 20px 24px;
             display: flex;
@@ -155,6 +149,29 @@
             a[href="/logs"] {{ display: none; }}
         }}
     </style>
+    <!-- Pre-render collapsed state from localStorage to prevent flicker -->
+    <script>
+        (function() {{
+            try {{
+                var saved = JSON.parse(localStorage.getItem('chartVis'));
+                if (saved) {{
+                    var css = '';
+                    for (var k in saved) {{
+                        if (!saved[k]) css += '[data-chart="' + k + '"] > *:not(.card-header) {{ display:none }}'
+                            + '[data-chart="' + k + '"] {{ flex:0 0 auto }}'
+                            + '[data-chart="' + k + '"] h2 {{ color:#aaa }}'
+                            + '[data-chart="' + k + '"] .caret {{ transform:rotate(-90deg) }}';
+                    }}
+                    if (css) {{
+                        var s = document.createElement('style');
+                        s.id = 'pre-collapse';
+                        s.textContent = css;
+                        document.head.appendChild(s);
+                    }}
+                }}
+            }} catch(e) {{}}
+        }})();
+    </script>
     <!-- Time-of-day theme (keep in sync across dashboard/charts/logs templates) -->
     <script>
         function applyTimeTheme() {{
@@ -211,6 +228,7 @@
     </div>
 
     <script>
+        var chartKeys = ['params', 'elo', 'rates'];
         var chartVis = {{ params: true, elo: true, rates: true }};
         try {{
             var saved = JSON.parse(localStorage.getItem('chartVis'));
@@ -220,23 +238,24 @@
             }}
         }} catch(e) {{}}
 
-        function countOn() {{
-            return Object.values(chartVis).filter(Boolean).length;
-        }}
-
         function applyVis() {{
-            var onCount = countOn();
             document.querySelectorAll('[data-chart]').forEach(function(card) {{
                 var key = card.getAttribute('data-chart');
                 card.classList.toggle('collapsed', !chartVis[key]);
-                card.classList.toggle('last-on', chartVis[key] && onCount === 1);
             }});
+            // Remove pre-render style now that classes are applied
+            var pre = document.getElementById('pre-collapse');
+            if (pre) pre.remove();
             localStorage.setItem('chartVis', JSON.stringify(chartVis));
         }}
 
         function toggleChart(key) {{
-            if (chartVis[key] && countOn() <= 1) return;
             chartVis[key] = !chartVis[key];
+            // If all off, cycle to the next chart
+            if (!Object.values(chartVis).some(Boolean)) {{
+                var next = chartKeys[(chartKeys.indexOf(key) + 1) % chartKeys.length];
+                chartVis[next] = true;
+            }}
             applyVis();
         }}
 
