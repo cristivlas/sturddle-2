@@ -976,7 +976,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
 
         # Read log file
         log_file = self.coordinator.logs_dir / "coordinator.log"
-        log_lines_html = ""
+        parts = []
         total_lines = 0
 
         try:
@@ -998,14 +998,16 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                         elif "[DEBUG]" in line:
                             css_class += " log-line-debug"
 
-                        log_lines_html += f'<div class="{css_class}">{line}</div>\n'
+                        parts.append(f'<div class="{css_class}"><span class="log-line-content">{line}</span></div>')
                         total_lines += 1
             else:
-                log_lines_html = '<div class="log-line">Log file not found</div>'
+                parts.append('<div class="log-line"><span class="log-line-content">Log file not found</span></div>')
                 total_lines = 1
         except Exception as e:
-            log_lines_html = f'<div class="log-line log-line-error">Error reading log file: {str(e)}</div>'
+            parts.append(f'<div class="log-line log-line-error"><span class="log-line-content">Error reading log file: {str(e)}</span></div>')
             total_lines = 1
+
+        log_lines_html = '\n'.join(parts)
 
         return template.format(
             version=VERSION,

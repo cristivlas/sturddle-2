@@ -151,15 +151,18 @@
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             font-size: 13px;
             line-height: 1.6;
+            counter-reset: log-line;
         }}
-        .log-entry {{
+        .log-line {{
             display: flex;
             align-items: flex-start;
+            counter-increment: log-line;
         }}
-        .log-entry:hover {{
+        .log-line:hover {{
             background: rgba(255, 255, 255, 0.05);
         }}
-        .line-number {{
+        .log-line::before {{
+            content: counter(log-line);
             color: #858585;
             text-align: right;
             padding: 0 16px;
@@ -170,7 +173,7 @@
             position: sticky;
             left: 0;
         }}
-        .log-line {{
+        .log-line-content {{
             color: #d4d4d4;
             white-space: pre-wrap;
             word-wrap: break-word;
@@ -271,23 +274,8 @@
         let matches = [];
         let currentMatchIndex = -1;
 
-        // Add line numbers dynamically
-        const logLines = Array.from(logContainer.querySelectorAll('.log-line'));
-        logLines.forEach((line, index) => {{
-            const entry = document.createElement('div');
-            entry.className = 'log-entry';
-
-            const lineNum = document.createElement('div');
-            lineNum.className = 'line-number';
-            lineNum.textContent = index + 1;
-
-            line.parentNode.insertBefore(entry, line);
-            entry.appendChild(lineNum);
-            entry.appendChild(line);
-        }});
-
         // Store original content on load
-        document.querySelectorAll('.log-entry .log-line').forEach(line => {{
+        document.querySelectorAll('.log-line-content').forEach(line => {{
             originalContent.push({{
                 element: line,
                 text: line.textContent

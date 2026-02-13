@@ -258,6 +258,7 @@
             else                        {{ s = '#3d4f7c'; e = '#1a1a2e'; }}
             document.documentElement.style.setProperty('--accent-start', s);
             document.documentElement.style.setProperty('--accent-end', e);
+            if (typeof setThetaView === 'function') setThetaView(showInternal);
         }}
         applyTimeTheme();
         setInterval(applyTimeTheme, 3600000);
