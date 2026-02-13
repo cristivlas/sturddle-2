@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-"""
-Apply SPSA tuning results to config.h using tuning.json for parameter metadata.
-
-Unlike apply_spsa.py, this does not require loading the chess engine — all
-parameter metadata (including original ranges for normalized parameters) is
-read from tuning.json.
-
-Usage:
-    python apply.py <project_dir> [--config config.h] [--finalize]
-    python apply.py <project_dir> --state alt_state.json [--config config.h]
-"""
+"""Apply SPSA tuning results to config.h using tuning.json for parameter metadata."""
 
 import argparse
 import json
@@ -73,6 +63,12 @@ def update_config(config_file, engine_values, finalize=False):
                     old_val = match.group(2)
                     after = match.group(3)
 
+                    # Finalize macro first so alignment accounts for name change
+                    if finalize and macro != 'DECLARE_VALUE':
+                        pad = ' ' * (len(macro) - len('DECLARE_VALUE'))
+                        before = before.replace(macro + '(', 'DECLARE_VALUE(' + pad, 1)
+                        finalized.add(name)
+
                     new_val = str(value)
 
                     # Preserve column alignment
@@ -85,10 +81,6 @@ def update_config(config_file, engine_values, finalize=False):
                     if line != original_line:
                         updated.add(name)
                         logging.info(f"Updated: {original_line.strip()} -> {line.strip()}")
-
-                    if finalize and macro != 'DECLARE_VALUE':
-                        line = line.replace(macro, 'DECLARE_VALUE', 1)
-                        finalized.add(name)
 
                     break
         updated_lines.append(line)
@@ -110,19 +102,24 @@ def main():
     parser = argparse.ArgumentParser(
         description='Apply SPSA tuning results to config.h (using tuning.json for parameter metadata).'
     )
-    parser.add_argument('project', help='Path to SPSA project directory (containing tuning.json)')
+    parser.add_argument('project', help='Path to SPSA project directory or tuning.json file')
     parser.add_argument('--state', default=None, help='Path to spsa_state.json (default: <project>/spsa_state.json)')
     parser.add_argument('--config', default='config.h', help='Path to config.h (default: config.h)')
     parser.add_argument('--finalize', action='store_true', help='Convert DECLARE_PARAM/DECLARE_NORMAL to DECLARE_VALUE')
     args = parser.parse_args()
 
-    project_dir = args.project
-    if not os.path.isdir(project_dir):
-        logging.error(f"Project directory not found: {project_dir}")
+    # Accept either a project directory or a tuning.json file directly
+    if os.path.isfile(args.project) and args.project.endswith('.json'):
+        tuning_path = args.project
+        project_dir = os.path.dirname(tuning_path) or '.'
+    elif os.path.isdir(args.project):
+        project_dir = args.project
+        tuning_path = os.path.join(project_dir, 'tuning.json')
+    else:
+        logging.error(f"Not a valid project directory or tuning.json: {args.project}")
         sys.exit(1)
 
     # Load tuning config for parameter metadata
-    tuning_path = os.path.join(project_dir, 'tuning.json')
     if not os.path.exists(tuning_path):
         logging.error(f"Tuning config not found: {tuning_path}")
         sys.exit(1)

@@ -420,14 +420,15 @@
 
         function setThetaView(internal) {{
             showInternal = internal;
+            var accent = getComputedStyle(document.documentElement).getPropertyValue('--accent-start').trim();
             var ti = document.getElementById('togInternal');
             var te = document.getElementById('togEngine');
-            ti.style.background = internal ? '#667eea' : '';
+            ti.style.background = internal ? accent : '';
             ti.style.color = internal ? '#fff' : '#666';
-            ti.style.borderColor = internal ? '#667eea' : '#ccc';
-            te.style.background = internal ? '' : '#667eea';
+            ti.style.borderColor = internal ? accent : '#ccc';
+            te.style.background = internal ? '' : accent;
             te.style.color = internal ? '#666' : '#fff';
-            te.style.borderColor = internal ? '#ccc' : '#667eea';
+            te.style.borderColor = internal ? '#ccc' : accent;
             renderTheta(internal ? currentThetaInternal : currentTheta);
         }}
 
