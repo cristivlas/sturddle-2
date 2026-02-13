@@ -132,7 +132,7 @@ class CoordinatorState:
         self.total_draws = 0
         self.total_losses = 0
         self.pending_chunks = {}  # chunk_id -> ChunkInfo
-        self.stolen_chunks = {}   # stolen_cid -> replacement_cid
+        self.stolen_chunks = {}   # stolen_cid -> (replacement_cid, victim_worker)
 
         # Worker registry: keyed by self-reported name (hostname or worker config
         # "name" field).  Fine for trusted homelab / LAN setups; a public-facing
@@ -219,6 +219,9 @@ class CoordinatorState:
         if not chunks:
             if (now - w.last_seen) < self.config.worker_idle_timeout:
                 return WorkerStatus.ONLINE
+            # Worker may still be processing a chunk that was stolen from it
+            if any(wn == name for _, wn in self.stolen_chunks.values()):
+                return WorkerStatus.ONLINE
             return WorkerStatus.TIMED_OUT
         if not any(now - c.assign_time < c.timeout for c in chunks):
             return WorkerStatus.TIMED_OUT
@@ -274,6 +277,13 @@ class CoordinatorState:
         if bootstrap:
             cap = max(10, int(self.config.min_chunk_timeout / self._base_sec_per_game))
             chunk = min(chunk, cap)
+        else:
+            # Floor: don't hand out chunks so small that startup overhead
+            # dominates.  Naturally inactive for long TC (spg >= threshold).
+            spg = self._worker_sec_per_game(worker_name)
+            if spg > 0:
+                min_games = int(self.config.min_chunk_expected_duration / spg)
+                chunk = max(chunk, min(remaining, min_games))
 
         # If remainder is too small to split, take it all
         if remaining - chunk < num_workers:
@@ -362,7 +372,7 @@ class CoordinatorState:
             new_expected = chunk.num_games * spg
 
             overdue = self._is_overdue(now, chunk.assign_time, expected)
-            if overdue:
+            if overdue and spg < self._worker_sec_per_game(chunk.worker_name):
                 logger.warning(
                     "Work steal: %s taking %s [%s] %d games (overdue) — elapsed=%.1fs expected=%.1fs",
                     worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected,
@@ -400,12 +410,12 @@ class CoordinatorState:
             chunk.num_games, chunk.worker_name, best_cid,
             worker_name, now - chunk.assign_time, best_saving, spg,
         )
-        return best_cid, chunk.num_games
+        return best_cid, chunk.num_games, chunk.worker_name
 
     def _release_chunk(self, cid: str, reason: str):
         """Remove a chunk from pending tracking and clean up stolen_chunks."""
         chunk = self.pending_chunks.pop(cid)
-        stolen_cid = next((k for k, v in self.stolen_chunks.items() if v == cid), None)
+        stolen_cid = next((k for k, (v, _) in self.stolen_chunks.items() if v == cid), None)
         if stolen_cid:
             self.stolen_chunks.pop(stolen_cid)
         if cid in self.stolen_chunks:
@@ -468,13 +478,14 @@ class CoordinatorState:
                          worker_name, remaining, self.games_completed, self._games_in_flight())
             stolen_cid = None
             stolen_games = 0
+            stolen_from = None
 
             if remaining <= 0:
                 steal = None
                 if self.config.work_stealing:
                     steal = self._try_steal_chunk(worker_name)
                 if steal:
-                    stolen_cid, stolen_games = steal
+                    stolen_cid, stolen_games, stolen_from = steal
                     remaining = gpi - self._games_assigned()
                 elif self.draining and not self._restart:
                     return {"status": "done"}
@@ -514,7 +525,7 @@ class CoordinatorState:
 
             # Record steal race so either finisher can resolve it
             if stolen_cid:
-                self.stolen_chunks[stolen_cid] = chunk_id
+                self.stolen_chunks[stolen_cid] = (chunk_id, stolen_from)
 
             work = WorkItem(
                 iteration=self.current_work.iteration,
@@ -557,12 +568,12 @@ class CoordinatorState:
             chunk = None
             if result.chunk_id in self.pending_chunks:
                 chunk = self.pending_chunks.pop(result.chunk_id)
-                stolen_cid = next((k for k, v in self.stolen_chunks.items() if v == result.chunk_id), None)
+                stolen_cid = next((k for k, (v, _) in self.stolen_chunks.items() if v == result.chunk_id), None)
                 if stolen_cid:
                     self.stolen_chunks.pop(stolen_cid)
                     logger.info("Replacement [%s] from %s won against [%s]", result.chunk_id, result.worker, stolen_cid)
             elif result.chunk_id in self.stolen_chunks:
-                replacement_cid = self.stolen_chunks.pop(result.chunk_id)
+                replacement_cid, _ = self.stolen_chunks.pop(result.chunk_id)
                 if replacement_cid in self.pending_chunks:
                     replacement = self.pending_chunks.pop(replacement_cid)
                     logger.info("Got [%s] from %s, cancelled [%s] (%d games)", result.chunk_id, result.worker, replacement_cid, replacement.num_games)
