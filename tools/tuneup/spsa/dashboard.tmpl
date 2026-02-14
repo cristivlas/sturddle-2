@@ -580,6 +580,7 @@
 
         // --- SSE live updates ---
         let knownHistoryLen = {history_total};
+        const maxHist = parseInt('{dashboard_history}', 10) || 0;  // 0 = unlimited
         const serverStart = '{server_start}';
 
         const sse = new EventSource('/sse');
@@ -625,6 +626,9 @@
                     // Prepend to table (newest first)
                     const tbody = document.getElementById('historyBody');
                     tbody.insertBefore(historyRow(d.last_history), tbody.firstChild);
+                    // Trim oldest row if over limit
+                    if (maxHist > 0 && tbody.children.length > maxHist)
+                        tbody.removeChild(tbody.lastChild);
 
                     // Update chart
                     if (thetaChart && d.last_history.theta) {{
@@ -634,6 +638,11 @@
                                 ? d.last_history.theta[ds.label] : null;
                             ds.data.push(val);
                         }});
+                        // Trim oldest chart point if over limit
+                        if (maxHist > 0 && thetaChart.data.labels.length > maxHist) {{
+                            thetaChart.data.labels.shift();
+                            thetaChart.data.datasets.forEach(ds => ds.data.shift());
+                        }}
                         thetaChart.update();
                     }}
                 }}

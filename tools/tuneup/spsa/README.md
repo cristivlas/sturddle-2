@@ -162,10 +162,11 @@ interval set by `dashboard_refresh` in tuning.json.
 | `work_stealing` | Reclaim chunks from slow workers for fast idle ones | `true` |
 | `overdue_factor` | Factor on expected duration to declare a chunk overdue | `1.25` |
 | `worker_idle_timeout` | Seconds before an idle worker (no chunks) is considered dead | `120.0` |
-| `chunk_timeout_factor` | Factor on expected duration for chunk timeout | `2.5` |
+| `chunk_timeout_factor` | Factor on expected duration for chunk timeout | `2.0` |
 | `min_chunk_timeout` | Minimum chunk timeout in seconds | `60.0` |
 | `min_chunk_expected_duration` | Floor for expected chunk duration | `60.0` |
 | `static_dir` | Directory for static assets (favicon, etc.); empty = disabled | `""` |
+| `log_rotation` | Enable daily log rotation (keeps 30 days of rotated files) | `true` |
 | `spsa.budget` | Total games budget (iterations * games_per_iteration) | `10000` |
 | `spsa.a` | Learning rate | `0.5` |
 | `spsa.c` | Perturbation as fraction of parameter range | `0.05` |
@@ -195,4 +196,5 @@ interval set by `dashboard_refresh` in tuning.json.
 | `http_retry_timeout` | Seconds to retry on coordinator connection errors | `300` |
 | `parameter_overrides` | Per-machine UCI engine options (e.g., SyzygyPath) | `{}` |
 | `cutechess_overrides` | Per-machine cutechess-cli overrides (`tc`, `depth`) | `{}` |
+| `log_rotation` | Enable daily log rotation (keeps 30 days of rotated files) | `true` |
 

@@ -107,11 +107,13 @@ class TuningConfig:
     work_stealing: bool = True
     overdue_factor: float = 1.25
     worker_idle_timeout: float = 120.0
-    chunk_timeout_factor: float = 2.5
+    chunk_timeout_factor: float = 2.0
     min_chunk_timeout: float = 60.0
     min_chunk_expected_duration: float = 60.0
     # Directory for static assets (favicon, etc.); empty = disabled
     static_dir: str = ""
+    # Daily log rotation (keeps rotated files with date suffix)
+    log_rotation: bool = True
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
     parameters: Dict[str, Parameter] = field(default_factory=dict)
 
@@ -203,6 +205,8 @@ class WorkerConfig:
     parameter_overrides: dict = field(default_factory=dict)
     # cutechess-cli overrides: tc, depth, etc. (not UCI options)
     cutechess_overrides: dict = field(default_factory=dict)
+    # Daily log rotation (keeps rotated files with date suffix)
+    log_rotation: bool = True
 
     @classmethod
     def from_json(cls, path: str) -> "WorkerConfig":

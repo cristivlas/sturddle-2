@@ -12,6 +12,7 @@ Usage:
 import argparse
 import json
 import logging
+import logging.handlers
 import mimetypes
 import os
 import sys
@@ -870,6 +871,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -1115,7 +1117,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             self.send_error(404)
 
 
-def setup_logging(log_dir: Path, debug: bool = False):
+def setup_logging(log_dir: Path, debug: bool = False, rotate: bool = True):
     """Configure logging to file and stdout."""
     log_file = log_dir / "coordinator.log"
 
@@ -1124,7 +1126,12 @@ def setup_logging(log_dir: Path, debug: bool = False):
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    file_handler = logging.FileHandler(log_file)
+    if rotate:
+        file_handler = logging.handlers.TimedRotatingFileHandler(
+            log_file, when="midnight", backupCount=30,
+        )
+    else:
+        file_handler = logging.FileHandler(log_file)
     file_handler.setFormatter(formatter)
 
     console_handler = logging.StreamHandler()
@@ -1153,11 +1160,11 @@ def main():
     if args.clean:
         if state_file.exists():
             state_file.unlink()
-        for log in logs_dir.glob("*.log"):
+        for log in logs_dir.glob("*.log*"):
             log.unlink()
 
     logs_dir.mkdir(parents=True, exist_ok=True)
-    setup_logging(logs_dir, debug=args.debug)
+    setup_logging(logs_dir, debug=args.debug, rotate=config.log_rotation)
 
     if args.clean:
         logger.info("Clean start: state and logs wiped")

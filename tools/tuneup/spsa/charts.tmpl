@@ -133,6 +133,69 @@
             letter-spacing: 0.5px;
             margin-bottom: 2px;
         }}
+        .zoom-bar {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 0 0 auto;
+        }}
+        .zoom-track {{
+            position: relative;
+            flex: 1;
+            height: 32px;
+        }}
+        .zoom-track .bg {{
+            position: absolute;
+            left: 0; right: 0; top: 50%; height: 4px;
+            transform: translateY(-50%);
+            background: #ddd;
+            border-radius: 2px;
+        }}
+        .zoom-track .fill {{
+            position: absolute;
+            top: 50%; height: 4px;
+            transform: translateY(-50%);
+            background: var(--accent-start, #667eea);
+            border-radius: 2px;
+        }}
+        .zoom-track input[type="range"] {{
+            position: absolute;
+            left: 0; width: 100%; top: 0; height: 100%;
+            margin: 0; padding: 0;
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+            pointer-events: none;
+        }}
+        .zoom-track input[type="range"]::-webkit-slider-thumb {{
+            -webkit-appearance: none;
+            pointer-events: auto;
+            width: 22px; height: 22px;
+            border-radius: 50%;
+            background: var(--accent-start, #667eea);
+            border: 2px solid white;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            cursor: pointer;
+        }}
+        .zoom-track input[type="range"]::-moz-range-track {{
+            background: transparent;
+            border: 0; height: 0;
+        }}
+        .zoom-track input[type="range"]::-moz-range-thumb {{
+            pointer-events: auto;
+            width: 20px; height: 20px;
+            border-radius: 50%;
+            background: var(--accent-start, #667eea);
+            border: 2px solid white;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            cursor: pointer;
+        }}
+        .zoom-bar span {{
+            font-size: 11px;
+            color: #999;
+            white-space: nowrap;
+            min-width: 7em;
+        }}
         .refresh-info {{
             padding: 4px 24px;
             font-size: 12px;
@@ -199,6 +262,15 @@
         </div>
 
         <div class="content" id="chartContent">
+            <div class="zoom-bar">
+                <div class="zoom-track">
+                    <div class="bg"></div>
+                    <div class="fill" id="zoomFill"></div>
+                    <input type="range" id="zoomFrom" min="0" max="1" value="0" oninput="onZoom('from')">
+                    <input type="range" id="zoomTo" min="0" max="1" value="1" oninput="onZoom('to')">
+                </div>
+                <span id="zoomLabel">All</span>
+            </div>
             <div class="card" data-chart="params">
                 <div class="card-header" onclick="toggleChart('params')"><span class="caret">&#9660;</span><h2>Parameter Values</h2></div>
                 <div class="chart-wrap"><canvas id="thetaChart"></canvas></div>
@@ -238,15 +310,83 @@
             }}
         }} catch(e) {{}}
 
+        // Dual-slider zoom: control x-axis window across all charts
+        var _labels = [];
+        function onZoom(src) {{
+            var f = document.getElementById('zoomFrom');
+            var t = document.getElementById('zoomTo');
+            // Prevent thumbs from crossing
+            if (src === 'from' && +f.value > +t.value) f.value = t.value;
+            if (src === 'to'   && +t.value < +f.value) t.value = f.value;
+            applyZoomRange(+f.value, +t.value);
+        }}
+        function applyZoomRange(from, to) {{
+            var last = _labels.length - 1;
+            var minVal = from > 0    ? _labels[from] : undefined;
+            var maxVal = to   < last ? _labels[to]   : undefined;
+            // Active charts
+            document.querySelectorAll('canvas').forEach(function(c) {{
+                var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(c);
+                if (!ch) return;
+                if (!ch.options.scales) ch.options.scales = {{}};
+                if (!ch.options.scales.x) ch.options.scales.x = {{}};
+                if (minVal !== undefined) ch.options.scales.x.min = minVal;
+                else delete ch.options.scales.x.min;
+                if (maxVal !== undefined) ch.options.scales.x.max = maxVal;
+                else delete ch.options.scales.x.max;
+                ch.update('none');
+            }});
+            // Pending chart configs
+            for (var id in _pending) {{
+                var o = _pending[id].options;
+                if (!o.scales) o.scales = {{}};
+                if (!o.scales.x) o.scales.x = {{}};
+                if (minVal !== undefined) o.scales.x.min = minVal;
+                else delete o.scales.x.min;
+                if (maxVal !== undefined) o.scales.x.max = maxVal;
+                else delete o.scales.x.max;
+            }}
+            // Fill bar
+            var span = last || 1;
+            var fill = document.getElementById('zoomFill');
+            if (fill) {{
+                fill.style.left  = (from / span * 100) + '%';
+                fill.style.right = ((1 - to / span) * 100) + '%';
+            }}
+            // Label
+            var lbl = document.getElementById('zoomLabel');
+            if (lbl) lbl.textContent = (minVal !== undefined || maxVal !== undefined)
+                ? (_labels[from] || _labels[0]) + ' \u2013 ' + (_labels[to] || _labels[last])
+                : 'All';
+            // Persist
+            try {{ localStorage.setItem('chartZoom', JSON.stringify({{f:from, t:to}})); }} catch(e) {{}}
+        }}
+
+        // Deferred chart creation for canvases hidden at init time
+        var _pending = {{}};
+        var _canvasCard = {{ thetaChart:'params', eloChart:'elo', akChart:'rates', ckChart:'rates' }};
+        function createPending() {{
+            for (var id in _pending) {{
+                var el = document.getElementById(id);
+                if (!el) continue;
+                if (typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(el)) continue;
+                var card = el.closest('[data-chart]');
+                if (card && !card.classList.contains('collapsed')) {{
+                    new Chart(el.getContext('2d'), _pending[id]);
+                    delete _pending[id];
+                }}
+            }}
+        }}
+
         function applyVis() {{
             document.querySelectorAll('[data-chart]').forEach(function(card) {{
                 var key = card.getAttribute('data-chart');
                 card.classList.toggle('collapsed', !chartVis[key]);
             }});
-            // Remove pre-render style now that classes are applied
             var pre = document.getElementById('pre-collapse');
             if (pre) pre.remove();
             localStorage.setItem('chartVis', JSON.stringify(chartVis));
+            requestAnimationFrame(createPending);
         }}
 
         function toggleChart(key) {{
@@ -273,9 +413,41 @@
 
                 history.sort((a,b) => (a.iteration||0) - (b.iteration||0));
                 const labels = history.map(h => h.iteration);
+                _labels = labels;
+                var sMax = labels.length - 1;
+                var sf = document.getElementById('zoomFrom');
+                var st = document.getElementById('zoomTo');
+                if (sf) {{ sf.max = sMax; }}
+                if (st) {{ st.max = sMax; st.value = sMax; }}
+                var _restoredZoom = null;
+                try {{
+                    var sz = JSON.parse(localStorage.getItem('chartZoom'));
+                    if (sz) {{
+                        var zf = Math.max(0, Math.min(sz.f || 0, sMax));
+                        var zt = Math.max(zf, Math.min(sz.t != null ? sz.t : sMax, sMax));
+                        if (sf) sf.value = zf;
+                        if (st) st.value = zt;
+                        if (zf > 0 || zt < sMax) _restoredZoom = [zf, zt];
+                    }}
+                }} catch(e) {{}}
+                const defaultOpts = {{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {{ legend: {{ position: 'bottom' }} }}
+                }};
+
+                // Create chart now if visible, otherwise stash for deferred creation
+                function initChart(canvasId, config) {{
+                    var cardKey = _canvasCard[canvasId];
+                    if (cardKey && !chartVis[cardKey]) {{
+                        _pending[canvasId] = config;
+                    }} else {{
+                        new Chart(document.getElementById(canvasId).getContext('2d'), config);
+                    }}
+                }}
 
                 function makeChart(canvasId, data, label, color) {{
-                    new Chart(document.getElementById(canvasId).getContext('2d'), {{
+                    initChart(canvasId, {{
                         type: 'line',
                         data: {{
                             labels: labels,
@@ -290,11 +462,7 @@
                                 fill: true
                             }}]
                         }},
-                        options: {{
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            plugins: {{ legend: {{ position: 'bottom' }} }}
-                        }}
+                        options: defaultOpts
                     }});
                 }}
 
@@ -309,19 +477,18 @@
                     pointRadius: 1,
                     borderWidth: 2,
                 }}));
-                new Chart(document.getElementById('thetaChart').getContext('2d'), {{
+                initChart('thetaChart', {{
                     type: 'line',
                     data: {{ labels: labels, datasets: thetaDatasets }},
-                    options: {{
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {{ legend: {{ position: 'bottom' }} }}
-                    }}
+                    options: defaultOpts
                 }});
 
                 makeChart('eloChart', history.map(h => h.elo_diff), 'ELO Diff', '#e91e63');
                 makeChart('akChart', history.map(h => h.a_k), 'a_k', '#2196F3');
                 makeChart('ckChart', history.map(h => h.c_k), 'c_k', '#FF9800');
+
+                // Apply saved zoom now that charts and _pending are populated
+                if (_restoredZoom) applyZoomRange(_restoredZoom[0], _restoredZoom[1]);
             }} catch (e) {{
                 console.error('Failed to render charts', e);
             }}

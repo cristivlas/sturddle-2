@@ -12,6 +12,7 @@ Usage:
 import argparse
 import json
 import logging
+import logging.handlers
 import platform
 import re
 import subprocess
@@ -345,14 +346,19 @@ def worker_loop(worker_config: WorkerConfig):
             logger.exception("Terminating.")
             break
 
-def setup_logging(log_file: str, debug: bool = False):
+def setup_logging(log_file: str, debug: bool = False, rotate: bool = True):
     """Configure logging to file and stdout."""
     formatter = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    file_handler = logging.FileHandler(log_file)
+    if rotate:
+        file_handler = logging.handlers.TimedRotatingFileHandler(
+            log_file, when="midnight", backupCount=30,
+        )
+    else:
+        file_handler = logging.FileHandler(log_file)
     file_handler.setFormatter(formatter)
 
     console_handler = logging.StreamHandler()
@@ -372,13 +378,13 @@ def main():
 
     config = WorkerConfig.from_json(args.config)
 
-    # --clean: remove log file (keep games)
+    # --clean: remove log file and rotated copies (keep games)
     if args.clean:
         log_path = Path(config.log_file)
-        if log_path.exists():
-            log_path.unlink()
+        for f in log_path.parent.glob(log_path.name + "*"):
+            f.unlink()
 
-    setup_logging(config.log_file, debug=args.debug)
+    setup_logging(config.log_file, debug=args.debug, rotate=config.log_rotation)
 
     logger.info("Starting worker")
     logger.info("Coordinator: %s", config.coordinator)
