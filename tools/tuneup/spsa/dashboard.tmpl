@@ -300,8 +300,8 @@
 
                 <div class="card">
                     <h2>Scheduled Work</h2>
-                    <div class="card-value" id="pendingValue">{games_pending}</div>
-                    <div class="card-subtext">games pending completion</div>
+                    <div class="card-value"><span id="pendingValue">{games_pending}</span> / <span id="remainingValue">--</span></div>
+                    <div class="card-subtext">pending / remaining</div>
                 </div>
             </div>
 
@@ -516,6 +516,7 @@
         initToggle();
         renderTheta(hasNormalized ? currentThetaInternal : currentTheta);
         renderWorkers(initWorkers);
+        document.getElementById('remainingValue').textContent = {games_total} - {games_done};
         renderHistory(initHistory);
         updateHistoryTitle({history_total});
         updateETA({total_games}, {games_done}, {games_total}, {iteration}, {max_iters});
@@ -607,6 +608,7 @@
             document.getElementById('gamesFill').style.width = d.iter_progress + '%';
             document.getElementById('gamesFill').textContent = Math.round(d.iter_progress) + '%';
             document.getElementById('pendingValue').textContent = d.games_pending;
+            document.getElementById('remainingValue').textContent = d.games_total - d.games_done;
 
             // Stats
             document.getElementById('akValue').textContent = d.a_k.toFixed(6);
