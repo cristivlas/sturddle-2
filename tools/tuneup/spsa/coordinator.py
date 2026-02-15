@@ -989,45 +989,37 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         except FileNotFoundError:
             return "<h1>Error: logs.tmpl not found</h1>"
 
-        # Read log file
+        # Read log file as JSON data for virtual scrolling
         log_file = self.coordinator.logs_dir / "coordinator.log"
-        parts = []
-        total_lines = 0
+        log_entries = []
 
         try:
             if log_file.exists():
                 with open(log_file, "r", encoding="utf-8") as f:
                     for line in f:
                         line = line.rstrip('\n\r')
-                        # Escape HTML special characters
-                        line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-
-                        # Add color coding based on log level
-                        css_class = "log-line"
+                        # Classify log level
+                        level = ""
                         if "[ERROR]" in line:
-                            css_class += " log-line-error"
+                            level = "error"
                         elif "[WARNING]" in line:
-                            css_class += " log-line-warning"
+                            level = "warning"
                         elif "[INFO]" in line:
-                            css_class += " log-line-info"
+                            level = "info"
                         elif "[DEBUG]" in line:
-                            css_class += " log-line-debug"
-
-                        parts.append(f'<div class="{css_class}"><span class="log-line-content">{line}</span></div>')
-                        total_lines += 1
+                            level = "debug"
+                        log_entries.append([line, level])
             else:
-                parts.append('<div class="log-line"><span class="log-line-content">Log file not found</span></div>')
-                total_lines = 1
+                log_entries.append(["Log file not found", ""])
         except Exception as e:
-            parts.append(f'<div class="log-line log-line-error"><span class="log-line-content">Error reading log file: {str(e)}</span></div>')
-            total_lines = 1
+            log_entries.append([f"Error reading log file: {str(e)}", "error"])
 
-        log_lines_html = '\n'.join(parts)
+        # Escape braces so str.format() treats them as literals
+        log_data_json = json.dumps(log_entries).replace('{', '{{').replace('}', '}}')
 
         return template.format(
             version=VERSION,
-            log_lines=log_lines_html,
-            total_lines=total_lines,
+            log_data_json=log_data_json,
             timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
         )
 

@@ -151,18 +151,15 @@
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             font-size: 13px;
             line-height: 1.6;
-            counter-reset: log-line;
         }}
         .log-line {{
             display: flex;
             align-items: flex-start;
-            counter-increment: log-line;
         }}
         .log-line:hover {{
             background: rgba(255, 255, 255, 0.05);
         }}
-        .log-line::before {{
-            content: counter(log-line);
+        .log-num {{
             color: #858585;
             text-align: right;
             padding: 0 16px;
@@ -175,8 +172,7 @@
         }}
         .log-line-content {{
             color: #d4d4d4;
-            white-space: pre-wrap;
-            word-wrap: break-word;
+            white-space: pre;
             flex: 1;
             padding: 0 16px 0 8px;
         }}
@@ -191,16 +187,16 @@
             border: 1px solid #ff9800;
             padding: 0px 1px;
         }}
-        .log-line-error {{
+        .log-line-error .log-line-content {{
             color: #f48771;
         }}
-        .log-line-warning {{
+        .log-line-warning .log-line-content {{
             color: #dcdcaa;
         }}
-        .log-line-info {{
+        .log-line-info .log-line-content {{
             color: #4ec9b0;
         }}
-        .log-line-debug {{
+        .log-line-debug .log-line-content {{
             color: #9cdcfe;
         }}
         .refresh-info {{
@@ -247,15 +243,13 @@
                 <input type="text" id="searchInput" class="search-input" placeholder="Search logs...">
                 <span class="search-stats" id="searchStats"></span>
                 <div class="search-nav">
-                    <button class="nav-button" id="prevButton" onclick="navigatePrev()" title="Previous match (Shift+Enter)">↑</button>
-                    <button class="nav-button" id="nextButton" onclick="navigateNext()" title="Next match (Enter)">↓</button>
+                    <button class="nav-button" id="prevButton" onclick="navigatePrev()" title="Previous match (Shift+Enter)">&#x2191;</button>
+                    <button class="nav-button" id="nextButton" onclick="navigateNext()" title="Next match (Enter)">&#x2193;</button>
                 </div>
-                <button class="clear-button" onclick="clearSearch()" title="Clear search">×</button>
+                <button class="clear-button" onclick="clearSearch()" title="Clear search">&#xd7;</button>
             </div>
 
-            <div class="log-container" id="logContainer">
-{log_lines}
-            </div>
+            <div class="log-container" id="logContainer"></div>
         </div>
 
         <div class="refresh-info">
@@ -264,141 +258,168 @@
     </div>
 
     <script>
-        const searchInput = document.getElementById('searchInput');
-        const logContainer = document.getElementById('logContainer');
-        const searchStats = document.getElementById('searchStats');
-        const prevButton = document.getElementById('prevButton');
-        const nextButton = document.getElementById('nextButton');
+        var LOG_DATA = {log_data_json};
+        var LINE_HEIGHT = Math.round(13 * 1.6);
+        var BUFFER = 30;
 
-        let originalContent = [];
-        let matches = [];
-        let currentMatchIndex = -1;
+        var container = document.getElementById('logContainer');
+        var searchInput = document.getElementById('searchInput');
+        var searchStats = document.getElementById('searchStats');
+        var prevButton = document.getElementById('prevButton');
+        var nextButton = document.getElementById('nextButton');
 
-        // Store original content on load
-        document.querySelectorAll('.log-line-content').forEach(line => {{
-            originalContent.push({{
-                element: line,
-                text: line.textContent
+        var matches = [];
+        var currentMatchIndex = -1;
+        var matchesByLine = {{}};
+        var renderedStart = -1;
+        var renderedEnd = -1;
+        var renderedMatchGen = 0;
+        var matchGen = 0;
+
+        function escapeHtml(s) {{
+            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }}
+
+        function escapeRegex(s) {{
+            return s.replace(/[.*+?^${{}}()|[\]\\]/g, '\\$&');
+        }}
+
+        function renderLines(force) {{
+            var scrollTop = container.scrollTop;
+            var viewHeight = container.clientHeight;
+            var firstVisible = Math.floor(scrollTop / LINE_HEIGHT);
+            var visibleCount = Math.ceil(viewHeight / LINE_HEIGHT);
+            var start = Math.max(0, firstVisible - BUFFER);
+            var end = Math.min(LOG_DATA.length, firstVisible + visibleCount + BUFFER);
+
+            if (!force && start === renderedStart && end === renderedEnd && matchGen === renderedMatchGen) return;
+            renderedStart = start;
+            renderedEnd = end;
+            renderedMatchGen = matchGen;
+
+            var scrollLeft = container.scrollLeft;
+            var padTop = start * LINE_HEIGHT;
+            var padBottom = Math.max(0, (LOG_DATA.length - end) * LINE_HEIGHT);
+            var parts = ['<div style="height:' + padTop + 'px"></div>'];
+
+            for (var i = start; i < end; i++) {{
+                var text = LOG_DATA[i][0];
+                var level = LOG_DATA[i][1];
+                var cls = level ? 'log-line log-line-' + level : 'log-line';
+                var content;
+                var lineMatches = matchesByLine[i];
+
+                if (lineMatches) {{
+                    content = '';
+                    var lastPos = 0;
+                    for (var m = 0; m < lineMatches.length; m++) {{
+                        var mi = lineMatches[m];
+                        content += escapeHtml(text.substring(lastPos, mi.start));
+                        var markCls = mi.globalIndex === currentMatchIndex ? ' current' : '';
+                        content += '<mark class="' + markCls + '">' + escapeHtml(text.substring(mi.start, mi.end)) + '</mark>';
+                        lastPos = mi.end;
+                    }}
+                    content += escapeHtml(text.substring(lastPos));
+                }} else {{
+                    content = escapeHtml(text);
+                }}
+
+                parts.push(
+                    '<div class="' + cls + '" style="height:' + LINE_HEIGHT + 'px">' +
+                    '<span class="log-num">' + (i + 1) + '</span>' +
+                    '<span class="log-line-content">' + content + '</span></div>'
+                );
+            }}
+
+            parts.push('<div style="height:' + padBottom + 'px"></div>');
+            container.innerHTML = parts.join('');
+            container.scrollLeft = scrollLeft;
+        }}
+
+        var rafId = 0;
+        container.addEventListener('scroll', function() {{
+            if (rafId) return;
+            rafId = requestAnimationFrame(function() {{
+                rafId = 0;
+                renderLines(false);
             }});
         }});
 
-        // Auto-scroll to bottom on load
-        logContainer.scrollTop = logContainer.scrollHeight;
-
-        // Escape regex special characters
-        function escapeRegex(str) {{
-            return str.replace(/[.*+?^${{}}()|[\]\\]/g, '\\$&');
-        }}
-
-        // Search functionality
-        searchInput.addEventListener('input', function() {{
-            performSearch();
-        }});
+        /* --- Search --- */
 
         function performSearch() {{
-            const query = searchInput.value;
+            var query = searchInput.value;
             matches = [];
+            matchesByLine = {{}};
             currentMatchIndex = -1;
+            matchGen++;
 
-            if (query === '') {{
-                // Restore original content
-                originalContent.forEach(item => {{
-                    item.element.innerHTML = item.text;
-                }});
-                searchStats.textContent = '';
-                prevButton.disabled = true;
-                nextButton.disabled = true;
-                return;
+            if (query !== '') {{
+                var regex = new RegExp(escapeRegex(query), 'gi');
+                for (var i = 0; i < LOG_DATA.length; i++) {{
+                    var text = LOG_DATA[i][0];
+                    var match;
+                    regex.lastIndex = 0;
+                    while ((match = regex.exec(text)) !== null) {{
+                        var entry = {{ lineIndex: i, start: match.index, end: match.index + match[0].length, globalIndex: matches.length }};
+                        matches.push(entry);
+                        if (!matchesByLine[i]) matchesByLine[i] = [];
+                        matchesByLine[i].push(entry);
+                    }}
+                }}
             }}
 
-            // Search and highlight matches
-            const regex = new RegExp('(' + escapeRegex(query) + ')', 'gi');
-
-            originalContent.forEach((item, lineIndex) => {{
-                const text = item.text;
-                let lastIndex = 0;
-                let html = '';
-                let match;
-                let matchCount = 0;
-
-                const regexCopy = new RegExp(regex.source, regex.flags);
-
-                while ((match = regexCopy.exec(text)) !== null) {{
-                    html += text.substring(lastIndex, match.index);
-                    html += '<mark data-line="' + lineIndex + '" data-match="' + matchCount + '">' + match[0] + '</mark>';
-                    matches.push({{ line: lineIndex, match: matchCount, element: item.element }});
-                    lastIndex = match.index + match[0].length;
-                    matchCount++;
-                }}
-                html += text.substring(lastIndex);
-
-                item.element.innerHTML = html;
-            }});
-
-            // Update stats
             if (matches.length > 0) {{
                 currentMatchIndex = 0;
-                highlightCurrentMatch();
-                searchStats.textContent = '1 of ' + matches.length;
                 prevButton.disabled = false;
                 nextButton.disabled = false;
+                searchStats.textContent = '1 of ' + matches.length;
+                scrollToCurrentMatch();
             }} else {{
-                searchStats.textContent = 'No matches';
+                searchStats.textContent = query ? 'No matches' : '';
                 prevButton.disabled = true;
                 nextButton.disabled = true;
+                renderLines(true);
             }}
         }}
 
-        function highlightCurrentMatch() {{
+        function scrollToCurrentMatch() {{
             if (currentMatchIndex < 0 || currentMatchIndex >= matches.length) return;
-
-            // Remove previous current highlight
-            document.querySelectorAll('mark.current').forEach(m => m.classList.remove('current'));
-
-            // Highlight current match
-            const current = matches[currentMatchIndex];
-            const mark = current.element.querySelector('mark[data-line="' + current.line + '"][data-match="' + current.match + '"]');
-            if (mark) {{
-                mark.classList.add('current');
-                mark.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-            }}
-
-            // Update stats
+            var m = matches[currentMatchIndex];
+            var targetScroll = m.lineIndex * LINE_HEIGHT - container.clientHeight / 2 + LINE_HEIGHT / 2;
+            container.scrollTop = Math.max(0, targetScroll);
             searchStats.textContent = (currentMatchIndex + 1) + ' of ' + matches.length;
+            renderLines(true);
         }}
 
         function navigateNext() {{
             if (matches.length === 0) return;
             currentMatchIndex = (currentMatchIndex + 1) % matches.length;
-            highlightCurrentMatch();
+            scrollToCurrentMatch();
         }}
 
         function navigatePrev() {{
             if (matches.length === 0) return;
             currentMatchIndex = (currentMatchIndex - 1 + matches.length) % matches.length;
-            highlightCurrentMatch();
+            scrollToCurrentMatch();
         }}
 
-        // Clear search
         function clearSearch() {{
             searchInput.value = '';
             performSearch();
-            logContainer.scrollTop = logContainer.scrollHeight;
+            container.scrollTop = container.scrollHeight;
         }}
 
-        // Keyboard shortcuts
+        searchInput.addEventListener('input', performSearch);
+
         searchInput.addEventListener('keydown', function(e) {{
             if (e.key === 'Enter') {{
                 e.preventDefault();
-                if (e.shiftKey) {{
-                    navigatePrev();
-                }} else {{
-                    navigateNext();
-                }}
+                if (e.shiftKey) navigatePrev();
+                else navigateNext();
             }}
         }});
 
-        // Focus search on Ctrl+F or Cmd+F
         document.addEventListener('keydown', function(e) {{
             if ((e.ctrlKey || e.metaKey) && e.key === 'f') {{
                 e.preventDefault();
@@ -407,6 +428,11 @@
                 clearSearch();
             }}
         }});
+
+        /* --- Initial render, scrolled to bottom --- */
+        container.innerHTML = '<div style="height:' + (LOG_DATA.length * LINE_HEIGHT) + 'px"></div>';
+        container.scrollTop = container.scrollHeight;
+        renderLines(true);
     </script>
 </body>
 </html>

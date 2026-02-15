@@ -360,10 +360,7 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
             work.num_games, total, wins, losses, draws,
         )
 
-    logger.info(
-        "Results: W=%d D=%d L=%d (%d games)",
-        wins, draws, losses, total,
-    )
+    logger.info("Results: W=%d D=%d L=%d (%d games)", wins, draws, losses, total)
 
     return wins, draws, losses
 
