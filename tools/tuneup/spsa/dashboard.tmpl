@@ -441,6 +441,9 @@
             }}
         }}
 
+        var lastWorkerUpdate = Date.now();
+        var latestWorkers = [];
+
         function renderWorkers(workers) {{
             workers.sort((a, b) => b.games_completed - a.games_completed);
             const tbody = document.getElementById('workersBody');
@@ -457,13 +460,24 @@
                 tr.title = tip;
                 tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + w.name + '</td>'
                              + '<td style="' + style + '">' + status + '</td>'
-                             + '<td>' + Math.round(w.last_seen_ago) + 's ago</td>'
+                             + '<td class="worker-seen">' + Math.round(w.last_seen_ago) + 's ago</td>'
                              + '<td>' + w.games_assigned + '</td>'
                              + '<td>' + w.games_completed_iter + '</td>'
                              + '<td>' + w.games_completed + '</td>';
                 tbody.appendChild(tr);
             }});
+            latestWorkers = workers;
+            lastWorkerUpdate = Date.now();
         }}
+
+        // Tick last-seen counters client-side between SSE pushes
+        setInterval(function() {{
+            var elapsed = Math.round((Date.now() - lastWorkerUpdate) / 1000);
+            var cells = document.querySelectorAll('.worker-seen');
+            for (var i = 0; i < cells.length && i < latestWorkers.length; i++) {{
+                cells[i].textContent = Math.round(latestWorkers[i].last_seen_ago + elapsed) + 's ago';
+            }}
+        }}, 1000);
 
         function historyRow(h) {{
             const sd = (h.score_diff >= 0 ? '+' : '') + h.score_diff.toFixed(4);
