@@ -217,6 +217,16 @@ class CoordinatorState:
         if not w:
             return WorkerStatus.TIMED_OUT
         now = time.time()
+        # Fast path: validate heartbeats keep last_seen fresh during games,
+        # so worker_idle_timeout is a universal liveness check.
+        if self.config.validate_interval:
+            if (now - w.last_seen) >= self.config.worker_idle_timeout:
+                return WorkerStatus.TIMED_OUT
+            chunks = [c for c in self.pending_chunks.values() if c.worker_name == name]
+            if chunks and all(self._is_overdue(now, c.assign_time, c.expected_duration) for c in chunks):
+                return WorkerStatus.OVERDUE
+            return WorkerStatus.ONLINE
+        # Fallback: no validate heartbeats, use chunk-based timeouts.
         chunks = [c for c in self.pending_chunks.values() if c.worker_name == name]
         if not chunks:
             if (now - w.last_seen) < self.config.worker_idle_timeout:
@@ -687,6 +697,7 @@ class CoordinatorState:
         logger.info("=" * 60)
 
         # Clear iteration progress and checkpoint
+        self.games_completed = 0
         st = self.optimizer.state
         st.current_delta = {}
         st.games_completed = 0
@@ -706,6 +717,7 @@ class CoordinatorState:
             logger.info("Final parameters:")
             for name, val in self._get_display_values().items():
                 logger.info("  %s = %s", name, val)
+            self.workers.clear()
 
     def _save_state(self):
         """Persist SPSA state with backup of previous version.
@@ -785,8 +797,9 @@ class CoordinatorState:
         """Rich coordinator data for graphical dashboard."""
         now = time.time()
         with self.lock:
-            pct_complete = 0
-            if not self.optimizer.is_done():
+            if self.optimizer.is_done():
+                pct_complete = 100
+            else:
                 pct_complete = (
                     self.optimizer.iteration / self.optimizer.max_iterations * 100
                 )
