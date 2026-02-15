@@ -20,6 +20,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from urllib.parse import parse_qs, urlparse
 from enum import Enum
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -748,6 +749,12 @@ class CoordinatorState:
                 "pending_chunks": len(self.pending_chunks),
             }
 
+    def check_chunk(self, chunk_id: str, worker_name: str) -> bool:
+        """Return True if the chunk is still valid work."""
+        with self.lock:
+            self._touch_worker(worker_name)
+            return chunk_id in self.pending_chunks or chunk_id in self.stolen_chunks
+
     def get_tuning_config_dict(self) -> dict:
         """Tuning config as dict for workers to fetch."""
         return json.loads(self.config.to_json())
@@ -1100,6 +1107,14 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             self._send_json(self.coordinator.get_tuning_config_dict())
         elif self.path == "/status":
             self._send_json(self.coordinator.get_status())
+        elif self.path.startswith("/validate?"):
+            qs = parse_qs(urlparse(self.path).query)
+            worker = qs.get("worker", [""])[0]
+            chunk = qs.get("chunk", [""])[0]
+            if not worker or not chunk:
+                self._send_json({"error": "worker and chunk required"}, status=400)
+            else:
+                self._send_json({"valid": self.coordinator.check_chunk(chunk, worker)})
         else:
             self.send_error(404)
 
@@ -1227,10 +1242,8 @@ def main():
             if not coordinator.optimizer.is_done():
                 can_restart = sys.platform != "win32"
                 try:
-                    if can_restart:
-                        prompt = f"\nWait for iteration {iter_k}? [r]estart | restart in [d]ebug mode | [w]ait and stop | [s]top now | [Enter] to dismiss"
-                    else:
-                        prompt = f"\nWait for iteration {iter_k}? [w]ait and stop | [s]top now | [Enter] to dismiss"
+                    restart_opts = "[r]estart | restart in [d]ebug mode | " if can_restart else ""
+                    prompt = f"\nWait for iteration {iter_k}? {restart_opts}[w]ait and stop | [s]top now | [Enter] to dismiss "
                     answer = input(prompt).strip().lower()
                 except (EOFError, KeyboardInterrupt):
                     answer = ""
@@ -1241,10 +1254,8 @@ def main():
                     coordinator._restart = answer in ("r", "d")
                     restart_debug = (answer == "d")
                     coordinator._notify_dashboard()
-                    if coordinator._restart:
-                        logger.info("Draining — waiting for iteration %d to complete (Ctrl+C again to restart now)...", iter_k)
-                    else:
-                        logger.info("Draining — waiting for iteration %d to complete (Ctrl+C again to force stop)...", iter_k)
+                    hint = "restart now" if coordinator._restart else "force stop"
+                    logger.info("Draining — waiting for iteration %d to complete (Ctrl+C again to %s)...", iter_k, hint)
                     # Break out of serve_forever() once the drain completes;
                     # needs a thread because serve_forever() blocks.
                     def drain_watcher():

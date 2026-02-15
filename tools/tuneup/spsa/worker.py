@@ -31,16 +31,18 @@ logger = logging.getLogger("worker")
 GAME_TIMEOUT = 3600        # max seconds for a cutechess-cli run
 PIPE_DRAIN_TIMEOUT = 30    # seconds to wait for pipe readers after exit
 POLL_INTERVAL = 0.5        # seconds between process-alive checks
+HTTP_TIMEOUT = 30          # seconds for general HTTP requests
+VALIDATE_TIMEOUT = 3       # seconds for chunk-validity HTTP checks
 
 # Graceful-shutdown state
 _current_process = None       # cutechess-cli Popen while games run
 _shutdown_requested = False   # set True after operator chooses "wait"
 
 
-def http_get(url: str) -> dict:
+def http_get(url: str, timeout: int) -> dict:
     """GET request, return parsed JSON."""
     req = urllib.request.Request(url)
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
 
 
@@ -270,13 +272,31 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
 
     # Poll for exit — main thread stays responsive to Ctrl+C.
     # The inner try re-enters after "ignore" so the worker keeps going.
+    validate_interval = tuning_config.get("validate_interval", 0)
+    base_url = worker_config.coordinator.rstrip("/")
+    worker_name = worker_config.name or platform.node()
     deadline = time.monotonic() + GAME_TIMEOUT
+    last_validate = time.monotonic()
     try:
         while proc.poll() is None:
-            if time.monotonic() > deadline:
+            now = time.monotonic()
+            if now > deadline:
                 proc.kill()
                 proc.wait()
                 raise subprocess.TimeoutExpired(cmd[0], GAME_TIMEOUT)
+            # Periodic chunk-validity check
+            if validate_interval and now - last_validate >= validate_interval:
+                last_validate = now
+                try:
+                    resp = http_get("%s/validate?worker=%s&chunk=%s" % (base_url, worker_name, work.chunk_id), VALIDATE_TIMEOUT)
+                    logger.debug("Validate chunk %s: %s", work.chunk_id, resp)
+                    if not resp.get("valid", True):
+                        logger.warning("Chunk %s cancelled by coordinator, aborting games", work.chunk_id)
+                        proc.kill()
+                        proc.wait()
+                        return None
+                except Exception as e:
+                    logger.debug("Validate check failed: %s", e)
             try:
                 time.sleep(POLL_INTERVAL)
             except KeyboardInterrupt:
@@ -354,7 +374,7 @@ def worker_loop(worker_config: WorkerConfig):
 
     # Fetch tuning config from coordinator
     logger.info("Connecting to coordinator at %s", base_url)
-    tuning_config = http_get(f"{base_url}/config")
+    tuning_config = http_get(f"{base_url}/config", HTTP_TIMEOUT)
     logger.info("Received tuning config: %d parameters", len(tuning_config.get("parameters", {})))
 
     # Default retry interval when coordinator asks workers to retry
@@ -401,7 +421,10 @@ def worker_loop(worker_config: WorkerConfig):
             logger.info("Got work: iteration %d, %d games", work.iteration, work.num_games)
 
             # Run the games
-            wins, draws, losses = run_games(worker_config, tuning_config, work)
+            result = run_games(worker_config, tuning_config, work)
+            if result is None:
+                continue  # chunk cancelled, request new work
+            wins, draws, losses = result
 
             # Report results (PGNs saved locally by cutechess-cli)
             result = {

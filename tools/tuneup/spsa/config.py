@@ -114,6 +114,8 @@ class TuningConfig:
     static_dir: str = ""
     # Daily log rotation (keeps rotated files with date suffix)
     log_rotation: bool = True
+    # Seconds between chunk-validity checks (0 = disabled)
+    validate_interval: int = 5
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
     parameters: Dict[str, Parameter] = field(default_factory=dict)
 
@@ -145,6 +147,7 @@ class TuningConfig:
             "min_chunk_timeout": self.min_chunk_timeout,
             "min_chunk_expected_duration": self.min_chunk_expected_duration,
             "static_dir": self.static_dir,
+            "validate_interval": self.validate_interval,
             "spsa": asdict(self.spsa),
             "parameters": {
                 name: _param_dict(p) for name, p in self.parameters.items()
