@@ -16,6 +16,8 @@ import logging.handlers
 import platform
 import re
 import subprocess
+import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -24,6 +26,15 @@ from pathlib import Path
 from config import WorkerConfig, WorkItem
 
 logger = logging.getLogger("worker")
+
+# Subprocess timeouts and poll cadence
+GAME_TIMEOUT = 3600        # max seconds for a cutechess-cli run
+PIPE_DRAIN_TIMEOUT = 30    # seconds to wait for pipe readers after exit
+POLL_INTERVAL = 0.5        # seconds between process-alive checks
+
+# Graceful-shutdown state
+_current_process = None       # cutechess-cli Popen while games run
+_shutdown_requested = False   # set True after operator chooses "wait"
 
 
 def http_get(url: str) -> dict:
@@ -174,6 +185,42 @@ def build_cutechess_command(worker_config: WorkerConfig,
     return cmd
 
 
+def _handle_game_interrupt(proc):
+    """Handle Ctrl+C while cutechess-cli games are running.
+
+    Prompts the operator (whether or not the child is still alive):
+        [w]ait — let games finish, report results, then stop
+        [s]top — kill immediately
+        Enter  — dismiss, keep working (default)
+    A second Ctrl+C during the wait force-kills the child.
+    """
+    global _shutdown_requested
+
+    try:
+        answer = input("\nGames in progress. [w]ait and stop | [s]top now | [Enter] to dismiss ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+
+    if answer == "w":
+        _shutdown_requested = True
+        logger.info("Waiting for current games to finish (Ctrl+C again to force stop)...")
+        try:
+            while proc.poll() is None:
+                time.sleep(POLL_INTERVAL)
+        except KeyboardInterrupt:
+            logger.info("Force stop.")
+            proc.kill()
+            proc.wait()
+            raise
+    elif answer == "s":
+        proc.kill()
+        proc.wait()
+        raise KeyboardInterrupt
+    else:
+        _shutdown_requested = False
+        logger.info("Continuing...")
+
+
 def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) -> tuple:
     """
     Run cutechess-cli and return (wins, draws, losses).
@@ -195,25 +242,66 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
 
     logger.info("Running: %s", " ".join(cmd))
 
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=3600,
-    )
+    # Isolate child process from Ctrl+C so we can offer a graceful stop.
+    # Windows: CREATE_NEW_PROCESS_GROUP prevents CTRL_C_EVENT propagation.
+    # Unix: start_new_session puts the child in its own session.
+    global _current_process
+    popen_kwargs = {}
+    if sys.platform == "win32":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs["start_new_session"] = True
 
-    if result.returncode != 0:
-        rc = result.returncode
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **popen_kwargs)
+    _current_process = proc
+
+    # Drain pipes in background threads to prevent deadlock while the
+    # main thread polls proc.poll() (which directly sets returncode).
+    stdout_buf = []
+    stderr_buf = []
+
+    def _drain(pipe, buf):
+        buf.append(pipe.read())
+
+    out_t = threading.Thread(target=_drain, args=(proc.stdout, stdout_buf), daemon=True)
+    err_t = threading.Thread(target=_drain, args=(proc.stderr, stderr_buf), daemon=True)
+    out_t.start()
+    err_t.start()
+
+    # Poll for exit — main thread stays responsive to Ctrl+C.
+    # The inner try re-enters after "ignore" so the worker keeps going.
+    deadline = time.monotonic() + GAME_TIMEOUT
+    try:
+        while proc.poll() is None:
+            if time.monotonic() > deadline:
+                proc.kill()
+                proc.wait()
+                raise subprocess.TimeoutExpired(cmd[0], GAME_TIMEOUT)
+            try:
+                time.sleep(POLL_INTERVAL)
+            except KeyboardInterrupt:
+                _handle_game_interrupt(proc)
+    finally:
+        _current_process = None
+
+    # Collect pipe output (process is dead; readers will see EOF shortly)
+    out_t.join(timeout=PIPE_DRAIN_TIMEOUT)
+    err_t.join(timeout=PIPE_DRAIN_TIMEOUT)
+
+    if proc.returncode != 0:
+        rc = proc.returncode
         logger.error("cutechess-cli failed (rc=%s)", hex(rc))
-        logger.error("stdout (last 1000 chars): %s",
-                      result.stdout[-1000:] if result.stdout else "(empty)")
-        logger.error("stderr (last 1000 chars): %s",
-                      result.stderr[-1000:] if result.stderr else "(empty)")
+        logger.error("stdout (last 1000 chars): %s", (stdout_buf[0][-1000:] if stdout_buf else "") or "(empty)")
+        logger.error("stderr (last 1000 chars): %s", (stderr_buf[0][-1000:] if stderr_buf else "") or "(empty)")
         # Windows STATUS_ACCESS_VIOLATION (subprocess returns signed or unsigned)
         if rc & 0xFFFFFFFF == 0xc0000005:
             raise OSError(f"cutechess-cli access violation ({hex(rc)})")
         raise RuntimeError(f"cutechess-cli exited with code {hex(rc)}")
 
-    output = result.stdout
-    if result.stderr:
-        logger.warning("cutechess-cli stderr: %s", result.stderr.strip()[-1000:])
+    output = stdout_buf[0] if stdout_buf else ""
+    stderr_output = stderr_buf[0] if stderr_buf else ""
+    if stderr_output:
+        logger.warning("cutechess-cli stderr: %s", stderr_output.strip()[-1000:])
 
     # Log all output lines that mention errors or crashes
     for line in output.splitlines():
@@ -267,8 +355,7 @@ def worker_loop(worker_config: WorkerConfig):
     # Fetch tuning config from coordinator
     logger.info("Connecting to coordinator at %s", base_url)
     tuning_config = http_get(f"{base_url}/config")
-    logger.info("Received tuning config: %d parameters",
-                len(tuning_config.get("parameters", {})))
+    logger.info("Received tuning config: %d parameters", len(tuning_config.get("parameters", {})))
 
     # Default retry interval when coordinator asks workers to retry
     default_retry = tuning_config.get("retry_after", 5)
@@ -311,15 +398,10 @@ def worker_loop(worker_config: WorkerConfig):
 
             # We got a work assignment
             work = WorkItem.from_dict(response)
-            logger.info(
-                "Got work: iteration %d, %d games",
-                work.iteration, work.num_games,
-            )
+            logger.info("Got work: iteration %d, %d games", work.iteration, work.num_games)
 
             # Run the games
-            wins, draws, losses = run_games(
-                worker_config, tuning_config, work
-            )
+            wins, draws, losses = run_games(worker_config, tuning_config, work)
 
             # Report results (PGNs saved locally by cutechess-cli)
             result = {
@@ -330,10 +412,18 @@ def worker_loop(worker_config: WorkerConfig):
                 "num_games": wins + draws + losses,
                 "chunk_id": work.chunk_id,
                 "worker": hostname,
+                "shutting_down": _shutdown_requested,
             }
             resp = http_post(f"{base_url}/result", result, retry_timeout)
             logger.info("Result submitted: %s", resp.get("status"))
 
+            if _shutdown_requested:
+                logger.info("Shutdown requested, stopping after result reported.")
+                break
+
+        except KeyboardInterrupt:
+            logger.info("Interrupted, shutting down.")
+            break
         except urllib.error.URLError as e:
             logger.warning("Connection error: %s, retrying in 5s", e)
             time.sleep(5)

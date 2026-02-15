@@ -244,6 +244,7 @@ class WorkResult:
     num_games: int      # actual games completed
     chunk_id: str = ""  # echoed from WorkItem
     worker: str = ""    # worker hostname
+    shutting_down: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)

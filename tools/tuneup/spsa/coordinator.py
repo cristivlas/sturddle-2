@@ -28,7 +28,7 @@ from pathlib import Path
 from config import TuningConfig, WorkItem, WorkResult
 from spsa import SPSAOptimizer, SPSAState
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
 logger = logging.getLogger("coordinator")
 
@@ -601,6 +601,12 @@ class CoordinatorState:
                     spg = w.sec_per_game or self._base_sec_per_game
                     if w.sec_per_game <= 0 or result.num_games * spg >= self.config.min_chunk_expected_duration:
                         w.update_speed(result.num_games, time.time() - chunk.assign_time)
+                # Graceful disconnect: worker announced it won't request more work
+                if result.shutting_down:
+                    for cid in [c for c, ci in self.pending_chunks.items() if ci.worker_name == result.worker]:
+                        self._release_chunk(cid, "worker %s shutting down" % result.worker)
+                    del self.workers[result.worker]
+                    logger.info("Worker %s disconnected gracefully", result.worker)
 
             logger.info(
                 "Result: iter %d, %d games from %s [%s], W=%d D=%d L=%d (%d/%d done)",
@@ -1222,18 +1228,23 @@ def main():
                 can_restart = sys.platform != "win32"
                 try:
                     if can_restart:
-                        prompt = f"\nWait for iteration {iter_k}? [r]estart / [d]ebug restart / [s]top / [N]o "
+                        prompt = f"\nWait for iteration {iter_k}? [r]estart | restart in [d]ebug mode | [w]ait and stop | [s]top now | [Enter] to dismiss"
                     else:
-                        prompt = f"\nWait for iteration {iter_k} to complete? [s]top / [N]o "
+                        prompt = f"\nWait for iteration {iter_k}? [w]ait and stop | [s]top now | [Enter] to dismiss"
                     answer = input(prompt).strip().lower()
                 except (EOFError, KeyboardInterrupt):
                     answer = ""
-                if answer in ("r", "d", "s") if can_restart else answer == "s":
+                if answer == "s":
+                    break
+                if answer in ("r", "d", "w") if can_restart else answer == "w":
                     coordinator.draining = True
                     coordinator._restart = answer in ("r", "d")
                     restart_debug = (answer == "d")
                     coordinator._notify_dashboard()
-                    logger.info("Draining — waiting for iteration %d to complete (Ctrl+C again to force stop)...", iter_k)
+                    if coordinator._restart:
+                        logger.info("Draining — waiting for iteration %d to complete (Ctrl+C again to restart now)...", iter_k)
+                    else:
+                        logger.info("Draining — waiting for iteration %d to complete (Ctrl+C again to force stop)...", iter_k)
                     # Break out of serve_forever() once the drain completes;
                     # needs a thread because serve_forever() blocks.
                     def drain_watcher():
@@ -1241,6 +1252,7 @@ def main():
                         server.shutdown()
                     threading.Thread(target=drain_watcher, daemon=True).start()
                     continue
+                continue  # dismiss — back to serve_forever()
             break
         else:
             break  # serve_forever returned normally (drain complete)
