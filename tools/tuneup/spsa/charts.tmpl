@@ -328,12 +328,13 @@
             document.querySelectorAll('canvas').forEach(function(c) {{
                 var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(c);
                 if (!ch) return;
-                if (!ch.options.scales) ch.options.scales = {{}};
-                if (!ch.options.scales.x) ch.options.scales.x = {{}};
-                if (minVal !== undefined) ch.options.scales.x.min = minVal;
-                else delete ch.options.scales.x.min;
-                if (maxVal !== undefined) ch.options.scales.x.max = maxVal;
-                else delete ch.options.scales.x.max;
+                var opts = ch.config.options;
+                if (!opts.scales) opts.scales = {{}};
+                if (!opts.scales.x) opts.scales.x = {{}};
+                if (minVal !== undefined) opts.scales.x.min = minVal;
+                else delete opts.scales.x.min;
+                if (maxVal !== undefined) opts.scales.x.max = maxVal;
+                else delete opts.scales.x.max;
                 ch.update('none');
             }});
             // Pending chart configs
