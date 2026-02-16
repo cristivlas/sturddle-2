@@ -435,13 +435,15 @@ class CoordinatorState:
         logger.warning("Released [%s] (%d games) from %s: %s", cid, chunk.num_games, chunk.worker_name, reason)
 
     def _reclaim_timed_out_chunks(self):
-        """Reclaim chunks that have exceeded their per-worker timeout."""
+        """Reclaim chunks whose timeout expired or whose worker is dead."""
         now = time.time()
-        timed_out = [(cid, now - c.assign_time, c.timeout)
-                     for cid, c in self.pending_chunks.items()
-                     if now - c.assign_time > c.timeout]
-        for cid, elapsed, timeout in timed_out:
-            self._release_chunk(cid, "timed out (%.0fs elapsed, timeout %ds)" % (elapsed, int(timeout)))
+        alive = {w.name for w in self._active_workers()}
+        stale = [(cid, c) for cid, c in self.pending_chunks.items()
+                 if c.worker_name not in alive or now - c.assign_time > c.timeout]
+        for cid, c in stale:
+            reason = ("worker %s timed out" % c.worker_name if c.worker_name not in alive
+                      else "timed out (%.0fs elapsed, timeout %ds)" % (now - c.assign_time, int(c.timeout)))
+            self._release_chunk(cid, reason)
 
     def _notify_dashboard(self):
         """Wake up any SSE listeners so they push fresh data immediately."""
