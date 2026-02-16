@@ -417,6 +417,8 @@ def worker_loop(worker_config: WorkerConfig):
             # Run the games
             result = run_games(worker_config, tuning_config, work)
             if result is None:
+                if _shutdown_requested:
+                    break
                 continue  # chunk cancelled, request new work
             wins, draws, losses = result
 
