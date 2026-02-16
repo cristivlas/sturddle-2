@@ -426,6 +426,7 @@
                     if (sz) {{
                         var zf = Math.max(0, Math.min(sz.f || 0, sMax));
                         var zt = Math.max(zf, Math.min(sz.t != null ? sz.t : sMax, sMax));
+                        if (zt - zf < 2) {{ zf = 0; zt = sMax; }}
                         if (sf) sf.value = zf;
                         if (st) st.value = zt;
                         if (zf > 0 || zt < sMax) _restoredZoom = [zf, zt];
