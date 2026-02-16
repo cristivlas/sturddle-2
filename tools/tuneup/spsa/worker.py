@@ -198,6 +198,12 @@ def _handle_game_interrupt(proc):
     """
     global _shutdown_requested
 
+    if _shutdown_requested:
+        logger.info("Force stop.")
+        proc.kill()
+        proc.wait()
+        raise KeyboardInterrupt
+
     try:
         answer = input("\nGames in progress. [w]ait and stop | [s]top now | [Enter] to dismiss ").strip().lower()
     except (EOFError, KeyboardInterrupt):
@@ -206,20 +212,11 @@ def _handle_game_interrupt(proc):
     if answer == "w":
         _shutdown_requested = True
         logger.info("Waiting for current games to finish (Ctrl+C again to force stop)...")
-        try:
-            while proc.poll() is None:
-                time.sleep(POLL_INTERVAL)
-        except KeyboardInterrupt:
-            logger.info("Force stop.")
-            proc.kill()
-            proc.wait()
-            raise
     elif answer == "s":
         proc.kill()
         proc.wait()
         raise KeyboardInterrupt
     else:
-        _shutdown_requested = False
         logger.info("Continuing...")
 
 

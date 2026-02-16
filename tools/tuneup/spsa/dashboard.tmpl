@@ -646,7 +646,25 @@
                         tbody.removeChild(tbody.lastChild);
 
                     // Update chart
-                    if (thetaChart && d.last_history.theta) {{
+                    if (d.last_history.theta) {{
+                        if (!thetaChart) {{
+                            var keys = Object.keys(d.last_history.theta);
+                            var ctx = document.getElementById('thetaChart').getContext('2d');
+                            thetaChart = new Chart(ctx, {{
+                                type: 'line',
+                                data: {{
+                                    labels: [],
+                                    datasets: keys.map(function(k) {{
+                                        return {{ label: k, data: [], tension: 0.25, pointRadius: 2, borderWidth: 2 }};
+                                    }})
+                                }},
+                                options: {{
+                                    responsive: true,
+                                    maintainAspectRatio: false,
+                                    plugins: {{ legend: {{ position: 'bottom' }} }}
+                                }}
+                            }});
+                        }}
                         thetaChart.data.labels.push(d.last_history.iteration);
                         thetaChart.data.datasets.forEach(ds => {{
                             const val = (d.last_history.theta && ds.label in d.last_history.theta)
