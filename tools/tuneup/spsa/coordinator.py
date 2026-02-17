@@ -140,6 +140,7 @@ class CoordinatorState:
         # "name" field).  Fine for trusted homelab / LAN setups; a public-facing
         # deployment would need IP-based validation or auth tokens.
         self.workers = {}  # name -> WorkerInfo
+        self._worker_stats = {}  # name -> (games_completed, chunks_completed)
 
         # Time estimates and timeouts
         self._base_sec_per_game = self._estimate_game_duration()
@@ -203,8 +204,14 @@ class CoordinatorState:
         assert name, "worker name required (enforced at HTTP boundary)"
         now = time.time()
         if name not in self.workers:
-            self.workers[name] = WorkerInfo(name=name, last_seen=now)
-            logger.info("Worker registered: %s", name)
+            w = WorkerInfo(name=name, last_seen=now)
+            saved = self._worker_stats.pop(name, None)
+            if saved:
+                w.games_completed, w.chunks_completed = saved
+                logger.info("Worker reconnected: %s (%d games)", name, w.games_completed)
+            else:
+                logger.info("Worker registered: %s", name)
+            self.workers[name] = w
         else:
             self.workers[name].last_seen = now
 
@@ -618,6 +625,7 @@ class CoordinatorState:
                 if result.shutting_down:
                     for cid in [c for c, ci in self.pending_chunks.items() if ci.worker_name == result.worker]:
                         self._release_chunk(cid, "worker %s shutting down" % result.worker)
+                    self._worker_stats[result.worker] = (w.games_completed, w.chunks_completed)
                     del self.workers[result.worker]
                     logger.info("Worker %s disconnected gracefully", result.worker)
 
