@@ -27,6 +27,10 @@ from config import WorkerConfig, WorkItem
 
 logger = logging.getLogger("worker")
 
+class RetryableError(Exception):
+    """Recoverable error during a single chunk — worker retries."""
+    pass
+
 # Subprocess timeouts and poll cadence
 GAME_TIMEOUT = 3600        # max seconds for a cutechess-cli run
 PIPE_DRAIN_TIMEOUT = 30    # seconds to wait for pipe readers after exit
@@ -312,8 +316,8 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
         logger.error("stderr (last 1000 chars): %s", (stderr_buf[0][-1000:] if stderr_buf else "") or "(empty)")
         # Windows STATUS_ACCESS_VIOLATION (subprocess returns signed or unsigned)
         if rc & 0xFFFFFFFF == 0xc0000005:
-            raise OSError(f"cutechess-cli access violation ({hex(rc)})")
-        raise RuntimeError(f"cutechess-cli exited with code {hex(rc)}")
+            raise RetryableError(f"cutechess-cli access violation ({hex(rc)})")
+        raise RetryableError(f"cutechess-cli exited with code {hex(rc)}")
 
     output = stdout_buf[0] if stdout_buf else ""
     stderr_output = stderr_buf[0] if stderr_buf else ""
@@ -337,7 +341,7 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
     total = wins + losses + draws
 
     if total == 0:
-        raise RuntimeError("No games were played")
+        raise RetryableError("No games were played")
 
     # Abort if too many games failed — results would be noise
     min_completion = 0.5
@@ -346,7 +350,7 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
             "Only %d/%d games completed (W=%d L=%d D=%d) — aborting chunk",
             total, work.num_games, wins, losses, draws,
         )
-        raise RuntimeError(
+        raise RetryableError(
             f"Only {total}/{work.num_games} games completed "
             f"({total/work.num_games:.0%}), minimum is {min_completion:.0%}"
         )
@@ -449,7 +453,7 @@ def worker_loop(worker_config: WorkerConfig):
         except subprocess.TimeoutExpired:
             logger.error("cutechess-cli timed out")
             time.sleep(2)
-        except OSError as e:
+        except RetryableError as e:
             logger.error("%s, retrying", e)
         except Exception as e:
             logger.exception("Terminating.")
