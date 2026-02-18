@@ -270,7 +270,7 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
     stderr_buf = []
     log_dir = Path(worker_config.log_file).parent
     try:
-        _cc_log = open(log_dir / "cutechess_last.log", "w")
+        _cc_log = open(log_dir / "cutechess_last.log", "w", buffering=1)
         _cc_log.write("=== chunk %s, iteration %d ===\n" % (work.chunk_id, work.iteration))
     except OSError:
         _cc_log = None
