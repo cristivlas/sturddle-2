@@ -41,6 +41,7 @@ VALIDATE_TIMEOUT = 3       # seconds for chunk-validity HTTP checks
 # Graceful-shutdown state
 _current_process = None       # cutechess-cli Popen while games run
 _shutdown_requested = False   # set True after operator chooses "wait"
+_cutechess_debug = False      # set True via --cutechess-debug flag
 
 
 def http_get(url: str, timeout: int) -> dict:
@@ -188,6 +189,10 @@ def build_cutechess_command(worker_config: WorkerConfig,
     # PGN output
     cmd += ["-pgnout", pgn_file]
 
+    # Debug: log all engine I/O
+    if _cutechess_debug:
+        cmd += ["-debug"]
+
     return cmd
 
 
@@ -260,11 +265,23 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
 
     # Drain pipes in background threads to prevent deadlock while the
     # main thread polls proc.poll() (which directly sets returncode).
+    # Output is streamed to cutechess_last.log for post-mortem inspection.
     stdout_buf = []
     stderr_buf = []
+    log_dir = Path(worker_config.log_file).parent
+    try:
+        _cc_log = open(log_dir / "cutechess_last.log", "w")
+        _cc_log.write("=== chunk %s, iteration %d ===\n" % (work.chunk_id, work.iteration))
+    except OSError:
+        _cc_log = None
 
     def _drain(pipe, buf):
-        buf.append(pipe.read())
+        lines = []
+        for line in pipe:
+            lines.append(line)
+            if _cc_log:
+                _cc_log.write(line)
+        buf.append("".join(lines))
 
     out_t = threading.Thread(target=_drain, args=(proc.stdout, stdout_buf), daemon=True)
     err_t = threading.Thread(target=_drain, args=(proc.stderr, stderr_buf), daemon=True)
@@ -308,6 +325,11 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
     # Collect pipe output (process is dead; readers will see EOF shortly)
     out_t.join(timeout=PIPE_DRAIN_TIMEOUT)
     err_t.join(timeout=PIPE_DRAIN_TIMEOUT)
+    if _cc_log:
+        try:
+            _cc_log.close()
+        except OSError:
+            pass
 
     if proc.returncode != 0:
         rc = proc.returncode
@@ -341,6 +363,12 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
     total = wins + losses + draws
 
     if total == 0:
+        started = any("started game" in line.lower() for line in output.splitlines())
+        if not started:
+            raise RuntimeError(
+                "cutechess-cli started no games — check engine configuration\n"
+                + (stderr_output.strip()[-500:] or "(no stderr)")
+            )
         raise RetryableError("No games were played")
 
     # Abort if too many games failed — results would be noise
@@ -486,6 +514,7 @@ def main():
     parser = argparse.ArgumentParser(description="SPSA Tuning Worker")
     parser.add_argument("-c", "--config", required=True, help="Path to worker config JSON")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--cutechess-debug", action="store_true", help="Pass -debug to cutechess-cli (log engine I/O)")
     parser.add_argument("--clean", action="store_true", help="Wipe log file before starting")
     args = parser.parse_args()
 
@@ -497,6 +526,8 @@ def main():
         for f in log_path.parent.glob(log_path.name + "*"):
             f.unlink()
 
+    global _cutechess_debug
+    _cutechess_debug = args.cutechess_debug
     setup_logging(config.log_file, debug=args.debug, rotate=config.log_rotation)
 
     logger.info("Starting worker")
