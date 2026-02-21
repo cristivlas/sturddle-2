@@ -432,6 +432,7 @@
                         if (zf > 0 || zt < sMax) _restoredZoom = [zf, zt];
                     }}
                 }} catch(e) {{}}
+                var tableau20 = ['#1f77b4','#aec7e8','#ff7f0e','#ffbb78','#2ca02c','#98df8a','#d62728','#ff9896','#9467bd','#c5b0d5','#8c564b','#c49c94','#e377c2','#f7b6d2','#7f7f7f','#c7c7c7','#bcbd22','#dbdb8d','#17becf','#9edae5'];
                 const defaultOpts = {{
                     responsive: true,
                     maintainAspectRatio: false,
@@ -472,9 +473,10 @@
                 const thetaKeys = [...new Set(
                     history.flatMap(h => Object.keys(h.theta || {{}}))
                 )];
-                const thetaDatasets = thetaKeys.map(k => ({{
+                const thetaDatasets = thetaKeys.map((k, i) => ({{
                     label: k,
                     data: history.map(h => (h.theta && k in h.theta) ? h.theta[k] : null),
+                    borderColor: tableau20[i % tableau20.length],
                     tension: 0.25,
                     pointRadius: 1,
                     borderWidth: 2,

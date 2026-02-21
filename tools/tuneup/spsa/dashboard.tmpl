@@ -593,6 +593,8 @@
             );
         }}
 
+        var tableau10 = ['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'];
+
         let thetaChart = null;
         (function() {{
             try {{
@@ -609,9 +611,10 @@
                 const thetaKeys = [...new Set(
                     history.flatMap(h => Object.keys(h.theta || {{}}))
                 )];
-                const datasets = thetaKeys.map(k => ({{
+                const datasets = thetaKeys.map((k, i) => ({{
                     label: k,
                     data: history.map(h => (h.theta && k in h.theta) ? h.theta[k] : null),
+                    borderColor: tableau10[i % tableau10.length],
                     tension: 0.25,
                     pointRadius: 2,
                     borderWidth: 2,
@@ -733,8 +736,8 @@
                                 type: 'line',
                                 data: {{
                                     labels: [],
-                                    datasets: keys.map(function(k) {{
-                                        return {{ label: k, data: [], tension: 0.25, pointRadius: 2, borderWidth: 2 }};
+                                    datasets: keys.map(function(k, i) {{
+                                        return {{ label: k, data: [], borderColor: tableau10[i % tableau10.length], tension: 0.25, pointRadius: 2, borderWidth: 2 }};
                                     }})
                                 }},
                                 options: {{
