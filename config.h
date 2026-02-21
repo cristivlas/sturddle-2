@@ -294,7 +294,7 @@ DECLARE_VALUE(  KILLER_MOVES_DEPTH_MARGIN,          261,   10,     300)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,       7)
 
 DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,      15)
-DECLARE_VALUE(  MULTICUT_MARGIN,                    124,   20,     200)
+DECLARE_NORMAL(  MULTICUT_MARGIN,                    124,   20,     200)
 
 #if USE_MOVE_PREDICTION
 DECLARE_VALUE(  MOVE_PREDICTION_MAX_ITER,             3,    0,      10)
@@ -306,8 +306,8 @@ DECLARE_VALUE(  NNUE_MAX_EVAL,                      459,  400,     600)
 #endif /* WITH_NNUE */
 
 /* is_null_move_ok */
-DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT,               2,    1,      10)
-DECLARE_VALUE(  NULL_MOVE_MARGIN,                    65,   40,      80)
+DECLARE_NORMAL(  NULL_MOVE_DEPTH_WEIGHT,               2,    1,      10)
+DECLARE_NORMAL(  NULL_MOVE_MARGIN,                    65,   40,      80)
 DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  3,    2,       5)
 
 /* Minimum depth when verifying */
@@ -315,8 +315,8 @@ DECLARE_VALUE(  NULL_MOVE_MIN_DRAUGHT,                0,   -1,       7)
 
 /* null_move_reduction */
 DECLARE_VALUE(  NULL_MOVE_REDUCTION_BASE,             4,    2,       5)
-DECLARE_VALUE(  NULL_MOVE_REDUCTION_DEPTH_DIV,        4,    1,       8)
-DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,            278,  200,     300)
+DECLARE_NORMAL(  NULL_MOVE_REDUCTION_DEPTH_DIV,        4,    1,       8)
+DECLARE_NORMAL(  NULL_MOVE_REDUCTION_DIV,            278,  200,     300)
 
 /* Do not verify null move below this depth */
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,      20)
@@ -356,18 +356,18 @@ DECLARE_VALUE(  CAPTURE_HISTORY_WEIGHT,             413,  360,     500)
 #endif /* CAPTURE_HISTORY */
 
 #if CONTINUATION_HISTORY
-DECLARE_NORMAL( CONTINUATION_HISTORY_WEIGHT,        152,  100,     250)
-DECLARE_NORMAL( FOLLOWUP_HISTORY_WEIGHT,             73,   50,     200)
+DECLARE_VALUE(  CONTINUATION_HISTORY_WEIGHT,        153,  100,     250)
+DECLARE_VALUE(  FOLLOWUP_HISTORY_WEIGHT,             65,   50,     200)
 DECLARE_VALUE(  CONTINUATION_HISTORY_MIN_DEPTH,       2,    0,       7)
-DECLARE_NORMAL( CONTINUATION_HISTORY_LMR_DIV,       525,  256,     768)
-DECLARE_NORMAL( CONTINUATION_HISTORY_PRUNING,        84,   50,     200)
+DECLARE_VALUE(  CONTINUATION_HISTORY_LMR_DIV,       560,  256,     768)
+DECLARE_VALUE(  CONTINUATION_HISTORY_PRUNING,        71,   50,     200)
 #endif /* CONTINUATION_HISTORY */
 
-DECLARE_NORMAL( COUNTER_MOVE_BONUS,                 200,  150,     230)
+DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 198,  150,     230)
 DECLARE_VALUE(  COUNTER_MOVE_MIN_DEPTH,               2,    0,       5)
 
-DECLARE_NORMAL( HISTORY_SCORE_DIV,                   86,   50,     100)
-DECLARE_NORMAL( HISTORY_SCORE_MUL,                  261,  200,     280)
+DECLARE_VALUE(  HISTORY_SCORE_DIV,                   85,   50,     100)
+DECLARE_VALUE(  HISTORY_SCORE_MUL,                  264,  200,     280)
 DECLARE_VALUE(  HISTORY_HIGH,                        91,   50,     150)
 DECLARE_VALUE(  HISTORY_LOW,                         12,    0,      30)
 DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,      15)
