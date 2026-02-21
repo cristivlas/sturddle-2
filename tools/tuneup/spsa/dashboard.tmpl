@@ -329,7 +329,7 @@
                 <div class="card">
                     <canvas id="thetaChart" width="400" height="200"></canvas>
                 </div>
-                <div class="section" style="margin-top: 0;">
+                <div class="section" style="margin-top: 0; display:flex; flex-direction:column; min-height:0;">
                     <h3 style="display:flex;align-items:baseline;gap:8px;">Current Parameters
                         <span id="thetaToggle" style="display:none;font-size:0;line-height:0;margin-left:auto;">
                             <span id="togInternal" onclick="setThetaView(true)"
@@ -339,17 +339,18 @@
                         </span>
                     </h3>
                     <table class="params-tbl">
-                        <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
+                        <colgroup><col style="width:40%"><col style="width:30%"><col style="width:30%"></colgroup>
                         <thead>
                             <tr>
                                 <th>Parameter</th>
-                                <th>Value</th>
+                                <th>Initial</th>
+                                <th>Current</th>
                             </tr>
                         </thead>
                     </table>
-                    <div style="max-height: 260px; overflow-y: auto;">
+                    <div style="flex:1; min-height:0; overflow-y:auto;">
                     <table class="params-tbl">
-                        <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
+                        <colgroup><col style="width:40%"><col style="width:30%"><col style="width:30%"></colgroup>
                         <tbody id="thetaBody"></tbody>
                     </table>
                     </div>
@@ -405,15 +406,22 @@
         var showInternal = localStorage.getItem('thetaView') !== 'engine';
         var currentTheta = {{}};
         var currentThetaInternal = {{}};
+        var initialTheta = {{}};
+        var initialThetaInternal = {{}};
 
-        function renderTheta(theta) {{
+        function fmtVal(v) {{
+            return (typeof v === 'number' && !Number.isInteger(v)) ? v.toFixed(6) : v;
+        }}
+
+        function renderTheta(theta, initial) {{
             const tbody = document.getElementById('thetaBody');
             tbody.innerHTML = '';
             for (const [name, value] of Object.entries(theta)) {{
                 const tr = document.createElement('tr');
-                var display = (typeof value === 'number' && !Number.isInteger(value)) ? value.toFixed(6) : value;
+                var initVal = initial && initial[name] !== undefined ? fmtVal(initial[name]) : '';
                 tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + name + '">' + name + '</td>'
-                             + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + display + '</td>';
+                             + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + initVal + '</td>'
+                             + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + fmtVal(value) + '</td>';
                 tbody.appendChild(tr);
             }}
         }}
@@ -430,7 +438,7 @@
             te.style.background = internal ? '' : accent;
             te.style.color = internal ? '#666' : '#fff';
             te.style.borderColor = internal ? '#ccc' : accent;
-            renderTheta(internal ? currentThetaInternal : currentTheta);
+            renderTheta(internal ? currentThetaInternal : currentTheta, internal ? initialThetaInternal : initialTheta);
         }}
 
         function initToggle() {{
@@ -513,12 +521,32 @@
         currentTheta = initTheta;
         currentThetaInternal = Object.keys(initThetaInternal).length ? initThetaInternal : initTheta;
         initToggle();
-        renderTheta(hasNormalized ? currentThetaInternal : currentTheta);
+        renderTheta(hasNormalized ? currentThetaInternal : currentTheta, hasNormalized ? initialThetaInternal : initialTheta);
         renderWorkers(initWorkers);
         document.getElementById('remainingValue').textContent = {games_total} - {games_done};
         renderHistory(initHistory);
         updateHistoryTitle({history_total});
         updateETA({total_games}, {games_done}, {games_total}, {iteration}, {max_iters});
+
+        // --- Fetch initial parameter values from config ---
+        fetch('/config').then(function(r) {{ return r.json(); }}).then(function(cfg) {{
+            var params = cfg.parameters || {{}};
+            for (var name in params) {{
+                var p = params[name];
+                initialThetaInternal[name] = p.init;
+                if (p.original_lower != null && p.original_upper != null) {{
+                    initialTheta[name] = Math.round((p.init + 1) * (p.original_upper - p.original_lower) / 2 + p.original_lower);
+                }} else if (p.type === 'int') {{
+                    initialTheta[name] = Math.round(p.init);
+                }} else {{
+                    initialTheta[name] = p.init;
+                }}
+            }}
+            renderTheta(
+                showInternal ? currentThetaInternal : currentTheta,
+                showInternal ? initialThetaInternal : initialTheta
+            );
+        }});
 
         // --- Chart ---
         let thetaChart = null;
@@ -622,7 +650,7 @@
             // Tables
             currentTheta = d.theta;
             if (d.theta_internal) currentThetaInternal = d.theta_internal;
-            renderTheta(showInternal ? currentThetaInternal : currentTheta);
+            renderTheta(showInternal ? currentThetaInternal : currentTheta, showInternal ? initialThetaInternal : initialTheta);
             renderWorkers(d.workers);
 
             // History: detect reset (--clean) or missed entries, append new
