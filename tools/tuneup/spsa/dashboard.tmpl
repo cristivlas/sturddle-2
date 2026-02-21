@@ -408,6 +408,9 @@
         var currentThetaInternal = {{}};
         var initialTheta = {{}};
         var initialThetaInternal = {{}};
+        var paramColors = {{}};
+        var paramTints = {{}};
+        var prevTheta = {{}};
 
         function fmtVal(v, decimals) {{
             return (typeof v === 'number' && !Number.isInteger(v)) ? v.toFixed(decimals || 6) : v;
@@ -417,17 +420,29 @@
             const tbody = document.getElementById('thetaBody');
             tbody.innerHTML = '';
             var dec = showInternal ? 5 : 6;
+            var hasPrev = Object.keys(prevTheta).length > 0;
             for (const [name, value] of Object.entries(theta)) {{
                 const tr = document.createElement('tr');
                 var initVal = initial && initial[name] !== undefined ? fmtVal(initial[name], dec) : '';
+                var ival = currentThetaInternal[name];
+                // Arrow (vs initial): compare in rendered space
                 var arrow = '';
                 if (initial && initial[name] !== undefined && typeof value === 'number') {{
                     var diff = value - initial[name];
                     if (diff > 0) arrow = ' <span style="color:#4CAF50;font-size:11px;">&#9650;</span>';
                     else if (diff < 0) arrow = ' <span style="color:#f44336;font-size:11px;">&#9660;</span>';
-                    else arrow = ' <span style="color:#999;font-size:11px;">&#9644;</span>';
+                    else arrow = ' <span style="color:#ccc;font-size:11px;">&#9644;</span>';
                 }}
-                tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + name + '">' + name + '</td>'
+                // Trend dot vs previous iteration + row tint from chart color
+                var dot = '';
+                if (hasPrev && paramColors[name] && prevTheta[name] !== undefined && typeof ival === 'number') {{
+                    var pdiff = ival - prevTheta[name];
+                    var sym = pdiff > 0 ? '&#9650;' : pdiff < 0 ? '&#9660;' : '&#9644;';
+                    var dotStyle = pdiff === 0 ? 'color:#ccc;' : '';
+                    dot = '<span style="font-size:9px;margin-right:4px;' + dotStyle + '">' + sym + '</span>';
+                }}
+                if (paramTints[name]) tr.style.background = paramTints[name];
+                tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + name + '">' + dot + name + '</td>'
                              + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + initVal + '</td>'
                              + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + fmtVal(value, dec) + arrow + '</td>';
                 tbody.appendChild(tr);
@@ -557,11 +572,38 @@
         }});
 
         // --- Chart ---
+        function toRgbTint(cssColor, alpha) {{
+            var tmp = document.createElement('div');
+            tmp.style.color = cssColor;
+            document.body.appendChild(tmp);
+            var rgb = getComputedStyle(tmp).color;
+            document.body.removeChild(tmp);
+            return rgb.replace('rgb(', 'rgba(').replace(')', ',' + alpha + ')');
+        }}
+
+        function syncParamColors() {{
+            if (!thetaChart) return;
+            thetaChart.data.datasets.forEach(function(ds) {{
+                paramColors[ds.label] = ds.borderColor;
+                paramTints[ds.label] = toRgbTint(ds.borderColor, 0.15);
+            }});
+            renderTheta(
+                showInternal ? currentThetaInternal : currentTheta,
+                showInternal ? initialThetaInternal : initialTheta
+            );
+        }}
+
         let thetaChart = null;
         (function() {{
             try {{
                 const history = initHistory.slice().sort((a,b) => (a.iteration||0) - (b.iteration||0));
                 if (!history.length) return;
+
+                // Previous iteration theta (for trend dots)
+                if (history.length >= 1) {{
+                    var last = history[history.length - 1];
+                    if (last.theta) prevTheta = Object.assign({{}}, last.theta);
+                }}
 
                 const labels = history.map(h => h.iteration);
                 const thetaKeys = [...new Set(
@@ -585,6 +627,7 @@
                         plugins: {{ legend: {{ display: window.innerWidth > 700, position: 'bottom' }} }}
                     }}
                 }});
+                syncParamColors();
             }} catch (e) {{
                 console.error('Failed to render chart', e);
             }}
@@ -713,7 +756,10 @@
                             thetaChart.data.datasets.forEach(ds => ds.data.shift());
                         }}
                         thetaChart.update();
+                        syncParamColors();
                     }}
+                    // Update previous-iteration theta for trend dots
+                    if (d.last_history.theta) prevTheta = Object.assign({{}}, d.last_history.theta);
                 }}
                 knownHistoryLen = d.history_len;
             }}
