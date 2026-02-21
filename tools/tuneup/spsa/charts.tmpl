@@ -435,7 +435,7 @@
                 const defaultOpts = {{
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: {{ legend: {{ position: 'bottom' }} }}
+                    plugins: {{ legend: {{ display: window.innerWidth > 700, position: 'bottom' }} }}
                 }};
 
                 // Create chart now if visible, otherwise stash for deferred creation
