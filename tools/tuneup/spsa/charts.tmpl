@@ -497,6 +497,20 @@
                 console.error('Failed to render charts', e);
             }}
         }})();
+    // Update chart legend visibility on resize
+    var _resizeTimer;
+    window.addEventListener('resize', function() {{
+        clearTimeout(_resizeTimer);
+        _resizeTimer = setTimeout(function() {{
+            var show = window.innerWidth > 700;
+            document.querySelectorAll('canvas').forEach(function(c) {{
+                var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(c);
+                if (!ch) return;
+                ch.options.plugins.legend.display = show;
+                ch.update('none');
+            }});
+        }}, 200);
+    }});
     </script>
 </body>
 </html>
