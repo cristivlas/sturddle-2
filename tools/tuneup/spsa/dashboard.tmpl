@@ -409,19 +409,27 @@
         var initialTheta = {{}};
         var initialThetaInternal = {{}};
 
-        function fmtVal(v) {{
-            return (typeof v === 'number' && !Number.isInteger(v)) ? v.toFixed(6) : v;
+        function fmtVal(v, decimals) {{
+            return (typeof v === 'number' && !Number.isInteger(v)) ? v.toFixed(decimals || 6) : v;
         }}
 
         function renderTheta(theta, initial) {{
             const tbody = document.getElementById('thetaBody');
             tbody.innerHTML = '';
+            var dec = showInternal ? 5 : 6;
             for (const [name, value] of Object.entries(theta)) {{
                 const tr = document.createElement('tr');
-                var initVal = initial && initial[name] !== undefined ? fmtVal(initial[name]) : '';
+                var initVal = initial && initial[name] !== undefined ? fmtVal(initial[name], dec) : '';
+                var arrow = '';
+                if (initial && initial[name] !== undefined && typeof value === 'number') {{
+                    var diff = value - initial[name];
+                    if (diff > 0) arrow = ' <span style="color:#4CAF50;font-size:11px;">&#9650;</span>';
+                    else if (diff < 0) arrow = ' <span style="color:#f44336;font-size:11px;">&#9660;</span>';
+                    else arrow = ' <span style="color:#999;font-size:11px;">&#9644;</span>';
+                }}
                 tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + name + '">' + name + '</td>'
                              + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + initVal + '</td>'
-                             + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + fmtVal(value) + '</td>';
+                             + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + fmtVal(value, dec) + arrow + '</td>';
                 tbody.appendChild(tr);
             }}
         }}
