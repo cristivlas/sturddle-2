@@ -623,6 +623,7 @@
                     label: k,
                     data: history.map(h => (h.theta && k in h.theta) ? h.theta[k] : null),
                     borderColor: tableau10[i % tableau10.length],
+                    backgroundColor: tableau10[i % tableau10.length] + '30',
                     tension: 0.25,
                     pointRadius: 2,
                     borderWidth: 2,
@@ -745,7 +746,7 @@
                                 data: {{
                                     labels: [],
                                     datasets: keys.map(function(k, i) {{
-                                        return {{ label: k, data: [], borderColor: tableau10[i % tableau10.length], tension: 0.25, pointRadius: 2, borderWidth: 2 }};
+                                        return {{ label: k, data: [], borderColor: tableau10[i % tableau10.length], backgroundColor: tableau10[i % tableau10.length] + '30', tension: 0.25, pointRadius: 2, borderWidth: 2 }};
                                     }})
                                 }},
                                 options: {{
