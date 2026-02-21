@@ -204,6 +204,8 @@ class CoordinatorState:
         assert name, "worker name required (enforced at HTTP boundary)"
         now = time.time()
         if name not in self.workers:
+            if self.optimizer.is_done():
+                return  # don't accept new workers after job is done
             w = WorkerInfo(name=name, last_seen=now)
             saved = self._worker_stats.pop(name, None)
             if saved:
