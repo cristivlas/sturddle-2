@@ -147,10 +147,13 @@
             color: #666;
             text-transform: uppercase;
             letter-spacing: 0.5px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }}
         td {{
             border-bottom: 1px solid #e0e0e0;
-            font-size: 13px;
+            font-size: 14px;
             white-space: nowrap;
         }}
         th:first-child, td:first-child {{
@@ -202,8 +205,9 @@
             .two-col, .two-col[style] {{ grid-template-columns: 1fr !important; }}
             .stats-grid {{ grid-template-columns: 1fr 1fr; }}
             a[href="/logs"] {{ display: none; }}
-            th, td {{ padding: 6px 4px; font-size: 11px; }}
-            .params-tbl {{ table-layout: auto; }}
+            th, td {{ padding: 6px 4px; font-size: 13px; }}
+            .params-tbl col:first-child {{ width: 50% !important; }}
+            .params-tbl col:nth-child(2), .params-tbl col:nth-child(3) {{ width: 25% !important; }}
         }}
         .bottom-panel {{
             flex: 1;
@@ -339,7 +343,7 @@
                         </span>
                     </h3>
                     <table class="params-tbl">
-                        <colgroup><col style="width:40%"><col style="width:30%"><col style="width:30%"></colgroup>
+                        <colgroup><col style="width:60%"><col style="width:20%"><col style="width:20%"></colgroup>
                         <thead>
                             <tr>
                                 <th>Parameter</th>
@@ -350,7 +354,7 @@
                     </table>
                     <div style="flex:1; min-height:0; overflow-y:auto;">
                     <table class="params-tbl">
-                        <colgroup><col style="width:40%"><col style="width:30%"><col style="width:30%"></colgroup>
+                        <colgroup><col style="width:60%"><col style="width:20%"><col style="width:20%"></colgroup>
                         <tbody id="thetaBody"></tbody>
                     </table>
                     </div>
