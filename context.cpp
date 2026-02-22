@@ -1404,7 +1404,7 @@ namespace search
                 ++reduction;
         }
 
-        if (is_capture() || (_move.from_square() == _parent->_capture_square))
+        if (is_capture())
         {
             --reduction;
         #if CAPTURE_HISTORY
@@ -1414,6 +1414,10 @@ namespace search
             else if (cap_hist > 0 && cap_hist < CAPTURE_HISTORY_LMR_LOW)
                 ++reduction;
         #endif /* CAPTURE_HISTORY */
+        }
+        else if (_move.from_square() == _parent->_capture_square)
+        {
+            --reduction;
         }
 
         const auto hist_score = _parent->history_score(_move);
