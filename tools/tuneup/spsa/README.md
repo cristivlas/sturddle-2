@@ -160,8 +160,8 @@ interval set by `dashboard_refresh` in tuning.json.
 | `dashboard_refresh` | Dashboard auto-refresh in seconds | `10` |
 | `dashboard_history` | Max iteration history entries sent to dashboard (0 = unlimited) | `100` |
 | `work_stealing` | Reclaim chunks from slow workers for fast idle ones | `true` |
-| `overdue_factor` | Factor on expected duration to declare a chunk overdue | `1.25` |
-| `worker_idle_timeout` | Seconds before an idle worker (no chunks) is considered dead | `120.0` |
+| `overdue_factor` | Factor on expected duration to declare a chunk overdue | `1.35` |
+| `worker_idle_timeout` | Seconds before an idle worker (no chunks) is considered dead | `60.0` |
 | `chunk_timeout_factor` | Factor on expected duration for chunk timeout | `2.0` |
 | `min_chunk_timeout` | Minimum chunk timeout in seconds | `60.0` |
 | `min_chunk_expected_duration` | Floor for expected chunk duration | `60.0` |

@@ -105,8 +105,8 @@ class TuningConfig:
     # Max history entries sent to the dashboard (0 = unlimited)
     dashboard_history: int = 100
     work_stealing: bool = True
-    overdue_factor: float = 1.25
-    worker_idle_timeout: float = 120.0
+    overdue_factor: float = 1.35
+    worker_idle_timeout: float = 60.0
     chunk_timeout_factor: float = 2.0
     min_chunk_timeout: float = 60.0
     min_chunk_expected_duration: float = 60.0
