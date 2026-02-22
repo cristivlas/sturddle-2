@@ -12,6 +12,17 @@ from config import TuningConfig
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Piece weight param names -> index in PIECE_VALUES array {0, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING}
+PIECE_INDEX = {
+    'PAWN': 1, 'KNIGHT': 2, 'BISHOP': 3, 'ROOK': 4, 'QUEEN': 5,
+}
+
+# Endgame adjust param names -> index in ENDGAME_ADJUST array
+ENDGAME_ADJUST_INDEX = {
+    'ENDGAME_PAWN_ADJUST': 1, 'ENDGAME_KNIGHT_ADJUST': 2, 'ENDGAME_BISHOP_ADJUST': 3,
+    'ENDGAME_ROOK_ADJUST': 4, 'ENDGAME_QUEEN_ADJUST': 5,
+}
+
 
 def denormalize(param, theta_val):
     """Convert a theta value to engine-space integer.
@@ -98,6 +109,138 @@ def update_config(config_file, engine_values, finalize=False):
     return updated, found
 
 
+def _read_eval_piece_grading(header_dir):
+    """Read the EVAL_PIECE_GRADING setting from common.h.
+
+    Returns True/False if found, None if the file or define is missing.
+    """
+    common_h = os.path.join(header_dir, 'common.h')
+    if not os.path.exists(common_h):
+        return None
+    with open(common_h, 'r', encoding='utf-8', newline='') as f:
+        for line in f:
+            m = re.match(r'#define\s+EVAL_PIECE_GRADING\s+(\w+)', line)
+            if m:
+                return m.group(1).lower() not in ('0', 'false')
+    return None
+
+
+def update_piece_values(header_file, engine_values):
+    """Patch PIECE_VALUES and ENDGAME_ADJUST array macros in chess.h.
+
+    Recognises piece weight names (PAWN, KNIGHT, ...) and endgame adjustment
+    names (ENDGAME_PAWN_ADJUST, ...) and updates the corresponding element
+    inside the ``#define PIECE_VALUES { ... }`` or ``#define ENDGAME_ADJUST { ... }``
+    line that matches the active build configuration.
+
+    When PIECE_VALUES has conditional definitions guarded by
+    ``#if EVAL_PIECE_GRADING``, only the branch matching the current
+    setting in common.h is patched.
+
+    Returns (updated, found) sets of parameter names.
+    """
+    piece_updates = {}   # array index -> (name, value)
+    adjust_updates = {}
+
+    for name, value in engine_values.items():
+        if name in PIECE_INDEX:
+            piece_updates[PIECE_INDEX[name]] = (name, value)
+        elif name in ENDGAME_ADJUST_INDEX:
+            adjust_updates[ENDGAME_ADJUST_INDEX[name]] = (name, value)
+
+    if not piece_updates and not adjust_updates:
+        return set(), set()
+
+    with open(header_file, 'r', encoding='utf-8', newline='') as f:
+        lines = f.readlines()
+
+    # Determine which PIECE_VALUES branch to patch
+    grading = _read_eval_piece_grading(os.path.dirname(header_file) or '.')
+    if grading is not None:
+        logging.info(f"EVAL_PIECE_GRADING = {grading}")
+
+    found = set()
+    updated = set()
+    define_re = re.compile(
+        r'(#define\s+PIECE_VALUES\s*\{\s*)'
+        r'([^}]+)'
+        r'(\s*\})'
+    )
+    adjust_re = re.compile(
+        r'(#define\s+ENDGAME_ADJUST\s*\{\s*)'
+        r'([^}]+)'
+        r'(\s*\})'
+    )
+
+    # Track preprocessor context to identify which branch we're in
+    in_grading_if = False   # inside #if EVAL_PIECE_GRADING block
+    in_else = False         # inside the #else branch
+
+    result_lines = []
+    for line in lines:
+        stripped_line = line.lstrip()
+
+        # Track #if EVAL_PIECE_GRADING / #else / #endif
+        if re.match(r'#if\s+EVAL_PIECE_GRADING\b', stripped_line):
+            in_grading_if = True
+            in_else = False
+        elif in_grading_if and stripped_line.startswith('#else'):
+            in_else = True
+        elif in_grading_if and stripped_line.startswith('#endif'):
+            in_grading_if = False
+            in_else = False
+
+        # Patch PIECE_VALUES — skip the wrong branch when we know which is active
+        if piece_updates and define_re.search(line):
+            skip = False
+            if grading is not None and in_grading_if:
+                # In the #if block: patch only if grading matches
+                if in_else:
+                    skip = grading        # skip #else branch when grading is true
+                else:
+                    skip = not grading    # skip #if branch when grading is false
+
+            if not skip:
+                line = _patch_array_line(define_re, line, 'PIECE_VALUES',
+                                         piece_updates, found, updated)
+
+        # Patch ENDGAME_ADJUST (unconditional — only one definition)
+        if adjust_updates and adjust_re.search(line):
+            line = _patch_array_line(adjust_re, line, 'ENDGAME_ADJUST',
+                                     adjust_updates, found, updated)
+
+        result_lines.append(line)
+
+    if updated:
+        with open(header_file, 'w', encoding='utf-8', newline='') as f:
+            f.writelines(result_lines)
+        logging.info(f"Patched {len(updated)} piece value(s) in {header_file}")
+    else:
+        logging.info(f"No piece-value changes in {header_file}")
+
+    return updated, found
+
+
+def _patch_array_line(pattern, line, macro_name, updates, found, updated):
+    """Replace individual elements in a ``#define MACRO { v0, v1, ... }`` line."""
+    m = pattern.search(line)
+    if not m:
+        return line
+    prefix, body, suffix = m.group(1), m.group(2), m.group(3)
+    values = body.split(',')
+    for idx, (name, val) in updates.items():
+        found.add(name)
+        if idx < len(values):
+            old_tok = values[idx]
+            stripped = old_tok.strip()
+            new_val = str(val)
+            if stripped != new_val:
+                values[idx] = old_tok.replace(stripped, new_val, 1)
+                updated.add(name)
+                logging.info(f"Updated {name}: {stripped} -> {new_val} in {macro_name}")
+    return line[:m.start()] + prefix + ','.join(values) + suffix + line[m.end():]
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Apply SPSA tuning results to config.h (using tuning.json for parameter metadata).'
@@ -105,6 +248,7 @@ def main():
     parser.add_argument('project', help='Path to SPSA project directory or tuning.json file')
     parser.add_argument('--state', default=None, help='Path to spsa_state.json (default: <project>/spsa_state.json)')
     parser.add_argument('--config', default='config.h', help='Path to config.h (default: config.h)')
+    parser.add_argument('--header', default=None, help='Path to chess.h for piece values (default: chess.h next to config.h)')
     parser.add_argument('--finalize', action='store_true', help='Convert DECLARE_PARAM/DECLARE_NORMAL to DECLARE_VALUE')
     args = parser.parse_args()
 
@@ -157,8 +301,22 @@ def main():
             logging.info(f"  {name}: theta={val} -> engine={engine_val} (not in tuning config)")
             engine_values[name] = engine_val
 
-    # Patch config.h
+    # Patch config.h (DECLARE_PARAM / DECLARE_VALUE / DECLARE_NORMAL)
     updated, found = update_config(args.config, engine_values, finalize=args.finalize)
+
+    # Patch piece values in chess.h (PIECE_VALUES / ENDGAME_ADJUST macros)
+    not_in_config = {n: v for n, v in engine_values.items() if n not in found}
+    piece_candidates = {n: v for n, v in not_in_config.items()
+                        if n in PIECE_INDEX or n in ENDGAME_ADJUST_INDEX}
+
+    if piece_candidates:
+        header_path = args.header or os.path.join(os.path.dirname(args.config) or '.', 'chess.h')
+        if os.path.exists(header_path):
+            pv_updated, pv_found = update_piece_values(header_path, piece_candidates)
+            updated |= pv_updated
+            found |= pv_found
+        else:
+            logging.warning(f"Header file not found for piece values: {header_path}")
 
     # Report params that match current values (no change needed)
     unchanged = {name: engine_values[name] for name in found if name not in updated}
@@ -167,10 +325,10 @@ def main():
         for name, val in sorted(unchanged.items()):
             print(f"  {name} = {val}")
 
-    # Report params not found in config.h
+    # Report params not found in any file
     not_found = {name: engine_values[name] for name in engine_values if name not in found}
     if not_found:
-        logging.info(f"{len(not_found)} parameter(s) not found in {args.config}:")
+        logging.info(f"{len(not_found)} parameter(s) not found:")
         for name, val in sorted(not_found.items()):
             print(f"  {name} = {val}")
 
