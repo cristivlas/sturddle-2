@@ -387,7 +387,14 @@
             var pre = document.getElementById('pre-collapse');
             if (pre) pre.remove();
             localStorage.setItem('chartVis', JSON.stringify(chartVis));
-            requestAnimationFrame(createPending);
+            requestAnimationFrame(function() {{
+                createPending();
+                // Resize existing charts after layout reflow
+                document.querySelectorAll('[data-chart]:not(.collapsed) canvas').forEach(function(c) {{
+                    var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(c);
+                    if (ch) ch.resize();
+                }});
+            }});
         }}
 
         function toggleChart(key) {{
@@ -405,6 +412,18 @@
 
     <script>{chart_js}</script>
     <script id="history-data" type="application/json">{history_json}</script>
+    <script>
+        // Param ranges fetched from /config for engine-space solo mode
+        var paramRanges = {{}};
+        fetch('/config').then(function(r) {{ return r.json(); }}).then(function(cfg) {{
+            var params = cfg.parameters || {{}};
+            for (var name in params) {{
+                var p = params[name];
+                if (p.original_lower != null && p.original_upper != null)
+                    paramRanges[name] = [p.original_lower, p.original_upper];
+            }}
+        }}).catch(function() {{}});
+    </script>
     <script>
         (function() {{
             try {{
@@ -469,23 +488,88 @@
                     }});
                 }}
 
-                // Parameter values (multi-series)
+                // Parameter values (multi-series) with solo mode
                 const thetaKeys = [...new Set(
                     history.flatMap(h => Object.keys(h.theta || {{}}))
                 )];
-                const thetaDatasets = thetaKeys.map((k, i) => ({{
-                    label: k,
-                    data: history.map(h => (h.theta && k in h.theta) ? h.theta[k] : null),
-                    borderColor: tableau20[i % tableau20.length],
-                    backgroundColor: tableau20[i % tableau20.length] + '30',
-                    tension: 0.25,
-                    pointRadius: 1,
-                    borderWidth: 2,
-                }}));
+                // Store original normalized data for each param
+                var _origData = {{}};
+                const thetaDatasets = thetaKeys.map((k, i) => {{
+                    var d = history.map(h => (h.theta && k in h.theta) ? h.theta[k] : null);
+                    _origData[k] = d.slice();
+                    return {{
+                        label: k,
+                        data: d,
+                        borderColor: tableau20[i % tableau20.length],
+                        backgroundColor: tableau20[i % tableau20.length] + '30',
+                        tension: 0.25,
+                        pointRadius: 1,
+                        borderWidth: 2,
+                    }};
+                }});
+                var _soloParam = null;
+                function denorm(v, lo, hi) {{ return (v + 1) * (hi - lo) / 2 + lo; }}
+                var thetaOpts = {{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {{
+                        legend: {{
+                            display: window.innerWidth > 700,
+                            position: 'bottom',
+                            onClick: function(e, item, legend) {{
+                                var ch = legend.chart;
+                                var name = item.text;
+                                var ds = ch.data.datasets;
+                                if (_soloParam === name) {{
+                                    // Unsolo: restore all
+                                    _soloParam = null;
+                                    ds.forEach(function(d) {{
+                                        d.hidden = false;
+                                        d.data = _origData[d.label].slice();
+                                    }});
+                                    delete ch.options.scales.y.min;
+                                    delete ch.options.scales.y.max;
+                                    ch.options.plugins.title.display = false;
+                                }} else {{
+                                    // Solo this param
+                                    _soloParam = name;
+                                    var range = paramRanges[name];
+                                    ds.forEach(function(d) {{
+                                        if (d.label === name) {{
+                                            d.hidden = false;
+                                            if (range) {{
+                                                d.data = _origData[name].map(function(v) {{
+                                                    return v != null ? denorm(v, range[0], range[1]) : null;
+                                                }});
+                                            }} else {{
+                                                d.data = _origData[name].slice();
+                                            }}
+                                        }} else {{
+                                            d.hidden = true;
+                                        }}
+                                    }});
+                                    if (range) {{
+                                        ch.options.scales.y.min = range[0];
+                                        ch.options.scales.y.max = range[1];
+                                    }} else {{
+                                        delete ch.options.scales.y.min;
+                                        delete ch.options.scales.y.max;
+                                    }}
+                                    ch.options.plugins.title.display = true;
+                                    ch.options.plugins.title.text = name + (range ? ' [' + range[0] + ' \u2013 ' + range[1] + ']' : '');
+                                }}
+                                ch.resize();
+                                ch.update();
+                            }}
+                        }},
+                        title: {{ display: false, font: {{ size: 14 }} }}
+                    }},
+                    scales: {{ y: {{}} }}
+                }};
                 initChart('thetaChart', {{
                     type: 'line',
                     data: {{ labels: labels, datasets: thetaDatasets }},
-                    options: defaultOpts
+                    options: thetaOpts
                 }});
 
                 makeChart('eloChart', history.map(h => h.elo_diff), 'ELO Diff', '#e91e63');
@@ -508,7 +592,8 @@
                 var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(c);
                 if (!ch) return;
                 ch.options.plugins.legend.display = show;
-                ch.update('none');
+                ch.resize();
+                ch.update();
             }});
         }}, 200);
     }});
