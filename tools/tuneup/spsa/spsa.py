@@ -71,8 +71,7 @@ class SPSAState:
 class SPSAOptimizer:
     """SPSA optimizer for chess engine parameter tuning."""
 
-    def __init__(self, params: Dict[str, Parameter], spsa_config: SPSAConfig,
-                 max_iterations: int, state: SPSAState = None):
+    def __init__(self, params: Dict[str, Parameter], spsa_config: SPSAConfig, max_iterations: int, state: SPSAState = None):
         self.params = params
         self.config = spsa_config
         self.max_iterations = max_iterations
@@ -112,8 +111,7 @@ class SPSAOptimizer:
         """Generate Bernoulli +/-1 perturbation vector."""
         return {name: random.choice([-1, 1]) for name in self.params}
 
-    def compute_candidates(self, delta: Dict[str, int]
-                           ) -> Tuple[Dict[str, float], Dict[str, float]]:
+    def compute_candidates(self, delta: Dict[str, int]) -> Tuple[Dict[str, float], Dict[str, float]]:
         """
         Compute perturbed parameter vectors.
 
@@ -135,8 +133,7 @@ class SPSAOptimizer:
 
         return theta_plus, theta_minus
 
-    def update(self, delta: Dict[str, int],
-               score_plus: float, score_minus: float) -> Dict[str, float]:
+    def update(self, delta: Dict[str, int], score_plus: float, score_minus: float) -> Dict[str, float]:
         """
         Compute gradient estimate and update theta.
 

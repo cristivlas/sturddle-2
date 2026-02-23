@@ -42,7 +42,13 @@ def denormalize(param, theta_val):
     return engine_val
 
 
-def update_config(config_file, engine_values, finalize=False):
+def narrow_bounds(value, narrow_pct):
+    """Compute narrowed range as value +/- narrow_pct% of value."""
+    half = value * narrow_pct / 100.0
+    return round(value - half), round(value + half)
+
+
+def update_config(config_file, engine_values, finalize=False, narrow_pct=None):
     """Patch DECLARE_PARAM/DECLARE_VALUE/DECLARE_NORMAL lines in config.h.
 
     If finalize is True, also converts DECLARE_PARAM/DECLARE_NORMAL back to
@@ -65,14 +71,12 @@ def update_config(config_file, engine_values, finalize=False):
         for name, value in engine_values.items():
             for macro in ('DECLARE_VALUE', 'DECLARE_PARAM', 'DECLARE_NORMAL'):
                 pattern = re.compile(
-                    rf'({macro}\s*\(\s*{re.escape(name)}\s*,\s*)(-?\d+)(\s*,\s*-?\d+\s*,\s*-?\d+\s*\))'
+                    rf'({macro}\s*\(\s*{re.escape(name)}\s*,\s*)(-?\d+)(\s*,\s*)(-?\d+)(\s*,\s*)(-?\d+)(\s*\))'
                 )
                 match = pattern.search(line)
                 if match:
                     found.add(name)
-                    before = match.group(1)
-                    old_val = match.group(2)
-                    after = match.group(3)
+                    before, old_val, sep1, old_lo, sep2, old_hi, close = match.groups()
 
                     # Finalize macro first so alignment accounts for name change
                     if finalize and macro != 'DECLARE_VALUE':
@@ -82,13 +86,27 @@ def update_config(config_file, engine_values, finalize=False):
 
                     new_val = str(value)
 
-                    # Preserve column alignment
+                    # Preserve column alignment for value
                     if len(new_val) < len(old_val):
                         new_val = ' ' * (len(old_val) - len(new_val)) + new_val
                     elif len(new_val) > len(old_val):
                         before = before[:-(len(new_val) - len(old_val))]
 
-                    line = pattern.sub(f'{before}{new_val}{after}', line)
+                    # Narrow bounds if requested
+                    new_lo, new_hi = old_lo, old_hi
+                    if narrow_pct is not None:
+                        lo, hi = narrow_bounds(value, narrow_pct)
+                        new_lo, new_hi = str(lo), str(hi)
+                        if len(new_lo) < len(old_lo):
+                            new_lo = ' ' * (len(old_lo) - len(new_lo)) + new_lo
+                        elif len(new_lo) > len(old_lo):
+                            sep1 = sep1[:-(len(new_lo) - len(old_lo))]
+                        if len(new_hi) < len(old_hi):
+                            new_hi = ' ' * (len(old_hi) - len(new_hi)) + new_hi
+                        elif len(new_hi) > len(old_hi):
+                            sep2 = sep2[:-(len(new_hi) - len(old_hi))]
+
+                    line = line[:match.start()] + before + new_val + sep1 + new_lo + sep2 + new_hi + close + line[match.end():]
                     if line != original_line:
                         updated.add(name)
                         logging.info(f"Updated: {original_line.strip()} -> {line.strip()}")
@@ -241,6 +259,51 @@ def _patch_array_line(pattern, line, macro_name, updates, found, updated):
     return line[:m.start()] + prefix + ','.join(values) + suffix + line[m.end():]
 
 
+def narrow_piece_param_bounds(config_file, engine_values, narrow_pct):
+    """Narrow Config::Param bounds for piece value parameters in config.h."""
+    piece_names = [n for n in engine_values if n in PIECE_INDEX]
+    if not piece_names:
+        return set()
+
+    with open(config_file, 'r') as f:
+        lines = f.readlines()
+
+    narrowed = set()
+    result_lines = []
+    for line in lines:
+        original_line = line
+        for name in piece_names:
+            pat = re.compile(
+                r'("' + re.escape(name) + r'"\s*,\s*Config::Param\{\s*[^,]+,\s*)(\d+)(\s*,\s*)(\d+)(\s*,)'
+            )
+            match = pat.search(line)
+            if match:
+                prefix, old_lo, sep, old_hi, trailing = match.groups()
+                lo, hi = narrow_bounds(engine_values[name], narrow_pct)
+                new_lo, new_hi = str(lo), str(hi)
+                if len(new_lo) < len(old_lo):
+                    new_lo = ' ' * (len(old_lo) - len(new_lo)) + new_lo
+                elif len(new_lo) > len(old_lo):
+                    prefix = prefix[:-(len(new_lo) - len(old_lo))]
+                if len(new_hi) < len(old_hi):
+                    new_hi = ' ' * (len(old_hi) - len(new_hi)) + new_hi
+                elif len(new_hi) > len(old_hi):
+                    sep = sep[:-(len(new_hi) - len(old_hi))]
+                line = line[:match.start()] + prefix + new_lo + sep + new_hi + trailing + line[match.end():]
+                if line != original_line:
+                    narrowed.add(name)
+                    logging.info(f"Narrowed bounds: {original_line.strip()} -> {line.strip()}")
+                break
+        result_lines.append(line)
+
+    if narrowed:
+        with open(config_file, 'w') as f:
+            f.writelines(result_lines)
+        logging.info(f"Narrowed {len(narrowed)} piece param bound(s) in {config_file}")
+
+    return narrowed
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Apply SPSA tuning results to config.h (using tuning.json for parameter metadata).'
@@ -250,7 +313,12 @@ def main():
     parser.add_argument('--config', default='config.h', help='Path to config.h (default: config.h)')
     parser.add_argument('--header', default=None, help='Path to chess.h for piece values (default: chess.h next to config.h)')
     parser.add_argument('--finalize', action='store_true', help='Convert DECLARE_PARAM/DECLARE_NORMAL to DECLARE_VALUE')
+    parser.add_argument('--narrow', type=float, default=None, metavar='PCT',
+                        help='Narrow parameter bounds to value +/- PCT%% of value (0-100)')
     args = parser.parse_args()
+
+    if args.narrow is not None and not (0 <= args.narrow <= 100):
+        parser.error('--narrow must be between 0 and 100')
 
     # Accept either a project directory or a tuning.json file directly
     if os.path.isfile(args.project) and args.project.endswith('.json'):
@@ -302,7 +370,7 @@ def main():
             engine_values[name] = engine_val
 
     # Patch config.h (DECLARE_PARAM / DECLARE_VALUE / DECLARE_NORMAL)
-    updated, found = update_config(args.config, engine_values, finalize=args.finalize)
+    updated, found = update_config(args.config, engine_values, finalize=args.finalize, narrow_pct=args.narrow)
 
     # Patch piece values in chess.h (PIECE_VALUES / ENDGAME_ADJUST macros)
     not_in_config = {n: v for n, v in engine_values.items() if n not in found}
@@ -317,6 +385,10 @@ def main():
             found |= pv_found
         else:
             logging.warning(f"Header file not found for piece values: {header_path}")
+
+    # Narrow Config::Param bounds for piece values in config.h
+    if args.narrow is not None and piece_candidates:
+        narrow_piece_param_bounds(args.config, piece_candidates, args.narrow)
 
     # Report params that match current values (no change needed)
     unchanged = {name: engine_values[name] for name in found if name not in updated}
