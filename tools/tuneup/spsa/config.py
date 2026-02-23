@@ -69,6 +69,26 @@ class SPSAConfig:
     A_ratio: float = 0.1
     alpha: float = 0.602
     gamma: float = 0.101
+    draw_weight: float = 0.5
+
+    def validate(self):
+        errors = []
+        if self.budget < 1:
+            errors.append("budget must be >= 1")
+        if self.a <= 0:
+            errors.append("a (learning rate) must be > 0")
+        if self.c <= 0:
+            errors.append("c (perturbation) must be > 0")
+        if not (0 < self.A_ratio < 1):
+            errors.append("A_ratio must be in (0, 1)")
+        if self.alpha <= 0:
+            errors.append("alpha must be > 0")
+        if self.gamma <= 0:
+            errors.append("gamma must be > 0")
+        if not (0 <= self.draw_weight <= 0.5):
+            errors.append("draw_weight must be in [0, 0.5]")
+        if errors:
+            raise ValueError("SPSA config: " + "; ".join(errors))
 
 
 @dataclass
@@ -121,6 +141,27 @@ class TuningConfig:
 
     def max_iterations(self) -> int:
         return self.spsa.budget // self.games_per_iteration
+
+    def validate(self):
+        self.spsa.validate()
+        errors = []
+        if self.games_per_iteration < 2:
+            errors.append("games_per_iteration must be >= 2")
+        if self.spsa.budget < self.games_per_iteration:
+            errors.append("budget must be >= games_per_iteration")
+        if self.worker_idle_timeout <= 0:
+            errors.append("worker_idle_timeout must be > 0")
+        if self.overdue_factor < 1:
+            errors.append("overdue_factor must be >= 1")
+        if self.chunk_timeout_factor < 1:
+            errors.append("chunk_timeout_factor must be >= 1")
+        for name, p in self.parameters.items():
+            if p.lower >= p.upper:
+                errors.append(f"parameter {name}: lower must be < upper")
+            if not (p.lower <= p.init <= p.upper):
+                errors.append(f"parameter {name}: init must be in [lower, upper]")
+        if errors:
+            raise ValueError("Tuning config: " + "; ".join(errors))
 
     def to_json(self) -> str:
         def _param_dict(p: Parameter) -> dict:
@@ -179,7 +220,9 @@ class TuningConfig:
             default = None if f.default is MISSING else f.default
             kwargs[name] = d.get(name, default)
 
-        return cls(engine=engine, spsa=spsa, parameters=parameters, **kwargs)
+        cfg = cls(engine=engine, spsa=spsa, parameters=parameters, **kwargs)
+        cfg.validate()
+        return cfg
 
 
 @dataclass

@@ -662,8 +662,9 @@ class CoordinatorState:
     def _complete_iteration(self):
         """Finalize current iteration: update theta, save state, log."""
         total = self.total_wins + self.total_draws + self.total_losses
-        avg_score_plus = (self.total_wins + 0.5 * self.total_draws) / total
-        avg_score_minus = (self.total_losses + 0.5 * self.total_draws) / total
+        dw = self.config.spsa.draw_weight
+        avg_score_plus = (self.total_wins + dw * self.total_draws) / total
+        avg_score_minus = (self.total_losses + dw * self.total_draws) / total
 
         k = self.optimizer.iteration
         old_theta = dict(self.optimizer.theta)

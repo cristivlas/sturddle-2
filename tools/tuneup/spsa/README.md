@@ -173,6 +173,7 @@ interval set by `dashboard_refresh` in tuning.json.
 | `spsa.A_ratio` | Stabilization constant (fraction of max iterations) | `0.1` |
 | `spsa.alpha` | Learning rate decay exponent | `0.602` |
 | `spsa.gamma` | Perturbation decay exponent | `0.101` |
+| `spsa.draw_weight` | Draw value in score calculation (0.5 = standard, lower = amplify decisive games) | `0.5` |
 | `parameters.<name>.init` | Initial value | -- |
 | `parameters.<name>.lower` | Lower bound | -- |
 | `parameters.<name>.upper` | Upper bound | -- |
