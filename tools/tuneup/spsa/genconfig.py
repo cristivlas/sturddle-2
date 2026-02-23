@@ -179,6 +179,7 @@ def main():
             depth=args.depth,
             games_per_iteration=args.games_per_iteration,
             output_dir=project_dir_abs,
+            static_dir=abspath(root_path()),
             dashboard_refresh=dashboard_refresh,
             spsa=SPSAConfig(
                 budget=args.iterations * args.games_per_iteration,
