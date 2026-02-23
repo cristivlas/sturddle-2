@@ -418,6 +418,7 @@
         var initialThetaInternal = {{}};
         var paramColors = {{}};
         var paramTints = {{}};
+        var hiddenParams = new Set();
         var prevTheta = {{}};
 
         function fmtVal(v, decimals) {{
@@ -430,6 +431,7 @@
             var dec = showInternal ? 5 : 6;
             var hasPrev = Object.keys(prevTheta).length > 0;
             for (const [name, value] of Object.entries(theta)) {{
+                if (hiddenParams.has(name)) continue;
                 const tr = document.createElement('tr');
                 var initVal = initial && initial[name] !== undefined ? fmtVal(initial[name], dec) : '';
                 var ival = currentThetaInternal[name];
@@ -603,6 +605,46 @@
 
         var tableau10 = ['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'];
 
+        function createThetaChart(keys, labels, dataFn) {{
+            var ctx = document.getElementById('thetaChart').getContext('2d');
+            return new Chart(ctx, {{
+                type: 'line',
+                data: {{
+                    labels: labels,
+                    datasets: keys.map(function(k, i) {{
+                        return {{
+                            label: k,
+                            data: dataFn(k),
+                            borderColor: tableau10[i % tableau10.length],
+                            backgroundColor: tableau10[i % tableau10.length] + '30',
+                            tension: 0.25,
+                            pointRadius: 2,
+                            borderWidth: 2,
+                        }};
+                    }})
+                }},
+                options: {{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {{ legend: {{ display: window.innerWidth > 700, position: 'bottom', onClick: legendClick }} }}
+                }}
+            }});
+        }}
+
+        function legendClick(e, item, legend) {{
+            // Default Chart.js toggle
+            Chart.defaults.plugins.legend.onClick.call(this, e, item, legend);
+            // Sync hidden set from chart dataset visibility
+            hiddenParams.clear();
+            legend.chart.data.datasets.forEach(function(ds, i) {{
+                if (!legend.chart.isDatasetVisible(i)) hiddenParams.add(ds.label);
+            }});
+            renderTheta(
+                showInternal ? currentThetaInternal : currentTheta,
+                showInternal ? initialThetaInternal : initialTheta
+            );
+        }}
+
         let thetaChart = null;
         (function() {{
             try {{
@@ -619,25 +661,8 @@
                 const thetaKeys = [...new Set(
                     history.flatMap(h => Object.keys(h.theta || {{}}))
                 )];
-                const datasets = thetaKeys.map((k, i) => ({{
-                    label: k,
-                    data: history.map(h => (h.theta && k in h.theta) ? h.theta[k] : null),
-                    borderColor: tableau10[i % tableau10.length],
-                    backgroundColor: tableau10[i % tableau10.length] + '30',
-                    tension: 0.25,
-                    pointRadius: 2,
-                    borderWidth: 2,
-                }}));
-
-                const ctx = document.getElementById('thetaChart').getContext('2d');
-                thetaChart = new Chart(ctx, {{
-                    type: 'line',
-                    data: {{ labels, datasets }},
-                    options: {{
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {{ legend: {{ display: window.innerWidth > 700, position: 'bottom' }} }}
-                    }}
+                thetaChart = createThetaChart(thetaKeys, labels, function(k) {{
+                    return history.map(h => (h.theta && k in h.theta) ? h.theta[k] : null);
                 }});
                 syncParamColors();
             }} catch (e) {{
@@ -740,21 +765,7 @@
                     if (d.last_history.theta) {{
                         if (!thetaChart) {{
                             var keys = Object.keys(d.last_history.theta);
-                            var ctx = document.getElementById('thetaChart').getContext('2d');
-                            thetaChart = new Chart(ctx, {{
-                                type: 'line',
-                                data: {{
-                                    labels: [],
-                                    datasets: keys.map(function(k, i) {{
-                                        return {{ label: k, data: [], borderColor: tableau10[i % tableau10.length], backgroundColor: tableau10[i % tableau10.length] + '30', tension: 0.25, pointRadius: 2, borderWidth: 2 }};
-                                    }})
-                                }},
-                                options: {{
-                                    responsive: true,
-                                    maintainAspectRatio: false,
-                                    plugins: {{ legend: {{ display: window.innerWidth > 700, position: 'bottom' }} }}
-                                }}
-                            }});
+                            thetaChart = createThetaChart(keys, [], function() {{ return []; }});
                         }}
                         thetaChart.data.labels.push(d.last_history.iteration);
                         thetaChart.data.datasets.forEach(ds => {{
