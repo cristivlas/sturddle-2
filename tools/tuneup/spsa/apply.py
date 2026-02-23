@@ -42,13 +42,13 @@ def denormalize(param, theta_val):
     return engine_val
 
 
-def narrow_bounds(value, narrow_pct):
-    """Compute narrowed range as value +/- narrow_pct% of value."""
-    half = value * narrow_pct / 100.0
+def compute_range(value, range_pct):
+    """Compute bounds as value +/- range_pct% of value."""
+    half = value * range_pct / 100.0
     return round(value - half), round(value + half)
 
 
-def update_config(config_file, engine_values, finalize=False, narrow_pct=None):
+def update_config(config_file, engine_values, finalize=False, range_pct=None):
     """Patch DECLARE_PARAM/DECLARE_VALUE/DECLARE_NORMAL lines in config.h.
 
     If finalize is True, also converts DECLARE_PARAM/DECLARE_NORMAL back to
@@ -92,10 +92,10 @@ def update_config(config_file, engine_values, finalize=False, narrow_pct=None):
                     elif len(new_val) > len(old_val):
                         before = before[:-(len(new_val) - len(old_val))]
 
-                    # Narrow bounds if requested
+                    # Adjust bounds if requested
                     new_lo, new_hi = old_lo, old_hi
-                    if narrow_pct is not None:
-                        lo, hi = narrow_bounds(value, narrow_pct)
+                    if range_pct is not None:
+                        lo, hi = compute_range(value, range_pct)
                         new_lo, new_hi = str(lo), str(hi)
                         if len(new_lo) < len(old_lo):
                             new_lo = ' ' * (len(old_lo) - len(new_lo)) + new_lo
@@ -259,8 +259,8 @@ def _patch_array_line(pattern, line, macro_name, updates, found, updated):
     return line[:m.start()] + prefix + ','.join(values) + suffix + line[m.end():]
 
 
-def narrow_piece_param_bounds(config_file, engine_values, narrow_pct):
-    """Narrow Config::Param bounds for piece value parameters in config.h."""
+def adjust_piece_param_bounds(config_file, engine_values, range_pct):
+    """Adjust Config::Param bounds for piece value parameters in config.h."""
     piece_names = [n for n in engine_values if n in PIECE_INDEX]
     if not piece_names:
         return set()
@@ -268,7 +268,7 @@ def narrow_piece_param_bounds(config_file, engine_values, narrow_pct):
     with open(config_file, 'r') as f:
         lines = f.readlines()
 
-    narrowed = set()
+    adjusted = set()
     result_lines = []
     for line in lines:
         original_line = line
@@ -279,7 +279,7 @@ def narrow_piece_param_bounds(config_file, engine_values, narrow_pct):
             match = pat.search(line)
             if match:
                 prefix, old_lo, sep, old_hi, trailing = match.groups()
-                lo, hi = narrow_bounds(engine_values[name], narrow_pct)
+                lo, hi = compute_range(engine_values[name], range_pct)
                 new_lo, new_hi = str(lo), str(hi)
                 if len(new_lo) < len(old_lo):
                     new_lo = ' ' * (len(old_lo) - len(new_lo)) + new_lo
@@ -291,17 +291,17 @@ def narrow_piece_param_bounds(config_file, engine_values, narrow_pct):
                     sep = sep[:-(len(new_hi) - len(old_hi))]
                 line = line[:match.start()] + prefix + new_lo + sep + new_hi + trailing + line[match.end():]
                 if line != original_line:
-                    narrowed.add(name)
-                    logging.info(f"Narrowed bounds: {original_line.strip()} -> {line.strip()}")
+                    adjusted.add(name)
+                    logging.info(f"Adjusted bounds: {original_line.strip()} -> {line.strip()}")
                 break
         result_lines.append(line)
 
-    if narrowed:
+    if adjusted:
         with open(config_file, 'w') as f:
             f.writelines(result_lines)
-        logging.info(f"Narrowed {len(narrowed)} piece param bound(s) in {config_file}")
+        logging.info(f"Adjusted {len(adjusted)} piece param bound(s) in {config_file}")
 
-    return narrowed
+    return adjusted
 
 
 def main():
@@ -313,12 +313,12 @@ def main():
     parser.add_argument('--config', default='config.h', help='Path to config.h (default: config.h)')
     parser.add_argument('--header', default=None, help='Path to chess.h for piece values (default: chess.h next to config.h)')
     parser.add_argument('--finalize', action='store_true', help='Convert DECLARE_PARAM/DECLARE_NORMAL to DECLARE_VALUE')
-    parser.add_argument('--narrow', type=float, default=None, metavar='PCT',
-                        help='Narrow parameter bounds to value +/- PCT%% of value (0-100)')
+    parser.add_argument('--range', type=float, default=None, metavar='PCT', dest='range_pct',
+                        help='Adjust parameter bounds to value +/- PCT%% of value (e.g. 20 to narrow, 150 to widen)')
     args = parser.parse_args()
 
-    if args.narrow is not None and not (0 <= args.narrow <= 100):
-        parser.error('--narrow must be between 0 and 100')
+    if args.range_pct is not None and args.range_pct <= 0:
+        parser.error('--range must be > 0')
 
     # Accept either a project directory or a tuning.json file directly
     if os.path.isfile(args.project) and args.project.endswith('.json'):
@@ -370,7 +370,7 @@ def main():
             engine_values[name] = engine_val
 
     # Patch config.h (DECLARE_PARAM / DECLARE_VALUE / DECLARE_NORMAL)
-    updated, found = update_config(args.config, engine_values, finalize=args.finalize, narrow_pct=args.narrow)
+    updated, found = update_config(args.config, engine_values, finalize=args.finalize, range_pct=args.range_pct)
 
     # Patch piece values in chess.h (PIECE_VALUES / ENDGAME_ADJUST macros)
     not_in_config = {n: v for n, v in engine_values.items() if n not in found}
@@ -386,9 +386,9 @@ def main():
         else:
             logging.warning(f"Header file not found for piece values: {header_path}")
 
-    # Narrow Config::Param bounds for piece values in config.h
-    if args.narrow is not None and piece_candidates:
-        narrow_piece_param_bounds(args.config, piece_candidates, args.narrow)
+    # Adjust Config::Param bounds for piece values in config.h
+    if args.range_pct is not None and piece_candidates:
+        adjust_piece_param_bounds(args.config, piece_candidates, args.range_pct)
 
     # Report params that match current values (no change needed)
     unchanged = {name: engine_values[name] for name in found if name not in updated}
