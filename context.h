@@ -908,7 +908,7 @@ namespace search
            )
             return false;
 
-        return static_eval() >= _beta - NULL_MOVE_DEPTH_WEIGHT * depth() + NULL_MOVE_MARGIN;
+        return static_eval() >= _beta - depth() * NULL_MOVE_DEPTH_WEIGHT_PCT / 100 + NULL_MOVE_MARGIN;
     }
 
 
@@ -976,7 +976,7 @@ namespace search
     INLINE int null_move_reduction(const Context& ctxt)
     {
         return NULL_MOVE_REDUCTION_BASE /* base reduction */
-            + ctxt.depth() / NULL_MOVE_REDUCTION_DEPTH_DIV
+            + ctxt.depth() * NULL_MOVE_REDUCTION_DEPTH_PCT / 100
             + std::min(ctxt.depth() / 2, std::max(0, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_REDUCTION_DIV));
     }
 
