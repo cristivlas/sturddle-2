@@ -1358,7 +1358,12 @@ void UCI::setoption(const Arguments &args)
     if (iter != _options.end())
         iter->second->set(join(" ", value));
     else
+    {
         log_warning(__func__ + (": \"" + opt_name + "\": not found"));
+#if TUNING_ENABLED || TUNING_PARTIAL
+        throw std::invalid_argument("unknown option: \"" + opt_name + "\"");
+#endif
+    }
 
     if (_ponder)
         ensure_background_thread();

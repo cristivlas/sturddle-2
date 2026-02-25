@@ -239,6 +239,9 @@ void _set_param(const std::string& name, int value, bool echo)
     if (iter == Config::_namespace.end())
     {
         search::Context::log_message(LogLevel::ERROR, "unknown parameter: \"" + name + "\"");
+#if TUNING_ENABLED || TUNING_PARTIAL
+        throw std::invalid_argument("unknown parameter: \"" + name + "\"");
+#endif
     }
     else if (value < iter->second._min || value > iter->second._max)
     {
@@ -247,6 +250,9 @@ void _set_param(const std::string& name, int value, bool echo)
         err << iter->second._min << ", " << iter->second._max << "]";
 
         search::Context::log_message(LogLevel::ERROR, err.str());
+#if TUNING_ENABLED || TUNING_PARTIAL
+        throw std::out_of_range(err.str());
+#endif
     }
     else
     {
