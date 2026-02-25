@@ -370,12 +370,12 @@
                 <div class="section" style="margin-top: 0;">
                     <h3>Workers</h3>
                     <table style="table-layout:fixed; width:100%;">
-                        <colgroup><col style="width:18%"><col style="width:14%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:17%"></colgroup>
+                        <colgroup><col style="width:18%"><col style="width:16%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:15%"></colgroup>
                         <thead><tr><th>Name</th><th>Status</th><th>Seen</th><th>Assigned</th><th>Iter</th><th>Session</th></tr></thead>
                     </table>
                     <div style="max-height: 260px; overflow-y: auto;">
                     <table style="table-layout:fixed; width:100%;">
-                        <colgroup><col style="width:18%"><col style="width:14%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:17%"></colgroup>
+                        <colgroup><col style="width:18%"><col style="width:16%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:15%"></colgroup>
                         <tbody id="workersBody"></tbody>
                     </table>
                     </div>
@@ -499,7 +499,7 @@
                 const tr = document.createElement('tr');
                 tr.title = tip;
                 tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + w.name + '</td>'
-                             + '<td style="' + style + '">' + status + '</td>'
+                             + '<td style="overflow:hidden;text-overflow:ellipsis;' + style + '">' + status + '</td>'
                              + '<td class="worker-seen">' + Math.round(w.last_seen_ago) + 's ago</td>'
                              + '<td>' + w.games_assigned + '</td>'
                              + '<td>' + w.games_completed_iter + '</td>'
