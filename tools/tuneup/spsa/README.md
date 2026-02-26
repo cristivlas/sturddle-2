@@ -103,7 +103,6 @@ The coordinator binds to `0.0.0.0:8080` and accepts connections from any worker.
   "cutechess_cli": "/usr/local/bin/cutechess-cli",
   "concurrency": 8,
   "opening_book": "/home/user/books/8moves_v3.pgn",
-  "book_format": "pgn",
   "book_depth": 8,
   "games_dir": "/home/user/spsa/my-test/games",
   "log_file": "/home/user/spsa/my-test/logs/worker.log",
@@ -188,7 +187,7 @@ interval set by `dashboard_refresh` in tuning.json.
 | `cutechess_cli` | Path to cutechess-cli | `"cutechess-cli"` |
 | `concurrency` | Concurrent games | CPU count |
 | `opening_book` | Absolute path to opening book | auto-detected |
-| `book_format` | Book format (`pgn` or `epd`) | `"pgn"` |
+| `book_format` | Book format (`pgn` or `epd`); auto-detected from file extension if omitted | `""` |
 | `book_depth` | Opening book depth in plies | `8` |
 | `games_dir` | Absolute path for PGN output | auto-detected |
 | `log_file` | Absolute path to worker log | auto-detected |
