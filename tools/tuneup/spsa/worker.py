@@ -540,7 +540,8 @@ def main():
     logger.info("cutechess-cli: %s", config.cutechess_cli)
     logger.info("Games dir: %s", config.games_dir)
     if config.opening_book:
-        logger.info("Opening book: %s (%s)", config.opening_book, config.book_format)
+        fmt = config.book_format or Path(config.opening_book).suffix.lower().lstrip(".") or "pgn"
+        logger.info("Opening book: %s (%s)", config.opening_book, fmt)
 
     worker_loop(config)
 

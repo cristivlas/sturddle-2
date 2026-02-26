@@ -241,7 +241,7 @@ class WorkerConfig:
     cutechess_cli: str = "cutechess-cli"
     concurrency: int = 1
     opening_book: str = ""
-    book_format: str = "pgn"
+    book_format: str = ""
     book_depth: int = 8
     games_dir: str = "./games"
     log_file: str = "worker.log"
