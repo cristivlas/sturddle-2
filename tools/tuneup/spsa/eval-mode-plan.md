@@ -62,9 +62,10 @@ The worker handles this gracefully:
 
 ### Position Filtering
 
-- Skip first N plies per game (reuse existing `book_depth` from WorkerConfig)
+- Detect and skip book moves
 - Skip positions where side to move is in check
 - Skip games with no result (`*`)
+- Optional config: skip quiet moves -- i.e. use only positions where the next move played was a capture
 
 ---
 
@@ -261,6 +262,11 @@ If desired later:
 - Driven by `mode` field in SSE data
 
 ---
+
+## Coding Style
+1. Do not break code lines for the sake of fitting into some narrow number of columns
+2. Do not use default parameter values in function signatures unless functionally-required.
+3. git commit -am messages must be brief; never include author notes
 
 ## Implementation Order
 
