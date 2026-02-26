@@ -167,6 +167,9 @@ def build_cutechess_command(worker_config: WorkerConfig,
 
     # Opening book
     if book_file:
+        if not book_format:
+            ext = Path(book_file).suffix.lower().lstrip(".")
+            book_format = ext if ext in ("pgn", "epd") else "pgn"
         cmd += ["-openings", f"file={book_file}", f"format={book_format}"]
         if book_depth:
             cmd += [f"plies={book_depth}"]
