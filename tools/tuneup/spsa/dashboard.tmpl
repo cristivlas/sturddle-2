@@ -323,10 +323,10 @@
                     <div class="stat-value" id="ckValue">{c_k:.6f}</div>
                 </div>
                 <div class="stat">
-                    <div class="stat-label">Avg / Iteration</div>
+                    <div class="stat-label" id="avgIterLabel">Avg / Iteration</div>
                     <div class="stat-value" id="avgIterValue">--</div>
                 </div>
-                <div class="stat">
+                <div class="stat" id="totalGamesStat">
                     <div class="stat-label">Total Games</div>
                     <div class="stat-value" id="totalGamesValue">{total_games}</div>
                 </div>
@@ -546,6 +546,8 @@
 
         // --- Initial render from baked-in data ---
         const sessionStart = '{session_start}';
+        const totalGamesAtStart = {total_games_at_start};
+        var currentThroughput = {throughput};
         const initTheta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}');
         const initThetaInternal = JSON.parse(document.getElementById('theta-internal-data').textContent || '{{}}');
         const initWorkers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
@@ -559,6 +561,7 @@
         document.getElementById('remainingValue').textContent = {games_total} - {games_done};
         renderHistory(initHistory);
         updateHistoryTitle({history_total});
+        updateSinceRestart({total_games});
         updateETA({total_games}, {games_done}, {games_total}, {iteration}, {max_iters});
 
         // --- Fetch initial parameter values from config ---
@@ -686,17 +689,31 @@
             if (hrs < 48) return hrs + 'h';
             return (min / 1440).toFixed(1) + 'd';
         }}
+        function updateSinceRestart(totalGames) {{
+            var since = totalGames - totalGamesAtStart;
+            var el = document.getElementById('totalGamesStat');
+            if (el) el.title = since > 0 ? since + ' since restart' : '';
+        }}
         function updateETA(totalGames, gamesDone, gamesTotal, iteration, maxIters) {{
-            var elapsed = Date.now() - parseLocalTimestamp(sessionStart);
             var etaIter = '', etaSession = '';
-            if (elapsed > 10000 && totalGames > 0) {{
-                var msPerGame = elapsed / totalGames;
-                var gamesLeftIter = Math.max(0, gamesTotal - gamesDone);
-                var gamesLeftTotal = gamesLeftIter + Math.max(0, maxIters - iteration) * gamesTotal;
-                var fi = formatDuration(gamesLeftIter * msPerGame);
-                var fs = formatDuration(gamesLeftTotal * msPerGame);
+            var gamesLeftIter = Math.max(0, gamesTotal - gamesDone);
+            var gamesLeftTotal = gamesLeftIter + Math.max(0, maxIters - iteration) * gamesTotal;
+            if (currentThroughput > 0) {{
+                // Use real-time aggregate throughput from active workers
+                var fi = formatDuration(gamesLeftIter / currentThroughput * 1000);
+                var fs = formatDuration(gamesLeftTotal / currentThroughput * 1000);
                 if (fi !== '--') etaIter = fi;
                 if (fs !== '--') etaSession = fs;
+            }} else {{
+                // Fallback: session-average when no workers are active
+                var elapsed = Date.now() - parseLocalTimestamp(sessionStart);
+                if (elapsed > 10000 && totalGames > 0) {{
+                    var msPerGame = elapsed / totalGames;
+                    var fi = formatDuration(gamesLeftIter * msPerGame);
+                    var fs = formatDuration(gamesLeftTotal * msPerGame);
+                    if (fi !== '--') etaIter = fi;
+                    if (fs !== '--') etaSession = fs;
+                }}
             }}
             var iterEl = document.getElementById('iterValue');
             var gamesEl = document.getElementById('gamesValue');
@@ -704,8 +721,11 @@
                 + (etaSession ? ' <span style="font-size:14px;color:#999;font-weight:normal">~' + etaSession + ' left</span>' : '');
             gamesEl.innerHTML = gamesDone + ' / ' + gamesTotal
                 + (etaIter ? ' <span style="font-size:14px;color:#999;font-weight:normal">~' + etaIter + ' left</span>' : '');
+            var useTP = currentThroughput > 0;
+            document.getElementById('avgIterLabel').textContent = useTP ? 'Est / Iteration' : 'Avg / Iteration';
             document.getElementById('avgIterValue').textContent =
-                iteration > 0 ? formatDuration(elapsed / iteration) : '--';
+                useTP ? formatDuration(gamesTotal / currentThroughput * 1000) :
+                iteration > 0 ? formatDuration((Date.now() - parseLocalTimestamp(sessionStart)) / iteration) : '--';
         }}
 
         // --- SSE live updates ---
@@ -729,6 +749,8 @@
             document.getElementById('akValue').textContent = d.a_k.toFixed(6);
             document.getElementById('ckValue').textContent = d.c_k.toFixed(6);
             document.getElementById('totalGamesValue').textContent = d.total_games;
+            currentThroughput = d.throughput;
+            updateSinceRestart(d.total_games);
 
             // Status badge
             const badge = document.getElementById('statusBadge');

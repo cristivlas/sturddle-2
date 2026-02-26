@@ -152,6 +152,10 @@ class CoordinatorState:
         )
         self.server_start_time = time.time()
         self._prepare_iteration()
+        self.total_games_at_start = (
+            self.optimizer.iteration * self.config.games_per_iteration
+            + self.games_completed
+        )
 
         # Log if resuming with partial progress
         if self.games_completed > 0:
@@ -849,6 +853,10 @@ class CoordinatorState:
                 })
 
             has_normalized = self._has_normalized_params()
+            throughput = sum(
+                w.games_per_second for name, w in self.workers.items()
+                if self._is_worker_alive(name)
+            )
             result = {
                 "iteration": self.optimizer.iteration,
                 "max_iterations": self.optimizer.max_iterations,
@@ -860,6 +868,8 @@ class CoordinatorState:
                 "games_assigned": self._games_assigned(),
                 "games_pending": self._games_in_flight(),
                 "total_games": self.optimizer.iteration * gpi + self.games_completed,
+                "total_games_at_start": self.total_games_at_start,
+                "throughput": round(throughput, 2),
                 "theta": self._get_display_values(),
                 "c_k": self.optimizer.c_k() if not self.optimizer.is_done() else 0,
                 "a_k": self.optimizer.a_k() if not self.optimizer.is_done() else 0,
@@ -975,6 +985,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             a_k=data["a_k"],
             c_k=data["c_k"],
             total_games=data["total_games"],
+            total_games_at_start=data["total_games_at_start"],
+            throughput=data["throughput"],
             theta_json=json.dumps(data.get("theta", {})),
             theta_internal_json=json.dumps(data.get("theta_internal", {})),
             has_normalized=json.dumps(data.get("has_normalized", False)),
@@ -1089,6 +1101,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                     "a_k": data["a_k"],
                     "c_k": data["c_k"],
                     "total_games": data["total_games"],
+                    "total_games_at_start": data["total_games_at_start"],
+                    "throughput": data["throughput"],
                     "theta": data.get("theta", {}),
                     "workers": data.get("workers", []),
                     "last_history": history[-1] if history else None,
