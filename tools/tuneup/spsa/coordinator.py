@@ -442,20 +442,19 @@ class CoordinatorState:
         logger.warning("Released [%s] (%d games) from %s: %s", cid, chunk.num_games, chunk.worker_name, reason)
 
     def _reclaim_timed_out_chunks(self):
-        """Reclaim chunks whose timeout expired or whose worker is dead."""
+        """Reclaim chunks from unresponsive workers only.
+
+        Overdue chunks from alive workers are left in place — work stealing
+        handles them with race semantics so no work is wasted.
+        """
         now = time.time()
         alive = {w.name for w in self._active_workers()}
         stale = []
         for cid, c in self.pending_chunks.items():
-            worker_timed_out = c.worker_name not in alive
-            chunk_expired = now - c.assign_time > c.timeout
-            if worker_timed_out:
+            if c.worker_name not in alive:
                 w = self.workers.get(c.worker_name)
                 ago = "%.0fs ago" % (now - w.last_seen) if w else "unknown"
                 stale.append((cid, "worker %s disconnected (last seen %s)" % (c.worker_name, ago)))
-            elif chunk_expired:
-                stale.append((cid, "chunk timed out (%.0fs elapsed, timeout %ds)" % (
-                    now - c.assign_time, int(c.timeout))))
         for cid, reason in stale:
             self._release_chunk(cid, reason)
 
@@ -469,7 +468,7 @@ class CoordinatorState:
         """
         Assign a chunk of games to a worker.
 
-        Flow: touch worker (heartbeat) -> reclaim timed-out chunks ->
+        Flow: touch worker (heartbeat) -> reclaim unresponsive-worker chunks ->
         compute adaptive chunk size -> assign and track.
 
         Args:
@@ -511,9 +510,7 @@ class CoordinatorState:
             stolen_from = None
 
             if remaining <= 0:
-                steal = None
-                if self.config.work_stealing:
-                    steal = self._try_steal_chunk(worker_name)
+                steal = self._try_steal_chunk(worker_name)
                 if steal:
                     stolen_cid, stolen_games, stolen_from = steal
                     remaining = gpi - self._games_assigned()
