@@ -433,7 +433,7 @@
         function paramConvergence(name) {{
             var range = paramRanges[name];
             if (!range) return null;
-            var vals = initHistory.map(function(h) {{ return h.theta && h.theta[name]; }}).filter(function(v) {{ return v != null; }});
+            var vals = historyWindow.map(function(h) {{ return h.theta && h.theta[name]; }}).filter(function(v) {{ return v != null; }});
             if (vals.length < CONVERGENCE_MIN) return null;
             var mean = vals.reduce(function(a, b) {{ return a + b; }}, 0) / vals.length;
             var variance = vals.reduce(function(a, v) {{ return a + (v - mean) * (v - mean); }}, 0) / vals.length;
@@ -573,11 +573,11 @@
             return tr;
         }}
 
-        function renderHistory(history) {{
-            history.sort((a, b) => (b.iteration || 0) - (a.iteration || 0));
+        function renderHistory(entries) {{
+            var sorted = entries.slice().sort((a, b) => (b.iteration || 0) - (a.iteration || 0));
             const tbody = document.getElementById('historyBody');
             tbody.innerHTML = '';
-            history.forEach(h => tbody.appendChild(historyRow(h)));
+            sorted.forEach(h => tbody.appendChild(historyRow(h)));
         }}
 
         function updateHistoryTitle(total) {{
@@ -593,7 +593,7 @@
         const initTheta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}');
         const initThetaInternal = JSON.parse(document.getElementById('theta-internal-data').textContent || '{{}}');
         const initWorkers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
-        const initHistory = JSON.parse(document.getElementById('history-data').textContent || '[]');
+        const historyWindow = JSON.parse(document.getElementById('history-data').textContent || '[]');
 
         currentTheta = initTheta;
         currentThetaInternal = Object.keys(initThetaInternal).length ? initThetaInternal : initTheta;
@@ -601,7 +601,7 @@
         renderTheta(hasNormalized ? currentThetaInternal : currentTheta, hasNormalized ? initialThetaInternal : initialTheta);
         renderWorkers(initWorkers);
         document.getElementById('remainingValue').textContent = {games_total} - {games_done};
-        renderHistory(initHistory);
+        renderHistory(historyWindow);
         updateHistoryTitle({history_total});
         updateSinceRestart({total_games});
         updateETA({total_games}, {games_done}, {games_total}, {iteration}, {max_iters});
@@ -697,7 +697,7 @@
         let thetaChart = null;
         (function() {{
             try {{
-                const history = initHistory.slice().sort((a,b) => (a.iteration||0) - (b.iteration||0));
+                const history = historyWindow.slice().sort((a,b) => (a.iteration||0) - (b.iteration||0));
                 if (!history.length) return;
 
                 // Previous iteration theta (for trend dots)
@@ -852,7 +852,7 @@
                     // Update previous-iteration theta for trend dots
                     if (d.last_history.theta) {{
                         prevTheta = Object.assign({{}}, d.last_history.theta);
-                        initHistory.push(d.last_history);
+                        historyWindow.push(d.last_history);
                     }}
                 }}
                 knownHistoryLen = d.history_len;
