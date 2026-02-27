@@ -430,6 +430,11 @@
         }}
 
         var CONVERGENCE_MIN = 5;
+        var CONV_THRESHOLDS = [2, 5];
+        var CONV_COLORS = ['#1B8A2A', '#B86800', '#C62828'];
+        function convColor(pct) {{
+            return pct < CONV_THRESHOLDS[0] ? CONV_COLORS[0] : pct < CONV_THRESHOLDS[1] ? CONV_COLORS[1] : CONV_COLORS[2];
+        }}
         function paramConvergence(name) {{
             var range = paramRanges[name];
             if (!range) return null;
@@ -463,7 +468,7 @@
                     var sdTxt = conv ? conv.stddev.toFixed(4) : '--';
                     var pctTxt = conv ? conv.pct.toFixed(1) + '%' : '--';
                     var pctColor = '';
-                    if (conv) pctColor = conv.pct < 2 ? 'color:#1B8A2A;font-weight:600;' : conv.pct < 5 ? 'color:#B86800;font-weight:600;' : 'color:#C62828;font-weight:600;';
+                    if (conv) pctColor = 'color:' + convColor(conv.pct) + ';font-weight:600;';
                     var tip = name;
                     if (conv) tip += '\nWindow: last ' + conv.window + ' iterations';
                     tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + tip + '">' + name + '</td>'
@@ -483,7 +488,8 @@
                     if (hasPrev && paramColors[name] && prevTheta[name] !== undefined && typeof ival === 'number') {{
                         var pdiff = ival - prevTheta[name];
                         var sym = pdiff > 0 ? '&#9650;' : pdiff < 0 ? '&#9660;' : '&#9644;';
-                        var dotStyle = pdiff === 0 ? 'color:#ccc;' : '';
+                        var conv = paramConvergence(name);
+                        var dotStyle = pdiff === 0 ? 'color:#ccc;' : conv ? 'color:' + convColor(conv.pct) + ';' : '';
                         dot = '<span style="font-size:9px;margin-right:4px;' + dotStyle + '">' + sym + '</span>';
                     }}
                     tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + name + '">' + dot + name + '</td>'
