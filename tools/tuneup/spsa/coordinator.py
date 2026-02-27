@@ -517,7 +517,7 @@ class CoordinatorState:
                 elif self.draining and not self._restart:
                     return {"status": "done"}
                 else:
-                    return {"status": "retry", "retry_after": self.config.retry_after}
+                    return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
 
             if stolen_cid:
                 num_games = stolen_games
@@ -528,7 +528,7 @@ class CoordinatorState:
                 num_games = min(remaining, adaptive)
 
             if num_games == 0:
-                return {"status": "retry", "retry_after": self.config.retry_after}
+                return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
 
             # Must be even (each game pair is +c vs -c); round up
             num_games += num_games % 2
@@ -568,7 +568,9 @@ class CoordinatorState:
                 work.iteration, self._games_assigned(), gpi, int(timeout),
             )
             self._notify_dashboard()
-            return work.to_dict()
+            d = work.to_dict()
+            d["server_start"] = self.server_start_time
+            return d
 
     def submit_result(self, result: WorkResult) -> dict:
         """
@@ -786,7 +788,9 @@ class CoordinatorState:
 
     def get_tuning_config_dict(self) -> dict:
         """Tuning config as dict for workers to fetch."""
-        return json.loads(self.config.to_json())
+        d = json.loads(self.config.to_json())
+        d["server_start"] = self.server_start_time
+        return d
 
     def get_charts_data(self) -> dict:
         """Full history for the charts page (no slicing)."""

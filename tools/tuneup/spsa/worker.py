@@ -402,12 +402,16 @@ def worker_loop(worker_config: WorkerConfig):
     base_url = worker_config.coordinator.rstrip("/")
 
     # Fetch tuning config from coordinator
-    logger.info("Connecting to coordinator at %s", base_url)
-    tuning_config = http_get(f"{base_url}/config", HTTP_TIMEOUT)
-    logger.info("Received tuning config: %d parameters", len(tuning_config.get("parameters", {})))
+    def fetch_config():
+        nonlocal tuning_config, server_start, default_retry
+        tuning_config = http_get(f"{base_url}/config", HTTP_TIMEOUT)
+        server_start = tuning_config.get("server_start", 0)
+        default_retry = tuning_config.get("retry_after", 5)
 
-    # Default retry interval when coordinator asks workers to retry
-    default_retry = tuning_config.get("retry_after", 5)
+    tuning_config, server_start, default_retry = None, 0, 5
+    logger.info("Connecting to coordinator at %s", base_url)
+    fetch_config()
+    logger.info("Received tuning config: %d parameters", len(tuning_config.get("parameters", {})))
     retry_timeout = worker_config.http_retry_timeout
 
     hostname = worker_config.name or platform.node()
@@ -434,6 +438,13 @@ def worker_loop(worker_config: WorkerConfig):
             if cc_overrides:
                 work_request["cutechess_overrides"] = cc_overrides
             response = http_post(f"{base_url}/work", work_request, retry_timeout)
+
+            # Detect coordinator restart and re-fetch config
+            resp_start = response.get("server_start", server_start)
+            if resp_start != server_start:
+                logger.warning("Coordinator restarted, re-fetching config")
+                fetch_config()
+                continue
 
             status = response.get("status")
             if status == "done":
