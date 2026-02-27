@@ -451,11 +451,18 @@ class CoordinatorState:
         """Reclaim chunks whose timeout expired or whose worker is dead."""
         now = time.time()
         alive = {w.name for w in self._active_workers()}
-        stale = [(cid, c) for cid, c in self.pending_chunks.items()
-                 if c.worker_name not in alive or now - c.assign_time > c.timeout]
-        for cid, c in stale:
-            reason = ("worker %s timed out" % c.worker_name if c.worker_name not in alive
-                      else "timed out (%.0fs elapsed, timeout %ds)" % (now - c.assign_time, int(c.timeout)))
+        stale = []
+        for cid, c in self.pending_chunks.items():
+            worker_timed_out = c.worker_name not in alive
+            chunk_expired = now - c.assign_time > c.timeout
+            if worker_timed_out:
+                w = self.workers.get(c.worker_name)
+                ago = "%.0fs ago" % (now - w.last_seen) if w else "unknown"
+                stale.append((cid, "worker %s disconnected (last seen %s)" % (c.worker_name, ago)))
+            elif chunk_expired:
+                stale.append((cid, "chunk timed out (%.0fs elapsed, timeout %ds)" % (
+                    now - c.assign_time, int(c.timeout))))
+        for cid, reason in stale:
             self._release_chunk(cid, reason)
 
     def _notify_dashboard(self):
