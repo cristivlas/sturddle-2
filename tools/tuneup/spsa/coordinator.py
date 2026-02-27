@@ -142,14 +142,8 @@ class CoordinatorState:
         self.workers = {}  # name -> WorkerInfo
         self._worker_stats = {}  # name -> (games_completed, chunks_completed)
 
-        # Time estimates and timeouts
+        # Time estimates
         self._base_sec_per_game = self._estimate_game_duration()
-        # Max timeout: at least 30 min, or enough for the largest possible chunk
-        max_chunk_games = tuning_config.games_per_iteration // 2
-        self.max_chunk_timeout = max(
-            1800.0,
-            max_chunk_games * self._base_sec_per_game * self.config.chunk_timeout_factor,
-        )
         self.server_start_time = time.time()
         self._prepare_iteration()
         self.total_games_at_start = (
@@ -274,7 +268,7 @@ class CoordinatorState:
         """Timeout for a chunk based on expected duration."""
         expected = num_games * self._worker_sec_per_game(worker_name)
         timeout = expected * self.config.chunk_timeout_factor
-        return max(self.config.min_chunk_timeout, min(self.max_chunk_timeout, timeout))
+        return max(self.config.min_chunk_timeout, timeout)
 
     def _compute_chunk_size(self, worker_name: str, remaining: int) -> int:
         """
