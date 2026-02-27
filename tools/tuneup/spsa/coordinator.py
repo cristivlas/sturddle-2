@@ -465,7 +465,7 @@ class CoordinatorState:
             self.dashboard_version += 1
             self.dashboard_changed.notify_all()
 
-    def get_work(self, chunk_size: int, worker_name: str, cutechess_overrides: dict) -> dict:
+    def get_work(self, chunk_size: int, worker_name: str, cutechess_overrides: dict, worker_server_start: float = 0) -> dict:
         """
         Assign a chunk of games to a worker.
 
@@ -477,11 +477,13 @@ class CoordinatorState:
             worker_name: worker hostname for tracking
 
         Returns:
-            WorkItem dict, or {"status": "done"/"retry"}.
+            WorkItem dict, or {"status": "done"/"retry"/"config_changed"}.
         """
         assert worker_name, "worker_name required; enforced at HTTP boundary"
         with self.lock:
             self._touch_worker(worker_name)
+            if worker_server_start and worker_server_start != self.server_start_time:
+                return {"status": "config_changed"}
             if cutechess_overrides and worker_name in self.workers:
                 self.workers[worker_name].cutechess_overrides = cutechess_overrides
 
@@ -1164,7 +1166,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                 self._send_json({"status": "error", "reason": "worker name required"})
                 return
             cc_overrides = data.get("cutechess_overrides")
-            result = self.coordinator.get_work(chunk_size, worker_name, cc_overrides)
+            worker_server_start = data.get("server_start", 0)
+            result = self.coordinator.get_work(chunk_size, worker_name, cc_overrides, worker_server_start)
             self._send_json(result)
         elif self.path == "/result":
             data = self._read_json()

@@ -434,14 +434,14 @@ def worker_loop(worker_config: WorkerConfig):
             work_request = {
                 "chunk_size": chunk_size_cap,
                 "worker": hostname,
+                "server_start": server_start,
             }
             if cc_overrides:
                 work_request["cutechess_overrides"] = cc_overrides
             response = http_post(f"{base_url}/work", work_request, retry_timeout)
 
             # Detect coordinator restart and re-fetch config
-            resp_start = response.get("server_start", server_start)
-            if resp_start != server_start:
+            if response.get("status") == "config_changed":
                 logger.warning("Coordinator restarted, re-fetching config")
                 fetch_config()
                 continue
