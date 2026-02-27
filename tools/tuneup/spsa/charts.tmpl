@@ -541,7 +541,7 @@
                     var t = parseInt(document.getElementById('zoomTo').value) || (_labels.length - 1);
                     var pct = sliceConvergence(_soloParam, f, t);
                     if (pct != null) {{
-                        var convColor = pct < 2 ? '#1B8A2A' : pct < 10 ? '#B86800' : '#C62828';
+                        var convColor = pct < 2 ? '#1B8A2A' : pct < 5 ? '#B86800' : '#C62828';
                         ch.options.plugins.subtitle = {{ display: true, text: 'StdDev/Range: ' + pct.toFixed(1) + '%', font: {{ size: 15, weight: 'bold' }}, color: convColor, padding: {{ bottom: 8 }} }};
                     }} else {{
                         ch.options.plugins.subtitle = {{ display: false }};

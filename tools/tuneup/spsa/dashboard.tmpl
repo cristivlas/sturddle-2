@@ -463,7 +463,7 @@
                     var sdTxt = conv ? conv.stddev.toFixed(4) : '--';
                     var pctTxt = conv ? conv.pct.toFixed(1) + '%' : '--';
                     var pctColor = '';
-                    if (conv) pctColor = conv.pct < 2 ? 'color:#1B8A2A;font-weight:600;' : conv.pct < 10 ? 'color:#B86800;font-weight:600;' : 'color:#C62828;font-weight:600;';
+                    if (conv) pctColor = conv.pct < 2 ? 'color:#1B8A2A;font-weight:600;' : conv.pct < 5 ? 'color:#B86800;font-weight:600;' : 'color:#C62828;font-weight:600;';
                     var tip = name;
                     if (conv) tip += '\nWindow: last ' + conv.window + ' iterations';
                     tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + tip + '">' + name + '</td>'
