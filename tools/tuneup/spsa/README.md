@@ -157,7 +157,7 @@ interval set by `dashboard_refresh` in tuning.json.
 | `output_dir` | Coordinator output (logs, checkpoint) | `"./spsa_output"` |
 | `retry_after` | Worker retry interval in seconds | `5` |
 | `dashboard_refresh` | Dashboard auto-refresh in seconds | `10` |
-| `dashboard_history` | Max iteration history entries sent to dashboard (0 = unlimited) | `100` |
+| `dashboard_history` | Max iteration history entries sent to dashboard (0 = unlimited). Also determines the convergence window size | `100` |
 | `work_stealing` | Reclaim chunks from slow workers for fast idle ones | `true` |
 | `overdue_factor` | Factor on expected duration to declare a chunk overdue | `1.35` |
 | `worker_idle_timeout` | Seconds before an idle worker (no chunks) is considered dead | `60.0` |

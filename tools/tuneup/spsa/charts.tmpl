@@ -361,6 +361,7 @@
                 : 'All';
             // Persist
             try {{ localStorage.setItem('chartZoom', JSON.stringify({{f:from, t:to}})); }} catch(e) {{}}
+            if (window.updateThetaSubtitle) window.updateThetaSubtitle();
         }}
 
         // Deferred chart creation for canvases hidden at init time
@@ -413,15 +414,18 @@
     <script>{chart_js}</script>
     <script id="history-data" type="application/json">{history_json}</script>
     <script>
-        // Param ranges fetched from /config for engine-space solo mode
+        // Param ranges fetched from /config for engine-space solo mode + convergence
         var paramRanges = {{}};
+        var paramInternalRanges = {{}};
         fetch('/config').then(function(r) {{ return r.json(); }}).then(function(cfg) {{
             var params = cfg.parameters || {{}};
             for (var name in params) {{
                 var p = params[name];
                 if (p.original_lower != null && p.original_upper != null)
                     paramRanges[name] = [p.original_lower, p.original_upper];
+                paramInternalRanges[name] = p.upper - p.lower;
             }}
+            if (window.updateThetaSubtitle) window.updateThetaSubtitle();
         }}).catch(function() {{}});
     </script>
     <script>
@@ -509,6 +513,40 @@
                 }});
                 var _soloParam = null;
                 function denorm(v, lo, hi) {{ return (v + 1) * (hi - lo) / 2 + lo; }}
+                var CONV_MIN = 5;
+                function sliceConvergence(name, fromIdx, toIdx) {{
+                    var range = paramInternalRanges[name];
+                    if (!range || range === 0) return null;
+                    var d = _origData[name];
+                    if (!d) return null;
+                    var vals = [];
+                    for (var i = fromIdx; i <= toIdx; i++) {{
+                        if (d[i] != null) vals.push(d[i]);
+                    }}
+                    if (vals.length < CONV_MIN) return null;
+                    var mean = vals.reduce(function(a, b) {{ return a + b; }}, 0) / vals.length;
+                    var variance = vals.reduce(function(a, v) {{ return a + (v - mean) * (v - mean); }}, 0) / vals.length;
+                    return Math.sqrt(variance) / range * 100;
+                }}
+                // Expose globally so applyZoomRange can call it
+                window.updateThetaSubtitle = function() {{
+                    var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
+                    if (!ch) return;
+                    if (!_soloParam) {{
+                        ch.options.plugins.subtitle = {{ display: false }};
+                        ch.update('none');
+                        return;
+                    }}
+                    var f = parseInt(document.getElementById('zoomFrom').value) || 0;
+                    var t = parseInt(document.getElementById('zoomTo').value) || (_labels.length - 1);
+                    var pct = sliceConvergence(_soloParam, f, t);
+                    if (pct != null) {{
+                        ch.options.plugins.subtitle = {{ display: true, text: 'StdDev/Range: ' + pct.toFixed(1) + '%', font: {{ size: 15, weight: 'bold' }}, color: '#333', padding: {{ bottom: 8 }} }};
+                    }} else {{
+                        ch.options.plugins.subtitle = {{ display: false }};
+                    }}
+                    ch.update('none');
+                }};
                 var thetaOpts = {{
                     responsive: true,
                     maintainAspectRatio: false,
@@ -560,6 +598,7 @@
                                 }}
                                 ch.resize();
                                 ch.update();
+                                window.updateThetaSubtitle();
                             }}
                         }},
                         title: {{ display: false, font: {{ size: 14 }} }}
@@ -578,6 +617,7 @@
 
                 // Apply saved zoom now that charts and _pending are populated
                 if (_restoredZoom) applyZoomRange(_restoredZoom[0], _restoredZoom[1]);
+                window.updateThetaSubtitle();
             }} catch (e) {{
                 console.error('Failed to render charts', e);
             }}

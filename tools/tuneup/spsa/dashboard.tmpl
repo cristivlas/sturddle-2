@@ -266,7 +266,7 @@
             else                        {{ s = '#3d4f7c'; e = '#1a1a2e'; }}
             document.documentElement.style.setProperty('--accent-start', s);
             document.documentElement.style.setProperty('--accent-end', e);
-            if (typeof setThetaView === 'function') setThetaView(showInternal);
+            if (typeof setThetaView === 'function') setThetaView(thetaViewMode);
         }}
         applyTimeTheme();
         setInterval(applyTimeTheme, 3600000);
@@ -339,17 +339,19 @@
                 </div>
                 <div class="section" style="margin-top: 0; display:flex; flex-direction:column; min-height:0;">
                     <h3 style="display:flex;align-items:baseline;gap:8px;">Current Parameters
-                        <span id="thetaToggle" style="display:none;font-size:0;line-height:0;margin-left:auto;">
-                            <span id="togInternal" onclick="setThetaView(true)"
-                                style="font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid #ccc;border-radius:4px 0 0 4px;font-weight:600;letter-spacing:0;text-transform:none;">Internal</span><span
-                                id="togEngine" onclick="setThetaView(false)"
-                                style="font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid #ccc;border-left:none;border-radius:0 4px 4px 0;font-weight:600;letter-spacing:0;text-transform:none;">Engine</span>
+                        <span id="thetaToggle" style="font-size:0;line-height:0;margin-left:auto;">
+                            <span id="togInternal" onclick="setThetaView('internal')"
+                                style="display:none;font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid #ccc;border-radius:4px 0 0 4px;font-weight:600;letter-spacing:0;text-transform:none;">Internal</span><span
+                                id="togEngine" onclick="setThetaView('engine')"
+                                style="display:none;font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid #ccc;border-left:none;border-radius:0;font-weight:600;letter-spacing:0;text-transform:none;">Engine</span><span
+                                id="togConv" onclick="setThetaView('convergence')"
+                                style="font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid #ccc;border-left:none;border-radius:0 4px 4px 0;font-weight:600;letter-spacing:0;text-transform:none;">Conv</span>
                         </span>
                     </h3>
                     <table class="params-tbl">
-                        <colgroup><col style="width:60%"><col style="width:20%"><col style="width:20%"></colgroup>
+                        <colgroup id="thetaHeadCols"><col style="width:60%"><col style="width:20%"><col style="width:20%"></colgroup>
                         <thead>
-                            <tr>
+                            <tr id="thetaHeadRow">
                                 <th>Parameter</th>
                                 <th>Initial</th>
                                 <th>Current</th>
@@ -358,7 +360,7 @@
                     </table>
                     <div style="flex:1; min-height:0; overflow-y:auto;">
                     <table class="params-tbl">
-                        <colgroup><col style="width:60%"><col style="width:20%"><col style="width:20%"></colgroup>
+                        <colgroup id="thetaBodyCols"><col style="width:60%"><col style="width:20%"><col style="width:20%"></colgroup>
                         <tbody id="thetaBody"></tbody>
                     </table>
                     </div>
@@ -411,7 +413,8 @@
     <script>
         // --- Normalized/internal toggle ---
         var hasNormalized = {has_normalized};
-        var showInternal = localStorage.getItem('thetaView') !== 'engine';
+        var thetaViewMode = localStorage.getItem('thetaView') || 'engine';
+        var showInternal = thetaViewMode === 'internal';
         var currentTheta = {{}};
         var currentThetaInternal = {{}};
         var initialTheta = {{}};
@@ -420,12 +423,33 @@
         var paramTints = {{}};
         var hiddenParams = new Set();
         var prevTheta = {{}};
+        var paramRanges = {{}};
 
         function fmtVal(v, decimals) {{
             return (typeof v === 'number' && !Number.isInteger(v)) ? v.toFixed(decimals || 6) : v;
         }}
 
+        var CONVERGENCE_MIN = 5;
+        function paramConvergence(name) {{
+            var range = paramRanges[name];
+            if (!range) return null;
+            var vals = initHistory.map(function(h) {{ return h.theta && h.theta[name]; }}).filter(function(v) {{ return v != null; }});
+            if (vals.length < CONVERGENCE_MIN) return null;
+            var mean = vals.reduce(function(a, b) {{ return a + b; }}, 0) / vals.length;
+            var variance = vals.reduce(function(a, v) {{ return a + (v - mean) * (v - mean); }}, 0) / vals.length;
+            var stddev = Math.sqrt(variance);
+            return {{ stddev: stddev, range: range, pct: range > 0 ? (stddev / range * 100) : 0, window: vals.length }};
+        }}
+
         function renderTheta(theta, initial) {{
+            var isConv = thetaViewMode === 'convergence';
+            // Update headers
+            var hr = document.getElementById('thetaHeadRow');
+            if (isConv) {{
+                hr.innerHTML = '<th>Parameter</th><th>StdDev</th><th>% Range</th>';
+            }} else {{
+                hr.innerHTML = '<th>Parameter</th><th>Initial</th><th>Current</th>';
+            }}
             const tbody = document.getElementById('thetaBody');
             tbody.innerHTML = '';
             var dec = showInternal ? 5 : 6;
@@ -433,52 +457,70 @@
             for (const [name, value] of Object.entries(theta)) {{
                 if (hiddenParams.has(name)) continue;
                 const tr = document.createElement('tr');
-                var initVal = initial && initial[name] !== undefined ? fmtVal(initial[name], dec) : '';
-                var ival = currentThetaInternal[name];
-                // Arrow (vs initial): compare in rendered space
-                var arrow = '';
-                if (initial && initial[name] !== undefined && typeof value === 'number') {{
-                    var diff = value - initial[name];
-                    if (diff > 0) arrow = ' <span style="color:#4CAF50;font-size:11px;">&#9650;</span>';
-                    else if (diff < 0) arrow = ' <span style="color:#f44336;font-size:11px;">&#9660;</span>';
-                    else arrow = ' <span style="color:#ccc;font-size:11px;">&#9644;</span>';
-                }}
-                // Trend dot vs previous iteration + row tint from chart color
-                var dot = '';
-                if (hasPrev && paramColors[name] && prevTheta[name] !== undefined && typeof ival === 'number') {{
-                    var pdiff = ival - prevTheta[name];
-                    var sym = pdiff > 0 ? '&#9650;' : pdiff < 0 ? '&#9660;' : '&#9644;';
-                    var dotStyle = pdiff === 0 ? 'color:#ccc;' : '';
-                    dot = '<span style="font-size:9px;margin-right:4px;' + dotStyle + '">' + sym + '</span>';
-                }}
                 if (paramTints[name]) tr.style.background = paramTints[name];
-                tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + name + '">' + dot + name + '</td>'
-                             + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + initVal + '</td>'
-                             + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + fmtVal(value, dec) + arrow + '</td>';
+                if (isConv) {{
+                    var conv = paramConvergence(name);
+                    var sdTxt = conv ? conv.stddev.toFixed(4) : '--';
+                    var pctTxt = conv ? conv.pct.toFixed(1) + '%' : '--';
+                    var pctColor = '';
+                    if (conv) pctColor = conv.pct < 2 ? 'color:#1B8A2A;font-weight:600;' : conv.pct < 10 ? 'color:#B86800;font-weight:600;' : 'color:#C62828;font-weight:600;';
+                    var tip = name;
+                    if (conv) tip += '\nWindow: last ' + conv.window + ' iterations';
+                    tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + tip + '">' + name + '</td>'
+                                 + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + sdTxt + '</td>'
+                                 + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;' + pctColor + '">' + pctTxt + '</td>';
+                }} else {{
+                    var initVal = initial && initial[name] !== undefined ? fmtVal(initial[name], dec) : '';
+                    var ival = currentThetaInternal[name];
+                    var arrow = '';
+                    if (initial && initial[name] !== undefined && typeof value === 'number') {{
+                        var diff = value - initial[name];
+                        if (diff > 0) arrow = ' <span style="color:#4CAF50;font-size:11px;">&#9650;</span>';
+                        else if (diff < 0) arrow = ' <span style="color:#f44336;font-size:11px;">&#9660;</span>';
+                        else arrow = ' <span style="color:#ccc;font-size:11px;">&#9644;</span>';
+                    }}
+                    var dot = '';
+                    if (hasPrev && paramColors[name] && prevTheta[name] !== undefined && typeof ival === 'number') {{
+                        var pdiff = ival - prevTheta[name];
+                        var sym = pdiff > 0 ? '&#9650;' : pdiff < 0 ? '&#9660;' : '&#9644;';
+                        var dotStyle = pdiff === 0 ? 'color:#ccc;' : '';
+                        dot = '<span style="font-size:9px;margin-right:4px;' + dotStyle + '">' + sym + '</span>';
+                    }}
+                    tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + name + '">' + dot + name + '</td>'
+                                 + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + initVal + '</td>'
+                                 + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + fmtVal(value, dec) + arrow + '</td>';
+                }}
                 tbody.appendChild(tr);
             }}
         }}
 
-        function setThetaView(internal) {{
-            showInternal = internal;
-            localStorage.setItem('thetaView', internal ? 'internal' : 'engine');
+        function setThetaView(mode) {{
+            thetaViewMode = mode;
+            showInternal = mode === 'internal';
+            localStorage.setItem('thetaView', mode);
             var accent = getComputedStyle(document.documentElement).getPropertyValue('--accent-start').trim();
-            var ti = document.getElementById('togInternal');
-            var te = document.getElementById('togEngine');
-            ti.style.background = internal ? accent : '';
-            ti.style.color = internal ? '#fff' : '#666';
-            ti.style.borderColor = internal ? accent : '#ccc';
-            te.style.background = internal ? '' : accent;
-            te.style.color = internal ? '#666' : '#fff';
-            te.style.borderColor = internal ? '#ccc' : accent;
-            renderTheta(internal ? currentThetaInternal : currentTheta, internal ? initialThetaInternal : initialTheta);
+            ['togInternal', 'togEngine', 'togConv'].forEach(function(id) {{
+                var el = document.getElementById(id);
+                if (!el) return;
+                var active = (id === 'togInternal' && mode === 'internal') || (id === 'togEngine' && mode === 'engine') || (id === 'togConv' && mode === 'convergence');
+                el.style.background = active ? accent : '';
+                el.style.color = active ? '#fff' : '#666';
+                el.style.borderColor = active ? accent : '#ccc';
+            }});
+            renderTheta(showInternal ? currentThetaInternal : currentTheta, showInternal ? initialThetaInternal : initialTheta);
         }}
 
         function initToggle() {{
             if (hasNormalized) {{
-                document.getElementById('thetaToggle').style.display = '';
-                setThetaView(showInternal);
+                document.getElementById('togInternal').style.display = '';
+                document.getElementById('togEngine').style.display = '';
+                document.getElementById('togEngine').style.borderRadius = '0';
+            }} else {{
+                var tc = document.getElementById('togConv');
+                tc.style.borderRadius = '4px';
+                tc.style.borderLeft = '1px solid #ccc';
             }}
+            setThetaView(thetaViewMode);
         }}
 
         var lastWorkerUpdate = Date.now();
@@ -577,6 +619,10 @@
                 }} else {{
                     initialTheta[name] = p.init;
                 }}
+            }}
+            for (var name in params) {{
+                var p = params[name];
+                paramRanges[name] = p.upper - p.lower;
             }}
             renderTheta(
                 showInternal ? currentThetaInternal : currentTheta,
@@ -804,7 +850,10 @@
                         syncParamColors();
                     }}
                     // Update previous-iteration theta for trend dots
-                    if (d.last_history.theta) prevTheta = Object.assign({{}}, d.last_history.theta);
+                    if (d.last_history.theta) {{
+                        prevTheta = Object.assign({{}}, d.last_history.theta);
+                        initHistory.push(d.last_history);
+                    }}
                 }}
                 knownHistoryLen = d.history_len;
             }}
