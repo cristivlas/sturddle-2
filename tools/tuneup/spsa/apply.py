@@ -259,6 +259,125 @@ def _patch_array_line(pattern, line, macro_name, updates, found, updated):
     return line[:m.start()] + prefix + ','.join(values) + suffix + line[m.end():]
 
 
+def _patch_table_row(line, base_square, updates, found, updated):
+    """Patch individual values in a comma-separated row of a PST array.
+
+    base_square: the square index of the first value on this line
+    updates: {square: (name, value)}
+    """
+    parts = line.split(',')
+    modified = False
+    for i, part in enumerate(parts):
+        sq = base_square + i
+        if sq not in updates:
+            continue
+        name, new_val = updates[sq]
+        found.add(name)
+        m = re.search(r'(-?\d+)', part)
+        if not m:
+            continue
+        old_str = m.group(1)
+        new_str = str(new_val)
+        if old_str == new_str:
+            continue
+        # Adjust leading whitespace to preserve column width
+        prefix = part[:m.start(1)]
+        suffix = part[m.end(1):]
+        diff = len(new_str) - len(old_str)
+        if diff > 0 and len(prefix.lstrip('\n')) >= diff:
+            prefix = prefix[:len(prefix) - diff]
+        elif diff < 0:
+            prefix = ' ' * (-diff) + prefix
+        parts[i] = prefix + new_str + suffix
+        updated.add(name)
+        logging.info(f"Updated {name}: {old_str} -> {new_str}")
+        modified = True
+    return ','.join(parts) if modified else line
+
+
+def update_tables(tables_file, pst_values):
+    """Patch SQUARE_TABLE and ENDGAME_KING_SQUARE_TABLE arrays in tables.h.
+
+    pst_values: dict of name -> (piece_key, square, value)
+        piece_key: '1'-'6' for SQUARE_TABLE, 'KEG' for ENDGAME_KING_SQUARE_TABLE
+    Returns (updated, found) sets of parameter names.
+    """
+    # Group updates by table
+    sq_updates = {}   # piece_type_int -> {square: (name, value)}
+    keg_updates = {}  # {square: (name, value)}
+    for name, (piece_key, square, value) in pst_values.items():
+        if piece_key == 'KEG':
+            keg_updates[square] = (name, value)
+        else:
+            sq_updates.setdefault(int(piece_key), {})[square] = (name, value)
+
+    with open(tables_file, 'r', encoding='utf-8', newline='') as f:
+        lines = f.readlines()
+
+    found = set()
+    updated = set()
+    section = None     # 'sq' or 'keg'
+    piece_idx = -1     # current sub-array index in SQUARE_TABLE
+    square_idx = 0     # current square within piece/table
+    in_piece = False   # inside a piece sub-array
+
+    result = []
+    for line in lines:
+        s = line.strip()
+
+        # Detect section starts
+        if section is None:
+            if 'SQUARE_TABLE' in line and '[]' in line and '{' in s:
+                section = 'sq'
+                piece_idx = -1
+                in_piece = False
+            elif 'ENDGAME_KING_SQUARE_TABLE' in line and '{' in s:
+                section = 'keg'
+                square_idx = 0
+            result.append(line)
+            continue
+
+        if section == 'sq':
+            if not in_piece:
+                if '{' in s:
+                    piece_idx += 1
+                    square_idx = 0
+                    in_piece = True
+                    # Self-closing sub-array like {}/* NONE */
+                    if '}' in s:
+                        in_piece = False
+                elif s.startswith('};'):
+                    section = None
+            else:
+                if s.startswith('}'):
+                    in_piece = False
+                elif re.search(r'-?\d', s):
+                    # Data row — patch if we have updates for this piece
+                    piece_updates = sq_updates.get(piece_idx, {})
+                    if piece_updates:
+                        line = _patch_table_row(line, square_idx, piece_updates, found, updated)
+                    square_idx += len(re.findall(r'-?\d+', s))
+
+        elif section == 'keg':
+            if '}' in s and ';' in s:
+                section = None
+            elif re.search(r'-?\d', s):
+                if keg_updates:
+                    line = _patch_table_row(line, square_idx, keg_updates, found, updated)
+                square_idx += len(re.findall(r'-?\d+', s))
+
+        result.append(line)
+
+    if updated:
+        with open(tables_file, 'w', encoding='utf-8', newline='') as f:
+            f.writelines(result)
+        logging.info(f"Patched {len(updated)} PST value(s) in {tables_file}")
+    else:
+        logging.info(f"No PST changes in {tables_file}")
+
+    return updated, found
+
+
 def adjust_piece_param_bounds(config_file, engine_values, range_pct):
     """Adjust Config::Param bounds for piece value parameters in config.h."""
     piece_names = [n for n in engine_values if n in PIECE_INDEX]
@@ -312,6 +431,7 @@ def main():
     parser.add_argument('--state', default=None, help='Path to spsa_state.json (default: <project>/spsa_state.json)')
     parser.add_argument('--config', default='config.h', help='Path to config.h (default: config.h)')
     parser.add_argument('--header', default=None, help='Path to chess.h for piece values (default: chess.h next to config.h)')
+    parser.add_argument('--tables', default=None, help='Path to tables.h for piece-square tables (default: tables.h next to config.h)')
     parser.add_argument('--finalize', action='store_true', help='Convert DECLARE_PARAM/DECLARE_NORMAL to DECLARE_VALUE')
     parser.add_argument('--range', type=float, default=None, metavar='PCT', dest='range_pct',
                         help='Adjust parameter bounds to value +/- PCT%% of value (e.g. 20 to narrow, 150 to widen)')
@@ -369,8 +489,22 @@ def main():
             logging.info(f"  {name}: theta={val} -> engine={engine_val} (not in tuning config)")
             engine_values[name] = engine_val
 
+    # Separate PST params (PS_<piece>_<square>, PS_KEG_<square>) from config.h params
+    pst_re = re.compile(r'PS_(\d+|KEG)_(\d+)$')
+    pst_values = {}   # name -> (piece_key, square, value)
+    config_values = {}
+    for name, val in engine_values.items():
+        m = pst_re.match(name)
+        if m:
+            pst_values[name] = (m.group(1), int(m.group(2)), val)
+        else:
+            config_values[name] = val
+
+    if pst_values:
+        logging.info(f"{len(pst_values)} PST parameter(s), {len(config_values)} config parameter(s)")
+
     # Patch config.h (DECLARE_PARAM / DECLARE_VALUE / DECLARE_NORMAL)
-    updated, found = update_config(args.config, engine_values, finalize=args.finalize, range_pct=args.range_pct)
+    updated, found = update_config(args.config, config_values, finalize=args.finalize, range_pct=args.range_pct)
 
     # Patch piece values in chess.h (PIECE_VALUES / ENDGAME_ADJUST macros)
     not_in_config = {n: v for n, v in engine_values.items() if n not in found}
@@ -389,6 +523,16 @@ def main():
     # Adjust Config::Param bounds for piece values in config.h
     if args.range_pct is not None and piece_candidates:
         adjust_piece_param_bounds(args.config, piece_candidates, args.range_pct)
+
+    # Patch piece-square tables in tables.h
+    if pst_values:
+        tables_path = args.tables or os.path.join(os.path.dirname(args.config) or '.', 'tables.h')
+        if os.path.exists(tables_path):
+            pst_updated, pst_found = update_tables(tables_path, pst_values)
+            updated |= pst_updated
+            found |= pst_found
+        else:
+            logging.warning(f"Tables file not found for PST values: {tables_path}")
 
     # Report params that match current values (no change needed)
     unchanged = {name: engine_values[name] for name in found if name not in updated}

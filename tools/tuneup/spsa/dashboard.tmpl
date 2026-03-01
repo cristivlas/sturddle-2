@@ -358,7 +358,7 @@
                             </tr>
                         </thead>
                     </table>
-                    <div style="flex:1; min-height:0; max-height:400px; overflow-y:auto;">
+                    <div style="flex:1; min-height:0; max-height:340px; overflow-y:auto;">
                     <table class="params-tbl">
                         <colgroup id="thetaBodyCols"><col style="width:60%"><col style="width:20%"><col style="width:20%"></colgroup>
                         <tbody id="thetaBody"></tbody>
@@ -414,6 +414,7 @@
         // --- Normalized/internal toggle ---
         var hasNormalized = {has_normalized};
         var thetaViewMode = localStorage.getItem('thetaView') || 'engine';
+        if (!hasNormalized && thetaViewMode === 'internal') thetaViewMode = 'engine';
         var showInternal = thetaViewMode === 'internal';
         var currentTheta = {{}};
         var currentThetaInternal = {{}};
@@ -430,6 +431,50 @@
         }}
 
         var CONVERGENCE_MIN = 5;
+        var GROUP_THRESHOLD = 64;
+        var groupedMode = false;
+        var groupMap = {{}};  // param name -> group key
+
+        var GROUP_LABELS = {{
+            'PS_1': 'PS_1 (Pawn)', 'PS_2': 'PS_2 (Knight)', 'PS_3': 'PS_3 (Bishop)',
+            'PS_4': 'PS_4 (Rook)', 'PS_5': 'PS_5 (Queen)',  'PS_6': 'PS_6 (King)',
+            'PS_KEG': 'PS_KEG (King EG)'
+        }};
+
+        function paramPrefix(name) {{
+            // Group by first two underscore-separated segments: PS_1_xx -> PS_1, PS_KEG_xx -> PS_KEG
+            var parts = name.split('_');
+            if (parts.length >= 3) return parts[0] + '_' + parts[1];
+            return name;
+        }}
+
+        function groupLabel(key) {{
+            return GROUP_LABELS[key] || key;
+        }}
+
+        function buildGroups(keys) {{
+            // Build groupMap and return sorted unique group keys
+            groupMap = {{}};
+            var groups = {{}};
+            keys.forEach(function(k) {{
+                var g = paramPrefix(k);
+                groupMap[k] = g;
+                groups[g] = true;
+            }});
+            return Object.keys(groups).sort();
+        }}
+
+        function groupMean(theta, groupKey) {{
+            // Average of all params in this group present in theta
+            var sum = 0, count = 0;
+            for (var name in theta) {{
+                if (groupMap[name] === groupKey) {{
+                    sum += theta[name];
+                    count++;
+                }}
+            }}
+            return count > 0 ? sum / count : null;
+        }}
         var CONV_THRESHOLDS = [2, 5];
         var CONV_COLORS = ['#1B8A2A', '#B86800', '#C62828'];
         function convColor(pct) {{
@@ -522,9 +567,8 @@
                 document.getElementById('togEngine').style.display = '';
                 document.getElementById('togEngine').style.borderRadius = '0';
             }} else {{
-                var tc = document.getElementById('togConv');
-                tc.style.borderRadius = '4px';
-                tc.style.borderLeft = '1px solid #ccc';
+                document.getElementById('togEngine').style.display = '';
+                document.getElementById('togEngine').style.borderRadius = '4px 0 0 4px';
             }}
             setThetaView(thetaViewMode);
         }}
@@ -660,7 +704,7 @@
 
         var tableau10 = ['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'];
 
-        function createThetaChart(keys, labels, dataFn) {{
+        function createThetaChart(keys, labels, dataFn, labelFn) {{
             var ctx = document.getElementById('thetaChart').getContext('2d');
             return new Chart(ctx, {{
                 type: 'line',
@@ -668,7 +712,8 @@
                     labels: labels,
                     datasets: keys.map(function(k, i) {{
                         return {{
-                            label: k,
+                            label: labelFn ? labelFn(k) : k,
+                            _groupKey: k,
                             data: dataFn(k),
                             borderColor: tableau10[i % tableau10.length],
                             backgroundColor: tableau10[i % tableau10.length] + '30',
@@ -681,7 +726,7 @@
                 options: {{
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: {{ legend: {{ display: window.innerWidth > 700, position: 'bottom', onClick: legendClick }} }}
+                    plugins: {{ legend: {{ display: groupedMode || (window.innerWidth > 700 && Object.keys(currentTheta).length <= GROUP_THRESHOLD), position: 'bottom', onClick: legendClick }} }}
                 }}
             }});
         }}
@@ -716,9 +761,21 @@
                 const thetaKeys = [...new Set(
                     history.flatMap(h => Object.keys(h.theta || {{}}))
                 )];
-                thetaChart = createThetaChart(thetaKeys, labels, function(k) {{
-                    return history.map(h => (h.theta && k in h.theta) ? h.theta[k] : null);
-                }});
+
+                if (thetaKeys.length > GROUP_THRESHOLD) {{
+                    // Grouped mode: aggregate by prefix
+                    groupedMode = true;
+                    var groupKeys = buildGroups(thetaKeys);
+                    thetaChart = createThetaChart(groupKeys, labels, function(g) {{
+                        return history.map(function(h) {{
+                            return h.theta ? groupMean(h.theta, g) : null;
+                        }});
+                    }}, groupLabel);
+                }} else {{
+                    thetaChart = createThetaChart(thetaKeys, labels, function(k) {{
+                        return history.map(h => (h.theta && k in h.theta) ? h.theta[k] : null);
+                    }});
+                }}
                 syncParamColors();
             }} catch (e) {{
                 console.error('Failed to render chart', e);
@@ -839,12 +896,24 @@
                     if (d.last_history.theta) {{
                         if (!thetaChart) {{
                             var keys = Object.keys(d.last_history.theta);
-                            thetaChart = createThetaChart(keys, [], function() {{ return []; }});
+                            if (keys.length > GROUP_THRESHOLD) {{
+                                groupedMode = true;
+                                var gk = buildGroups(keys);
+                                thetaChart = createThetaChart(gk, [], function() {{ return []; }}, groupLabel);
+                            }} else {{
+                                thetaChart = createThetaChart(keys, [], function() {{ return []; }});
+                            }}
                         }}
                         thetaChart.data.labels.push(d.last_history.iteration);
                         thetaChart.data.datasets.forEach(ds => {{
-                            const val = (d.last_history.theta && ds.label in d.last_history.theta)
-                                ? d.last_history.theta[ds.label] : null;
+                            var val;
+                            var key = ds._groupKey || ds.label;
+                            if (groupedMode) {{
+                                val = groupMean(d.last_history.theta, key);
+                            }} else {{
+                                val = (d.last_history.theta && key in d.last_history.theta)
+                                    ? d.last_history.theta[key] : null;
+                            }}
                             ds.data.push(val);
                         }});
                         // Trim oldest chart point if over limit
@@ -882,7 +951,7 @@
     window.addEventListener('resize', function() {{
         clearTimeout(_resizeTimer);
         _resizeTimer = setTimeout(function() {{
-            var show = window.innerWidth > 700;
+            var show = groupedMode || (window.innerWidth > 700 && Object.keys(currentTheta).length <= GROUP_THRESHOLD);
             if (thetaChart) {{
                 thetaChart.options.plugins.legend.display = show;
                 thetaChart.resize();
