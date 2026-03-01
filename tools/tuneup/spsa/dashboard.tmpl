@@ -530,7 +530,7 @@
                         else arrow = ' <span style="color:#ccc;font-size:11px;">&#9644;</span>';
                     }}
                     var dot = '';
-                    if (hasPrev && paramColors[name] && prevTheta[name] !== undefined && typeof ival === 'number') {{
+                    if (hasPrev && (paramColors[name] || (groupedMode && groupMap[name] && paramColors[groupLabel(groupMap[name])])) && prevTheta[name] !== undefined && typeof ival === 'number') {{
                         var pdiff = ival - prevTheta[name];
                         var sym = pdiff > 0 ? '&#9650;' : pdiff < 0 ? '&#9660;' : '&#9644;';
                         var conv = paramConvergence(name);
