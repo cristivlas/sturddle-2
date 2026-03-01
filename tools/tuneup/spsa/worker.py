@@ -251,7 +251,13 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
         worker_config, tuning_config, work, pgn_file
     )
 
-    logger.info("Running: %s", " ".join(cmd))
+    # Summarize command for console when many tunable params make it noisy
+    opt_count = sum(1 for a in cmd if a.startswith("option."))
+    if opt_count > 10:
+        brief = [a for a in cmd if not a.startswith("option.")]
+        logger.info("Running: %s [%d engine options]", " ".join(brief), opt_count)
+    else:
+        logger.info("Running: %s", " ".join(cmd))
 
     # Isolate child process from Ctrl+C so we can offer a graceful stop.
     # Windows: CREATE_NEW_PROCESS_GROUP prevents CTRL_C_EVENT propagation.
