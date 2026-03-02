@@ -196,6 +196,22 @@ class SPSAOptimizer:
 
         return new_theta
 
+    def advance(self, score_plus: float, score_minus: float):
+        """Advance iteration counter without updating theta (skipped update)."""
+        k = self.state.iteration
+        self.state.history.append({
+            "iteration": k,
+            "theta": dict(self.state.theta),
+            "score_plus": score_plus,
+            "score_minus": score_minus,
+            "score_diff": score_plus - score_minus,
+            "elo_diff": self.elo_estimate(score_plus) - self.elo_estimate(score_minus),
+            "a_k": self.a_k(),
+            "c_k": self.c_k(),
+            "skipped": True,
+        })
+        self.state.iteration = k + 1
+
     def is_done(self) -> bool:
         return self.state.iteration >= self.max_iterations
 

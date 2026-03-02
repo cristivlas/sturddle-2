@@ -749,9 +749,16 @@ class CoordinatorState:
         k = self.optimizer.iteration
         old_theta = dict(self.optimizer.theta)
 
-        new_theta = self.optimizer.update(
-            self.current_delta, avg_score_plus, avg_score_minus
-        )
+        # Reference mode: skip update if both sides lost to the reference
+        if total_plus > 0 and total_minus > 0 and max(avg_score_plus, avg_score_minus) < 0.5:
+            logger.warning(
+                "Iteration %d: both sides below reference (%.4f / %.4f), skipping update",
+                k, avg_score_plus, avg_score_minus,
+            )
+            new_theta = old_theta
+            self.optimizer.advance(avg_score_plus, avg_score_minus)
+        else:
+            new_theta = self.optimizer.update(self.current_delta, avg_score_plus, avg_score_minus)
 
         # ELO estimates
         elo_plus = self.optimizer.elo_estimate(avg_score_plus)
@@ -772,17 +779,21 @@ class CoordinatorState:
             avg_score_plus - avg_score_minus,
             elo_plus - elo_minus,
         )
-        logger.info("Updated parameters:")
-        display = self._get_display_values()
-        for name in new_theta:
-            param = self.optimizer.params[name]
-            step = new_theta[name] - old_theta[name]
-            r = param.upper - param.lower
-            logger.info(
-                "  %s: %.4f -> %.4f (engine: %s, step: %+.4f, %.1f%% of range)",
-                name, old_theta[name], new_theta[name], display[name],
-                step, 100.0 * abs(step) / r if r > 0 else 0,
-            )
+        skipped = new_theta is old_theta
+        if skipped:
+            logger.info("Parameters unchanged (skipped).")
+        else:
+            logger.info("Updated parameters:")
+            display = self._get_display_values()
+            for name in new_theta:
+                param = self.optimizer.params[name]
+                step = new_theta[name] - old_theta[name]
+                r = param.upper - param.lower
+                logger.info(
+                    "  %s: %.4f -> %.4f (engine: %s, step: %+.4f, %.1f%% of range)",
+                    name, old_theta[name], new_theta[name], display[name],
+                    step, 100.0 * abs(step) / r if r > 0 else 0,
+                )
 
         # Log worker stats
         active = self._active_workers()
