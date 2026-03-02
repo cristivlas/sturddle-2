@@ -299,21 +299,19 @@ def _handle_game_interrupt(proc):
         logger.info("Continuing...")
 
 
-def _run_cutechess(cmd, work, worker_config, tuning_config, label=""):
+def _run_cutechess(cmd, work, worker_config, tuning_config):
     """Run a cutechess-cli process and return its stdout, or None if cancelled.
 
     Handles process lifecycle: logging, pipe draining, polling with
     timeout/validate/interrupt, return-code checks, error-line scanning.
     """
-    tag = f" [{label}]" if label else ""
-
     # Summarize command for console when many tunable params make it noisy
     opt_count = sum(1 for a in cmd if a.startswith("option."))
     if opt_count > 10:
         brief = [a for a in cmd if not a.startswith("option.")]
-        logger.info("Running%s: %s [%d engine options]", tag, " ".join(brief), opt_count)
+        logger.info("Running: %s [%d engine options]", " ".join(brief), opt_count)
     else:
-        logger.info("Running%s: %s", tag, " ".join(cmd))
+        logger.info("Running: %s", " ".join(cmd))
 
     # Isolate child process from Ctrl+C so we can offer a graceful stop.
     # Windows: CREATE_NEW_PROCESS_GROUP prevents CTRL_C_EVENT propagation.
@@ -334,10 +332,9 @@ def _run_cutechess(cmd, work, worker_config, tuning_config, label=""):
     stdout_buf = []
     stderr_buf = []
     log_dir = Path(worker_config.log_file).parent
-    log_suffix = f"_{label}" if label else ""
     try:
-        _cc_log = open(log_dir / f"cutechess_last{log_suffix}.log", "w", buffering=1)
-        _cc_log.write("=== chunk %s, iteration %d%s ===\n" % (work.chunk_id, work.iteration, tag))
+        _cc_log = open(log_dir / "cutechess_last.log", "w", buffering=1)
+        _cc_log.write("=== chunk %s, iteration %d ===\n" % (work.chunk_id, work.iteration))
     except OSError:
         _cc_log = None
 
@@ -399,7 +396,7 @@ def _run_cutechess(cmd, work, worker_config, tuning_config, label=""):
 
     if proc.returncode != 0:
         rc = proc.returncode
-        logger.error("cutechess-cli failed%s (rc=%s)", tag, hex(rc))
+        logger.error("cutechess-cli failed (rc=%s)", hex(rc))
         logger.error("stdout (last 1000 chars): %s", (stdout_buf[0][-1000:] if stdout_buf else "") or "(empty)")
         logger.error("stderr (last 1000 chars): %s", (stderr_buf[0][-1000:] if stderr_buf else "") or "(empty)")
         # Windows STATUS_ACCESS_VIOLATION (subprocess returns signed or unsigned)
@@ -410,7 +407,7 @@ def _run_cutechess(cmd, work, worker_config, tuning_config, label=""):
     output = stdout_buf[0] if stdout_buf else ""
     stderr_output = stderr_buf[0] if stderr_buf else ""
     if stderr_output:
-        logger.warning("cutechess-cli stderr%s: %s", tag, stderr_output.strip()[-1000:])
+        logger.warning("cutechess-cli stderr: %s", stderr_output.strip()[-1000:])
 
     # Log all output lines that mention errors or crashes
     for line in output.splitlines():
@@ -498,7 +495,7 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
             engine3_params=work.theta_minus, engine3_name="theta_minus",
         )
 
-        output = _run_cutechess(cmd, work, worker_config, tuning_config, label="ref")
+        output = _run_cutechess(cmd, work, worker_config, tuning_config)
         if output is None:
             return None
 
