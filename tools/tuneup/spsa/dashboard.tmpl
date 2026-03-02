@@ -641,7 +641,7 @@
         const totalGamesAtStart = {total_games_at_start};
         var currentThroughput = {throughput};
         var iterationStartEpoch = {iteration_start};
-        var lastETA = [{total_games}, {games_done}, {games_total}, {iteration}, {max_iters}, {games_pending}];
+        var lastETA = [{total_games}, {games_done}, {games_total}, {iteration}, {max_iters}];
         const initTheta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}');
         const initThetaInternal = JSON.parse(document.getElementById('theta-internal-data').textContent || '{{}}');
         const initWorkers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
@@ -656,7 +656,7 @@
         renderHistory(historyWindow);
         updateHistoryTitle({history_total});
         updateSinceRestart({total_games});
-        updateETA({total_games}, {games_done}, {games_total}, {iteration}, {max_iters}, {games_pending});
+        updateETA({total_games}, {games_done}, {games_total}, {iteration}, {max_iters});
         setInterval(function() {{ updateETA.apply(null, lastETA); }}, 1000);
 
         // --- Fetch initial parameter values from config ---
@@ -810,15 +810,24 @@
             var el = document.getElementById('totalGamesStat');
             if (el) el.title = since > 0 ? since + ' since restart' : '';
         }}
-        function updateETA(totalGames, gamesDone, gamesTotal, iteration, maxIters, gamesPending) {{
+        function updateETA(totalGames, gamesDone, gamesTotal, iteration, maxIters) {{
             var etaIter = '', etaSession = '';
             var gamesLeftIter = Math.max(0, gamesTotal - gamesDone);
             var gamesLeftTotal = gamesLeftIter + Math.max(0, maxIters - iteration) * gamesTotal;
             var iterElapsed = (Date.now() - iterationStartEpoch * 1000) / 1000;
-            // Count in-flight games toward throughput — they are actively being played
-            var gamesActive = gamesDone + (gamesPending || 0);
-            var tp = (gamesActive > 0 && iterElapsed > 10) ? gamesActive / iterElapsed : 0;
+            var tp = (gamesDone > 0 && iterElapsed > 10) ? gamesDone / iterElapsed : 0;
             if (currentThroughput > tp) tp = currentThroughput;
+            // Estimate full cluster throughput from known worker speeds
+            var speeds = [], alive = 0;
+            latestWorkers.forEach(function(w) {{
+                if (w.status === 2 || !w.alive) return;
+                alive++;
+                if (w.sec_per_game > 0) speeds.push(1.0 / w.sec_per_game);
+            }});
+            if (speeds.length && alive) {{
+                var ct = (speeds.reduce(function(a, b) {{ return a + b; }}, 0) / speeds.length) * alive;
+                if (ct > tp) tp = ct;
+            }}
             if (tp > 0) {{
                 var fi = formatDuration(gamesLeftIter / tp * 1000);
                 var fs = formatDuration(gamesLeftTotal / tp * 1000);
@@ -940,7 +949,7 @@
 
             // ETA
             iterationStartEpoch = d.iteration_start;
-            lastETA = [d.total_games, d.games_done, d.games_total, d.iteration, d.max_iters, d.games_pending];
+            lastETA = [d.total_games, d.games_done, d.games_total, d.iteration, d.max_iters];
             updateETA.apply(null, lastETA);
 
             // Footer
