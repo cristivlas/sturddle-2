@@ -29,7 +29,7 @@ from pathlib import Path
 from config import TuningConfig, WorkItem, WorkResult
 from spsa import SPSAOptimizer, SPSAState
 
-VERSION = "1.0.7"
+VERSION = "1.0.6"
 
 logger = logging.getLogger("coordinator")
 
