@@ -431,7 +431,7 @@
         }}
 
         var CONVERGENCE_MIN = 5;
-        var GROUP_THRESHOLD = 8;
+        var GROUP_THRESHOLD = 10;
         var groupedMode = false;
         var groupMap = {{}};  // param name -> group key
 
@@ -641,6 +641,7 @@
         const totalGamesAtStart = {total_games_at_start};
         var currentThroughput = {throughput};
         var iterationStartEpoch = {iteration_start};
+        var lastETA = [{total_games}, {games_done}, {games_total}, {iteration}, {max_iters}];
         const initTheta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}');
         const initThetaInternal = JSON.parse(document.getElementById('theta-internal-data').textContent || '{{}}');
         const initWorkers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
@@ -656,7 +657,7 @@
         updateHistoryTitle({history_total});
         updateSinceRestart({total_games});
         updateETA({total_games}, {games_done}, {games_total}, {iteration}, {max_iters});
-        setInterval(function() {{ document.getElementById('elapsedIter').textContent = '(' + formatDuration(Date.now() - iterationStartEpoch * 1000) + ')'; }}, 1000);
+        setInterval(function() {{ updateETA.apply(null, lastETA); }}, 1000);
 
         // --- Fetch initial parameter values from config ---
         fetch('/config').then(function(r) {{ return r.json(); }}).then(function(cfg) {{
@@ -706,9 +707,16 @@
 
         var tableau10 = ['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'];
 
+        function updateLegend() {{
+            if (!thetaChart) return;
+            var show = !groupedMode && window.innerWidth > 700;
+            thetaChart.options.plugins.legend.display = show;
+            thetaChart.update();
+        }}
+
         function createThetaChart(keys, labels, dataFn, labelFn) {{
             var ctx = document.getElementById('thetaChart').getContext('2d');
-            return new Chart(ctx, {{
+            var chart = new Chart(ctx, {{
                 type: 'line',
                 data: {{
                     labels: labels,
@@ -728,9 +736,10 @@
                 options: {{
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: {{ legend: {{ display: groupedMode || (window.innerWidth > 700 && Object.keys(currentTheta).length <= GROUP_THRESHOLD), position: 'bottom', onClick: legendClick }} }}
+                    plugins: {{ legend: {{ display: false, position: 'bottom', onClick: legendClick }} }}
                 }}
             }});
+            return chart;
         }}
 
         function legendClick(e, item, legend) {{
@@ -778,6 +787,7 @@
                         return history.map(h => (h.theta && k in h.theta) ? h.theta[k] : null);
                     }});
                 }}
+                updateLegend();
                 syncParamColors();
             }} catch (e) {{
                 console.error('Failed to render chart', e);
@@ -809,22 +819,16 @@
             var etaIter = '', etaSession = '';
             var gamesLeftIter = Math.max(0, gamesTotal - gamesDone);
             var gamesLeftTotal = gamesLeftIter + Math.max(0, maxIters - iteration) * gamesTotal;
-            if (currentThroughput > 0) {{
-                // Use real-time aggregate throughput from active workers
-                var fi = formatDuration(gamesLeftIter / currentThroughput * 1000);
-                var fs = formatDuration(gamesLeftTotal / currentThroughput * 1000);
+            var tp = currentThroughput;
+            if (tp <= 0 && gamesDone > 0) {{
+                var iterElapsed = (Date.now() - iterationStartEpoch * 1000) / 1000;
+                if (iterElapsed > 10) tp = gamesDone / iterElapsed;
+            }}
+            if (tp > 0) {{
+                var fi = formatDuration(gamesLeftIter / tp * 1000);
+                var fs = formatDuration(gamesLeftTotal / tp * 1000);
                 if (fi !== '--') etaIter = fi;
                 if (fs !== '--') etaSession = fs;
-            }} else {{
-                // Fallback: session-average when no workers are active
-                var elapsed = Date.now() - parseLocalTimestamp(sessionStart);
-                if (elapsed > 10000 && totalGames > 0) {{
-                    var msPerGame = elapsed / totalGames;
-                    var fi = formatDuration(gamesLeftIter * msPerGame);
-                    var fs = formatDuration(gamesLeftTotal * msPerGame);
-                    if (fi !== '--') etaIter = fi;
-                    if (fs !== '--') etaSession = fs;
-                }}
             }}
             var iterEl = document.getElementById('iterValue');
             var gamesEl = document.getElementById('gamesValue');
@@ -832,11 +836,8 @@
                 + (etaSession ? ' <span style="font-size:14px;color:#999;font-weight:normal">~' + etaSession + ' left</span>' : '');
             gamesEl.innerHTML = gamesDone + ' / ' + gamesTotal
                 + (etaIter ? ' <span style="font-size:14px;color:#999;font-weight:normal">~' + etaIter + ' left</span>' : '');
-            var useTP = currentThroughput > 0;
-            document.getElementById('avgIterLabel').textContent = useTP ? 'Est / Iteration' : 'Avg / Iteration';
-            document.getElementById('avgIterValue').textContent =
-                useTP ? formatDuration(gamesTotal / currentThroughput * 1000) :
-                iteration > 0 ? formatDuration((Date.now() - parseLocalTimestamp(sessionStart)) / iteration) : '--';
+            document.getElementById('avgIterLabel').textContent = currentThroughput > 0 ? 'Est / Iteration' : 'Avg / Iteration';
+            document.getElementById('avgIterValue').textContent = tp > 0 ? formatDuration(gamesTotal / tp * 1000) : '--';
             document.getElementById('elapsedIter').textContent = '(' + formatDuration(Date.now() - iterationStartEpoch * 1000) + ')';
         }}
 
@@ -906,6 +907,7 @@
                             }} else {{
                                 thetaChart = createThetaChart(keys, [], function() {{ return []; }});
                             }}
+                            updateLegend();
                         }}
                         thetaChart.data.labels.push(d.last_history.iteration);
                         thetaChart.data.datasets.forEach(ds => {{
@@ -943,7 +945,8 @@
 
             // ETA
             iterationStartEpoch = d.iteration_start;
-            updateETA(d.total_games, d.games_done, d.games_total, d.iteration, d.max_iters);
+            lastETA = [d.total_games, d.games_done, d.games_total, d.iteration, d.max_iters];
+            updateETA.apply(null, lastETA);
 
             // Footer
             document.getElementById('footerInfo').innerHTML =
@@ -954,14 +957,7 @@
     var _resizeTimer;
     window.addEventListener('resize', function() {{
         clearTimeout(_resizeTimer);
-        _resizeTimer = setTimeout(function() {{
-            var show = groupedMode || (window.innerWidth > 700 && Object.keys(currentTheta).length <= GROUP_THRESHOLD);
-            if (thetaChart) {{
-                thetaChart.options.plugins.legend.display = show;
-                thetaChart.resize();
-                thetaChart.update();
-            }}
-        }}, 200);
+        _resizeTimer = setTimeout(updateLegend, 200);
     }});
     </script>
 </body>
