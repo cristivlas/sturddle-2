@@ -196,4 +196,34 @@ interval set by `dashboard_refresh` in tuning.json.
 | `parameter_overrides` | Per-machine UCI engine options (e.g., SyzygyPath) | `{}` |
 | `cutechess_overrides` | Per-machine cutechess-cli overrides (`tc`, `depth`) | `{}` |
 | `log_rotation` | Enable daily log rotation (keeps 30 days of rotated files) | `true` |
+| `name` | Worker identity reported to coordinator; defaults to hostname if empty | `""` |
+| `reference_engine` | Path to a fixed reference engine for reference mode (see below); empty = standard mode | `""` |
+
+### Reference Mode
+
+By default, SPSA compares theta+ vs theta- head-to-head. In **reference mode**, each
+perturbed configuration plays against a fixed reference engine instead:
+
+- theta+ vs reference
+- theta- vs reference
+
+This can reduce noise when parameter changes are small relative to engine strength,
+since each side is measured against a stable baseline rather than a moving target.
+
+To enable reference mode, set `reference_engine` in `worker.json` to the path of a
+fixed engine binary (can be a different engine or a pinned build of your own):
+
+```json
+{
+  "reference_engine": "/path/to/reference-engine"
+}
+```
+
+The reference engine receives no tunable parameters — only `fixed_options` from
+`tuning.json` (Hash, Threads, etc.) and any `parameter_overrides` from `worker.json`
+apply to it.
+
+Games are split evenly: half the chunk's games for theta+ vs reference, half for
+theta- vs reference. The coordinator computes independent win rates for each side
+and derives the SPSA gradient from the difference.
 

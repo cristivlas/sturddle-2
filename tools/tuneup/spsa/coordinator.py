@@ -29,7 +29,7 @@ from pathlib import Path
 from config import TuningConfig, WorkItem, WorkResult
 from spsa import SPSAOptimizer, SPSAState
 
-VERSION = "1.0.5"
+VERSION = "1.0.7"
 
 logger = logging.getLogger("coordinator")
 
@@ -93,7 +93,7 @@ class ChunkInfo:
 class CoordinatorState:
     """Thread-safe coordinator state managing one SPSA iteration at a time."""
 
-    def __init__(self, tuning_config: TuningConfig, resume: bool = False):
+    def __init__(self, tuning_config: TuningConfig, resume: bool):
         self.config = tuning_config
         self.lock = threading.Lock()
         self.dashboard_changed = threading.Condition()
@@ -133,6 +133,14 @@ class CoordinatorState:
         self.total_wins = 0
         self.total_draws = 0
         self.total_losses = 0
+        # Reference mode accumulators (theta+ vs ref, theta- vs ref)
+        self.total_plus_wins = 0
+        self.total_plus_draws = 0
+        self.total_plus_losses = 0
+        self.total_minus_wins = 0
+        self.total_minus_draws = 0
+        self.total_minus_losses = 0
+        self.iteration_reference_mode = None  # None until first result, then True/False
         self.pending_chunks = {}  # chunk_id -> ChunkInfo
         self.stolen_chunks = {}   # stolen_cid -> (replacement_cid, victim_worker)
 
@@ -294,7 +302,7 @@ class CoordinatorState:
 
         # Cap unproven workers until they establish an EWMA
         if bootstrap:
-            cap = max(10, int(self.config.min_chunk_timeout / self._base_sec_per_game))
+            cap = max(12, int(self.config.min_chunk_timeout / self._base_sec_per_game))
             chunk = min(chunk, cap)
         else:
             # Floor: don't hand out chunks so small that startup overhead
@@ -330,12 +338,24 @@ class CoordinatorState:
             self.total_wins = st.total_wins
             self.total_draws = st.total_draws
             self.total_losses = st.total_losses
+            self.total_plus_wins = st.total_plus_wins
+            self.total_plus_draws = st.total_plus_draws
+            self.total_plus_losses = st.total_plus_losses
+            self.total_minus_wins = st.total_minus_wins
+            self.total_minus_draws = st.total_minus_draws
+            self.total_minus_losses = st.total_minus_losses
         else:
             self.current_delta = self.optimizer.generate_perturbation()
             self.games_completed = 0
             self.total_wins = 0
             self.total_draws = 0
             self.total_losses = 0
+            self.total_plus_wins = 0
+            self.total_plus_draws = 0
+            self.total_plus_losses = 0
+            self.total_minus_wins = 0
+            self.total_minus_draws = 0
+            self.total_minus_losses = 0
 
         theta_plus, theta_minus = self.optimizer.compute_candidates(
             self.current_delta
@@ -464,7 +484,7 @@ class CoordinatorState:
             self.dashboard_version += 1
             self.dashboard_changed.notify_all()
 
-    def get_work(self, chunk_size: int, worker_name: str, cutechess_overrides: dict, worker_server_start: float = 0) -> dict:
+    def get_work(self, chunk_size: int, worker_name: str, cutechess_overrides: dict, worker_server_start: float) -> dict:
         """
         Assign a chunk of games to a worker.
 
@@ -530,8 +550,11 @@ class CoordinatorState:
             if num_games == 0:
                 return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
 
-            # Must be even (each game pair is +c vs -c); round up
-            num_games += num_games % 2
+            # Must be even; reference mode needs multiple of 4 so each half is even
+            if self.iteration_reference_mode:
+                num_games = ((num_games + 3) // 4) * 4
+            else:
+                num_games += num_games % 2
 
             # Generate unique chunk ID and compute timeout
             chunk_id = uuid.uuid4().hex[:12]
@@ -612,10 +635,35 @@ class CoordinatorState:
                 logger.warning("Ignoring result for unknown/reclaimed chunk %s from %s", result.chunk_id, result.worker)
                 return {"status": "ignored", "reason": "unknown chunk"}
 
+            # Detect mixed mode: reject results that don't match the iteration's mode
+            if self.iteration_reference_mode is None:
+                self.iteration_reference_mode = result.reference_mode
+            elif result.reference_mode != self.iteration_reference_mode:
+                mode = "reference" if result.reference_mode else "standard"
+                expected = "reference" if self.iteration_reference_mode else "standard"
+                logger.warning(
+                    "Rejecting %s-mode result from %s (iteration is %s mode)",
+                    mode, result.worker, expected,
+                )
+                return {"status": "ignored", "reason": f"mode mismatch: expected {expected}"}
+
             self.games_completed += result.num_games
-            self.total_wins += result.wins
-            self.total_draws += result.draws
-            self.total_losses += result.losses
+
+            if result.reference_mode:
+                self.total_plus_wins += result.plus_wins
+                self.total_plus_draws += result.plus_draws
+                self.total_plus_losses += result.plus_losses
+                self.total_minus_wins += result.minus_wins
+                self.total_minus_draws += result.minus_draws
+                self.total_minus_losses += result.minus_losses
+                # Derive aggregates from per-side values
+                self.total_wins += result.plus_wins + result.minus_wins
+                self.total_draws += result.plus_draws + result.minus_draws
+                self.total_losses += result.plus_losses + result.minus_losses
+            else:
+                self.total_wins += result.wins
+                self.total_draws += result.draws
+                self.total_losses += result.losses
 
             if result.worker in self.workers:
                 w = self.workers[result.worker]
@@ -637,13 +685,23 @@ class CoordinatorState:
                     del self.workers[result.worker]
                     logger.info("Worker %s disconnected gracefully", result.worker)
 
-            logger.info(
-                "Result: iter %d, %d games from %s [%s], W=%d D=%d L=%d (%d/%d done)",
-                result.iteration, result.num_games,
-                result.worker, result.chunk_id,
-                result.wins, result.draws, result.losses,
-                self.games_completed, self.config.games_per_iteration,
-            )
+            if result.reference_mode:
+                logger.info(
+                    "Result: iter %d, %d games from %s [%s], +W=%d/D=%d/L=%d -W=%d/D=%d/L=%d (%d/%d done)",
+                    result.iteration, result.num_games,
+                    result.worker, result.chunk_id,
+                    result.plus_wins, result.plus_draws, result.plus_losses,
+                    result.minus_wins, result.minus_draws, result.minus_losses,
+                    self.games_completed, self.config.games_per_iteration,
+                )
+            else:
+                logger.info(
+                    "Result: iter %d, %d games from %s [%s], W=%d D=%d L=%d (%d/%d done)",
+                    result.iteration, result.num_games,
+                    result.worker, result.chunk_id,
+                    result.wins, result.draws, result.losses,
+                    self.games_completed, self.config.games_per_iteration,
+                )
 
             # Check if iteration is complete
             if self.games_completed >= self.config.games_per_iteration:
@@ -663,14 +721,30 @@ class CoordinatorState:
         st.total_wins = self.total_wins
         st.total_draws = self.total_draws
         st.total_losses = self.total_losses
+        st.total_plus_wins = self.total_plus_wins
+        st.total_plus_draws = self.total_plus_draws
+        st.total_plus_losses = self.total_plus_losses
+        st.total_minus_wins = self.total_minus_wins
+        st.total_minus_draws = self.total_minus_draws
+        st.total_minus_losses = self.total_minus_losses
         self._save_state()
 
     def _complete_iteration(self):
         """Finalize current iteration: update theta, save state, log."""
         total = self.total_wins + self.total_draws + self.total_losses
         dw = self.config.spsa.draw_weight
-        avg_score_plus = (self.total_wins + dw * self.total_draws) / total
-        avg_score_minus = (self.total_losses + dw * self.total_draws) / total
+
+        # Reference mode: compute scores from separate theta+ and theta- accumulators
+        total_plus = self.total_plus_wins + self.total_plus_draws + self.total_plus_losses
+        total_minus = self.total_minus_wins + self.total_minus_draws + self.total_minus_losses
+
+        if total_plus > 0 and total_minus > 0:
+            avg_score_plus = (self.total_plus_wins + dw * self.total_plus_draws) / total_plus
+            avg_score_minus = (self.total_minus_wins + dw * self.total_minus_draws) / total_minus
+        else:
+            # Standard mode: derive from head-to-head results
+            avg_score_plus = (self.total_wins + dw * self.total_draws) / total
+            avg_score_minus = (self.total_losses + dw * self.total_draws) / total
 
         k = self.optimizer.iteration
         old_theta = dict(self.optimizer.theta)
@@ -686,6 +760,12 @@ class CoordinatorState:
         logger.info("=" * 60)
         logger.info("Iteration %d complete (%d games, W=%d D=%d L=%d)",
                      k, total, self.total_wins, self.total_draws, self.total_losses)
+        if total_plus > 0 and total_minus > 0:
+            logger.info(
+                "Reference mode: theta+ %dW/%dD/%dL (%d games), theta- %dW/%dD/%dL (%d games)",
+                self.total_plus_wins, self.total_plus_draws, self.total_plus_losses, total_plus,
+                self.total_minus_wins, self.total_minus_draws, self.total_minus_losses, total_minus,
+            )
         logger.info(
             "Scores: +%.4f / -%.4f (diff: %+.4f, ELO diff: %+.1f)",
             avg_score_plus, avg_score_minus,
@@ -717,12 +797,25 @@ class CoordinatorState:
 
         # Clear iteration progress and checkpoint
         self.games_completed = 0
+        self.iteration_reference_mode = None
+        self.total_plus_wins = 0
+        self.total_plus_draws = 0
+        self.total_plus_losses = 0
+        self.total_minus_wins = 0
+        self.total_minus_draws = 0
+        self.total_minus_losses = 0
         st = self.optimizer.state
         st.current_delta = {}
         st.games_completed = 0
         st.total_wins = 0
         st.total_draws = 0
         st.total_losses = 0
+        st.total_plus_wins = 0
+        st.total_plus_draws = 0
+        st.total_plus_losses = 0
+        st.total_minus_wins = 0
+        st.total_minus_draws = 0
+        st.total_minus_losses = 0
         self._save_state()
 
         # Prepare next iteration
@@ -1175,7 +1268,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             self.send_error(404)
 
 
-def setup_logging(log_dir: Path, debug: bool = False, rotate: bool = True):
+def setup_logging(log_dir: Path, debug: bool, rotate: bool):
     """Configure logging to file and stdout."""
     log_file = log_dir / "coordinator.log"
 

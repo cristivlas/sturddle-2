@@ -251,6 +251,8 @@ class WorkerConfig:
     cutechess_overrides: dict = field(default_factory=dict)
     # Daily log rotation (keeps rotated files with date suffix)
     log_rotation: bool = True
+    # Reference engine for 3-way SPSA (theta+/- vs reference instead of vs each other)
+    reference_engine: str = ""
 
     @classmethod
     def from_json(cls, path: str) -> "WorkerConfig":
@@ -282,13 +284,21 @@ class WorkItem:
 class WorkResult:
     """Results reported by a worker for a batch (game counts, PGNs saved locally)."""
     iteration: int
-    wins: int           # games won by theta_plus side
-    draws: int          # drawn games
-    losses: int         # games lost by theta_plus side (= won by theta_minus)
     num_games: int      # actual games completed
+    wins: int = 0       # games won by theta_plus side (standard mode)
+    draws: int = 0      # drawn games (standard mode)
+    losses: int = 0     # games lost by theta_plus side (standard mode)
     chunk_id: str = ""  # echoed from WorkItem
-    worker: str = ""    # worker hostname
+    worker: str = ""    # worker name
     shutting_down: bool = False
+    # Reference mode: separate scores for theta+ and theta- vs reference engine
+    reference_mode: bool = False
+    plus_wins: int = 0
+    plus_draws: int = 0
+    plus_losses: int = 0
+    minus_wins: int = 0
+    minus_draws: int = 0
+    minus_losses: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)

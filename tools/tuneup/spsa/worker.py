@@ -99,11 +99,67 @@ def parse_cutechess_output(output: str) -> tuple:
     return int(wins), int(losses), int(draws)
 
 
+def parse_gauntlet_output(output: str, seed_name: str) -> dict:
+    """Parse cutechess-cli gauntlet output from per-game result lines.
+
+    Tournament mode prints "Finished game N (A vs B): result" per game
+    (no cumulative "Score of" lines).  Tally results per opponent from
+    the seed engine's perspective.
+
+    Returns:
+        {opponent_name: (seed_wins, seed_losses, draws)}
+    """
+    pattern = r"Finished game \d+ \((.+?) vs (.+?)\): (1-0|0-1|1/2-1/2)"
+    games = re.findall(pattern, output)
+    if not games:
+        raise ValueError(
+            f"Could not parse cutechess-cli gauntlet output:\n{output[-500:]}"
+        )
+    wins = {}
+    losses = {}
+    draws = {}
+    for white, black, result in games:
+        if white == seed_name:
+            opponent = black
+        elif black == seed_name:
+            opponent = white
+        else:
+            continue
+        wins.setdefault(opponent, 0)
+        losses.setdefault(opponent, 0)
+        draws.setdefault(opponent, 0)
+        if result == "1/2-1/2":
+            draws[opponent] += 1
+        elif (result == "1-0" and white == seed_name) or \
+             (result == "0-1" and black == seed_name):
+            wins[opponent] += 1
+        else:
+            losses[opponent] += 1
+    return {opp: (wins[opp], losses[opp], draws[opp]) for opp in wins}
+
+
 def build_cutechess_command(worker_config: WorkerConfig,
                             tuning_config: dict,
-                            work: WorkItem,
-                            pgn_file: str) -> list:
-    """Build the cutechess-cli command line."""
+                            engine1_params: dict,
+                            engine1_name: str,
+                            engine2_params: dict,
+                            engine2_name: str,
+                            num_games: int,
+                            pgn_file: str,
+                            engine1_cmd: str = "",
+                            engine2_cmd: str = "",
+                            engine3_params: dict = None,
+                            engine3_name: str = "",
+                            engine3_cmd: str = "") -> list:
+    """Build the cutechess-cli command line.
+
+    Args:
+        engine1_cmd: override engine binary for engine1.
+        engine2_cmd: override engine binary for engine2.
+        engine3_params: if not None, adds a 3rd engine and uses gauntlet mode.
+        engine3_cmd: override engine binary for engine3.
+        All cmd overrides default to worker_config.engine when empty.
+    """
     engine_cmd = worker_config.engine
     protocol = tuning_config["engine"].get("protocol", "uci")
     fixed_options = tuning_config["engine"].get("fixed_options", {})
@@ -148,13 +204,22 @@ def build_cutechess_command(worker_config: WorkerConfig,
 
     cmd = [worker_config.cutechess_cli]
 
-    # Engine 1: theta_plus
-    cmd += ["-engine", f"cmd={engine_cmd}", "name=theta_plus"]
-    cmd += option_args(work.theta_plus)
+    # Engine 1
+    e1_cmd = engine1_cmd or engine_cmd
+    cmd += ["-engine", f"cmd={e1_cmd}", f"name={engine1_name}"]
+    cmd += option_args(engine1_params)
 
-    # Engine 2: theta_minus
-    cmd += ["-engine", f"cmd={engine_cmd}", "name=theta_minus"]
-    cmd += option_args(work.theta_minus)
+    # Engine 2
+    e2_cmd = engine2_cmd or engine_cmd
+    cmd += ["-engine", f"cmd={e2_cmd}", f"name={engine2_name}"]
+    cmd += option_args(engine2_params)
+
+    # Engine 3 (gauntlet mode: engine1 is the seed, plays engines 2 and 3)
+    if engine3_params is not None:
+        e3_cmd = engine3_cmd or engine_cmd
+        cmd += ["-engine", f"cmd={e3_cmd}", f"name={engine3_name}"]
+        cmd += option_args(engine3_params)
+        cmd += ["-tournament", "gauntlet"]
 
     # Common settings
     cmd += ["-each", f"proto={protocol}"]
@@ -176,9 +241,11 @@ def build_cutechess_command(worker_config: WorkerConfig,
         cmd += ["order=random"]
         cmd += ["policy=round"]
 
-    # Number of games (rounds = games/2 for alternating colors)
-    num_rounds = max(1, work.num_games // 2)
-    assert(work.num_games)
+    # Number of games: each round plays 2 games (color swap) per pairing.
+    # 2-engine: rounds = games/2.  Gauntlet (2 pairings): rounds = games/4.
+    games_per_round = 4 if engine3_params is not None else 2
+    num_rounds = max(1, num_games // games_per_round)
+    assert(num_games)
     assert(num_rounds)
 
     cmd += ["-rounds", str(num_rounds)]
@@ -232,32 +299,21 @@ def _handle_game_interrupt(proc):
         logger.info("Continuing...")
 
 
-def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) -> tuple:
+def _run_cutechess(cmd, work, worker_config, tuning_config, label=""):
+    """Run a cutechess-cli process and return its stdout, or None if cancelled.
+
+    Handles process lifecycle: logging, pipe draining, polling with
+    timeout/validate/interrupt, return-code checks, error-line scanning.
     """
-    Run cutechess-cli and return (wins, draws, losses).
-
-    PGNs are saved directly by cutechess-cli into worker's games_dir.
-
-    wins   = games won by engine1 (theta_plus)
-    draws  = drawn games
-    losses = games lost by engine1 (= won by theta_minus)
-    """
-    games_dir = Path(worker_config.games_dir)
-    games_dir.mkdir(parents=True, exist_ok=True)
-
-    pgn_file = str(games_dir / "games.pgn").replace("\\", "/")
-
-    cmd = build_cutechess_command(
-        worker_config, tuning_config, work, pgn_file
-    )
+    tag = f" [{label}]" if label else ""
 
     # Summarize command for console when many tunable params make it noisy
     opt_count = sum(1 for a in cmd if a.startswith("option."))
     if opt_count > 10:
         brief = [a for a in cmd if not a.startswith("option.")]
-        logger.info("Running: %s [%d engine options]", " ".join(brief), opt_count)
+        logger.info("Running%s: %s [%d engine options]", tag, " ".join(brief), opt_count)
     else:
-        logger.info("Running: %s", " ".join(cmd))
+        logger.info("Running%s: %s", tag, " ".join(cmd))
 
     # Isolate child process from Ctrl+C so we can offer a graceful stop.
     # Windows: CREATE_NEW_PROCESS_GROUP prevents CTRL_C_EVENT propagation.
@@ -278,9 +334,10 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
     stdout_buf = []
     stderr_buf = []
     log_dir = Path(worker_config.log_file).parent
+    log_suffix = f"_{label}" if label else ""
     try:
-        _cc_log = open(log_dir / "cutechess_last.log", "w", buffering=1)
-        _cc_log.write("=== chunk %s, iteration %d ===\n" % (work.chunk_id, work.iteration))
+        _cc_log = open(log_dir / f"cutechess_last{log_suffix}.log", "w", buffering=1)
+        _cc_log.write("=== chunk %s, iteration %d%s ===\n" % (work.chunk_id, work.iteration, tag))
     except OSError:
         _cc_log = None
 
@@ -342,7 +399,7 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
 
     if proc.returncode != 0:
         rc = proc.returncode
-        logger.error("cutechess-cli failed (rc=%s)", hex(rc))
+        logger.error("cutechess-cli failed%s (rc=%s)", tag, hex(rc))
         logger.error("stdout (last 1000 chars): %s", (stdout_buf[0][-1000:] if stdout_buf else "") or "(empty)")
         logger.error("stderr (last 1000 chars): %s", (stderr_buf[0][-1000:] if stderr_buf else "") or "(empty)")
         # Windows STATUS_ACCESS_VIOLATION (subprocess returns signed or unsigned)
@@ -353,20 +410,35 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
     output = stdout_buf[0] if stdout_buf else ""
     stderr_output = stderr_buf[0] if stderr_buf else ""
     if stderr_output:
-        logger.warning("cutechess-cli stderr: %s", stderr_output.strip()[-1000:])
+        logger.warning("cutechess-cli stderr%s: %s", tag, stderr_output.strip()[-1000:])
 
     # Log all output lines that mention errors or crashes
     for line in output.splitlines():
         if any(kw in line.lower() for kw in ("abandoned", "error", "crash", "disconnect", "timeout", "illegal", "terminated", "forfeit")):
             logger.warning("cutechess: %s", line.strip())
 
+    return output
+
+
+def _execute_match(cmd, expected_games, work, worker_config, tuning_config, label=""):
+    """
+    Run a single cutechess-cli match and return (wins, draws, losses) or None.
+
+    This is the standard-mode wrapper around _run_cutechess().
+    """
+    tag = f" [{label}]" if label else ""
+
+    output = _run_cutechess(cmd, work, worker_config, tuning_config, label)
+    if output is None:
+        return None
+
     # Log score lines for diagnostics
     score_lines = re.findall(r"Score of .+", output)
-    logger.info("cutechess-cli reported %d score line(s)", len(score_lines))
+    logger.info("cutechess-cli reported %d score line(s)%s", len(score_lines), tag)
     for line in score_lines[:-1]:
         logger.debug("  %s", line)
     if score_lines:
-        logger.info("Final: %s", score_lines[-1])
+        logger.info("Final%s: %s", tag, score_lines[-1])
 
     wins, losses, draws = parse_cutechess_output(output)
     total = wins + losses + draws
@@ -376,31 +448,112 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
         if not started:
             raise RuntimeError(
                 "cutechess-cli started no games — check engine configuration\n"
-                + (stderr_output.strip()[-500:] or "(no stderr)")
+                + (output[-500:] or "(no output)")
             )
         raise RetryableError("No games were played")
 
     # Abort if too many games failed — results would be noise
     min_completion = 0.5
-    if total < work.num_games * min_completion:
+    if total < expected_games * min_completion:
         logger.error(
-            "Only %d/%d games completed (W=%d L=%d D=%d) — aborting chunk",
-            total, work.num_games, wins, losses, draws,
+            "Only %d/%d games completed (W=%d L=%d D=%d) — aborting chunk%s",
+            total, expected_games, wins, losses, draws, tag,
         )
         raise RetryableError(
-            f"Only {total}/{work.num_games} games completed "
-            f"({total/work.num_games:.0%}), minimum is {min_completion:.0%}"
+            f"Only {total}/{expected_games} games completed "
+            f"({total/expected_games:.0%}), minimum is {min_completion:.0%}"
         )
 
-    if total != work.num_games:
+    if total != expected_games:
         logger.warning(
-            "Expected %d games but got %d (W=%d L=%d D=%d)",
-            work.num_games, total, wins, losses, draws,
+            "Expected %d games but got %d (W=%d L=%d D=%d)%s",
+            expected_games, total, wins, losses, draws, tag,
         )
 
-    logger.info("Results: W=%d D=%d L=%d (%d games)", wins, draws, losses, total)
+    logger.info("Results%s: W=%d D=%d L=%d (%d games)", tag, wins, draws, losses, total)
 
     return wins, draws, losses
+
+
+def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) -> tuple:
+    """Run cutechess-cli match(es) and return results.
+
+    Standard mode: returns (wins, draws, losses) for theta_plus vs theta_minus.
+    Reference mode: returns (plus_W/D/L, minus_W/D/L) for theta+/- vs reference.
+    Returns None if cancelled.
+    """
+    games_dir = Path(worker_config.games_dir)
+    games_dir.mkdir(parents=True, exist_ok=True)
+
+    ref_engine = worker_config.reference_engine
+
+    if ref_engine:
+        # Reference mode: gauntlet with reference as seed vs theta+, theta-
+        half = work.num_games // 2
+        pgn_file = str(games_dir / "games_ref.pgn").replace("\\", "/")
+        cmd = build_cutechess_command(
+            worker_config, tuning_config,
+            engine1_params={}, engine1_name="reference",
+            engine2_params=work.theta_plus, engine2_name="theta_plus",
+            num_games=work.num_games, pgn_file=pgn_file,
+            engine1_cmd=ref_engine,
+            engine3_params=work.theta_minus, engine3_name="theta_minus",
+        )
+
+        output = _run_cutechess(cmd, work, worker_config, tuning_config, label="ref")
+        if output is None:
+            return None
+
+        # Log ranking table from gauntlet output
+        in_rank = False
+        for line in output.splitlines():
+            if line.startswith("Rank "):
+                in_rank = True
+            if in_rank:
+                if not line.strip():
+                    break
+                logger.info("  %s", line.rstrip())
+
+        # Parse per-pairing results (from reference's perspective)
+        pairing_results = parse_gauntlet_output(output, "reference")
+        for name in ("theta_plus", "theta_minus"):
+            if name not in pairing_results:
+                raise ValueError(f"Missing gauntlet pairing for {name} in output:\n{output[-500:]}")
+
+        # Swap perspective: reference W/L → theta W/L
+        ref_pw, ref_pl, ref_pd = pairing_results["theta_plus"]
+        ref_mw, ref_ml, ref_md = pairing_results["theta_minus"]
+        plus_wins, plus_draws, plus_losses = ref_pl, ref_pd, ref_pw
+        minus_wins, minus_draws, minus_losses = ref_ml, ref_md, ref_mw
+
+        # Validate game counts per side
+        min_completion = 0.5
+        for side, w, d, l in [("theta+", plus_wins, plus_draws, plus_losses),
+                               ("theta-", minus_wins, minus_draws, minus_losses)]:
+            total = w + d + l
+            if total == 0:
+                raise RetryableError(f"No games completed for {side}")
+            if total < half * min_completion:
+                raise RetryableError(
+                    f"Only {total}/{half} games completed for {side} "
+                    f"({total/half:.0%}), minimum is {min_completion:.0%}"
+                )
+            if total != half:
+                logger.warning("Expected %d games for %s but got %d", half, side, total)
+            logger.info("Results [%s]: W=%d D=%d L=%d (%d games)", side, w, d, l, total)
+
+        return plus_wins, plus_draws, plus_losses, minus_wins, minus_draws, minus_losses
+
+    else:
+        # Standard mode: theta_plus vs theta_minus
+        pgn_file = str(games_dir / "games.pgn").replace("\\", "/")
+        cmd = build_cutechess_command(
+            worker_config, tuning_config,
+            engine1_params=work.theta_plus, engine1_name="theta_plus",
+            engine2_params=work.theta_minus, engine2_name="theta_minus",
+            num_games=work.num_games, pgn_file=pgn_file,
+        )
+        return _execute_match(cmd, work.num_games, work, worker_config, tuning_config)
 
 
 def worker_loop(worker_config: WorkerConfig):
@@ -418,9 +571,11 @@ def worker_loop(worker_config: WorkerConfig):
     logger.info("Connecting to coordinator at %s", base_url)
     fetch_config()
     logger.info("Received tuning config: %d parameters", len(tuning_config.get("parameters", {})))
+    if worker_config.reference_engine:
+        logger.info("Reference mode: theta+/- vs %s", worker_config.reference_engine)
     retry_timeout = worker_config.http_retry_timeout
 
-    hostname = worker_config.name or platform.node()
+    worker_name = worker_config.name or platform.node()
 
     # Collect cutechess overrides to send to coordinator (for timeout estimation)
     cc_overrides = {k: v for k, v in worker_config.cutechess_overrides.items()
@@ -439,7 +594,7 @@ def worker_loop(worker_config: WorkerConfig):
             # Request work
             work_request = {
                 "chunk_size": chunk_size_cap,
-                "worker": hostname,
+                "worker": worker_name,
                 "server_start": server_start,
             }
             if cc_overrides:
@@ -467,24 +622,37 @@ def worker_loop(worker_config: WorkerConfig):
             logger.info("Got work: iteration %d, %d games", work.iteration, work.num_games)
 
             # Run the games
-            result = run_games(worker_config, tuning_config, work)
-            if result is None:
+            game_result = run_games(worker_config, tuning_config, work)
+            if game_result is None:
                 if _shutdown_requested:
                     break
                 continue  # chunk cancelled, request new work
-            wins, draws, losses = result
 
             # Report results (PGNs saved locally by cutechess-cli)
             result = {
                 "iteration": work.iteration,
-                "wins": wins,
-                "draws": draws,
-                "losses": losses,
-                "num_games": wins + draws + losses,
                 "chunk_id": work.chunk_id,
-                "worker": hostname,
+                "worker": worker_name,
                 "shutting_down": _shutdown_requested,
             }
+            if len(game_result) == 6:
+                # Reference mode: per-side scores, coordinator derives aggregates
+                pw, pd, pl, mw, md, ml = game_result
+                result["num_games"] = pw + pd + pl + mw + md + ml
+                result["reference_mode"] = True
+                result["plus_wins"] = pw
+                result["plus_draws"] = pd
+                result["plus_losses"] = pl
+                result["minus_wins"] = mw
+                result["minus_draws"] = md
+                result["minus_losses"] = ml
+            else:
+                # Standard mode
+                wins, draws, losses = game_result
+                result["wins"] = wins
+                result["draws"] = draws
+                result["losses"] = losses
+                result["num_games"] = wins + draws + losses
             resp = http_post(f"{base_url}/result", result, retry_timeout)
             logger.info("Result submitted: %s", resp.get("status"))
 
@@ -507,7 +675,7 @@ def worker_loop(worker_config: WorkerConfig):
             logger.exception("Terminating.")
             break
 
-def setup_logging(log_file: str, debug: bool = False, rotate: bool = True):
+def setup_logging(log_file: str, debug: bool, rotate: bool):
     """Configure logging to file and stdout."""
     formatter = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(message)s",

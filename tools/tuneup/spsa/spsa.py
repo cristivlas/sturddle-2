@@ -39,9 +39,16 @@ class SPSAState:
     total_draws: int = 0      # drawn games
     total_losses: int = 0     # games lost by theta_plus (= won by theta_minus)
     created_at: float = 0.0   # session start timestamp (epoch)
+    # Reference mode accumulators (theta+ vs ref, theta- vs ref separately)
+    total_plus_wins: int = 0
+    total_plus_draws: int = 0
+    total_plus_losses: int = 0
+    total_minus_wins: int = 0
+    total_minus_draws: int = 0
+    total_minus_losses: int = 0
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "iteration": self.iteration,
             "theta": dict(self.theta),
             "history": list(self.history),
@@ -52,6 +59,13 @@ class SPSAState:
             "total_losses": self.total_losses,
             "created_at": self.created_at,
         }
+        # Only persist reference accumulators when non-zero
+        for key in ("total_plus_wins", "total_plus_draws", "total_plus_losses",
+                     "total_minus_wins", "total_minus_draws", "total_minus_losses"):
+            val = getattr(self, key)
+            if val:
+                d[key] = val
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "SPSAState":
@@ -65,6 +79,12 @@ class SPSAState:
             total_draws=d.get("total_draws", 0),
             total_losses=d.get("total_losses", 0),
             created_at=d.get("created_at", 0.0),
+            total_plus_wins=d.get("total_plus_wins", 0),
+            total_plus_draws=d.get("total_plus_draws", 0),
+            total_plus_losses=d.get("total_plus_losses", 0),
+            total_minus_wins=d.get("total_minus_wins", 0),
+            total_minus_draws=d.get("total_minus_draws", 0),
+            total_minus_losses=d.get("total_minus_losses", 0),
         )
 
 
