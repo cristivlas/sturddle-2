@@ -819,11 +819,9 @@
             var etaIter = '', etaSession = '';
             var gamesLeftIter = Math.max(0, gamesTotal - gamesDone);
             var gamesLeftTotal = gamesLeftIter + Math.max(0, maxIters - iteration) * gamesTotal;
-            var tp = currentThroughput;
-            if (tp <= 0 && gamesDone > 0) {{
-                var iterElapsed = (Date.now() - iterationStartEpoch * 1000) / 1000;
-                if (iterElapsed > 10) tp = gamesDone / iterElapsed;
-            }}
+            var tp = 0;
+            var iterElapsed = (Date.now() - iterationStartEpoch * 1000) / 1000;
+            if (gamesDone > 0 && iterElapsed > 10) tp = gamesDone / iterElapsed;
             if (tp > 0) {{
                 var fi = formatDuration(gamesLeftIter / tp * 1000);
                 var fs = formatDuration(gamesLeftTotal / tp * 1000);
@@ -836,9 +834,9 @@
                 + (etaSession ? ' <span style="font-size:14px;color:#999;font-weight:normal">~' + etaSession + ' left</span>' : '');
             gamesEl.innerHTML = gamesDone + ' / ' + gamesTotal
                 + (etaIter ? ' <span style="font-size:14px;color:#999;font-weight:normal">~' + etaIter + ' left</span>' : '');
-            document.getElementById('avgIterLabel').textContent = currentThroughput > 0 ? 'Est / Iteration' : 'Avg / Iteration';
+            document.getElementById('avgIterLabel').textContent = 'Est / Iteration';
             document.getElementById('avgIterValue').textContent = tp > 0 ? formatDuration(gamesTotal / tp * 1000) : '--';
-            document.getElementById('elapsedIter').textContent = '(' + formatDuration(Date.now() - iterationStartEpoch * 1000) + ')';
+            document.getElementById('elapsedIter').textContent = '(' + formatDuration(iterElapsed * 1000) + ')';
         }}
 
         // --- SSE live updates ---
