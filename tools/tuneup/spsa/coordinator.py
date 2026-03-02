@@ -141,6 +141,7 @@ class CoordinatorState:
         self.total_minus_draws = 0
         self.total_minus_losses = 0
         self.iteration_reference_mode = None  # None until first result, then True/False
+        self.iteration_start_time = time.time()
         self.pending_chunks = {}  # chunk_id -> ChunkInfo
         self.stolen_chunks = {}   # stolen_cid -> (replacement_cid, victim_worker)
 
@@ -827,6 +828,7 @@ class CoordinatorState:
         st.total_minus_wins = 0
         st.total_minus_draws = 0
         st.total_minus_losses = 0
+        self.iteration_start_time = time.time()
         self._save_state()
 
         # Prepare next iteration
@@ -990,6 +992,7 @@ class CoordinatorState:
                 "workers": worker_data,
                 "session_start": self.optimizer.state.created_at,
                 "server_start": self.server_start_time,
+                "iteration_start": self.iteration_start_time,
                 "has_normalized": has_normalized,
             }
             if has_normalized:
@@ -1105,6 +1108,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
             session_start=session_start,
             server_start=server_start,
+            iteration_start=data["iteration_start"],
         )
 
     def _render_charts_page(self) -> str:
@@ -1215,6 +1219,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                     "workers": data.get("workers", []),
                     "last_history": history[-1] if history else None,
                     "history_len": data["history_total"],
+                    "iteration_start": data["iteration_start"],
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "server_start": time.strftime(
                         "%Y-%m-%d %H:%M:%S",

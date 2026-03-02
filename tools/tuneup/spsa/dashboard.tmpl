@@ -324,7 +324,7 @@
                 </div>
                 <div class="stat">
                     <div class="stat-label" id="avgIterLabel">Avg / Iteration</div>
-                    <div class="stat-value" id="avgIterValue">--</div>
+                    <div class="stat-value"><span id="avgIterValue">--</span> <span id="elapsedIter" style="font-size:13px;color:#999;font-weight:normal"></span></div>
                 </div>
                 <div class="stat" id="totalGamesStat">
                     <div class="stat-label">Total Games</div>
@@ -640,6 +640,7 @@
         const sessionStart = '{session_start}';
         const totalGamesAtStart = {total_games_at_start};
         var currentThroughput = {throughput};
+        var iterationStartEpoch = {iteration_start};
         const initTheta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}');
         const initThetaInternal = JSON.parse(document.getElementById('theta-internal-data').textContent || '{{}}');
         const initWorkers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
@@ -655,6 +656,7 @@
         updateHistoryTitle({history_total});
         updateSinceRestart({total_games});
         updateETA({total_games}, {games_done}, {games_total}, {iteration}, {max_iters});
+        setInterval(function() {{ document.getElementById('elapsedIter').textContent = '(' + formatDuration(Date.now() - iterationStartEpoch * 1000) + ')'; }}, 1000);
 
         // --- Fetch initial parameter values from config ---
         fetch('/config').then(function(r) {{ return r.json(); }}).then(function(cfg) {{
@@ -835,6 +837,7 @@
             document.getElementById('avgIterValue').textContent =
                 useTP ? formatDuration(gamesTotal / currentThroughput * 1000) :
                 iteration > 0 ? formatDuration((Date.now() - parseLocalTimestamp(sessionStart)) / iteration) : '--';
+            document.getElementById('elapsedIter').textContent = '(' + formatDuration(Date.now() - iterationStartEpoch * 1000) + ')';
         }}
 
         // --- SSE live updates ---
@@ -939,6 +942,7 @@
             applyTimeTheme();
 
             // ETA
+            iterationStartEpoch = d.iteration_start;
             updateETA(d.total_games, d.games_done, d.games_total, d.iteration, d.max_iters);
 
             // Footer
