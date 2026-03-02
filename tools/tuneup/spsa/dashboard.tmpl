@@ -795,11 +795,6 @@
         }})();
 
         // --- ETA estimation ---
-        function parseLocalTimestamp(s) {{
-            // Parse "YYYY-MM-DD HH:MM:SS" as local time
-            var p = s.split(/[- :]/);
-            return new Date(p[0], p[1]-1, p[2], p[3], p[4], p[5]).getTime();
-        }}
         function formatDuration(ms) {{
             if (!ms || !isFinite(ms) || ms < 0) return '--';
             var sec = Math.round(ms / 1000);
@@ -819,9 +814,9 @@
             var etaIter = '', etaSession = '';
             var gamesLeftIter = Math.max(0, gamesTotal - gamesDone);
             var gamesLeftTotal = gamesLeftIter + Math.max(0, maxIters - iteration) * gamesTotal;
-            var tp = 0;
             var iterElapsed = (Date.now() - iterationStartEpoch * 1000) / 1000;
-            if (gamesDone > 0 && iterElapsed > 10) tp = gamesDone / iterElapsed;
+            var tp = (gamesDone > 0 && iterElapsed > 10) ? gamesDone / iterElapsed : 0;
+            if (currentThroughput > tp) tp = currentThroughput;
             if (tp > 0) {{
                 var fi = formatDuration(gamesLeftIter / tp * 1000);
                 var fs = formatDuration(gamesLeftTotal / tp * 1000);
