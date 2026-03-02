@@ -420,25 +420,23 @@ def _run_cutechess(cmd, work, worker_config, tuning_config, label=""):
     return output
 
 
-def _execute_match(cmd, expected_games, work, worker_config, tuning_config, label=""):
+def _execute_match(cmd, expected_games, work, worker_config, tuning_config):
     """
     Run a single cutechess-cli match and return (wins, draws, losses) or None.
 
     This is the standard-mode wrapper around _run_cutechess().
     """
-    tag = f" [{label}]" if label else ""
-
-    output = _run_cutechess(cmd, work, worker_config, tuning_config, label)
+    output = _run_cutechess(cmd, work, worker_config, tuning_config)
     if output is None:
         return None
 
     # Log score lines for diagnostics
     score_lines = re.findall(r"Score of .+", output)
-    logger.info("cutechess-cli reported %d score line(s)%s", len(score_lines), tag)
+    logger.info("cutechess-cli reported %d score line(s)", len(score_lines))
     for line in score_lines[:-1]:
         logger.debug("  %s", line)
     if score_lines:
-        logger.info("Final%s: %s", tag, score_lines[-1])
+        logger.info("Final: %s", score_lines[-1])
 
     wins, losses, draws = parse_cutechess_output(output)
     total = wins + losses + draws
@@ -456,8 +454,8 @@ def _execute_match(cmd, expected_games, work, worker_config, tuning_config, labe
     min_completion = 0.5
     if total < expected_games * min_completion:
         logger.error(
-            "Only %d/%d games completed (W=%d L=%d D=%d) — aborting chunk%s",
-            total, expected_games, wins, losses, draws, tag,
+            "Only %d/%d games completed (W=%d L=%d D=%d) — aborting chunk",
+            total, expected_games, wins, losses, draws,
         )
         raise RetryableError(
             f"Only {total}/{expected_games} games completed "
@@ -466,11 +464,11 @@ def _execute_match(cmd, expected_games, work, worker_config, tuning_config, labe
 
     if total != expected_games:
         logger.warning(
-            "Expected %d games but got %d (W=%d L=%d D=%d)%s",
-            expected_games, total, wins, losses, draws, tag,
+            "Expected %d games but got %d (W=%d L=%d D=%d)",
+            expected_games, total, wins, losses, draws,
         )
 
-    logger.info("Results%s: W=%d D=%d L=%d (%d games)", tag, wins, draws, losses, total)
+    logger.info("Results: W=%d D=%d L=%d (%d games)", wins, draws, losses, total)
 
     return wins, draws, losses
 
