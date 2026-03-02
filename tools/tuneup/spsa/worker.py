@@ -479,13 +479,13 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
     """
     games_dir = Path(worker_config.games_dir)
     games_dir.mkdir(parents=True, exist_ok=True)
+    pgn_file = str(games_dir / f"games-{work.iteration}.pgn").replace("\\", "/")
 
     ref_engine = worker_config.reference_engine
 
     if ref_engine:
         # Reference mode: gauntlet with reference as seed vs theta+, theta-
         half = work.num_games // 2
-        pgn_file = str(games_dir / "games_ref.pgn").replace("\\", "/")
         cmd = build_cutechess_command(
             worker_config, tuning_config,
             engine1_params={}, engine1_name="reference",
@@ -541,7 +541,6 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
 
     else:
         # Standard mode: theta_plus vs theta_minus
-        pgn_file = str(games_dir / "games.pgn").replace("\\", "/")
         cmd = build_cutechess_command(
             worker_config, tuning_config,
             engine1_params=work.theta_plus, engine1_name="theta_plus",
