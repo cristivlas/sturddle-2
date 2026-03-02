@@ -817,17 +817,6 @@
             var iterElapsed = (Date.now() - iterationStartEpoch * 1000) / 1000;
             var tp = (gamesDone > 0 && iterElapsed > 10) ? gamesDone / iterElapsed : 0;
             if (currentThroughput > tp) tp = currentThroughput;
-            // Estimate full cluster throughput from known worker speeds
-            var speeds = [], alive = 0;
-            latestWorkers.forEach(function(w) {{
-                if (w.status === 2 || !w.alive) return;
-                alive++;
-                if (w.sec_per_game > 0) speeds.push(1.0 / w.sec_per_game);
-            }});
-            if (speeds.length && alive) {{
-                var ct = (speeds.reduce(function(a, b) {{ return a + b; }}, 0) / speeds.length) * alive;
-                if (ct > tp) tp = ct;
-            }}
             if (tp > 0) {{
                 var fi = formatDuration(gamesLeftIter / tp * 1000);
                 var fs = formatDuration(gamesLeftTotal / tp * 1000);
