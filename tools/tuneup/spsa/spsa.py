@@ -10,7 +10,7 @@ Algorithm (range-scaled):
   theta_plus_i  = clamp(theta_i + c_k * delta_i * r_i)
   theta_minus_i = clamp(theta_i - c_k * delta_i * r_i)
 
-  pert_i = c_k * delta_i * r_i  (clamped to |pert| >= 1 for int params)
+  pert_i = c_k * delta_i * r_i  (clamped to |pert| >= 1 in engine space)
   g_hat[i] = (score_plus - score_minus) / (2 * pert_i / r_i)
   theta_{k+1}_i = clamp(theta_i + a_k * g_hat_i * r_i)
 
@@ -168,6 +168,13 @@ class SPSAOptimizer:
 
             tp = param.clamp(t + pert)
             tm = param.clamp(t - pert)
+
+            # Verify engine values actually differ; bump if rounding collapsed them.
+            if param.denormalize(tp) == param.denormalize(tm):
+                pert = d * min_pert * 2
+                tp = param.clamp(t + pert)
+                tm = param.clamp(t - pert)
+
             theta_plus[name] = param.to_engine_value(tp)
             theta_minus[name] = param.to_engine_value(tm)
             self._effective_perts[name] = pert / r

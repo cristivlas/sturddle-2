@@ -749,6 +749,7 @@ class CoordinatorState:
 
         k = self.optimizer.iteration
         old_theta = dict(self.optimizer.theta)
+        old_display = self._get_display_values()
 
         # Reference mode: skip update if both sides lost to the reference
         if total_plus > 0 and total_minus > 0 and max(avg_score_plus, avg_score_minus) < 0.5:
@@ -791,8 +792,8 @@ class CoordinatorState:
                 step = new_theta[name] - old_theta[name]
                 r = param.upper - param.lower
                 logger.info(
-                    "  %s: %.4f -> %.4f (engine: %s, step: %+.4f, %.1f%% of range)",
-                    name, old_theta[name], new_theta[name], display[name],
+                    "  %s: %s -> %s (step: %+.4f, %.1f%% of range)",
+                    name, old_display[name], display[name],
                     step, 100.0 * abs(step) / r if r > 0 else 0,
                 )
 
@@ -908,14 +909,12 @@ class CoordinatorState:
         return any(getattr(p, 'is_normalized', False) for p in self.config.parameters.values())
 
     def _get_display_values(self) -> dict:
-        """Engine-space display values: denormalized integers for normalized params."""
+        """Engine-space display values (denormalized integers)."""
         result = {}
         for name, val in self.optimizer.theta.items():
             param = self.config.parameters.get(name)
-            if param and getattr(param, 'is_normalized', False):
+            if param:
                 result[name] = param.denormalize(val)
-            elif param:
-                result[name] = param.to_engine_value(val)
             else:
                 result[name] = val
         return result
