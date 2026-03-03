@@ -10,7 +10,8 @@ Algorithm (range-scaled):
   theta_plus_i  = clamp(theta_i + c_k * delta_i * r_i)
   theta_minus_i = clamp(theta_i - c_k * delta_i * r_i)
 
-  g_hat[i] = (score_plus - score_minus) / (2 * c_k * delta_i)
+  pert_i = c_k * delta_i * r_i  (clamped to |pert| >= 1 for int params)
+  g_hat[i] = (score_plus - score_minus) / (2 * pert_i / r_i)
   theta_{k+1}_i = clamp(theta_i + a_k * g_hat_i * r_i)
 
   a_k = a / (A + k + 1)^alpha
@@ -99,6 +100,9 @@ class SPSAOptimizer:
         # A = fraction of total iterations for initial stabilization
         self.A = spsa_config.A_ratio * max_iterations
 
+        # Effective perturbation per param (set by compute_candidates, used by update).
+        self._effective_perts = {}
+
         if state is not None:
             self.state = state
         else:
@@ -135,6 +139,11 @@ class SPSAOptimizer:
         """
         Compute perturbed parameter vectors.
 
+        For integer parameters, enforces a minimum perturbation of ±1 so the
+        engine always sees distinct values (avoids pure-noise gradient estimates).
+        The actual perturbation per parameter is stored in _effective_perts for
+        use by update().
+
         Returns:
             (theta_plus, theta_minus) as dicts of param_name -> engine value.
         """
@@ -146,10 +155,17 @@ class SPSAOptimizer:
             t = self.state.theta[name]
             d = delta[name]
             r = param.upper - param.lower
-            tp = param.clamp(t + ck * d * r)
-            tm = param.clamp(t - ck * d * r)
+            pert = ck * d * r
+
+            # Ensure integer params produce distinct engine values.
+            if param.type == "int" and abs(pert) < 1:
+                pert = float(d)  # minimum ±1 step
+
+            tp = param.clamp(t + pert)
+            tm = param.clamp(t - pert)
             theta_plus[name] = param.to_engine_value(tp)
             theta_minus[name] = param.to_engine_value(tm)
+            self._effective_perts[name] = pert / r
 
         return theta_plus, theta_minus
 
@@ -173,7 +189,9 @@ class SPSAOptimizer:
         for name, param in self.params.items():
             d = delta[name]
             r = param.upper - param.lower
-            g_hat = (score_plus - score_minus) / (2.0 * ck * d)
+            # Use actual perturbation (accounts for minimum step on int params).
+            eff = self._effective_perts.get(name, ck * d)
+            g_hat = (score_plus - score_minus) / (2.0 * eff)
             t = self.state.theta[name] + ak * g_hat * r
             t = param.clamp(t)
             new_theta[name] = t
