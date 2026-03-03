@@ -649,6 +649,9 @@ class CoordinatorState:
                 return {"status": "ignored", "reason": f"mode mismatch: expected {expected}"}
 
             # Reject odd game counts (from bad cutechess runs) to keep remaining even.
+            # If we get an odd count back, cutechess crashed or an engine died mid-game.
+            # The results are from an incomplete/corrupted run — the W/D/L split across theta+ and theta-
+            # is unbalanced, and there's no way to know which side got shorted.
             if result.num_games % 2 != 0:
                 logger.warning("Rejecting odd result (%d games) from %s [%s]", result.num_games, result.worker, result.chunk_id)
                 return {"status": "ignored", "reason": "odd game count"}
