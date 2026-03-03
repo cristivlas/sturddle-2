@@ -139,10 +139,10 @@ class SPSAOptimizer:
         """
         Compute perturbed parameter vectors.
 
-        For integer parameters, enforces a minimum perturbation of ±1 so the
-        engine always sees distinct values (avoids pure-noise gradient estimates).
-        The actual perturbation per parameter is stored in _effective_perts for
-        use by update().
+        Enforces a minimum perturbation of ±1 in engine space so the engine
+        always sees distinct values (avoids pure-noise gradient estimates).
+        The actual perturbation per parameter is stored in _effective_perts
+        for use by update().
 
         Returns:
             (theta_plus, theta_minus) as dicts of param_name -> engine value.
@@ -157,9 +157,14 @@ class SPSAOptimizer:
             r = param.upper - param.lower
             pert = ck * d * r
 
-            # Ensure integer params produce distinct engine values.
-            if param.type == "int" and abs(pert) < 1:
-                pert = float(d)  # minimum ±1 step
+            # Minimum ±1 engine-space step.
+            if param.is_normalized:
+                orig_range = param.original_upper - param.original_lower
+                min_pert = 2.0 / orig_range
+            else:
+                min_pert = 1.0
+            if abs(pert) < min_pert:
+                pert = d * min_pert
 
             tp = param.clamp(t + pert)
             tm = param.clamp(t - pert)
