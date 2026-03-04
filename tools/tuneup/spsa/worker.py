@@ -19,15 +19,18 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
-import zipfile
 from pathlib import Path
 
 from config import WorkerConfig, WorkItem
+from ramdisk import (
+    estimate_ramdisk_mb, create_ramdisk, remove_ramdisk,
+    find_existing_ramdisk, normalize_drive, write_marker,
+    find_free_drive,
+)
 
 logger = logging.getLogger("worker")
 
@@ -48,10 +51,6 @@ _shutdown_requested = False   # set True after operator chooses "wait"
 _cutechess_debug = False      # set True via --cutechess-debug flag
 
 
-# RAM disk helpers
-
-IMDISK_URL = "https://sourceforge.net/projects/imdisk-toolkit/files/20250206/ImDiskTk-x64.zip/download"
-RAMDISK_MARKER = "spsa_ramdisk"  # marker file to identify our RAM disks
 _ramdisk_mount = ""  # resolved mount point for the active RAM disk
 _ramdisk_owned = False  # True only if we created the drive this session
 
@@ -71,141 +70,6 @@ def _needs_ramdisk(worker_config) -> bool:
     return any(not _is_script(e) for e in engines)
 
 
-def _estimate_ramdisk_mb(worker_config) -> int:
-    """Estimate RAM disk size in MB from engine binary sizes and concurrency.
-
-    Each concurrent engine process extracts its own copy.  Gauntlet mode
-    uses reference + theta_plus + theta_minus, all × concurrency.
-    PyInstaller decompresses ~2x the binary size; we add a flat headroom.
-    If ramdisk_size is set in config, use that directly.
-    """
-    if worker_config.ramdisk_size > 0:
-        return worker_config.ramdisk_size
-    ref_size = 0
-    eng_size = 0
-    if worker_config.reference_engine and not _is_script(worker_config.reference_engine):
-        try:
-            ref_size = os.path.getsize(worker_config.reference_engine)
-        except OSError as e:
-            logger.warning("Cannot stat reference engine %s: %s", worker_config.reference_engine, e)
-    if not _is_script(worker_config.engine):
-        try:
-            eng_size = os.path.getsize(worker_config.engine)
-        except OSError as e:
-            logger.warning("Cannot stat engine %s: %s", worker_config.engine, e)
-    conc = max(1, worker_config.concurrency)
-    # reference × concurrency + engine × 2 (theta+, theta-) × concurrency, × 2 decompression ratio
-    raw = (ref_size * conc + eng_size * 2 * conc) * 2
-    mb = max(256, int(raw / (1024 * 1024)) + 128)
-    return mb
-
-
-def _has_imdisk() -> bool:
-    """Check if imdisk is available on the system."""
-    return shutil.which("imdisk") is not None
-
-
-def _install_imdisk() -> bool:
-    """Download and silently install ImDisk Toolkit. Returns True on success."""
-    logger.info("Downloading ImDisk Toolkit from SourceForge...")
-    tmp = None
-    try:
-        tmp = tempfile.mkdtemp(prefix="imdisk_")
-        zip_path = os.path.join(tmp, "ImDiskTk-x64.zip")
-        import ssl
-        ctx = ssl.create_default_context()
-        try:
-            certifi = __import__("certifi")
-            ctx.load_verify_locations(certifi.where())
-        except (ImportError, ssl.SSLError):
-            pass
-        opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx))
-        try:
-            with opener.open(IMDISK_URL) as resp, open(zip_path, "wb") as out:
-                out.write(resp.read())
-        except urllib.error.URLError as e:
-            if "CERTIFICATE_VERIFY_FAILED" not in str(e):
-                raise
-            logger.warning("SSL verification failed, retrying without verification")
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx))
-            with opener.open(IMDISK_URL) as resp, open(zip_path, "wb") as out:
-                out.write(resp.read())
-        logger.info("Downloaded ImDisk to %s", zip_path)
-        with zipfile.ZipFile(zip_path) as zf:
-            zf.extractall(tmp)
-        logger.info("Extracted ImDisk to %s", tmp)
-        install_bat = os.path.join(tmp, "install.bat")
-        if not os.path.exists(install_bat):
-            for root, dirs, files in os.walk(tmp):
-                if "install.bat" in files:
-                    install_bat = os.path.join(root, "install.bat")
-                    break
-        if not os.path.exists(install_bat):
-            logger.error("install.bat not found in ImDisk archive")
-            return False
-        logger.info("Running ImDisk installer (UAC prompt may appear)...")
-        result = subprocess.run([install_bat, "/fullsilent"], cwd=os.path.dirname(install_bat),
-                                capture_output=True, text=True, timeout=120, shell=True)
-        if result.returncode != 0:
-            logger.error("ImDisk install failed (rc=%d): %s", result.returncode, result.stderr.strip())
-            return False
-        logger.info("ImDisk installed successfully")
-        return True
-    except Exception as e:
-        logger.error("Failed to install ImDisk: %s", e)
-        return False
-    finally:
-        if tmp:
-            shutil.rmtree(tmp, ignore_errors=True)
-
-
-def _normalize_drive(mount_point: str) -> str:
-    """Normalize a Windows drive letter to 'X:' form (no trailing separator)."""
-    drive = mount_point.rstrip("\\/")
-    if not drive.endswith(":"):
-        drive += ":"
-    return drive.upper()
-
-
-def _is_our_ramdisk(drive_root: str) -> bool:
-    """Check if a drive root has our marker file (from a previous run or crash)."""
-    return os.path.exists(os.path.join(drive_root, RAMDISK_MARKER))
-
-
-def _drive_letters():
-    """Yield drive letters Z: down to D: as 'X:' strings."""
-    for letter in "ZYXWVUTSRQPONMLKJIHGFED":
-        yield letter + ":"
-
-
-def _find_existing_ramdisk() -> str:
-    """Scan drive letters for a RAM disk left over from a previous crash. Returns 'X:' or empty."""
-    for drive in _drive_letters():
-        drive_root = drive + os.sep
-        if os.path.exists(drive_root) and _is_our_ramdisk(drive_root):
-            logger.info("Found existing RAM disk from previous run: %s", drive)
-            return drive
-    return ""
-
-
-def _find_free_drive() -> str:
-    """Find an unused drive letter, searching from Z: down. Returns 'X:' or empty."""
-    for drive in _drive_letters():
-        if not os.path.exists(drive + os.sep):
-            return drive
-    return ""
-
-
-def _write_marker(mount: str):
-    """Write a marker file to identify our RAM disk after a crash. Raises on failure."""
-    marker = os.path.join(mount, RAMDISK_MARKER)
-    with open(marker, "w") as f:
-        f.write("pid=%d\n" % os.getpid())
-
-
 def setup_ramdisk(worker_config) -> str:
     """Set up a RAM disk for engine temp files. Returns the mount path, or empty string.
 
@@ -218,51 +82,30 @@ def setup_ramdisk(worker_config) -> str:
         return ""
 
     if sys.platform == "win32":
-        size_mb = _estimate_ramdisk_mb(worker_config)
+        size_mb = worker_config.ramdisk_size
+        if size_mb <= 0:
+            ref = worker_config.reference_engine if not _is_script(worker_config.reference_engine or "") else ""
+            size_mb = estimate_ramdisk_mb(worker_config.engine, ref, worker_config.concurrency)
         # Check for leftover from a previous crash
-        drive = _find_existing_ramdisk()
+        drive = find_existing_ramdisk()
         if drive:
             drive_root = drive + os.sep
             _ramdisk_mount = drive_root
-            _write_marker(drive_root)
+            write_marker(drive_root)
             return drive_root
         # Use configured drive letter or auto-find one
         if worker_config.ramdisk_drive:
-            drive = _normalize_drive(worker_config.ramdisk_drive)
+            drive = normalize_drive(worker_config.ramdisk_drive)
             drive_root = drive + os.sep
             if os.path.exists(drive_root):
                 logger.info("Using pre-existing drive %s (externally managed)", drive)
                 _ramdisk_mount = drive_root
                 return drive_root
         else:
-            drive = _find_free_drive()
+            drive = find_free_drive()
             if not drive:
                 raise RuntimeError("No free drive letters available for RAM disk")
-        # Ensure imdisk is available
-        if not _has_imdisk():
-            if not worker_config.auto_install_imdisk:
-                raise RuntimeError("ImDisk not found and auto_install_imdisk is disabled")
-            logger.info("ImDisk not found, attempting auto-install")
-            if not _install_imdisk():
-                raise RuntimeError("ImDisk auto-install failed")
-            if not _has_imdisk():
-                raise RuntimeError("ImDisk still not on PATH after install")
-        logger.info("Creating RAM disk: %s (%d MB)", drive, size_mb)
-        # Create unformatted virtual disk
-        result = subprocess.run(["imdisk", "-a", "-s", "%dM" % size_mb, "-m", drive], capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout or "").strip()
-            raise RuntimeError("imdisk failed (rc=%d): %s" % (result.returncode, detail))
-        # Format requires elevation — RunAs only works with .exe, so wrap in cmd.exe
-        fmt_cmd = 'Start-Process cmd.exe -ArgumentList "/c format %s /fs:ntfs /q /y" -Verb RunAs -Wait' % drive
-        result = subprocess.run(["powershell", "-Command", fmt_cmd], capture_output=True, text=True, timeout=60)
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout or "").strip()
-            subprocess.run(["imdisk", "-D", "-m", drive], capture_output=True, text=True, timeout=10)
-            raise RuntimeError("format failed (rc=%d): %s" % (result.returncode, detail))
-        drive_root = drive + os.sep
-        _write_marker(drive_root)
-        logger.info("RAM disk created: %s (%d MB)", drive_root, size_mb)
+        drive_root = create_ramdisk(size_mb, drive, auto_install=worker_config.auto_install_imdisk)
         _ramdisk_mount = drive_root
         _ramdisk_owned = True
         return drive_root
@@ -283,18 +126,11 @@ def teardown_ramdisk(worker_config):
     if not _ramdisk_mount:
         return
     if sys.platform == "win32":
-        drive = _ramdisk_mount.rstrip("\\/")
         if _ramdisk_owned:
-            logger.info("Removing RAM disk %s", drive)
-            try:
-                subprocess.run(["imdisk", "-D", "-m", drive], capture_output=True, text=True, timeout=30)
-                logger.info("RAM disk removed: %s", drive)
-            except Exception as e:
-                logger.warning("Failed to remove RAM disk %s: %s", drive, e)
+            remove_ramdisk(_ramdisk_mount.rstrip("\\/"))
         else:
-            logger.info("RAM disk %s was not created by this worker, skipping teardown", drive)
+            logger.info("RAM disk %s was not created by this worker, skipping teardown", _ramdisk_mount)
     else:
-        # /dev/shm: just clean up our subdirectory, no unmount needed
         logger.info("Cleaning up %s", _ramdisk_mount)
         shutil.rmtree(_ramdisk_mount, ignore_errors=True)
     _ramdisk_mount = ""
