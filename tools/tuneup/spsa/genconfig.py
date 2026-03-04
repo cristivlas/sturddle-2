@@ -19,9 +19,11 @@ Creates:
 """
 
 import argparse
+import glob
 import json
 import os
 import platform
+import shutil
 import sys
 import sysconfig
 import warnings
@@ -54,6 +56,48 @@ def abspath(path):
     return to_forward_slash(os.path.abspath(path))
 
 
+def find_game_runner():
+    """Auto-detect fastchess or cutechess-cli. Fastchess preferred over cutechess-cli."""
+    windows = sysconfig.get_platform().startswith('win')
+    binary = 'fastchess.exe' if windows else 'fastchess'
+    # 1) fastchess in PATH
+    path = shutil.which('fastchess')
+    if path:
+        print(f'  Found fastchess in PATH: {path}')
+        return abspath(path)
+    # 2) fastchess in sibling directories of root project
+    parent = os.path.dirname(root_path())
+    pattern = os.path.join(parent, '*fastchess*')
+    print(f'  Scanning siblings: {pattern}')
+    for d in glob.glob(pattern):
+        candidate = os.path.join(d, binary)
+        print(f'  Checking: {candidate} (exists={os.path.isfile(candidate)})')
+        if os.path.isfile(candidate):
+            return abspath(candidate)
+    # 3) cutechess-cli in PATH as fallback
+    path = shutil.which('cutechess-cli')
+    if path:
+        print(f'  Found cutechess-cli in PATH: {path}')
+        return abspath(path)
+    warnings.warn('Neither fastchess nor cutechess-cli found in PATH or sibling directories')
+    return 'cutechess-cli'
+
+
+def find_dist_engine(version):
+    """Find engine binary in dist/ by version tag (e.g., '2.5.0', '2.5.1-pieces'). Exits on failure."""
+    dist_dir = os.path.join(root_path(), 'dist')
+    windows = sysconfig.get_platform().startswith('win')
+    if windows:
+        name = f'sturddle-{version}.exe'
+    else:
+        name = f'sturddle-{version}-Linux-{platform.machine()}'
+    path = os.path.join(dist_dir, name)
+    if not os.path.isfile(path):
+        print(f'Error: Engine not found: {path}', file=sys.stderr)
+        sys.exit(1)
+    return abspath(path)
+
+
 def get_engine_cmd(project_dir):
     """
     Get engine command for worker config.
@@ -78,6 +122,8 @@ def main():
     parser.add_argument('project', help='Project name (creates tuneup/<project>/)')
     parser.add_argument('tune', nargs='*', default='all', help='Parameter names to tune (or "all")')
     parser.add_argument('-w', '--worker-only', action='store_true', help='Generate worker.json only (no engine needed)')
+    parser.add_argument('-e', '--engine', metavar='VERSION', help='Engine version from dist/ (e.g., 2.5.1-pieces)')
+    parser.add_argument('--ref', metavar='VERSION', help='Reference engine version from dist/ (e.g., 2.5.0)')
     _tc = TuningConfig()
     _spsa = SPSAConfig()
     parser.add_argument('-t', '--time-control', default=_tc.time_control, help=f'Time control (default: {_tc.time_control})')
@@ -102,8 +148,11 @@ def main():
     os.makedirs(os.path.join(project_dir, 'logs'), exist_ok=True)
     project_dir_abs = abspath(project_dir)
 
-    # Engine command (creates wrapper on Windows)
-    engine_cmd = get_engine_cmd(project_dir)
+    # Engine command: dist binary if --engine, otherwise script wrapper
+    if args.engine:
+        engine_cmd = find_dist_engine(args.engine)
+    else:
+        engine_cmd = get_engine_cmd(project_dir)
 
     # Default book path (absolute, forward slashes)
     default_book = abspath(os.path.join(tuneup_path(), 'books', '8moves_v3.pgn'))
@@ -202,7 +251,7 @@ def main():
         'name': platform.node(),
         'coordinator': 'http://localhost:8080',
         'engine': engine_cmd,
-        'cutechess_cli': 'cutechess-cli',
+        'cutechess_cli': find_game_runner(),
         'concurrency': os.cpu_count() or 1,
         'opening_book': default_book,
         'book_format': 'pgn',
@@ -213,6 +262,8 @@ def main():
             '_comment': 'per-machine parameter overrides (e.g., SyzygyPath)',
         },
     }
+    if args.ref:
+        worker_config['reference_engine'] = find_dist_engine(args.ref)
 
     worker_path = os.path.join(project_dir, 'worker.json')
     with open(worker_path, 'w') as f:
@@ -224,7 +275,9 @@ def main():
     if not args.worker_only:
         budget = args.iterations * args.games_per_iteration
         print(f'  tuning.json   - {len(tune_params)} parameters, {args.iterations} iterations, {budget} games')
-    print(f'  worker.json   - concurrency={worker_config["concurrency"]}, engine={engine_cmd}')
+    print(f'  worker.json   - concurrency={worker_config["concurrency"]}, engine={engine_cmd}, runner={worker_config["cutechess_cli"]}')
+    if args.ref:
+        print(f'                  reference_engine={worker_config["reference_engine"]}')
     print()
     print('Next steps:')
     print(f'  1. Review and edit {"worker.json" if args.worker_only else "tuning.json and worker.json"}')
