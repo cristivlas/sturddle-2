@@ -201,6 +201,7 @@ interval set by `dashboard_refresh` in tuning.json.
 | `ramdisk` | Auto-create a RAM disk for PyInstaller temp extraction (see below); set `false` to disable | `true` |
 | `ramdisk_drive` | Override drive letter for RAM disk (e.g. `"R:"`); empty = auto-select | `""` |
 | `auto_install_imdisk` | Auto-download and install ImDisk on Windows if not found; set `false` to manage manually | `true` |
+| `ramdisk_size` | Override RAM disk size in MB (0 = auto-estimate from engine sizes and concurrency) | `0` |
 
 ### RAM Disk
 

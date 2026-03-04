@@ -75,8 +75,11 @@ def _estimate_ramdisk_mb(worker_config) -> int:
 
     Each concurrent engine process extracts its own copy.  Gauntlet mode
     uses reference + theta_plus + theta_minus, all × concurrency.
-    PyInstaller decompresses ~2-3x the binary size; we use 3x + headroom.
+    PyInstaller decompresses ~2x the binary size; we add a flat headroom.
+    If ramdisk_size is set in config, use that directly.
     """
+    if worker_config.ramdisk_size > 0:
+        return worker_config.ramdisk_size
     ref_size = 0
     eng_size = 0
     if worker_config.reference_engine and not _is_script(worker_config.reference_engine):
@@ -90,8 +93,8 @@ def _estimate_ramdisk_mb(worker_config) -> int:
         except OSError as e:
             logger.warning("Cannot stat engine %s: %s", worker_config.engine, e)
     conc = max(1, worker_config.concurrency)
-    # reference × concurrency + engine × 2 (theta+, theta-) × concurrency, × 3 decompression ratio
-    raw = (ref_size * conc + eng_size * 2 * conc) * 3
+    # reference × concurrency + engine × 2 (theta+, theta-) × concurrency, × 2 decompression ratio
+    raw = (ref_size * conc + eng_size * 2 * conc) * 2
     mb = max(256, int(raw / (1024 * 1024)) + 128)
     return mb
 
