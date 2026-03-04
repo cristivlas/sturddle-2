@@ -13,14 +13,18 @@ import argparse
 import json
 import logging
 import logging.handlers
+import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 
 from config import WorkerConfig, WorkItem
@@ -42,6 +46,240 @@ VALIDATE_TIMEOUT = 3       # seconds for chunk-validity HTTP checks
 _current_process = None       # cutechess-cli Popen while games run
 _shutdown_requested = False   # set True after operator chooses "wait"
 _cutechess_debug = False      # set True via --cutechess-debug flag
+
+
+# RAM disk helpers
+
+IMDISK_URL = "https://sourceforge.net/projects/imdisk-toolkit/files/20250206/ImDiskTk-x64.zip/download"
+RAMDISK_MARKER = "spsa_ramdisk"  # marker file to identify our RAM disks
+_ramdisk_mount = ""  # resolved mount point for the active RAM disk
+
+
+def _is_script(path: str) -> bool:
+    """True if path is a Python script (no PyInstaller extraction needed)."""
+    return path.endswith(".py")
+
+
+def _needs_ramdisk(worker_config) -> bool:
+    """Check if any engine is a non-script binary that benefits from a RAM disk."""
+    if not worker_config.ramdisk:
+        return False
+    engines = [worker_config.engine]
+    if worker_config.reference_engine:
+        engines.append(worker_config.reference_engine)
+    return any(not _is_script(e) for e in engines)
+
+
+def _estimate_ramdisk_mb(worker_config) -> int:
+    """Estimate RAM disk size in MB from engine binary sizes and concurrency.
+
+    Each concurrent engine process extracts its own copy.  Gauntlet mode
+    uses reference + theta_plus + theta_minus, all × concurrency.
+    PyInstaller decompresses ~2-3x the binary size; we use 3x + headroom.
+    """
+    ref_size = 0
+    eng_size = 0
+    if worker_config.reference_engine and not _is_script(worker_config.reference_engine):
+        try:
+            ref_size = os.path.getsize(worker_config.reference_engine)
+        except OSError as e:
+            logger.warning("Cannot stat reference engine %s: %s", worker_config.reference_engine, e)
+    if not _is_script(worker_config.engine):
+        try:
+            eng_size = os.path.getsize(worker_config.engine)
+        except OSError as e:
+            logger.warning("Cannot stat engine %s: %s", worker_config.engine, e)
+    conc = max(1, worker_config.concurrency)
+    # reference × concurrency + engine × 2 (theta+, theta-) × concurrency, × 3 decompression ratio
+    raw = (ref_size * conc + eng_size * 2 * conc) * 3
+    mb = max(256, int(raw / (1024 * 1024)) + 128)
+    return mb
+
+
+def _has_imdisk() -> bool:
+    """Check if imdisk is available on the system."""
+    return shutil.which("imdisk") is not None
+
+
+def _install_imdisk() -> bool:
+    """Download and silently install ImDisk Toolkit. Returns True on success."""
+    logger.info("Downloading ImDisk Toolkit from SourceForge...")
+    tmp = None
+    try:
+        tmp = tempfile.mkdtemp(prefix="imdisk_")
+        zip_path = os.path.join(tmp, "ImDiskTk-x64.zip")
+        urllib.request.urlretrieve(IMDISK_URL, zip_path)
+        logger.info("Downloaded ImDisk to %s", zip_path)
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(tmp)
+        logger.info("Extracted ImDisk to %s", tmp)
+        install_bat = os.path.join(tmp, "install.bat")
+        if not os.path.exists(install_bat):
+            for root, dirs, files in os.walk(tmp):
+                if "install.bat" in files:
+                    install_bat = os.path.join(root, "install.bat")
+                    break
+        if not os.path.exists(install_bat):
+            logger.error("install.bat not found in ImDisk archive")
+            return False
+        logger.info("Running ImDisk installer (UAC prompt may appear)...")
+        result = subprocess.run([install_bat, "/fullsilent"], cwd=os.path.dirname(install_bat),
+                                capture_output=True, text=True, timeout=120, shell=True)
+        if result.returncode != 0:
+            logger.error("ImDisk install failed (rc=%d): %s", result.returncode, result.stderr.strip())
+            return False
+        logger.info("ImDisk installed successfully")
+        return True
+    except Exception as e:
+        logger.error("Failed to install ImDisk: %s", e)
+        return False
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _normalize_drive(mount_point: str) -> str:
+    """Normalize a Windows drive letter to 'X:' form (no trailing separator)."""
+    drive = mount_point.rstrip("\\/")
+    if not drive.endswith(":"):
+        drive += ":"
+    return drive.upper()
+
+
+def _is_our_ramdisk(drive_root: str) -> bool:
+    """Check if a drive root has our marker file (from a previous run or crash)."""
+    return os.path.exists(os.path.join(drive_root, RAMDISK_MARKER))
+
+
+def _drive_letters():
+    """Yield drive letters Z: down to D: as 'X:' strings."""
+    for letter in "ZYXWVUTSRQPONMLKJIHGFED":
+        yield letter + ":"
+
+
+def _find_existing_ramdisk() -> str:
+    """Scan drive letters for a RAM disk left over from a previous crash. Returns 'X:' or empty."""
+    for drive in _drive_letters():
+        drive_root = drive + os.sep
+        if os.path.exists(drive_root) and _is_our_ramdisk(drive_root):
+            logger.info("Found existing RAM disk from previous run: %s", drive)
+            return drive
+    return ""
+
+
+def _find_free_drive() -> str:
+    """Find an unused drive letter, searching from Z: down. Returns 'X:' or empty."""
+    for drive in _drive_letters():
+        if not os.path.exists(drive + os.sep):
+            return drive
+    return ""
+
+
+def _write_marker(mount: str):
+    """Write a marker file to identify our RAM disk after a crash. Raises on failure."""
+    marker = os.path.join(mount, RAMDISK_MARKER)
+    with open(marker, "w") as f:
+        f.write("pid=%d\n" % os.getpid())
+
+
+def setup_ramdisk(worker_config) -> str:
+    """Set up a RAM disk for engine temp files. Returns the mount path, or empty string.
+
+    On Windows the mount path is 'X:\\' (drive root); on Linux it's a /dev/shm subdirectory.
+    Raises RuntimeError on failure (ramdisk=true means the user wants it).
+    Returns empty string only when ramdisk is disabled or not needed.
+    """
+    global _ramdisk_mount
+    if not _needs_ramdisk(worker_config):
+        return ""
+
+    if sys.platform == "win32":
+        size_mb = _estimate_ramdisk_mb(worker_config)
+        # Check for leftover from a previous crash
+        drive = _find_existing_ramdisk()
+        if drive:
+            drive_root = drive + os.sep
+            _ramdisk_mount = drive_root
+            _write_marker(drive_root)
+            return drive_root
+        # Use configured drive letter or auto-find one
+        if worker_config.ramdisk_drive:
+            drive = _normalize_drive(worker_config.ramdisk_drive)
+            if os.path.exists(drive + os.sep):
+                raise RuntimeError("Drive %s is already in use — set ramdisk_drive to a free letter or leave empty" % drive)
+        else:
+            drive = _find_free_drive()
+            if not drive:
+                raise RuntimeError("No free drive letters available for RAM disk")
+        # Ensure imdisk is available
+        if not _has_imdisk():
+            if not worker_config.auto_install_imdisk:
+                raise RuntimeError("ImDisk not found and auto_install_imdisk is disabled")
+            logger.info("ImDisk not found, attempting auto-install")
+            if not _install_imdisk():
+                raise RuntimeError("ImDisk auto-install failed")
+            if not _has_imdisk():
+                raise RuntimeError("ImDisk still not on PATH after install")
+        logger.info("Creating RAM disk: %s (%d MB)", drive, size_mb)
+        # Create unformatted virtual disk
+        result = subprocess.run(["imdisk", "-a", "-s", "%dM" % size_mb, "-m", drive], capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError("imdisk failed (rc=%d): %s" % (result.returncode, detail))
+        # Format requires elevation — RunAs only works with .exe, so wrap in cmd.exe
+        fmt_cmd = 'Start-Process cmd.exe -ArgumentList "/c format %s /fs:ntfs /q /y" -Verb RunAs -Wait' % drive
+        result = subprocess.run(["powershell", "-Command", fmt_cmd], capture_output=True, text=True, timeout=60)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            subprocess.run(["imdisk", "-D", "-m", drive], capture_output=True, text=True, timeout=10)
+            raise RuntimeError("format failed (rc=%d): %s" % (result.returncode, detail))
+        drive_root = drive + os.sep
+        _write_marker(drive_root)
+        logger.info("RAM disk created: %s (%d MB)", drive_root, size_mb)
+        _ramdisk_mount = drive_root
+        return drive_root
+    else:
+        # Linux/macOS: use /dev/shm (already tmpfs, no root needed)
+        if not os.path.isdir("/dev/shm"):
+            raise RuntimeError("/dev/shm not available — cannot create RAM-backed temp")
+        mount = "/dev/shm/spsa_temp"
+        os.makedirs(mount, exist_ok=True)
+        logger.info("Using /dev/shm for engine temp: %s", mount)
+        _ramdisk_mount = mount
+        return mount
+
+
+def teardown_ramdisk(worker_config):
+    """Remove the RAM disk created by setup_ramdisk."""
+    global _ramdisk_mount
+    if not _ramdisk_mount:
+        return
+    if sys.platform == "win32":
+        drive = _ramdisk_mount.rstrip("\\/")
+        logger.info("Removing RAM disk %s", drive)
+        try:
+            subprocess.run(["imdisk", "-D", "-m", drive], capture_output=True, text=True, timeout=30)
+            logger.info("RAM disk removed: %s", drive)
+        except Exception as e:
+            logger.warning("Failed to remove RAM disk %s: %s", drive, e)
+    else:
+        # /dev/shm: just clean up our subdirectory, no unmount needed
+        logger.info("Cleaning up %s", _ramdisk_mount)
+        shutil.rmtree(_ramdisk_mount, ignore_errors=True)
+    _ramdisk_mount = ""
+
+
+def _make_temp_env(worker_config) -> dict:
+    """Build an env dict with temp dir overridden for subprocess, or None if no override."""
+    if not _ramdisk_mount:
+        return None
+    env = os.environ.copy()
+    if sys.platform == "win32":
+        env["TEMP"] = _ramdisk_mount
+        env["TMP"] = _ramdisk_mount
+    else:
+        env["TMPDIR"] = _ramdisk_mount
+    return env
 
 
 def http_get(url: str, timeout: int) -> dict:
@@ -323,6 +561,9 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
     else:
         popen_kwargs["start_new_session"] = True
 
+    temp_env = _make_temp_env(worker_config)
+    if temp_env:
+        popen_kwargs["env"] = temp_env
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **popen_kwargs)
     _current_process = proc
 
@@ -408,6 +649,9 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
     stderr_output = stderr_buf[0] if stderr_buf else ""
     if stderr_output:
         logger.warning("cutechess-cli stderr: %s", stderr_output.strip()[-1000:])
+        # "Cannot start engine" / "Cannot execute command" = config error, not transient
+        if "cannot start engine" in stderr_output.lower() or "cannot execute command" in stderr_output.lower():
+            raise RuntimeError("Engine failed to start (check paths/permissions):\n" + stderr_output.strip()[-500:])
 
     # Log all output lines that mention errors or crashes
     for line in output.splitlines():
@@ -725,7 +969,13 @@ def main():
         fmt = config.book_format or Path(config.opening_book).suffix.lower().lstrip(".") or "pgn"
         logger.info("Opening book: %s (%s)", config.opening_book, fmt)
 
-    worker_loop(config)
+    ramdisk_path = setup_ramdisk(config)
+    if ramdisk_path:
+        logger.info("Engine temp dir: %s", ramdisk_path)
+    try:
+        worker_loop(config)
+    finally:
+        teardown_ramdisk(config)
 
 
 if __name__ == "__main__":

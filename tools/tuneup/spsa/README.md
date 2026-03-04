@@ -198,6 +198,28 @@ interval set by `dashboard_refresh` in tuning.json.
 | `log_rotation` | Enable daily log rotation (keeps 30 days of rotated files) | `true` |
 | `name` | Worker identity reported to coordinator; defaults to hostname if empty | `""` |
 | `reference_engine` | Path to a fixed reference engine for reference mode (see below); empty = standard mode | `""` |
+| `ramdisk` | Auto-create a RAM disk for PyInstaller temp extraction (see below); set `false` to disable | `true` |
+| `ramdisk_drive` | Override drive letter for RAM disk (e.g. `"R:"`); empty = auto-select | `""` |
+| `auto_install_imdisk` | Auto-download and install ImDisk on Windows if not found; set `false` to manage manually | `true` |
+
+### RAM Disk
+
+When engines are PyInstaller `--onefile` executables, each process extracts itself to
+a temp directory on startup. At high concurrency this can saturate disk I/O. The worker
+automatically creates a RAM disk to redirect these extractions to memory.
+
+**Windows**: Uses [ImDisk](https://sourceforge.net/projects/imdisk-toolkit/) to create
+an NTFS virtual disk. The first run will auto-download and install ImDisk (requires a
+one-time UAC elevation). Formatting also triggers a UAC prompt. The disk size is
+estimated from engine binary sizes and concurrency. On clean shutdown (including Ctrl+C)
+the RAM disk is removed. If the worker crashes, the disk is detected and reused on the
+next startup via a marker file.
+
+**Linux**: Uses `/dev/shm` (tmpfs, already RAM-backed on most systems). No drivers or
+elevation needed. If `/dev/shm` is not available, the worker raises an error.
+
+Skipped entirely when all engines are `.py` scripts (no PyInstaller extraction).
+Set `"ramdisk": false` in `worker.json` to disable.
 
 ### Reference Mode
 

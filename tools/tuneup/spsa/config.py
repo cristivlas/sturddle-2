@@ -253,6 +253,14 @@ class WorkerConfig:
     log_rotation: bool = True
     # Reference engine for 3-way SPSA (theta+/- vs reference instead of vs each other)
     reference_engine: str = ""
+    # Auto-create RAM disk for PyInstaller extraction at high concurrency.
+    # Finds an unused drive letter (Windows) or tmpfs mount (Linux).
+    # Set false to disable. Skipped when all engines are .py scripts.
+    ramdisk: bool = True
+    # Override drive letter / mount point for RAM disk (e.g. "R:"). Empty = auto-select.
+    ramdisk_drive: str = ""
+    # Auto-download and install ImDisk on Windows if not found. Set false to manage ImDisk manually.
+    auto_install_imdisk: bool = True
 
     @classmethod
     def from_json(cls, path: str) -> "WorkerConfig":
