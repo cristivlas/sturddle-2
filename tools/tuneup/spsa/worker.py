@@ -604,9 +604,10 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
     # Output is streamed to cutechess_last.log for post-mortem inspection.
     stdout_buf = []
     stderr_buf = []
-    log_dir = Path(worker_config.log_file).parent
+    log_path = Path(worker_config.log_file)
+    cc_log_name = log_path.stem.replace("worker", "cutechess_last") + ".log"
     try:
-        _cc_log = open(log_dir / "cutechess_last.log", "w", buffering=1)
+        _cc_log = open(log_path.parent / cc_log_name, "w", buffering=1)
         _cc_log.write("=== chunk %s, iteration %d ===\n" % (work.chunk_id, work.iteration))
     except OSError:
         _cc_log = None
@@ -756,6 +757,14 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
     games_dir = Path(worker_config.games_dir)
     games_dir.mkdir(parents=True, exist_ok=True)
     pgn_file = str(games_dir / f"games-{work.iteration}.pgn").replace("\\", "/")
+
+    # KLUDGE: clean up orphaned PyInstaller _MEI* dirs on the RAM disk.
+    # Crashed/timed-out engines leave extracted dirs behind, filling the disk.
+    # Windows only: file locks protect dirs still in use by colocated workers.
+    if _ramdisk_mount and sys.platform == "win32":
+        for entry in os.scandir(_ramdisk_mount):
+            if entry.is_dir() and entry.name.startswith("_MEI"):
+                shutil.rmtree(entry.path, ignore_errors=True)
 
     ref_engine = worker_config.reference_engine
 
