@@ -510,10 +510,13 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
                 logger.info("  %s", line.rstrip())
 
         # Parse per-pairing results (from reference's perspective)
-        pairing_results = parse_gauntlet_output(output, "reference")
+        try:
+            pairing_results = parse_gauntlet_output(output, "reference")
+        except ValueError:
+            raise RetryableError("Could not parse gauntlet output (engine init failure?):\n" + output[-500:])
         for name in ("theta_plus", "theta_minus"):
             if name not in pairing_results:
-                raise ValueError(f"Missing gauntlet pairing for {name} in output:\n{output[-500:]}")
+                raise RetryableError(f"Missing gauntlet pairing for {name} in output:\n{output[-500:]}")
 
         # Swap perspective: reference W/L → theta W/L
         ref_pw, ref_pl, ref_pd = pairing_results["theta_plus"]
