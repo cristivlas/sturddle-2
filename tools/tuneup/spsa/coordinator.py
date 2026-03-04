@@ -150,6 +150,7 @@ class CoordinatorState:
         # deployment would need IP-based validation or auth tokens.
         self.workers = {}  # name -> WorkerInfo
         self._worker_stats = {}  # name -> (games_completed, chunks_completed, games_completed_iter)
+        self._worker_connect_times = {}  # name -> timestamp
 
         # Time estimates
         self._base_sec_per_game = self._estimate_game_duration()
@@ -519,6 +520,16 @@ class CoordinatorState:
             # Worker reconnected: release its old chunks and reset EWMA
             stale = [cid for cid, c in self.pending_chunks.items() if c.worker_name == worker_name]
             if stale:
+                # Rate-limit crash-reconnects
+                max_r = self.config.max_retries
+                if max_r > 0:
+                    now = time.time()
+                    window = max_r * self.config.retry_after
+                    last = self._worker_connect_times.get(worker_name, 0)
+                    if now - last < window:
+                        logger.warning("Worker %s denied: crash-reconnect within %.0fs", worker_name, window)
+                        return False
+                    self._worker_connect_times[worker_name] = now
                 for cid in stale:
                     self._release_chunk(cid, "worker %s reconnected" % worker_name)
                 w = self.workers.get(worker_name)
@@ -1284,6 +1295,9 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             cc_overrides = data.get("cutechess_overrides")
             worker_server_start = data.get("server_start", 0)
             result = self.coordinator.get_work(chunk_size, worker_name, cc_overrides, worker_server_start)
+            if result is False:
+                self.send_error(403)
+                return
             self._send_json(result)
         elif self.path == "/result":
             data = self._read_json()
