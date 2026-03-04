@@ -202,6 +202,7 @@ interval set by `dashboard_refresh` in tuning.json.
 | `ramdisk_drive` | Override drive letter for RAM disk (e.g. `"R:"`); empty = auto-select | `""` |
 | `auto_install_imdisk` | Auto-download and install ImDisk on Windows if not found; set `false` to manage manually | `true` |
 | `ramdisk_size` | Override RAM disk size in MB (0 = auto-estimate from engine sizes and concurrency) | `0` |
+| `max_retries` | Max consecutive retryable errors before the worker gives up (0 = unlimited) | `3` |
 
 ### RAM Disk
 
