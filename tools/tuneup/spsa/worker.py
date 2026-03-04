@@ -862,6 +862,9 @@ def worker_loop(worker_config: WorkerConfig):
     logger.info("Chunk size cap: %d games (%d rounds x %d concurrency)",
                 chunk_size_cap, worker_config.max_rounds_per_chunk, worker_config.concurrency)
 
+    consecutive_errors = 0
+    max_retries = worker_config.max_retries
+
     while True:
         try:
             # Request work
@@ -928,6 +931,7 @@ def worker_loop(worker_config: WorkerConfig):
                 result["num_games"] = wins + draws + losses
             resp = http_post(f"{base_url}/result", result, retry_timeout)
             logger.info("Result submitted: %s", resp.get("status"))
+            consecutive_errors = 0
 
             if _shutdown_requested:
                 logger.info("Shutdown requested, stopping after result reported.")
@@ -939,11 +943,13 @@ def worker_loop(worker_config: WorkerConfig):
         except urllib.error.URLError as e:
             logger.warning("Connection error: %s, retrying in 5s", e)
             time.sleep(5)
-        except subprocess.TimeoutExpired:
-            logger.error("cutechess-cli timed out")
-            time.sleep(2)
-        except RetryableError as e:
-            logger.error("%s, retrying", e)
+        except (subprocess.TimeoutExpired, RetryableError) as e:
+            consecutive_errors += 1
+            msg = "cutechess-cli timed out" if isinstance(e, subprocess.TimeoutExpired) else str(e)
+            logger.error("%s (%d/%s)", msg, consecutive_errors, max_retries or "inf")
+            if max_retries and consecutive_errors >= max_retries:
+                logger.error("Too many consecutive errors, terminating.")
+                break
         except Exception as e:
             logger.exception("Terminating.")
             break

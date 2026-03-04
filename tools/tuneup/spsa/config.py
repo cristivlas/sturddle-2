@@ -263,6 +263,8 @@ class WorkerConfig:
     auto_install_imdisk: bool = True
     # Override RAM disk size in MB (0 = auto-estimate from engine sizes and concurrency).
     ramdisk_size: int = 0
+    # Max consecutive retryable errors before the worker gives up (0 = unlimited).
+    max_retries: int = 3
 
     @classmethod
     def from_json(cls, path: str) -> "WorkerConfig":
