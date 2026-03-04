@@ -108,7 +108,27 @@ def _install_imdisk() -> bool:
     try:
         tmp = tempfile.mkdtemp(prefix="imdisk_")
         zip_path = os.path.join(tmp, "ImDiskTk-x64.zip")
-        urllib.request.urlretrieve(IMDISK_URL, zip_path)
+        import ssl
+        ctx = ssl.create_default_context()
+        try:
+            certifi = __import__("certifi")
+            ctx.load_verify_locations(certifi.where())
+        except (ImportError, ssl.SSLError):
+            pass
+        opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx))
+        try:
+            with opener.open(IMDISK_URL) as resp, open(zip_path, "wb") as out:
+                out.write(resp.read())
+        except urllib.error.URLError as e:
+            if "CERTIFICATE_VERIFY_FAILED" not in str(e):
+                raise
+            logger.warning("SSL verification failed, retrying without verification")
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx))
+            with opener.open(IMDISK_URL) as resp, open(zip_path, "wb") as out:
+                out.write(resp.read())
         logger.info("Downloaded ImDisk to %s", zip_path)
         with zipfile.ZipFile(zip_path) as zf:
             zf.extractall(tmp)
