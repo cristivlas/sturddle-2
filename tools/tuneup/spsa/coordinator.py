@@ -222,6 +222,9 @@ class CoordinatorState:
                 logger.info("Worker registered: %s", name)
             self.workers[name] = w
         else:
+            if self._worker_status(name) == WorkerStatus.TIMED_OUT:
+                logger.info("Worker %s back after timeout, resetting speed estimate", name)
+                self.workers[name]._spg_ewma = 0.0
             self.workers[name].last_seen = now
 
     def _is_overdue(self, now: float, assign_time: float, expected: float) -> bool:
