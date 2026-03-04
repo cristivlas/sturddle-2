@@ -42,6 +42,9 @@ This creates `tuneup/my-test/` with:
 Options:
 - First argument is the project name
 - `all` (default) — tune all parameters, or list specific names
+- `-w` — generate worker.json only
+- `-e VERSION` — use a dist/ engine binary (e.g., `-e 2.5.1-pieces`)
+- `--ref VERSION` — reference engine from dist/ for reference mode (e.g., `--ref 2.5.0`)
 - `-D` — fixed search depth (mutually exclusive with `-t`)
 - `-t` — time control, e.g. `1+0.1` (default)
 - `-H` — hash table size in MB (default: 256)
@@ -50,6 +53,10 @@ Options:
 - `-g` — games per SPSA iteration (default: 100)
 - `-c` — SPSA perturbation as fraction of range (default: 0.05 = 5%)
 - `-a` — SPSA learning rate (default: 0.5)
+
+`genconfig` auto-detects fastchess or cutechess-cli: first checks PATH, then scans
+sibling directories of the project root for `*fastchess*`. Fastchess is preferred
+over cutechess-cli when both are available.
 
 ### 2. Review and edit configs
 
@@ -62,7 +69,7 @@ Open `tuneup/my-test/worker.json` and verify:
 - `engine` path is correct
 - `opening_book` path is correct (defaults to `tuneup/books/8moves_v3.pgn`)
 - `concurrency` matches your CPU count
-- `cutechess_cli` is in your PATH (or set full path)
+- `cutechess_cli` path is correct (auto-detected by genconfig)
 - `parameter_overrides` for machine-specific options (e.g., `SyzygyPath`)
 
 ### 3. Start the coordinator
@@ -156,7 +163,7 @@ interval set by `dashboard_refresh` in tuning.json.
 | `games_per_iteration` | Games per SPSA iteration | `200` |
 | `output_dir` | Coordinator output (logs, checkpoint) | `"./spsa_output"` |
 | `retry_after` | Worker retry interval in seconds | `5` |
-| `dashboard_refresh` | Dashboard auto-refresh in seconds | `10` |
+| `dashboard_refresh` | Dashboard auto-refresh in seconds | `60` |
 | `dashboard_history` | Max iteration history entries sent to dashboard (0 = unlimited). Also determines the convergence window size | `100` |
 | `overdue_factor` | Factor on expected duration to declare a chunk overdue | `1.35` |
 | `worker_idle_timeout` | Seconds before an idle worker (no chunks) is considered dead | `60.0` |
@@ -164,6 +171,8 @@ interval set by `dashboard_refresh` in tuning.json.
 | `min_chunk_timeout` | Minimum chunk timeout in seconds | `60.0` |
 | `min_chunk_expected_duration` | Floor for expected chunk duration | `60.0` |
 | `static_dir` | Directory for static assets (favicon, etc.); empty = disabled | `""` |
+| `validate_interval` | Seconds between chunk-validity checks (0 = disabled) | `5` |
+| `max_retries` | Max worker crash-reconnects within `max_retries * retry_after` seconds (0 = unlimited) | `3` |
 | `log_rotation` | Enable daily log rotation (keeps 30 days of rotated files) | `true` |
 | `spsa.budget` | Total games budget (iterations * games_per_iteration) | `10000` |
 | `spsa.a` | Learning rate | `0.5` |
@@ -183,7 +192,7 @@ interval set by `dashboard_refresh` in tuning.json.
 |---|---|---|
 | `coordinator` | Coordinator URL | `"http://localhost:8080"` |
 | `engine` | Absolute path to engine (or wrapper script) | auto-detected |
-| `cutechess_cli` | Path to cutechess-cli or [fastchess](https://github.com/Disservin/fastchess) (auto-detected from binary name) | `"cutechess-cli"` |
+| `cutechess_cli` | Path to cutechess-cli or [fastchess](https://github.com/Disservin/fastchess); auto-detected by genconfig (fastchess preferred) | auto-detected |
 | `concurrency` | Concurrent games | CPU count |
 | `opening_book` | Absolute path to opening book | auto-detected |
 | `book_format` | Book format (`pgn` or `epd`); auto-detected from file extension if omitted | `""` |
