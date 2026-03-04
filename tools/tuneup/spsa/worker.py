@@ -421,7 +421,11 @@ def build_cutechess_command(worker_config: WorkerConfig,
                             engine3_params: dict = None,
                             engine3_name: str = "",
                             engine3_cmd: str = "") -> list:
-    """Build the cutechess-cli command line.
+    """Build the command line for cutechess-cli or fastchess.
+
+    Detects which tool is configured via worker_config.cutechess_cli and
+    adjusts syntax accordingly.  fastchess requires `-output format=cutechess`
+    so that our existing output parsers work unchanged.
 
     Args:
         engine1_cmd: override engine binary for engine1.
@@ -441,7 +445,7 @@ def build_cutechess_command(worker_config: WorkerConfig,
     depth = tuning_config.get("depth")
     tc = tuning_config.get("time_control", "1+0.1")
 
-    # Apply worker-local cutechess-cli overrides
+    # Apply worker-local overrides
     cc_overrides = worker_config.cutechess_overrides
     if "depth" in cc_overrides:
         depth = cc_overrides["depth"]
@@ -449,6 +453,10 @@ def build_cutechess_command(worker_config: WorkerConfig,
     if "tc" in cc_overrides:
         tc = cc_overrides["tc"]
         logger.info("Worker override: tc=%s", tc)
+
+    # Detect fast-chess vs cutechess-cli from the binary name
+    tool_name = Path(worker_config.cutechess_cli).stem.lower()
+    is_fastchess = "fastchess" in tool_name
 
     # Get parameter overrides from worker config (exclude _comment)
     param_overrides = {k: v for k, v in worker_config.parameter_overrides.items()
@@ -509,7 +517,8 @@ def build_cutechess_command(worker_config: WorkerConfig,
         if book_depth:
             cmd += [f"plies={book_depth}"]
         cmd += ["order=random"]
-        cmd += ["policy=round"]
+        if not is_fastchess:
+            cmd += ["policy=round"]
 
     # Number of games: each round plays 2 games (color swap) per pairing.
     # 2-engine: rounds = games/2.  Gauntlet (2 pairings): rounds = games/4.
@@ -525,13 +534,24 @@ def build_cutechess_command(worker_config: WorkerConfig,
     # Concurrency
     if worker_config.concurrency > 1:
         cmd += ["-concurrency", str(worker_config.concurrency)]
+        if is_fastchess:
+            cmd += ["-force-concurrency"]
 
     # PGN output
-    cmd += ["-pgnout", pgn_file]
+    if is_fastchess:
+        cmd += ["-pgnout", f"file={pgn_file}"]
+        cmd += ["-output", "format=cutechess"]
+        cmd += ["-ratinginterval", "0"]
+        cmd += ["-scoreinterval", "0"]
+    else:
+        cmd += ["-pgnout", pgn_file]
 
     # Debug: log all engine I/O
     if _cutechess_debug:
-        cmd += ["-debug"]
+        if is_fastchess:
+            cmd += ["-log", "engine=true"]
+        else:
+            cmd += ["-debug"]
 
     return cmd
 
@@ -1010,7 +1030,9 @@ def main():
     logger.info("Coordinator: %s", config.coordinator)
     logger.info("Engine: %s", config.engine)
     logger.info("Concurrency: %d", config.concurrency)
-    logger.info("cutechess-cli: %s", config.cutechess_cli)
+    tool_name = Path(config.cutechess_cli).stem.lower()
+    tool_label = "fastchess" if "fastchess" in tool_name else "cutechess-cli"
+    logger.info("%s: %s", tool_label, config.cutechess_cli)
     logger.info("Games dir: %s", config.games_dir)
     if config.opening_book:
         fmt = config.book_format or Path(config.opening_book).suffix.lower().lstrip(".") or "pgn"

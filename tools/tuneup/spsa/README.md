@@ -1,7 +1,7 @@
 # Distributed SPSA Tuner
 
 A distributed SPSA (Simultaneous Perturbation Stochastic Approximation) tuner
-for the Sturddle chess engine, using cutechess-cli to run games. Designed for small
+for the Sturddle chess engine, using cutechess-cli or fastchess to run games. Designed for small
 heterogeneous LANs, mixed Linux/Windows.
 
 ## Architecture
@@ -9,12 +9,12 @@ heterogeneous LANs, mixed Linux/Windows.
 - **Coordinator**: HTTP server managing SPSA state. Generates perturbations,
   distributes work, collects scores, updates parameters. Tracks worker health
   via implicit heartbeat and adapts chunk sizes to worker throughput.
-- **Workers**: Poll the coordinator for game batches, run cutechess-cli locally,
+- **Workers**: Poll the coordinator for game batches, run cutechess-cli/fastchess locally,
   report scores back. Each worker saves PGNs and logs locally.
 
 ## Prerequisites
 
-- [cutechess-cli](https://github.com/cutechess/cutechess) installed on each worker machine
+- [cutechess-cli](https://github.com/cutechess/cutechess) or [fastchess](https://github.com/Disservin/fastchess) installed on each worker machine (fastchess recommended for high concurrency)
 - Engine build prepped for tuning (see [Tuning the Engine](../../../README.md#tuning-the-engine) in the main README)
 
 **Windows stack size caveat**: Using `main.py` directly (via the `engine.bat`
@@ -183,7 +183,7 @@ interval set by `dashboard_refresh` in tuning.json.
 |---|---|---|
 | `coordinator` | Coordinator URL | `"http://localhost:8080"` |
 | `engine` | Absolute path to engine (or wrapper script) | auto-detected |
-| `cutechess_cli` | Path to cutechess-cli | `"cutechess-cli"` |
+| `cutechess_cli` | Path to cutechess-cli or [fastchess](https://github.com/Disservin/fastchess) (auto-detected from binary name) | `"cutechess-cli"` |
 | `concurrency` | Concurrent games | CPU count |
 | `opening_book` | Absolute path to opening book | auto-detected |
 | `book_format` | Book format (`pgn` or `epd`); auto-detected from file extension if omitted | `""` |
