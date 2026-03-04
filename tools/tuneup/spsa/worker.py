@@ -53,6 +53,7 @@ _cutechess_debug = False      # set True via --cutechess-debug flag
 IMDISK_URL = "https://sourceforge.net/projects/imdisk-toolkit/files/20250206/ImDiskTk-x64.zip/download"
 RAMDISK_MARKER = "spsa_ramdisk"  # marker file to identify our RAM disks
 _ramdisk_mount = ""  # resolved mount point for the active RAM disk
+_ramdisk_owned = False  # True only if we created the drive this session
 
 
 def _is_script(path: str) -> bool:
@@ -212,7 +213,7 @@ def setup_ramdisk(worker_config) -> str:
     Raises RuntimeError on failure (ramdisk=true means the user wants it).
     Returns empty string only when ramdisk is disabled or not needed.
     """
-    global _ramdisk_mount
+    global _ramdisk_mount, _ramdisk_owned
     if not _needs_ramdisk(worker_config):
         return ""
 
@@ -228,8 +229,11 @@ def setup_ramdisk(worker_config) -> str:
         # Use configured drive letter or auto-find one
         if worker_config.ramdisk_drive:
             drive = _normalize_drive(worker_config.ramdisk_drive)
-            if os.path.exists(drive + os.sep):
-                raise RuntimeError("Drive %s is already in use — set ramdisk_drive to a free letter or leave empty" % drive)
+            drive_root = drive + os.sep
+            if os.path.exists(drive_root):
+                logger.info("Using pre-existing drive %s (externally managed)", drive)
+                _ramdisk_mount = drive_root
+                return drive_root
         else:
             drive = _find_free_drive()
             if not drive:
@@ -260,6 +264,7 @@ def setup_ramdisk(worker_config) -> str:
         _write_marker(drive_root)
         logger.info("RAM disk created: %s (%d MB)", drive_root, size_mb)
         _ramdisk_mount = drive_root
+        _ramdisk_owned = True
         return drive_root
     else:
         # Linux/macOS: use /dev/shm (already tmpfs, no root needed)
@@ -274,22 +279,26 @@ def setup_ramdisk(worker_config) -> str:
 
 def teardown_ramdisk(worker_config):
     """Remove the RAM disk created by setup_ramdisk."""
-    global _ramdisk_mount
+    global _ramdisk_mount, _ramdisk_owned
     if not _ramdisk_mount:
         return
     if sys.platform == "win32":
         drive = _ramdisk_mount.rstrip("\\/")
-        logger.info("Removing RAM disk %s", drive)
-        try:
-            subprocess.run(["imdisk", "-D", "-m", drive], capture_output=True, text=True, timeout=30)
-            logger.info("RAM disk removed: %s", drive)
-        except Exception as e:
-            logger.warning("Failed to remove RAM disk %s: %s", drive, e)
+        if _ramdisk_owned:
+            logger.info("Removing RAM disk %s", drive)
+            try:
+                subprocess.run(["imdisk", "-D", "-m", drive], capture_output=True, text=True, timeout=30)
+                logger.info("RAM disk removed: %s", drive)
+            except Exception as e:
+                logger.warning("Failed to remove RAM disk %s: %s", drive, e)
+        else:
+            logger.info("RAM disk %s was not created by this worker, skipping teardown", drive)
     else:
         # /dev/shm: just clean up our subdirectory, no unmount needed
         logger.info("Cleaning up %s", _ramdisk_mount)
         shutil.rmtree(_ramdisk_mount, ignore_errors=True)
     _ramdisk_mount = ""
+    _ramdisk_owned = False
 
 
 def _make_temp_env(worker_config) -> dict:
