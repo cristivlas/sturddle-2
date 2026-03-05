@@ -77,12 +77,20 @@ def install_imdisk() -> bool:
         if not os.path.exists(install_bat):
             logger.error("install.bat not found in ImDisk archive")
             return False
-        logger.info("Running ImDisk installer (UAC prompt may appear)...")
-        result = subprocess.run([install_bat, "/fullsilent"], cwd=os.path.dirname(install_bat),
-                                capture_output=True, text=True, timeout=120, shell=True)
+        logger.info("Running ImDisk installer (UAC elevation required)...")
+        ps_cmd = 'Start-Process cmd.exe -ArgumentList "/c cd /d %s && install.bat /fullsilent" -Verb RunAs -Wait' % os.path.dirname(install_bat).replace("'", "''")
+        result = subprocess.run(["powershell", "-Command", ps_cmd], capture_output=True, text=True, timeout=120)
         if result.returncode != 0:
             logger.error("ImDisk install failed (rc=%d): %s", result.returncode, result.stderr.strip())
             return False
+        # install.bat may copy files without registering the driver service; fix up if needed
+        sc_query = subprocess.run(["sc", "query", "ImDisk"], capture_output=True, text=True, timeout=10)
+        if sc_query.returncode != 0:
+            logger.info("Registering ImDisk driver service")
+            sc_create = 'Start-Process sc.exe -ArgumentList "create ImDisk type= kernel binPath= system32\\drivers\\imdisk.sys start= auto" -Verb RunAs -Wait'
+            subprocess.run(["powershell", "-Command", sc_create], capture_output=True, text=True, timeout=30)
+            sc_start = 'Start-Process sc.exe -ArgumentList "start ImDisk" -Verb RunAs -Wait'
+            subprocess.run(["powershell", "-Command", sc_start], capture_output=True, text=True, timeout=30)
         logger.info("ImDisk installed successfully")
         return True
     except Exception as e:
@@ -204,12 +212,17 @@ def create_ramdisk(size_mb: int, drive: str = "", auto_install: bool = True) -> 
             raise RuntimeError("ImDisk auto-install failed")
         if not has_imdisk():
             raise RuntimeError("ImDisk still not on PATH after install")
+    imdisk_cmd = ["imdisk", "-a", "-s", "%dM" % size_mb, "-m", drive]
     logger.info("Creating RAM disk: %s (%d MB)", drive, size_mb)
-    result = subprocess.run(["imdisk", "-a", "-s", "%dM" % size_mb, "-m", drive],
-                            capture_output=True, text=True, timeout=30)
+    result = subprocess.run(imdisk_cmd, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0 and auto_install:
+        err = (result.stderr or result.stdout or "").strip().lower()
+        if "not installed" in err or "does not exist" in err:
+            logger.warning("ImDisk driver not available, attempting reinstall")
+            if install_imdisk():
+                result = subprocess.run(imdisk_cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
-        raise RuntimeError("imdisk failed (rc=%d): %s" % (result.returncode, detail))
+        raise RuntimeError("imdisk failed (rc=%d): %s" % (result.returncode, (result.stderr or result.stdout or "").strip()))
     # Format requires elevation
     fmt_cmd = 'Start-Process cmd.exe -ArgumentList "/c format %s /fs:ntfs /q /y" -Verb RunAs -Wait' % drive
     result = subprocess.run(["powershell", "-Command", fmt_cmd],

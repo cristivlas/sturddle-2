@@ -837,9 +837,11 @@ def setup_logging(log_file: str, debug: bool, rotate: bool):
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
 
-    logger.setLevel(logging.DEBUG if debug else logging.INFO)
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
+    level = logging.DEBUG if debug else logging.INFO
+    for lg in (logger, logging.getLogger("ramdisk")):
+        lg.setLevel(level)
+        lg.addHandler(file_handler)
+        lg.addHandler(console_handler)
 
 
 def main():
