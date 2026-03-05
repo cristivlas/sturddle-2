@@ -23,7 +23,9 @@ import glob
 import json
 import os
 import platform
+import re
 import shutil
+import subprocess
 import sys
 import sysconfig
 import warnings
@@ -31,6 +33,24 @@ import warnings
 from config import (
     EngineConfig, SPSAConfig, TuningConfig, Parameter,
 )
+
+
+def physical_cpu_count():
+    """Return the number of physical CPU cores (not logical/hyperthreaded)."""
+    try:
+        if sys.platform == 'win32':
+            out = subprocess.check_output(['wmic', 'cpu', 'get', 'NumberOfCores', '/value'], text=True)
+            cores = sum(int(m.group(1)) for m in re.finditer(r'NumberOfCores=(\d+)', out))
+            if cores > 0:
+                return cores
+        else:
+            with open('/proc/cpuinfo') as f:
+                ids = set(re.findall(r'^core id\s*:\s*(\d+)', f.read(), re.MULTILINE))
+            if ids:
+                return len(ids)
+    except Exception:
+        pass
+    return os.cpu_count() or 1
 
 
 def root_path():
@@ -252,7 +272,7 @@ def main():
         'coordinator': 'http://localhost:8080',
         'engine': engine_cmd,
         'cutechess_cli': find_game_runner(),
-        'concurrency': os.cpu_count() or 1,
+        'concurrency': physical_cpu_count(),
         'opening_book': default_book,
         'book_format': 'pgn',
         'book_depth': 8,
