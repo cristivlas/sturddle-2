@@ -123,11 +123,11 @@ def is_our_ramdisk(drive_root: str) -> bool:
 
 
 def find_existing_ramdisk() -> str:
-    """Scan drive letters for a RAM disk left over from a previous crash. Returns 'X:' or empty."""
+    """Scan drive letters for an existing SPSA RAM disk. Returns 'X:' or empty."""
     for drive in drive_letters():
         drive_root = drive + os.sep
         if os.path.exists(drive_root) and is_our_ramdisk(drive_root):
-            logger.info("Found existing RAM disk from previous run: %s", drive)
+            logger.info("Found existing RAM disk: %s", drive)
             return drive
     return ""
 
