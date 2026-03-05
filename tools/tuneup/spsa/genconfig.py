@@ -105,10 +105,10 @@ def find_game_runner():
 
 def resolve_engine(value):
     """Resolve engine: if value is a path, canonicalize it; otherwise look up version in dist/. Exits on failure."""
-    if os.sep in value or '/' in value or value.startswith('.') or value.endswith('.exe'):
+    if os.path.exists(value):
         path = os.path.realpath(value)
         if not os.path.isfile(path):
-            print(f'Error: Engine not found: {path}', file=sys.stderr)
+            print(f'Error: Not a regular file: {path}', file=sys.stderr)
             sys.exit(1)
         return abspath(path)
     dist_dir = os.path.join(root_path(), 'dist')
