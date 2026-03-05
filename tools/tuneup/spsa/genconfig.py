@@ -103,14 +103,20 @@ def find_game_runner():
     return 'cutechess-cli'
 
 
-def find_dist_engine(version):
-    """Find engine binary in dist/ by version tag (e.g., '2.5.0', '2.5.1-pieces'). Exits on failure."""
+def resolve_engine(value):
+    """Resolve engine: if value is a path, canonicalize it; otherwise look up version in dist/. Exits on failure."""
+    if os.sep in value or '/' in value or value.startswith('.') or value.endswith('.exe'):
+        path = os.path.realpath(value)
+        if not os.path.isfile(path):
+            print(f'Error: Engine not found: {path}', file=sys.stderr)
+            sys.exit(1)
+        return abspath(path)
     dist_dir = os.path.join(root_path(), 'dist')
     windows = sysconfig.get_platform().startswith('win')
     if windows:
-        name = f'sturddle-{version}.exe'
+        name = f'sturddle-{value}.exe'
     else:
-        name = f'sturddle-{version}-Linux-{platform.machine()}'
+        name = f'sturddle-{value}-Linux-{platform.machine()}'
     path = os.path.join(dist_dir, name)
     if not os.path.isfile(path):
         print(f'Error: Engine not found: {path}', file=sys.stderr)
@@ -142,8 +148,8 @@ def main():
     parser.add_argument('project', help='Project name (creates tuneup/<project>/)')
     parser.add_argument('tune', nargs='*', default='all', help='Parameter names to tune (or "all")')
     parser.add_argument('-w', '--worker-only', action='store_true', help='Generate worker.json only (no engine needed)')
-    parser.add_argument('-e', '--engine', metavar='VERSION', help='Engine version from dist/ (e.g., 2.5.1-pieces)')
-    parser.add_argument('--ref', metavar='VERSION', help='Reference engine version from dist/ (e.g., 2.5.0)')
+    parser.add_argument('-e', '--engine', metavar='VERSION_OR_PATH', help='Engine version from dist/ (e.g., 2.5.1-pieces) or path to binary')
+    parser.add_argument('-r', '--ref', metavar='VERSION_OR_PATH', help='Reference engine version from dist/ (e.g., 2.5.0) or path to binary')
     _tc = TuningConfig()
     _spsa = SPSAConfig()
     parser.add_argument('-t', '--time-control', default=_tc.time_control, help=f'Time control (default: {_tc.time_control})')
@@ -170,7 +176,7 @@ def main():
 
     # Engine command: dist binary if --engine, otherwise script wrapper
     if args.engine:
-        engine_cmd = find_dist_engine(args.engine)
+        engine_cmd = resolve_engine(args.engine)
     else:
         engine_cmd = get_engine_cmd(project_dir)
 
@@ -283,7 +289,7 @@ def main():
         },
     }
     if args.ref:
-        worker_config['reference_engine'] = find_dist_engine(args.ref)
+        worker_config['reference_engine'] = resolve_engine(args.ref)
 
     worker_path = os.path.join(project_dir, 'worker.json')
     with open(worker_path, 'w') as f:
