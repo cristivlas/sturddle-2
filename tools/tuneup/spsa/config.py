@@ -262,8 +262,8 @@ class WorkerConfig:
     ramdisk_drive: str = ""
     # Auto-download and install ImDisk on Windows if not found. Set false to manage ImDisk manually.
     auto_install_imdisk: bool = True
-    # Override RAM disk size in MB (0 = auto-estimate from engine sizes and concurrency).
     ramdisk_size: int = 0
+    ramdisk_decompression: float = 2.6
     # Max consecutive retryable errors before the worker gives up (0 = unlimited).
     max_retries: int = 3
 

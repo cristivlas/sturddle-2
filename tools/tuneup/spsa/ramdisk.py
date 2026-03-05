@@ -160,26 +160,27 @@ def _resolve_mei_path(path):
 
 # --- Size estimation ---
 
-def estimate_ramdisk_mb(engine: str, reference: str = "", concurrency: int = 1, decompression: int = 2) -> int:
-    """Estimate RAM disk size in MB from engine binary sizes and concurrency.
+def is_script(path):
+    return path.endswith(".py")
 
-    Formula: (ref_size * conc + eng_size * 2 * conc) * decompression + 128 MB headroom.
-    Minimum 256 MB.
-    """
-    ref_size = 0
-    eng_size = 0
-    if reference:
-        try:
-            ref_size = os.path.getsize(reference)
-        except OSError as e:
-            logger.warning("Cannot stat reference engine %s: %s", reference, e)
+
+def _binary_size(path):
+    if not path or is_script(path):
+        return 0
     try:
-        eng_size = os.path.getsize(engine)
+        return os.path.getsize(path)
     except OSError as e:
-        logger.warning("Cannot stat engine %s: %s", engine, e)
-    conc = max(1, concurrency)
-    raw = (ref_size * conc + eng_size * 2 * conc) * decompression
+        logger.warning("Cannot stat %s: %s", path, e)
+        return 0
+
+
+def estimate_ramdisk_mb(engine1, engine2, concurrency, decompression):
+    size1 = _binary_size(engine1)
+    size2 = _binary_size(engine2)
+    c = max(1, concurrency)
+    raw = 2 * c * (size1 + size2) * decompression
     mb = max(256, int(raw / (1024 * 1024)) + 128)
+    logger.info("Ramdisk estimate: e1=%d MB, e2=%d MB, concurrency=%d, decompression=%.1f -> %d MB", size1 >> 20, size2 >> 20, c, decompression, mb)
     return mb
 
 
@@ -450,8 +451,7 @@ def main():
                           help="Total concurrent engine processes (default: CPU count)")
     p_create.add_argument("--drive", default="", help="Drive letter (e.g., Z:); auto-select if omitted")
     p_create.add_argument("--size", type=int, default=0, help="Override size in MB (0 = auto-estimate)")
-    p_create.add_argument("--factor", type=int, default=2,
-                          help="Decompression multiplier for size estimation (default: 2)")
+    p_create.add_argument("--factor", type=float, default=2.6, help="Decompression multiplier (default: 2.6)")
     p_create.add_argument("--no-install", action="store_true", help="Don't auto-install ImDisk if missing")
 
     # remove
@@ -483,11 +483,11 @@ def main():
             sys.exit(1)
         size_mb = args.size
         if size_mb <= 0:
-            size_mb = estimate_ramdisk_mb(args.engine, args.ref, args.concurrency, args.factor)
+            size_mb = estimate_ramdisk_mb(args.engine, args.ref or args.engine, args.concurrency, args.factor)
         print("Engine: %s (%d MB)" % (args.engine, os.path.getsize(args.engine) // (1024 * 1024)))
         if args.ref:
             print("Reference: %s (%d MB)" % (args.ref, os.path.getsize(args.ref) // (1024 * 1024)))
-        print("Concurrency: %d, decompression factor: %dx" % (args.concurrency, args.factor))
+        print("Concurrency: %d, decompression factor: %.1fx" % (args.concurrency, args.factor))
         print("Estimated size: %d MB" % size_mb)
         try:
             drive_root = create_ramdisk(size_mb, args.drive, auto_install=not args.no_install)

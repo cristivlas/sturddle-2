@@ -29,7 +29,7 @@ from config import WorkerConfig, WorkItem
 from ramdisk import (
     estimate_ramdisk_mb, create_ramdisk, remove_ramdisk,
     find_existing_ramdisk, normalize_drive, write_marker,
-    find_free_drive,
+    find_free_drive, is_script,
 )
 
 logger = logging.getLogger("worker")
@@ -55,19 +55,14 @@ _ramdisk_mount = ""  # resolved mount point for the active RAM disk
 _ramdisk_owned = False  # True only if we created the drive this session
 
 
-def _is_script(path: str) -> bool:
-    """True if path is a Python script (no PyInstaller extraction needed)."""
-    return path.endswith(".py")
-
-
-def _needs_ramdisk(worker_config) -> bool:
+def _needs_ramdisk(worker_config):
     """Check if any engine is a non-script binary that benefits from a RAM disk."""
     if not worker_config.ramdisk:
         return False
     engines = [worker_config.engine]
     if worker_config.reference_engine:
         engines.append(worker_config.reference_engine)
-    return any(not _is_script(e) for e in engines)
+    return any(not is_script(e) for e in engines)
 
 
 def setup_ramdisk(worker_config) -> str:
@@ -84,8 +79,8 @@ def setup_ramdisk(worker_config) -> str:
     if sys.platform == "win32":
         size_mb = worker_config.ramdisk_size
         if size_mb <= 0:
-            ref = worker_config.reference_engine if not _is_script(worker_config.reference_engine or "") else ""
-            size_mb = estimate_ramdisk_mb(worker_config.engine, ref, worker_config.concurrency)
+            engine2 = worker_config.reference_engine or worker_config.engine
+            size_mb = estimate_ramdisk_mb(worker_config.engine, engine2, worker_config.concurrency, worker_config.ramdisk_decompression)
         # Check for leftover from a previous crash
         drive = find_existing_ramdisk()
         if drive:
