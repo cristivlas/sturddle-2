@@ -310,11 +310,13 @@ def _running_pids():
     pids = set()
     try:
         if sys.platform == "win32":
-            out = subprocess.check_output(["wmic", "process", "get", "ProcessId", "/format:csv"], text=True, timeout=10)
+            out = subprocess.check_output(["tasklist", "/fo", "csv", "/nh"], text=True, timeout=10)
             for line in out.strip().splitlines():
                 parts = line.strip().split(",")
-                if len(parts) >= 2 and parts[-1].isdigit():
-                    pids.add(int(parts[-1]))
+                if len(parts) >= 2:
+                    pid_str = parts[1].strip('"')
+                    if pid_str.isdigit():
+                        pids.add(int(pid_str))
         else:
             for entry in os.scandir("/proc"):
                 if entry.name.isdigit():
