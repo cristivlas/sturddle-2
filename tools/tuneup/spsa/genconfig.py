@@ -291,25 +291,27 @@ def main():
         f.write('\n')
 
     # Summary
+    indent = 2 * ' '
     print(f'Project created: {project_dir_abs}/')
     if not args.worker_only:
         budget = args.iterations * args.games_per_iteration
-        print(f'  tuning.json   - {len(tune_params)} parameters, {args.iterations} iterations, {budget} games')
-    print(f'  worker.json   - concurrency={worker_config["concurrency"]}, engine={engine_cmd}, runner={worker_config["cutechess_cli"]}')
+        print(f'{indent}tuning.json   - {len(tune_params)} parameters, {args.iterations} iterations, {budget} games')
+    print(f'{indent}worker.json   - concurrency={worker_config["concurrency"]}, engine={engine_cmd}, runner={worker_config["cutechess_cli"]}')
     if args.ref:
-        print(f'                  reference_engine={worker_config["reference_engine"]}')
+        print(f'{indent}{14 * " "}  reference_engine={worker_config["reference_engine"]}')
     print()
     print('Next steps:')
-    print(f'  1. Review and edit {"worker.json" if args.worker_only else "tuning.json and worker.json"}')
-    print(f'  2. cd {project_dir_abs}')
-
+    step = 1
+    print(f'{indent}{step}. Review and edit {"worker.json" if args.worker_only else "tuning.json and worker.json"}')
+    step += 1
+    print(f'{indent}{step}. cd {project_dir_abs}')
+    step += 1
     coordinator_py = abspath(os.path.join(root_path(), 'tools', 'tuneup', 'spsa', 'coordinator.py'))
     worker_py = abspath(os.path.join(root_path(), 'tools', 'tuneup', 'spsa', 'worker.py'))
     if not args.worker_only:
-        print(f'  3. python {coordinator_py} -c tuning.json')
-        print(f'  4. python {worker_py} -c worker.json')
-    else:
-        print(f'  3. python {worker_py} -c worker.json')
+        print(f'{indent}{step}. python {coordinator_py} -c tuning.json')
+        step += 1
+    print(f'{indent}{step}. python {worker_py} -c worker.json')
 
     if not args.worker_only and not tune_params:
         warnings.warn('No tunable parameters selected!')

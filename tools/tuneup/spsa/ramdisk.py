@@ -147,6 +147,17 @@ def write_marker(mount: str):
         f.write("pid=%d\n" % os.getpid())
 
 
+def _resolve_mei_path(path):
+    """Resolve the _MEI parent path for clean/status. Returns path or None."""
+    if sys.platform != "win32":
+        return path or "/dev/shm/spsa_temp"
+    if path:
+        drive = normalize_drive(path)
+    else:
+        drive = find_existing_ramdisk()
+    return (drive + os.sep) if drive else None
+
+
 # --- Size estimation ---
 
 def estimate_ramdisk_mb(engine: str, reference: str = "", concurrency: int = 1, decompression: int = 2) -> int:
@@ -258,35 +269,150 @@ def remove_ramdisk(drive: str = "") -> bool:
     return True
 
 
-def clean_ramdisk(drive: str = "") -> int:
-    """Remove orphaned PyInstaller _MEI* dirs from a RAM disk. Returns count of dirs removed."""
-    if not drive:
-        drive = find_existing_ramdisk()
-        if not drive:
-            logger.info("No SPSA RAM disk found")
-            return 0
-    drive_root = normalize_drive(drive) + os.sep
-    if not os.path.isdir(drive_root):
-        logger.error("Drive %s does not exist", drive_root)
+def clean_ramdisk(path: str = "") -> int:
+    """Remove orphaned _MEI dirs (dead PIDs only). Returns count removed."""
+    path = _resolve_mei_path(path)
+    if not path:
+        logger.info("No SPSA RAM disk found")
         return 0
+    if not os.path.isdir(path):
+        logger.error("Path %s does not exist", path)
+        return 0
+    checker = _MeiChecker()
     count = 0
-    for entry in os.scandir(drive_root):
-        if entry.is_dir() and entry.name.startswith("_MEI"):
-            shutil.rmtree(entry.path, ignore_errors=True)
-            if not os.path.exists(entry.path):
-                count += 1
-                logger.info("Removed: %s", entry.path)
-            else:
-                logger.info("Skipped (in use): %s", entry.path)
+    for entry in os.scandir(path):
+        if not entry.is_dir() or not entry.name.startswith("_MEI"):
+            continue
+        if checker.is_active(entry):
+            logger.info("Skipped (active): %s", entry.path)
+            continue
+        shutil.rmtree(entry.path, ignore_errors=True)
+        if not os.path.exists(entry.path):
+            count += 1
+            logger.info("Removed: %s", entry.path)
+        else:
+            logger.info("Skipped (locked): %s", entry.path)
     return count
 
 
+def _disk_usage_str(path):
+    """Format free/total disk usage, or empty string on failure."""
+    try:
+        u = shutil.disk_usage(path)
+        pct = 100.0 * u.free / u.total if u.total else 0
+        return "%d/%d MB free (%.0f%%)" % (u.free >> 20, u.total >> 20, pct)
+    except OSError:
+        return ""
+
+
+def _running_pids():
+    """Return set of all running process IDs."""
+    pids = set()
+    try:
+        if sys.platform == "win32":
+            out = subprocess.check_output(["wmic", "process", "get", "ProcessId", "/format:csv"], text=True, timeout=10)
+            for line in out.strip().splitlines():
+                parts = line.strip().split(",")
+                if len(parts) >= 2 and parts[-1].isdigit():
+                    pids.add(int(parts[-1]))
+        else:
+            for entry in os.scandir("/proc"):
+                if entry.name.isdigit():
+                    pids.add(int(entry.name))
+    except Exception:
+        pass
+    return pids
+
+
+def _mei_is_active_win32(digits, pids):
+    """Check if a _MEI dir's digit suffix matches a running PID (Windows).
+
+    PyInstaller on Windows names temp dirs _MEI<pid><suffix> where <pid>
+    comes from _getpid() and <suffix> is appended by _wtempnam(). We find
+    the PID by longest-prefix match against the running PID set.
+    """
+    for length in range(len(digits), 0, -1):
+        try:
+            candidate = int(digits[:length])
+        except ValueError:
+            continue
+        if candidate in pids:
+            return True
+    return False
+
+
+def _active_mei_paths_posix():
+    """Scan /proc/*/maps for memory-mapped files inside _MEI dirs. Returns set of active _MEI dir paths."""
+    import re
+    active = set()
+    mei_re = re.compile(r'(/\S*/_MEI\w+)/')
+    for proc in os.scandir("/proc"):
+        if not proc.name.isdigit():
+            continue
+        try:
+            with open(os.path.join(proc.path, "maps")) as f:
+                for line in f:
+                    m = mei_re.search(line)
+                    if m:
+                        active.add(m.group(1))
+                        break  # one match per process is enough
+        except OSError:
+            pass
+    return active
+
+
+class _MeiChecker:
+    """Checks whether _MEI dirs are active. Platform-aware, caches state."""
+    def __init__(self):
+        if sys.platform == "win32":
+            self._pids = _running_pids()
+            self._posix_active = None
+        else:
+            self._pids = None
+            self._posix_active = _active_mei_paths_posix()
+
+    def is_active(self, entry):
+        if self._pids is not None:
+            return _mei_is_active_win32(entry.name[4:], self._pids)
+        return os.path.realpath(entry.path) in self._posix_active
+
+
+def _mei_summary(path):
+    """Count _MEI dirs and detect orphans. Returns (total, orphaned)."""
+    checker = _MeiChecker()
+    total = orphaned = 0
+    for e in os.scandir(path):
+        if e.is_dir() and e.name.startswith("_MEI"):
+            total += 1
+            if not checker.is_active(e):
+                orphaned += 1
+    return total, orphaned
+
+
+def _mei_status_str(path):
+    """Format _MEI dir summary string, or empty if none."""
+    total, orphaned = _mei_summary(path)
+    if not total:
+        return ""
+    s = "%d _MEI dir(s)" % total
+    if orphaned:
+        s += ", %d orphaned" % orphaned
+    return s
+
+
 def ramdisk_status() -> list:
-    """Scan for SPSA RAM disks. Returns list of (drive, marker_contents) tuples."""
+    """Scan for SPSA RAM disks. Returns list of (drive, info_string) tuples."""
     if sys.platform != "win32":
         shm = "/dev/shm/spsa_temp"
         if os.path.isdir(shm):
-            return [(shm, "linux /dev/shm")]
+            parts = ["linux /dev/shm"]
+            usage = _disk_usage_str(shm)
+            if usage:
+                parts.append(usage)
+            mei = _mei_status_str(shm)
+            if mei:
+                parts.append(mei)
+            return [(shm, ", ".join(parts))]
         return []
     found = []
     for drive in drive_letters():
@@ -297,12 +423,14 @@ def ramdisk_status() -> list:
                 contents = open(marker).read().strip()
             except OSError:
                 contents = "(unreadable)"
-            # Count _MEI dirs
-            mei_count = sum(1 for e in os.scandir(drive_root) if e.is_dir() and e.name.startswith("_MEI"))
-            info = contents
-            if mei_count:
-                info += ", %d _MEI dir(s)" % mei_count
-            found.append((drive, info))
+            parts = [contents]
+            usage = _disk_usage_str(drive_root)
+            if usage:
+                parts.append(usage)
+            mei = _mei_status_str(drive_root)
+            if mei:
+                parts.append(mei)
+            found.append((drive, ", ".join(parts)))
     return found
 
 
@@ -379,10 +507,7 @@ def main():
             sys.exit(1)
 
     elif args.command == "clean":
-        if sys.platform != "win32":
-            print("Clean is Windows-only (_MEI dirs are a PyInstaller/Windows issue)")
-            sys.exit(0)
-        count = clean_ramdisk(args.drive)
+        count = clean_ramdisk(getattr(args, "drive", ""))
         print("Cleaned %d orphaned _MEI dir(s)" % count)
 
     elif args.command == "status":
