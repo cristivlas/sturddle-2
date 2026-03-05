@@ -374,9 +374,12 @@ class CoordinatorState:
         self.pending_chunks = {}
         self.stolen_chunks = {}
 
-        # Reset per-iteration worker counters
+        # Reset per-iteration worker counters (including disconnected workers saved in _worker_stats)
         for w in self.workers.values():
             w.games_completed_iter = 0
+        for n in self._worker_stats:
+            g, c, _ = self._worker_stats[n]
+            self._worker_stats[n] = (g, c, 0)
 
         logger.info(
             "Iteration %d: c_k=%.4f, a_k=%.6f",
