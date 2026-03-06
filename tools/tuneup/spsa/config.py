@@ -156,6 +156,8 @@ class TuningConfig:
             errors.append("overdue_factor must be >= 1")
         if self.chunk_timeout_factor < 1:
             errors.append("chunk_timeout_factor must be >= 1")
+        if self.min_chunk_timeout < self.min_chunk_expected_duration:
+            self.min_chunk_timeout = self.min_chunk_expected_duration
         for name, p in self.parameters.items():
             if p.lower >= p.upper:
                 errors.append(f"parameter {name}: lower must be < upper")
