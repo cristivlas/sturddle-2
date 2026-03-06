@@ -50,6 +50,7 @@ VALIDATE_TIMEOUT = 3       # seconds for chunk-validity HTTP checks
 _current_process = None       # cutechess-cli Popen while games run
 _shutdown_requested = False   # set True after operator chooses "wait"
 _cutechess_debug = False      # set True via --cutechess-debug flag
+_tool_label = "cutechess-cli"  # display name; updated to "fastchess" at startup
 
 
 _ramdisk_mount = ""  # resolved mount point for the active RAM disk
@@ -522,18 +523,18 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
 
     if proc.returncode != 0:
         rc = proc.returncode
-        logger.error("cutechess-cli failed (rc=%s)", hex(rc))
+        logger.error("%s failed (rc=%s)", _tool_label, hex(rc))
         logger.error("stdout (last 1000 chars): %s", (stdout_buf[0][-1000:] if stdout_buf else "") or "(empty)")
         logger.error("stderr (last 1000 chars): %s", (stderr_buf[0][-1000:] if stderr_buf else "") or "(empty)")
         # Windows STATUS_ACCESS_VIOLATION (subprocess returns signed or unsigned)
         if rc & 0xFFFFFFFF == 0xc0000005:
-            raise RetryableError(f"cutechess-cli access violation ({hex(rc)})")
-        raise RetryableError(f"cutechess-cli exited with code {hex(rc)}")
+            raise RetryableError(f"{_tool_label} access violation ({hex(rc)})")
+        raise RetryableError(f"{_tool_label} exited with code {hex(rc)}")
 
     output = stdout_buf[0] if stdout_buf else ""
     stderr_output = stderr_buf[0] if stderr_buf else ""
     if stderr_output:
-        logger.warning("cutechess-cli stderr: %s", stderr_output.strip()[-1000:])
+        logger.warning("%s stderr: %s", _tool_label, stderr_output.strip()[-1000:])
         # "Cannot start engine" / "Cannot execute command" = config error, not transient
         if "cannot start engine" in stderr_output.lower() or "cannot execute command" in stderr_output.lower():
             raise RuntimeError("Engine failed to start (check paths/permissions):\n" + stderr_output.strip()[-500:])
@@ -541,7 +542,7 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
     # Log all output lines that mention errors or crashes
     for line in output.splitlines():
         if any(kw in line.lower() for kw in ("abandoned", "error", "crash", "disconnect", "timeout", "illegal", "terminated", "forfeit", "loses on time")):
-            logger.warning("cutechess: %s", line.strip())
+            logger.warning("%s: %s", _tool_label, line.strip())
 
     return output
 
@@ -578,7 +579,7 @@ def _execute_match(cmd, expected_games, work, worker_config, tuning_config):
 
     # Log score lines for diagnostics
     score_lines = re.findall(r"Score of .+", output)
-    logger.info("cutechess-cli reported %d score line(s)", len(score_lines))
+    logger.info("%s reported %d score line(s)", _tool_label, len(score_lines))
     for line in score_lines[:-1]:
         logger.debug("  %s", line)
     if score_lines:
@@ -591,7 +592,7 @@ def _execute_match(cmd, expected_games, work, worker_config, tuning_config):
         started = any("started game" in line.lower() for line in output.splitlines())
         if not started:
             raise RuntimeError(
-                "cutechess-cli started no games — check engine configuration\n"
+                f"{_tool_label} started no games — check engine configuration\n"
                 + (output[-500:] or "(no output)")
             )
         raise RetryableError("No games were played")
@@ -830,7 +831,7 @@ def worker_loop(worker_config: WorkerConfig):
             time.sleep(5)
         except (subprocess.TimeoutExpired, RetryableError) as e:
             consecutive_errors += 1
-            msg = "cutechess-cli timed out" if isinstance(e, subprocess.TimeoutExpired) else str(e)
+            msg = f"{_tool_label} timed out" if isinstance(e, subprocess.TimeoutExpired) else str(e)
             logger.error("%s (%d/%s)", msg, consecutive_errors, max_retries or "inf")
             if max_retries and consecutive_errors >= max_retries:
                 logger.error("Too many consecutive errors, terminating.")
@@ -888,9 +889,10 @@ def main():
     logger.info("Coordinator: %s", config.coordinator)
     logger.info("Engine: %s", config.engine)
     logger.info("Concurrency: %d", config.concurrency)
+    global _tool_label
     tool_name = Path(config.cutechess_cli).stem.lower()
-    tool_label = "fastchess" if "fastchess" in tool_name else "cutechess-cli"
-    logger.info("%s: %s", tool_label, config.cutechess_cli)
+    _tool_label = "fastchess" if "fastchess" in tool_name else "cutechess-cli"
+    logger.info("%s: %s", _tool_label, config.cutechess_cli)
     logger.info("Games dir: %s", config.games_dir)
     if config.opening_book:
         fmt = config.book_format or Path(config.opening_book).suffix.lower().lstrip(".") or "pgn"

@@ -212,7 +212,7 @@ interval set by `dashboard_refresh` in tuning.json.
 | `auto_install_imdisk` | Auto-download and install ImDisk on Windows if not found; set `false` to manage manually | `true` |
 | `ramdisk_size` | Override RAM disk size in MB (0 = auto-estimate from engine sizes and concurrency) | `0` |
 | `ramdisk_decompression` | PyInstaller decompression multiplier for size estimation | `2.6` |
-| `max_forfeit_pct` | Max fraction of games that can be time forfeits before discarding the chunk (0 = disabled) | `0.10` |
+| `max_forfeit_pct` | Max fraction of games that can be time forfeits before discarding the chunk (0 = disabled) | `0.05` |
 | `max_retries` | Max consecutive retryable errors before the worker gives up (0 = unlimited) | `3` |
 
 ### RAM Disk
