@@ -266,6 +266,8 @@ class WorkerConfig:
     auto_install_imdisk: bool = True
     ramdisk_size: int = 0
     ramdisk_decompression: float = 2.6
+    # Max fraction of games that can be forfeits before discarding the chunk (0 = disabled).
+    max_forfeit_pct: float = 0.10
     # Max consecutive retryable errors before the worker gives up (0 = unlimited).
     max_retries: int = 3
 

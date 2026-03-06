@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import math
 import json
 import logging
 import logging.handlers
@@ -539,10 +540,30 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
 
     # Log all output lines that mention errors or crashes
     for line in output.splitlines():
-        if any(kw in line.lower() for kw in ("abandoned", "error", "crash", "disconnect", "timeout", "illegal", "terminated", "forfeit")):
+        if any(kw in line.lower() for kw in ("abandoned", "error", "crash", "disconnect", "timeout", "illegal", "terminated", "forfeit", "loses on time")):
             logger.warning("cutechess: %s", line.strip())
 
     return output
+
+
+def _check_forfeits(output, expected_games, max_forfeit_pct):
+    """Raise RetryableError if too many games ended by time forfeit.
+
+    cutechess-cli uses "loses on time" for decisive forfeits and
+    "Draw by timeout" when both engines flag.
+    """
+    if not max_forfeit_pct or max_forfeit_pct <= 0:
+        return
+    forfeit_count = sum(1 for line in output.splitlines() if "loses on time" in line.lower() or "draw by timeout" in line.lower())
+    if forfeit_count == 0:
+        return
+    threshold = math.ceil(expected_games * max_forfeit_pct)
+    logger.warning("Forfeits: %d/%d (threshold %d at %.0f%%)", forfeit_count, expected_games, threshold, max_forfeit_pct * 100)
+    if forfeit_count >= threshold:
+        # TODO: RetryableError causes the coordinator to treat the next /work
+        # request as a crash-reconnect, resetting the worker's speed EWMA.
+        # Consider reporting a "discard" result instead to preserve the EWMA.
+        raise RetryableError(f"{forfeit_count}/{expected_games} games forfeited ({forfeit_count/expected_games:.0%}), max is {max_forfeit_pct:.0%}")
 
 
 def _execute_match(cmd, expected_games, work, worker_config, tuning_config):
@@ -593,6 +614,8 @@ def _execute_match(cmd, expected_games, work, worker_config, tuning_config):
             expected_games, total, wins, losses, draws,
         )
 
+    _check_forfeits(output, expected_games, worker_config.max_forfeit_pct)
+
     logger.info("Results: W=%d D=%d L=%d (%d games)", wins, draws, losses, total)
 
     return wins, draws, losses
@@ -634,6 +657,8 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
         output = _run_cutechess(cmd, work, worker_config, tuning_config)
         if output is None:
             return None
+
+        _check_forfeits(output, work.num_games, worker_config.max_forfeit_pct)
 
         # Log ranking table from gauntlet output
         in_rank = False

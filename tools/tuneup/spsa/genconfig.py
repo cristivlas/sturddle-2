@@ -31,7 +31,7 @@ import sysconfig
 import warnings
 
 from config import (
-    EngineConfig, SPSAConfig, TuningConfig, Parameter,
+    EngineConfig, SPSAConfig, TuningConfig, Parameter, WorkerConfig,
 )
 
 
@@ -273,17 +273,19 @@ def main():
     games_dir = abspath(os.path.join(project_dir, 'games'))
     log_file = abspath(os.path.join(project_dir, 'logs', 'worker.log'))
 
+    _wd = WorkerConfig  # shorthand for accessing dataclass defaults
     worker_config = {
         'name': platform.node(),
-        'coordinator': 'http://localhost:8080',
+        'coordinator': _wd.coordinator,
         'engine': engine_cmd,
         'cutechess_cli': find_game_runner(),
         'concurrency': physical_cpu_count(),
         'opening_book': default_book,
         'book_format': 'pgn',
-        'book_depth': 8,
+        'book_depth': _wd.book_depth,
         'games_dir': games_dir,
         'log_file': log_file,
+        'max_forfeit_pct': _wd.max_forfeit_pct,
         'parameter_overrides': {
             '_comment': 'per-machine parameter overrides (e.g., SyzygyPath)',
         },
