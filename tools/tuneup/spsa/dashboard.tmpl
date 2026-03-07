@@ -1017,8 +1017,10 @@
             e.preventDefault();
             rh.classList.add('dragging');
             var startY = e.clientY, startH = cs.getBoundingClientRect().height;
+            var content = cs.closest('.content');
+            var maxH = content.getBoundingClientRect().bottom - cs.getBoundingClientRect().top - rh.offsetHeight - 80;
             function onMove(e) {{
-                var h = Math.max(120, Math.min(startH + e.clientY - startY, window.innerHeight * 0.75));
+                var h = Math.max(120, Math.min(startH + e.clientY - startY, maxH));
                 cs.style.height = h + 'px';
                 if (thetaChart) thetaChart.resize();
             }}
