@@ -212,6 +212,8 @@
             th, td {{ padding: 6px 4px; font-size: 13px; }}
             .params-tbl col:first-child {{ width: 50% !important; }}
             .params-tbl col:nth-child(2), .params-tbl col:nth-child(3) {{ width: 25% !important; }}
+            .resize-handle {{ display: none !important; }}
+            #chartSection {{ height: auto !important; }}
         }}
         .bottom-panel {{
             flex: 1;
@@ -253,6 +255,50 @@
             text-align: center;
             border-top: 1px solid #eee;
             flex-shrink: 0;
+        }}
+        #chartSection {{
+            height: 340px;
+            flex-shrink: 0;
+            align-items: stretch;
+        }}
+        #chartSection > .card {{
+            height: 100%;
+            min-height: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }}
+        #chartSection > .card .chart-wrap {{
+            flex: 1;
+            height: 0;
+            min-height: 80px;
+            max-height: none;
+        }}
+        #chartSection .section {{
+            overflow: hidden;
+        }}
+        #chartSection .section > div {{
+            max-height: none !important;
+        }}
+        .resize-handle {{
+            flex-shrink: 0;
+            height: 10px;
+            cursor: row-resize;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .resize-handle::after {{
+            content: '';
+            display: block;
+            width: 48px;
+            height: 4px;
+            background: #ddd;
+            border-radius: 2px;
+            transition: background 0.15s;
+        }}
+        .resize-handle:hover::after, .resize-handle.dragging::after {{
+            background: var(--accent-start);
         }}
     </style>
     <!-- Time-of-day theme (keep in sync across dashboard/charts/logs templates) -->
@@ -333,7 +379,7 @@
             </div>
 
             <!-- Chart + Current Parameters side by side -->
-            <div class="two-col" style="margin-bottom: 12px; grid-template-columns: 3fr 2fr;">
+            <div class="two-col" id="chartSection" style="grid-template-columns: 3fr 2fr;">
                 <div class="card">
                     <div class="chart-wrap"><canvas id="thetaChart"></canvas></div>
                 </div>
@@ -366,6 +412,8 @@
                     </div>
                 </div>
             </div>
+
+            <div class="resize-handle" id="resizeHandle"></div>
 
             <!-- Workers + Recent History side by side -->
             <div class="two-col bottom-panel">
@@ -957,6 +1005,33 @@
         clearTimeout(_resizeTimer);
         _resizeTimer = setTimeout(updateLegend, 200);
     }});
+
+    // --- Resizable split between chart and workers/history ---
+    (function() {{
+        var cs = document.getElementById('chartSection');
+        var rh = document.getElementById('resizeHandle');
+        var saved = localStorage.getItem('dashSplitH');
+        if (saved) cs.style.height = parseInt(saved) + 'px';
+        rh.addEventListener('mousedown', function(e) {{
+            if (window.innerWidth <= 700) return;
+            e.preventDefault();
+            rh.classList.add('dragging');
+            var startY = e.clientY, startH = cs.getBoundingClientRect().height;
+            function onMove(e) {{
+                var h = Math.max(120, Math.min(startH + e.clientY - startY, window.innerHeight * 0.75));
+                cs.style.height = h + 'px';
+                if (thetaChart) thetaChart.resize();
+            }}
+            function onUp() {{
+                rh.classList.remove('dragging');
+                localStorage.setItem('dashSplitH', Math.round(cs.getBoundingClientRect().height));
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+            }}
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+        }});
+    }})();
     </script>
 </body>
 </html>
