@@ -1043,37 +1043,28 @@
         _resizeTimer = setTimeout(updateLegend, 200);
     }});
 
-    // --- Resizable split between chart and workers/history ---
+    // --- Resize handles (horizontal row split + vertical column splitters) ---
     (function() {{
-        var cs = document.getElementById('chartSection');
-        var rh = document.getElementById('resizeHandle');
-        var saved = localStorage.getItem('dashSplitH');
-        if (saved) cs.style.height = parseInt(saved) + 'px';
-        rh.addEventListener('mousedown', function(e) {{
-            if (window.innerWidth <= 700) return;
-            e.preventDefault();
-            rh.classList.add('dragging');
-            var startY = e.clientY, startH = cs.getBoundingClientRect().height;
-            var content = cs.closest('.content');
-            var maxH = content.getBoundingClientRect().bottom - cs.getBoundingClientRect().top - rh.offsetHeight - 80;
-            function onMove(e) {{
-                var h = Math.max(120, Math.min(startH + e.clientY - startY, maxH));
-                cs.style.height = h + 'px';
-                if (thetaChart) thetaChart.resize();
-            }}
-            function onUp() {{
-                rh.classList.remove('dragging');
-                localStorage.setItem('dashSplitH', Math.round(cs.getBoundingClientRect().height));
-                window.removeEventListener('mousemove', onMove);
-                window.removeEventListener('mouseup', onUp);
-            }}
-            window.addEventListener('mousemove', onMove);
-            window.addEventListener('mouseup', onUp);
-        }});
-    }})();
+        // Shared drag boilerplate: mobile guard, dragging class, move/up listeners, chart resize.
+        // onStart(e) is called on mousedown and must return {{ move(e), save() }}.
+        function makeDragResize(handle, onStart) {{
+            handle.addEventListener('mousedown', function(eDown) {{
+                if (window.innerWidth <= 700) return;
+                eDown.preventDefault();
+                handle.classList.add('dragging');
+                var h = onStart(eDown);
+                function onMove(e) {{ h.move(e); if (thetaChart) thetaChart.resize(); }}
+                function onUp() {{
+                    handle.classList.remove('dragging');
+                    h.save();
+                    window.removeEventListener('mousemove', onMove);
+                    window.removeEventListener('mouseup', onUp);
+                }}
+                window.addEventListener('mousemove', onMove);
+                window.addEventListener('mouseup', onUp);
+            }});
+        }}
 
-    // --- Column resizers (chart/params and workers/history) ---
-    (function() {{
         function makeColResizable(handle, leftEl, rightEl, storageKey, defaultRatio, minLeft, minRight) {{
             var curRatio = defaultRatio;
             function applyRatio(r) {{
@@ -1089,26 +1080,30 @@
             }}
             var saved = parseFloat(localStorage.getItem(storageKey));
             applyRatio(clampRatio(isNaN(saved) ? defaultRatio : saved));
-            handle.addEventListener('mousedown', function(e) {{
-                if (window.innerWidth <= 700) return;
-                e.preventDefault();
-                handle.classList.add('dragging');
+            makeDragResize(handle, function(e) {{
                 var rect = handle.parentElement.getBoundingClientRect();
-                function onMove(e) {{
-                    applyRatio(clampRatio((e.clientX - rect.left) / rect.width));
-                    if (thetaChart) thetaChart.resize();
-                }}
-                function onUp() {{
-                    handle.classList.remove('dragging');
-                    localStorage.setItem(storageKey, curRatio.toFixed(4));
-                    window.removeEventListener('mousemove', onMove);
-                    window.removeEventListener('mouseup', onUp);
-                }}
-                window.addEventListener('mousemove', onMove);
-                window.addEventListener('mouseup', onUp);
+                return {{
+                    move: function(e) {{ applyRatio(clampRatio((e.clientX - rect.left) / rect.width)); }},
+                    save: function() {{ localStorage.setItem(storageKey, curRatio.toFixed(4)); }}
+                }};
             }});
         }}
+
+        // Horizontal split: chart section height
         var cs = document.getElementById('chartSection');
+        var rh = document.getElementById('resizeHandle');
+        var savedH = localStorage.getItem('dashSplitH');
+        if (savedH) cs.style.height = parseInt(savedH) + 'px';
+        makeDragResize(rh, function(e) {{
+            var startY = e.clientY, startH = cs.getBoundingClientRect().height;
+            var maxH = cs.closest('.content').getBoundingClientRect().bottom - cs.getBoundingClientRect().top - rh.offsetHeight - 80;
+            return {{
+                move: function(e) {{ cs.style.height = Math.max(120, Math.min(startH + e.clientY - startY, maxH)) + 'px'; }},
+                save: function() {{ localStorage.setItem('dashSplitH', Math.round(cs.getBoundingClientRect().height)); }}
+            }};
+        }});
+
+        // Vertical column splits
         makeColResizable(document.getElementById('chartParamsHandle'), cs.querySelector('.card'), cs.querySelector('.section'), 'dashChartParamsRatio', 0.6, 280, 200);
         var bp = document.querySelector('.bottom-panel');
         var bpSections = bp.querySelectorAll('.section');
