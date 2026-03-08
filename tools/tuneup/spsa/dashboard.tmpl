@@ -213,19 +213,26 @@
             .params-tbl col:first-child {{ width: 50% !important; }}
             .params-tbl col:nth-child(2), .params-tbl col:nth-child(3) {{ width: 25% !important; }}
             .resize-handle {{ display: none !important; }}
-            #chartSection {{ height: auto !important; }}
-            #chartSection > .card {{ height: auto; }}
+            .col-resize-handle {{ display: none !important; }}
+            #chartSection {{ height: auto !important; flex-direction: column !important; }}
+            #chartSection > .card {{ height: auto; flex: unset !important; width: auto !important; min-width: 0 !important; }}
             #chartSection > .card .chart-wrap {{ flex: none !important; height: 400px !important; }}
+            #chartSection > .section {{ flex: unset !important; width: auto !important; min-width: 0 !important; }}
+            .bottom-panel {{ flex-direction: column !important; }}
+            .bottom-panel > .section {{ flex: unset !important; width: auto !important; min-width: 0 !important; }}
         }}
         .bottom-panel {{
             flex: 1;
             min-height: 0;
-            grid-template-rows: 1fr;
+            display: flex;
+            gap: 0;
         }}
         .bottom-panel > .section {{
             display: flex;
             flex-direction: column;
             min-height: 0;
+            min-width: 0;
+            overflow: hidden;
         }}
         .bottom-panel > .section > div:last-child {{
             flex: 1;
@@ -262,13 +269,19 @@
             height: 340px;
             flex-shrink: 0;
             align-items: stretch;
+            display: flex;
+            gap: 0;
         }}
         #chartSection > .card {{
             height: 100%;
             min-height: 0;
+            min-width: 0;
             overflow: hidden;
             display: flex;
             flex-direction: column;
+        }}
+        #chartSection > .section {{
+            min-width: 0;
         }}
         #chartSection > .card .chart-wrap {{
             flex: 1;
@@ -300,6 +313,26 @@
             transition: background 0.15s;
         }}
         .resize-handle:hover::after, .resize-handle.dragging::after {{
+            background: var(--accent-start);
+        }}
+        .col-resize-handle {{
+            flex-shrink: 0;
+            width: 10px;
+            cursor: col-resize;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .col-resize-handle::after {{
+            content: '';
+            display: block;
+            width: 4px;
+            height: 48px;
+            background: #ddd;
+            border-radius: 2px;
+            transition: background 0.15s;
+        }}
+        .col-resize-handle:hover::after, .col-resize-handle.dragging::after {{
             background: var(--accent-start);
         }}
     </style>
@@ -385,6 +418,7 @@
                 <div class="card">
                     <div class="chart-wrap"><canvas id="thetaChart"></canvas></div>
                 </div>
+                <div class="col-resize-handle" id="chartParamsHandle"></div>
                 <div class="section" style="margin-top: 0; display:flex; flex-direction:column; min-height:0;">
                     <h3 style="display:flex;align-items:baseline;gap:8px;">Current Parameters
                         <span id="thetaToggle" style="font-size:0;line-height:0;margin-left:auto;">
@@ -432,6 +466,7 @@
                     </table>
                     </div>
                 </div>
+                <div class="col-resize-handle" id="workersHistHandle"></div>
                 <div class="section" style="margin-top: 0;">
                     <h3 id="historyTitle">History (latest {dashboard_history})</h3>
                     <div style="flex-shrink: 0;">
@@ -1035,6 +1070,49 @@
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
         }});
+    }})();
+
+    // --- Column resizers (chart/params and workers/history) ---
+    (function() {{
+        function makeColResizable(handle, leftEl, rightEl, storageKey, defaultRatio, minLeft, minRight) {{
+            var curRatio = defaultRatio;
+            function applyRatio(r) {{
+                curRatio = r;
+                leftEl.style.flex = 'none';
+                rightEl.style.flex = 'none';
+                leftEl.style.width = 'calc(' + (r * 100).toFixed(3) + '% - 5px)';
+                rightEl.style.width = 'calc(' + ((1 - r) * 100).toFixed(3) + '% - 5px)';
+            }}
+            function clampRatio(r) {{
+                var w = handle.parentElement.getBoundingClientRect().width || 1000;
+                return Math.max(minLeft / w, Math.min((w - minRight) / w, r));
+            }}
+            var saved = parseFloat(localStorage.getItem(storageKey));
+            applyRatio(clampRatio(isNaN(saved) ? defaultRatio : saved));
+            handle.addEventListener('mousedown', function(e) {{
+                if (window.innerWidth <= 700) return;
+                e.preventDefault();
+                handle.classList.add('dragging');
+                var rect = handle.parentElement.getBoundingClientRect();
+                function onMove(e) {{
+                    applyRatio(clampRatio((e.clientX - rect.left) / rect.width));
+                    if (thetaChart) thetaChart.resize();
+                }}
+                function onUp() {{
+                    handle.classList.remove('dragging');
+                    localStorage.setItem(storageKey, curRatio.toFixed(4));
+                    window.removeEventListener('mousemove', onMove);
+                    window.removeEventListener('mouseup', onUp);
+                }}
+                window.addEventListener('mousemove', onMove);
+                window.addEventListener('mouseup', onUp);
+            }});
+        }}
+        var cs = document.getElementById('chartSection');
+        makeColResizable(document.getElementById('chartParamsHandle'), cs.querySelector('.card'), cs.querySelector('.section'), 'dashChartParamsRatio', 0.6, 280, 200);
+        var bp = document.querySelector('.bottom-panel');
+        var bpSections = bp.querySelectorAll('.section');
+        makeColResizable(document.getElementById('workersHistHandle'), bpSections[0], bpSections[1], 'dashWorkersHistRatio', 0.5, 360, 420);
     }})();
     </script>
 </body>
