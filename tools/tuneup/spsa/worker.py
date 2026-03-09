@@ -454,11 +454,11 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
 
     # Drain pipes in background threads to prevent deadlock while the
     # main thread polls proc.poll() (which directly sets returncode).
-    # Output is streamed to cutechess_last.log for post-mortem inspection.
+    # Output is streamed to <tool>.log for post-mortem inspection.
     stdout_buf = []
     stderr_buf = []
     log_path = Path(worker_config.log_file)
-    cc_log_name = log_path.stem.replace("worker", "cutechess_last") + ".log"
+    cc_log_name = _tool_label + ".log"
     try:
         _cc_log = open(log_path.parent / cc_log_name, "w", buffering=1)
         _cc_log.write("=== chunk %s, iteration %d ===\n" % (work.chunk_id, work.iteration))
