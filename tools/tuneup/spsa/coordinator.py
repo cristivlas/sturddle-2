@@ -824,13 +824,12 @@ class CoordinatorState:
 
         # Log worker stats
         active = self._active_workers()
-        if active:
+        if active or self._worker_stats:
             logger.info("Worker stats:")
             for w in sorted(active, key=lambda w: w.games_per_second, reverse=True):
-                logger.info(
-                    "  %s: %d games, %.2f games/sec",
-                    w.name, w.games_completed, w.games_per_second,
-                )
+                logger.info("  %s: %d games, %.2f games/sec", w.name, w.games_completed, w.games_per_second)
+            for name, (games, chunks, _) in sorted(self._worker_stats.items()):
+                logger.info("  %s: %d games (disconnected)", name, games)
         logger.info("=" * 60)
 
         # Clear iteration progress and checkpoint
