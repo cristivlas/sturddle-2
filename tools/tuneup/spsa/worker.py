@@ -3,7 +3,7 @@
 SPSA Tuning Worker.
 
 Polls the coordinator for work, runs cutechess-cli games, reports results.
-Zero external dependencies — uses only Python stdlib.
+Zero external dependencies -- uses only Python stdlib.
 
 Usage:
     python worker.py -c worker.json
@@ -36,7 +36,7 @@ from ramdisk import (
 logger = logging.getLogger("worker")
 
 class RetryableError(Exception):
-    """Recoverable error during a single chunk — worker retries."""
+    """Recoverable error during a single chunk -- worker retries."""
     pass
 
 # Subprocess timeouts and poll cadence
@@ -109,7 +109,7 @@ def setup_ramdisk(worker_config) -> str:
     else:
         # Linux/macOS: use /dev/shm (already tmpfs, no root needed)
         if not os.path.isdir("/dev/shm"):
-            raise RuntimeError("/dev/shm not available — cannot create RAM-backed temp")
+            raise RuntimeError("/dev/shm not available -- cannot create RAM-backed temp")
         mount = "/dev/shm/spsa_temp"
         os.makedirs(mount, exist_ok=True)
         logger.info("Using /dev/shm for engine temp: %s", mount)
@@ -398,9 +398,9 @@ def _handle_game_interrupt(proc):
     """Handle Ctrl+C while cutechess-cli games are running.
 
     Prompts the operator (whether or not the child is still alive):
-        [w]ait — let games finish, report results, then stop
-        [s]top — kill immediately
-        Enter  — dismiss, keep working (default)
+        [w]ait -- let games finish, report results, then stop
+        [s]top -- kill immediately
+        Enter  -- dismiss, keep working (default)
     A second Ctrl+C during the wait force-kills the child.
     """
     global _shutdown_requested
@@ -483,7 +483,7 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
     out_t.start()
     err_t.start()
 
-    # Poll for exit — main thread stays responsive to Ctrl+C.
+    # Poll for exit -- main thread stays responsive to Ctrl+C.
     # The inner try re-enters after "ignore" so the worker keeps going.
     validate_interval = tuning_config.get("validate_interval", 0)
     base_url = worker_config.coordinator.rstrip("/")
@@ -597,16 +597,16 @@ def _execute_match(cmd, expected_games, work, worker_config, tuning_config):
         started = any("started game" in line.lower() for line in output.splitlines())
         if not started:
             raise RuntimeError(
-                f"{_tool_label} started no games — check engine configuration\n"
+                f"{_tool_label} started no games -- check engine configuration\n"
                 + (output[-500:] or "(no output)")
             )
         raise RetryableError("No games were played")
 
-    # Abort if too many games failed — results would be noise
+    # Abort if too many games failed -- results would be noise
     min_completion = 0.5
     if total < expected_games * min_completion:
         logger.error(
-            "Only %d/%d games completed (W=%d L=%d D=%d) — aborting chunk",
+            "Only %d/%d games completed (W=%d L=%d D=%d) -- aborting chunk",
             total, expected_games, wins, losses, draws,
         )
         raise RetryableError(
@@ -685,7 +685,7 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
             if name not in pairing_results:
                 raise RetryableError(f"Missing gauntlet pairing for {name} in output:\n{output[-500:]}")
 
-        # Swap perspective: reference W/L → theta W/L
+        # Swap perspective: reference W/L -> theta W/L
         ref_pw, ref_pl, ref_pd = pairing_results["theta_plus"]
         ref_mw, ref_ml, ref_md = pairing_results["theta_minus"]
         plus_wins, plus_draws, plus_losses = ref_pl, ref_pd, ref_pw

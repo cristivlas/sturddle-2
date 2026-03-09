@@ -3,7 +3,7 @@
 SPSA Tuning Coordinator.
 
 HTTP server that manages SPSA state and distributes work to workers.
-Zero external dependencies — uses only Python stdlib.
+Zero external dependencies -- uses only Python stdlib.
 
 Usage:
     python coordinator.py -c tuning.json [-p 8080] [--clean] [--debug]
@@ -29,7 +29,7 @@ from pathlib import Path
 from config import TuningConfig, WorkItem, WorkResult
 from spsa import SPSAOptimizer, SPSAState
 
-VERSION = "1.0.8"
+VERSION = "1.0.9"
 
 logger = logging.getLogger("coordinator")
 
@@ -421,7 +421,7 @@ class CoordinatorState:
             overdue = self._is_overdue(now, chunk.assign_time, expected)
             if overdue and spg < self._worker_sec_per_game(chunk.worker_name):
                 logger.warning(
-                    "Work steal: %s taking %s [%s] %d games (overdue) — elapsed=%.1fs expected=%.1fs",
+                    "Work steal: %s taking %s [%s] %d games (overdue) -- elapsed=%.1fs expected=%.1fs",
                     worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected,
                 )
                 best_cid = cid
@@ -434,12 +434,12 @@ class CoordinatorState:
             if new_expected + elapsed < expected:
                 saving = expected - elapsed - new_expected
                 logger.debug(
-                    "Work steal: %s eyeing %s [%s] %d games — elapsed=%.1fs expected=%.1fs new=%.1fs saving=%.1fs",
+                    "Work steal: %s eyeing %s [%s] %d games -- elapsed=%.1fs expected=%.1fs new=%.1fs saving=%.1fs",
                     worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected, new_expected, saving,
                 )
             else:
                 logger.debug(
-                    "Work steal: %s skip %s [%s] %d games — elapsed=%.1fs expected=%.1fs new=%.1fs",
+                    "Work steal: %s skip %s [%s] %d games -- elapsed=%.1fs expected=%.1fs new=%.1fs",
                     worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected, new_expected,
                 )
                 continue
@@ -472,7 +472,7 @@ class CoordinatorState:
     def _reclaim_timed_out_chunks(self):
         """Reclaim chunks from unresponsive workers only.
 
-        Overdue chunks from alive workers are left in place — work stealing
+        Overdue chunks from alive workers are left in place -- work stealing
         handles them with race semantics so no work is wasted.
         """
         now = time.time()
@@ -667,7 +667,7 @@ class CoordinatorState:
 
             # Reject odd game counts (from bad cutechess runs) to keep remaining even.
             # If we get an odd count back, cutechess crashed or an engine died mid-game.
-            # The results are from an incomplete/corrupted run — the W/D/L split across theta+ and theta-
+            # The results are from an incomplete/corrupted run -- the W/D/L split across theta+ and theta-
             # is unbalanced, and there's no way to know which side got shorted.
             if result.num_games % 2 != 0:
                 logger.warning("Rejecting odd result (%d games) from %s [%s]", result.num_games, result.worker, result.chunk_id)
@@ -875,7 +875,7 @@ class CoordinatorState:
 
         Renames current state to .bak before writing new state.
         If the write fails, .bak is available for manual recovery.
-        Raises on failure — continuing would risk overwriting the good .bak.
+        Raises on failure -- continuing would risk overwriting the good .bak.
         """
         backup_file = self.state_file.with_suffix(".bak")
         if self.state_file.exists():
@@ -1428,7 +1428,7 @@ def main():
                     restart_debug = (answer == "d")
                     coordinator._notify_dashboard()
                     hint = "restart now" if coordinator._restart else "force stop"
-                    logger.info("Draining — waiting for iteration %d to complete (Ctrl+C again to %s)...", iter_k, hint)
+                    logger.info("Draining -- waiting for iteration %d to complete (Ctrl+C again to %s)...", iter_k, hint)
                     # Break out of serve_forever() once the drain completes;
                     # needs a thread because serve_forever() blocks.
                     def drain_watcher():
@@ -1436,7 +1436,7 @@ def main():
                         server.shutdown()
                     threading.Thread(target=drain_watcher, daemon=True).start()
                     continue
-                continue  # dismiss — back to serve_forever()
+                continue  # dismiss -- back to serve_forever()
             break
         else:
             break  # serve_forever returned normally (drain complete)

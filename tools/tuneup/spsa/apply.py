@@ -208,7 +208,7 @@ def update_piece_values(header_file, engine_values):
             in_grading_if = False
             in_else = False
 
-        # Patch PIECE_VALUES — skip the wrong branch when we know which is active
+        # Patch PIECE_VALUES -- skip the wrong branch when we know which is active
         if piece_updates and define_re.search(line):
             skip = False
             if grading is not None and in_grading_if:
@@ -222,7 +222,7 @@ def update_piece_values(header_file, engine_values):
                 line = _patch_array_line(define_re, line, 'PIECE_VALUES',
                                          piece_updates, found, updated)
 
-        # Patch ENDGAME_ADJUST (unconditional — only one definition)
+        # Patch ENDGAME_ADJUST (unconditional -- only one definition)
         if adjust_updates and adjust_re.search(line):
             line = _patch_array_line(adjust_re, line, 'ENDGAME_ADJUST',
                                      adjust_updates, found, updated)
@@ -352,7 +352,7 @@ def update_tables(tables_file, pst_values):
                 if s.startswith('}'):
                     in_piece = False
                 elif re.search(r'-?\d', s):
-                    # Data row — patch if we have updates for this piece
+                    # Data row -- patch if we have updates for this piece
                     piece_updates = sq_updates.get(piece_idx, {})
                     if piece_updates:
                         line = _patch_table_row(line, square_idx, piece_updates, found, updated)

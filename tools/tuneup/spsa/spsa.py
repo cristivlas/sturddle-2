@@ -1,7 +1,7 @@
 """
 SPSA (Simultaneous Perturbation Stochastic Approximation) optimizer.
 
-Pure math module — no I/O, no network, no dependencies beyond stdlib.
+Pure math module -- no I/O, no network, no dependencies beyond stdlib.
 
 Algorithm (range-scaled):
   r_i = upper_i - lower_i  (parameter range)
@@ -139,7 +139,7 @@ class SPSAOptimizer:
         """
         Compute perturbed parameter vectors.
 
-        Enforces a minimum perturbation of ±1 in engine space so the engine
+        Enforces a minimum perturbation of +/-1 in engine space so the engine
         always sees distinct values (avoids pure-noise gradient estimates).
         The actual perturbation per parameter is stored in _effective_perts
         for use by update().
@@ -157,7 +157,7 @@ class SPSAOptimizer:
             r = param.upper - param.lower
             pert = ck * d * r
 
-            # Minimum ±1 engine-space step.
+            # Minimum +/-1 engine-space step.
             if param.is_normalized:
                 orig_range = param.original_upper - param.original_lower
                 min_pert = 2.0 / orig_range
