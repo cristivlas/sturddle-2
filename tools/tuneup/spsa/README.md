@@ -173,6 +173,12 @@ interval set by `dashboard_refresh` in tuning.json.
 | `static_dir` | Directory for static assets (favicon, etc.); empty = disabled | `""` |
 | `validate_interval` | Seconds between chunk-validity checks (0 = disabled) | `5` |
 | `max_retries` | Max worker crash-reconnects within `max_retries * retry_after` seconds (0 = unlimited) | `3` |
+| `auto_resign` | Enable resign and draw adjudication to shorten decided games | `true` |
+| `resign_movecount` | Consecutive moves below threshold before adjudicating a loss | `3` |
+| `resign_score` | Score threshold in centipawns for resign adjudication | `700` |
+| `draw_movenumber` | Move number after which draw adjudication is allowed | `40` |
+| `draw_movecount` | Consecutive moves within threshold before adjudicating a draw | `8` |
+| `draw_score` | Score threshold in centipawns for draw adjudication | `10` |
 | `log_rotation` | Enable daily log rotation (keeps 30 days of rotated files) | `true` |
 | `spsa.budget` | Total games budget (iterations * games_per_iteration) | `10000` |
 | `spsa.a` | Learning rate | `0.5` |

@@ -137,6 +137,13 @@ class TuningConfig:
     validate_interval: int = 5
     # Max worker reconnects within max_retries * retry_after seconds (0 = unlimited)
     max_retries: int = 3
+    # Adjudication: auto-resign and draw detection to shorten decided games.
+    auto_resign: bool = True
+    resign_movecount: int = 3
+    resign_score: int = 700
+    draw_movenumber: int = 40
+    draw_movecount: int = 8
+    draw_score: int = 10
     spsa: SPSAConfig = field(default_factory=SPSAConfig)
     parameters: Dict[str, Parameter] = field(default_factory=dict)
 
@@ -192,6 +199,12 @@ class TuningConfig:
             "static_dir": self.static_dir,
             "validate_interval": self.validate_interval,
             "max_retries": self.max_retries,
+            "auto_resign": self.auto_resign,
+            "resign_movecount": self.resign_movecount,
+            "resign_score": self.resign_score,
+            "draw_movenumber": self.draw_movenumber,
+            "draw_movecount": self.draw_movecount,
+            "draw_score": self.draw_score,
             "spsa": asdict(self.spsa),
             "parameters": { name: _param_dict(p) for name, p in self.parameters.items() },
         }
@@ -266,13 +279,6 @@ class WorkerConfig:
     auto_install_imdisk: bool = True
     ramdisk_size: int = 0
     ramdisk_decompression: float = 2.6
-    # Adjudication: auto-resign and draw detection to shorten decided games.
-    auto_resign: bool = True
-    resign_movecount: int = 3
-    resign_score: int = 700
-    draw_movenumber: int = 40
-    draw_movecount: int = 8
-    draw_score: int = 10
     # Max fraction of games that can be forfeits before discarding the chunk (0 = disabled).
     max_forfeit_pct: float = 0.05
     # Max consecutive retryable errors before the worker gives up (0 = unlimited).
