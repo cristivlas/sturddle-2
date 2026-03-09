@@ -379,6 +379,11 @@ def build_cutechess_command(worker_config: WorkerConfig,
     else:
         cmd += ["-pgnout", pgn_file]
 
+    # Adjudication: shorten decided games to reduce time forfeits
+    if worker_config.auto_resign:
+        cmd += ["-resign", f"movecount={worker_config.resign_movecount}", f"score={worker_config.resign_score}"]
+        cmd += ["-draw", f"movenumber={worker_config.draw_movenumber}", f"movecount={worker_config.draw_movecount}", f"score={worker_config.draw_score}"]
+
     # Debug: log all engine I/O
     if _cutechess_debug:
         if is_fastchess:
