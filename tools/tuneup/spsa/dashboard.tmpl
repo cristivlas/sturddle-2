@@ -298,42 +298,86 @@
         .resize-handle {{
             flex-shrink: 0;
             height: 10px;
-            cursor: row-resize;
+            cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cpath d='M12 2L7 7h3v10h-3l5 5 5-5h-3V7h3z' fill='%23fff' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E") 12 12, row-resize;
+            position: relative;
+            z-index: 1;
             display: flex;
             align-items: center;
             justify-content: center;
+        }}
+        .resize-handle::before {{
+            content: '';
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 50%;
+            height: 4px;
+            margin-top: -2px;
+            background: var(--accent-start);
+            border-radius: 2px;
+            opacity: 0;
+            transition: opacity 0.15s;
+            pointer-events: none;
+        }}
+        .resize-handle:hover::before, .resize-handle.dragging::before {{
+            opacity: 1;
         }}
         .resize-handle::after {{
             content: '';
             display: block;
             width: 48px;
             height: 4px;
-            background: #ddd;
             border-radius: 2px;
-            transition: background 0.15s;
+            transition: opacity 0.15s;
+            position: relative;
+            z-index: 1;
+            background: var(--accent-start);
+            opacity: 0;
         }}
         .resize-handle:hover::after, .resize-handle.dragging::after {{
-            background: var(--accent-start);
+            opacity: 1;
         }}
         .col-resize-handle {{
             flex-shrink: 0;
             width: 10px;
-            cursor: col-resize;
+            cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cpath d='M2 12L7 7v3h10v-3l5 5-5 5v-3H7v3z' fill='%23fff' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E") 12 12, col-resize;
+            position: relative;
+            z-index: 1;
             display: flex;
             align-items: center;
             justify-content: center;
+        }}
+        .col-resize-handle::before {{
+            content: '';
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 50%;
+            width: 4px;
+            margin-left: -2px;
+            background: var(--accent-start);
+            border-radius: 2px;
+            opacity: 0;
+            transition: opacity 0.15s;
+            pointer-events: none;
+        }}
+        .col-resize-handle:hover::before, .col-resize-handle.dragging::before {{
+            opacity: 1;
         }}
         .col-resize-handle::after {{
             content: '';
             display: block;
             width: 4px;
             height: 48px;
-            background: #ddd;
             border-radius: 2px;
-            transition: background 0.15s;
+            transition: opacity 0.15s;
+            position: relative;
+            z-index: 1;
+            background: var(--accent-start);
+            opacity: 0;
         }}
         .col-resize-handle:hover::after, .col-resize-handle.dragging::after {{
-            background: var(--accent-start);
+            opacity: 1;
         }}
     </style>
     <!-- Time-of-day theme (keep in sync across dashboard/charts/logs templates) -->
@@ -827,7 +871,7 @@
                 options: {{
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: {{ legend: {{ display: false, position: 'bottom', onClick: legendClick }} }}
+                    plugins: {{ tooltip: {{ enabled: false }}, legend: {{ display: false, position: 'bottom', onClick: legendClick }} }}
                 }}
             }});
             return chart;
