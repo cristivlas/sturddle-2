@@ -932,7 +932,7 @@
 
         // --- ETA estimation ---
         function formatDuration(ms) {{
-            if (!ms || !isFinite(ms) || ms < 0) return '--';
+            if (ms == null || !isFinite(ms) || ms < 0) return '--';
             var sec = Math.round(ms / 1000);
             if (sec < 120) return sec + 's';
             var min = Math.round(sec / 60);
