@@ -1401,7 +1401,10 @@ def main():
                 logger.error("Request error from %s:", client_address, exc_info=True)
 
     server = ThreadedHTTPServer(("0.0.0.0", args.port), CoordinatorHandler)
-    logger.info("Coordinator ready, waiting for workers...")
+    if coordinator.optimizer.is_done():
+        logger.info("Tuning already complete (%d iterations).", coordinator.optimizer.iteration)
+    else:
+        logger.info("Coordinator ready, waiting for workers...")
 
     restart_debug = False
     while True:
