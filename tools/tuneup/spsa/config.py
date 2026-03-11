@@ -129,8 +129,8 @@ class TuningConfig:
     chunk_timeout_factor: float = 2.0
     min_chunk_timeout: float = 60.0
     min_chunk_expected_duration: float = 60.0
-    # Work-stealing speed ratio: steal if fast worker can finish in this fraction
-    # of the slow worker's remaining time. 1.0 = break-even, lower = more aggressive.
+    # Work-stealing speed ratio: steal if fast_time * ratio < slow_remaining.
+    # 1.0 = break-even, lower = more aggressive (steals even when savings are marginal).
     steal_speed_ratio: float = 1.0
     # Directory for static assets (favicon, etc.); empty = disabled
     static_dir: str = ""

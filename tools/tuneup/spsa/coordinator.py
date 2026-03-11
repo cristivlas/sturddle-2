@@ -432,7 +432,7 @@ class CoordinatorState:
                 continue
 
             remaining = expected - elapsed
-            if new_expected < remaining * self.config.steal_speed_ratio:
+            if new_expected * self.config.steal_speed_ratio < remaining:
                 saving = remaining - new_expected
                 logger.debug(
                     "Work steal: %s eyeing %s [%s] %d games -- elapsed=%.1fs expected=%.1fs new=%.1fs saving=%.1fs",
