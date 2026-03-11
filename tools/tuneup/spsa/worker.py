@@ -292,8 +292,7 @@ def build_cutechess_command(worker_config: WorkerConfig,
     is_fastchess = "fastchess" in tool_name
 
     # Get parameter overrides from worker config (exclude _comment)
-    param_overrides = {k: v for k, v in worker_config.parameter_overrides.items()
-                       if not k.startswith('_')}
+    param_overrides = {k: v for k, v in worker_config.parameter_overrides.items() if not k.startswith('_')}
 
     # Build engine option strings
     def option_args(params: dict) -> list:
@@ -596,23 +595,17 @@ def _execute_match(cmd, expected_games, work, worker_config, tuning_config):
     if total == 0:
         started = any("started game" in line.lower() for line in output.splitlines())
         if not started:
-            raise RuntimeError(
-                f"{_tool_label} started no games -- check engine configuration\n"
-                + (output[-500:] or "(no output)")
-            )
+            raise RuntimeError(f"{_tool_label} started no games -- check engine configuration\n" + (output[-500:] or "(no output)"))
         raise RetryableError("No games were played")
 
     # Abort if too many games failed -- results would be noise
-    min_completion = 0.5
+    min_completion = 1 - worker_config.max_forfeit_pct
     if total < expected_games * min_completion:
         logger.error(
             "Only %d/%d games completed (W=%d L=%d D=%d) -- aborting chunk",
             total, expected_games, wins, losses, draws,
         )
-        raise RetryableError(
-            f"Only {total}/{expected_games} games completed "
-            f"({total/expected_games:.0%}), minimum is {min_completion:.0%}"
-        )
+        raise RetryableError(f"Only {total}/{expected_games} games completed ({total/expected_games:.0%}), minimum is {min_completion:.0%}")
 
     if total != expected_games:
         logger.warning(
@@ -692,17 +685,13 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
         minus_wins, minus_draws, minus_losses = ref_ml, ref_md, ref_mw
 
         # Validate game counts per side
-        min_completion = 0.5
-        for side, w, d, l in [("theta+", plus_wins, plus_draws, plus_losses),
-                               ("theta-", minus_wins, minus_draws, minus_losses)]:
+        min_completion = 1 - worker_config.max_forfeit_pct
+        for side, w, d, l in [("theta+", plus_wins, plus_draws, plus_losses), ("theta-", minus_wins, minus_draws, minus_losses)]:
             total = w + d + l
             if total == 0:
                 raise RetryableError(f"No games completed for {side}")
             if total < half * min_completion:
-                raise RetryableError(
-                    f"Only {total}/{half} games completed for {side} "
-                    f"({total/half:.0%}), minimum is {min_completion:.0%}"
-                )
+                raise RetryableError(f"Only {total}/{half} games completed for {side} ({total/half:.0%}), minimum is {min_completion:.0%}")
             if total != half:
                 logger.warning("Expected %d games for %s but got %d", half, side, total)
             logger.info("Results [%s]: W=%d D=%d L=%d (%d games)", side, w, d, l, total)
@@ -750,8 +739,7 @@ def worker_loop(worker_config: WorkerConfig):
     if worker_config.max_rounds_per_chunk > 0:
         rounds_cap = worker_config.max_rounds_per_chunk * worker_config.concurrency * 2
         chunk_size_cap = min(chunk_size_cap, rounds_cap) if chunk_size_cap > 0 else rounds_cap
-    logger.info("Chunk size cap: %d games (%d rounds x %d concurrency)",
-                chunk_size_cap, worker_config.max_rounds_per_chunk, worker_config.concurrency)
+    logger.info("Chunk size cap: %d games (%d rounds x %d concurrency)", chunk_size_cap, worker_config.max_rounds_per_chunk, worker_config.concurrency)
 
     consecutive_errors = 0
     max_retries = worker_config.max_retries
