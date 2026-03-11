@@ -129,6 +129,9 @@ class TuningConfig:
     chunk_timeout_factor: float = 2.0
     min_chunk_timeout: float = 60.0
     min_chunk_expected_duration: float = 60.0
+    # Work-stealing speed ratio: steal if fast worker can finish in this fraction
+    # of the slow worker's remaining time. 1.0 = break-even, lower = more aggressive.
+    steal_speed_ratio: float = 1.0
     # Directory for static assets (favicon, etc.); empty = disabled
     static_dir: str = ""
     # Daily log rotation (keeps rotated files with date suffix)
@@ -163,6 +166,8 @@ class TuningConfig:
             errors.append("overdue_factor must be >= 1")
         if self.chunk_timeout_factor < 1:
             errors.append("chunk_timeout_factor must be >= 1")
+        if self.steal_speed_ratio <= 0 or self.steal_speed_ratio > 1:
+            errors.append("steal_speed_ratio must be in (0, 1]")
         if self.min_chunk_timeout < self.min_chunk_expected_duration:
             self.min_chunk_timeout = self.min_chunk_expected_duration
         for name, p in self.parameters.items():
@@ -196,6 +201,7 @@ class TuningConfig:
             "chunk_timeout_factor": self.chunk_timeout_factor,
             "min_chunk_timeout": self.min_chunk_timeout,
             "min_chunk_expected_duration": self.min_chunk_expected_duration,
+            "steal_speed_ratio": self.steal_speed_ratio,
             "static_dir": self.static_dir,
             "validate_interval": self.validate_interval,
             "max_retries": self.max_retries,

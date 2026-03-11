@@ -431,8 +431,9 @@ class CoordinatorState:
             if elapsed < self.config.min_chunk_expected_duration:
                 continue
 
-            if new_expected + elapsed < expected:
-                saving = expected - elapsed - new_expected
+            remaining = expected - elapsed
+            if new_expected < remaining * self.config.steal_speed_ratio:
+                saving = remaining - new_expected
                 logger.debug(
                     "Work steal: %s eyeing %s [%s] %d games -- elapsed=%.1fs expected=%.1fs new=%.1fs saving=%.1fs",
                     worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected, new_expected, saving,
