@@ -29,7 +29,7 @@ from pathlib import Path
 from config import TuningConfig, WorkItem, WorkResult
 from spsa import SPSAOptimizer, SPSAState
 
-VERSION = "1.0.9"
+VERSION = "1.1.0"
 
 logger = logging.getLogger("coordinator")
 
@@ -145,6 +145,7 @@ class CoordinatorState:
         self.workers = {}  # name -> WorkerInfo
         self._worker_stats = {}  # name -> (games_completed, chunks_completed, games_completed_iter)
         self._worker_connect_times = {}  # name -> timestamp
+        self._mode_mismatch_workers: set = set()  # one-shot ban: tell worker to retry on next /work
 
         # Time estimates
         self._base_sec_per_game = self._estimate_game_duration()
@@ -291,7 +292,7 @@ class CoordinatorState:
         total_speed = sum(w.games_per_second for w in active)
 
         w = self.workers.get(worker_name)
-        bootstrap = w and w.sec_per_game <= 0
+        warming_up = w and (w.sec_per_game <= 0 or w.chunks_completed < self.config.ewma_warmup_chunks)
 
         if total_speed > 0:
             my_speed = w.games_per_second if (w and w.games_per_second > 0) else (total_speed / num_workers)
@@ -299,8 +300,8 @@ class CoordinatorState:
         else:
             chunk = remaining // num_workers
 
-        # Cap unproven workers until they establish an EWMA
-        if bootstrap:
+        # Cap unproven workers until EWMA has warmed up
+        if warming_up:
             cap = max(12, int(self.config.min_chunk_timeout / self._base_sec_per_game))
             chunk = min(chunk, cap)
         else:
@@ -504,6 +505,11 @@ class CoordinatorState:
         assert worker_name, "worker_name required; enforced at HTTP boundary"
         with self.lock:
             self._touch_worker(worker_name)
+            if worker_name in self._mode_mismatch_workers:
+                self._mode_mismatch_workers.discard(worker_name)
+                self.workers.pop(worker_name, None)
+                logger.warning("Rejecting banned worker %s (mode mismatch); fix config and reconnect", worker_name)
+                return {"status": "done"}
             if worker_server_start and worker_server_start != self.server_start_time:
                 return {"status": "config_changed"}
             if cutechess_overrides and worker_name in self.workers:
@@ -656,7 +662,8 @@ class CoordinatorState:
                 expected = "reference" if self.iteration_reference_mode else "standard"
                 logger.error("Mode mismatch from %s (got %s, expected %s) -- evicting", result.worker, mode, expected)
                 self.workers.pop(result.worker, None)
-                return {"status": "done"}
+                self._mode_mismatch_workers.add(result.worker)
+                return {"status": "ignored", "reason": f"mode mismatch: expected {expected}"}
 
             # Reject odd game counts (from bad cutechess runs) to keep remaining even.
             # If we get an odd count back, cutechess crashed or an engine died mid-game.
