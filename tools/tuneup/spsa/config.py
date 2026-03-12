@@ -132,6 +132,9 @@ class TuningConfig:
     # Work-stealing speed ratio: steal if fast_time * ratio < slow_remaining.
     # 1.0 = break-even, lower = more aggressive (steals even when savings are marginal).
     steal_speed_ratio: float = 1.0
+    # EWMA smoothing factor for worker speed estimates: higher = more weight on recent samples.
+    # Lower values (0.1-0.15) give more stable estimates for large chunks at fast TC.
+    ewma_alpha: float = 0.2
     # Directory for static assets (favicon, etc.); empty = disabled
     static_dir: str = ""
     # Daily log rotation (keeps rotated files with date suffix)
@@ -168,6 +171,8 @@ class TuningConfig:
             errors.append("chunk_timeout_factor must be >= 1")
         if self.steal_speed_ratio <= 0 or self.steal_speed_ratio > 1:
             errors.append("steal_speed_ratio must be in (0, 1]")
+        if not (0 < self.ewma_alpha <= 1):
+            errors.append("ewma_alpha must be in (0, 1]")
         if self.min_chunk_timeout < self.min_chunk_expected_duration:
             self.min_chunk_timeout = self.min_chunk_expected_duration
         for name, p in self.parameters.items():
@@ -202,6 +207,7 @@ class TuningConfig:
             "min_chunk_timeout": self.min_chunk_timeout,
             "min_chunk_expected_duration": self.min_chunk_expected_duration,
             "steal_speed_ratio": self.steal_speed_ratio,
+            "ewma_alpha": self.ewma_alpha,
             "static_dir": self.static_dir,
             "validate_interval": self.validate_interval,
             "max_retries": self.max_retries,

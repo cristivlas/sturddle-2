@@ -49,7 +49,7 @@ class WorkerInfo:
     games_completed: int = 0
     games_completed_iter: int = 0 # games completed in current iteration
     _spg_ewma: float = 0.0        # exponentially weighted moving average (sec/game)
-    _ewma_alpha: float = 0.3      # smoothing factor: higher = more weight on recent
+    _ewma_alpha: float = 0.2      # smoothing factor: higher = more weight on recent
     cutechess_overrides: dict = field(default_factory=dict)  # worker-local tc/depth
 
     @property
@@ -69,14 +69,8 @@ class WorkerInfo:
         if self._spg_ewma <= 0:
             self._spg_ewma = sample  # first observation
         else:
-            self._spg_ewma = (
-                self._ewma_alpha * sample
-                + (1 - self._ewma_alpha) * self._spg_ewma
-            )
-        logger.debug(
-            "Speed update %s: %d games in %.1fs (%.2f s/g), ewma %.2f -> %.2f",
-            self.name, games, elapsed, sample, old, self._spg_ewma,
-        )
+            self._spg_ewma = self._ewma_alpha * sample + (1 - self._ewma_alpha) * self._spg_ewma
+        logger.debug("Speed update %s: %d games in %.1fs (%.2f s/g), ewma %.2f -> %.2f", self.name, games, elapsed, sample, old, self._spg_ewma)
 
 
 @dataclass
@@ -214,7 +208,7 @@ class CoordinatorState:
         if name not in self.workers:
             if self.optimizer.is_done():
                 return  # don't accept new workers after job is done
-            w = WorkerInfo(name=name, last_seen=now)
+            w = WorkerInfo(name=name, last_seen=now, _ewma_alpha=self.config.ewma_alpha)
             saved = self._worker_stats.pop(name, None)
             if saved:
                 w.games_completed, w.chunks_completed, w.games_completed_iter = saved
