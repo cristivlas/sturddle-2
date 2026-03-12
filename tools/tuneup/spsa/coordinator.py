@@ -654,11 +654,9 @@ class CoordinatorState:
             elif result.reference_mode != self.iteration_reference_mode:
                 mode = "reference" if result.reference_mode else "standard"
                 expected = "reference" if self.iteration_reference_mode else "standard"
-                logger.warning(
-                    "Rejecting %s-mode result from %s (iteration is %s mode)",
-                    mode, result.worker, expected,
-                )
-                return {"status": "ignored", "reason": f"mode mismatch: expected {expected}"}
+                logger.error("Mode mismatch from %s (got %s, expected %s) -- evicting", result.worker, mode, expected)
+                self.workers.pop(result.worker, None)
+                return {"status": "done"}
 
             # Reject odd game counts (from bad cutechess runs) to keep remaining even.
             # If we get an odd count back, cutechess crashed or an engine died mid-game.
