@@ -42,14 +42,15 @@ This creates `tuneup/my-test/` with:
 Options:
 - First argument is the project name
 - `all` (default) — tune all parameters, or list specific names
-- `-w` — generate worker.json only
+- `-w` — generate worker.json only (no engine needed)
+- `-s` — generate tuning.json (coordinator) only, skip worker.json
 - `-e VERSION` — use a dist/ engine binary (e.g., `-e 2.5.1-pieces`)
 - `--ref VERSION` — reference engine from dist/ for reference mode (e.g., `--ref 2.5.0`)
 - `-D` — fixed search depth (mutually exclusive with `-t`)
 - `-t` — time control, e.g. `1+0.1` (default)
 - `-H` — hash table size in MB (default: 256)
 - `-T` — engine threads (default: 1)
-- `-i` — number of SPSA iterations (default: 100)
+- `-i` — number of SPSA iterations (default: 10000)
 - `-g` — games per SPSA iteration (default: 100)
 - `-c` — SPSA perturbation as fraction of range (default: 0.05 = 5%)
 - `-a` — SPSA learning rate (default: 0.5)
@@ -67,7 +68,7 @@ Open `tuneup/my-test/tuning.json` and adjust:
 
 Open `tuneup/my-test/worker.json` and verify:
 - `engine` path is correct
-- `opening_book` path is correct (defaults to `tuneup/books/8moves_v3.pgn`)
+- `opening_book` path is correct (defaults to `tuneup/books/UHO_2024_6mvs_+085_+094.pgn`)
 - `concurrency` matches your CPU count
 - `cutechess_cli` path is correct (auto-detected by genconfig)
 - `parameter_overrides` for machine-specific options (e.g., `SyzygyPath`)
@@ -109,7 +110,7 @@ The coordinator binds to `0.0.0.0:8080` and accepts connections from any worker.
   "engine": "/home/user/engines/sturddle/main.py",
   "cutechess_cli": "/usr/local/bin/cutechess-cli",
   "concurrency": 8,
-  "opening_book": "/home/user/books/8moves_v3.pgn",
+  "opening_book": "/home/user/books/UHO_2024_6mvs_+085_+094.pgn",
   "book_depth": 8,
   "games_dir": "/home/user/spsa/my-test/games",
   "log_file": "/home/user/spsa/my-test/logs/worker.log",

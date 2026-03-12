@@ -10,6 +10,7 @@ Usage:
     python genconfig.py <project_name> [-D 8] [-H 256] [-T 1]
                         [-i 100] [-g 100] [param_names... | all]
     python genconfig.py <project_name> -w   # worker.json only (no engine needed)
+    python genconfig.py <project_name> -s   # tuning.json (coordinator) only
 
 Creates:
     tuneup/<project_name>/
@@ -148,6 +149,7 @@ def main():
     parser.add_argument('project', help='Project name (creates tuneup/<project>/)')
     parser.add_argument('tune', nargs='*', default='all', help='Parameter names to tune (or "all")')
     parser.add_argument('-w', '--worker-only', action='store_true', help='Generate worker.json only (no engine needed)')
+    parser.add_argument('-s', '--server-only', action='store_true', help='Generate tuning.json (coordinator) only, skip worker.json')
     parser.add_argument('-e', '--engine', metavar='VERSION_OR_PATH', help='Engine version from dist/ (e.g., 2.5.1-pieces) or path to binary')
     parser.add_argument('-r', '--ref', metavar='VERSION_OR_PATH', help='Reference engine version from dist/ (e.g., 2.5.0) or path to binary')
     _tc = TuningConfig()
@@ -156,7 +158,7 @@ def main():
     parser.add_argument('-D', '--depth', type=int, default=_tc.depth, help='Fixed search depth (overrides time control)')
     parser.add_argument('-H', '--hash', type=int, default=256, help='Engine hash size in MB (default: 256)')
     parser.add_argument('-T', '--threads', type=int, default=1, help='Engine threads (default: 1)')
-    parser.add_argument('-i', '--iterations', type=int, default=100, help='SPSA iterations (default: 100)')
+    parser.add_argument('-i', '--iterations', type=int, default=10000, help='SPSA iterations (default: 10000)')
     parser.add_argument('-g', '--games-per-iteration', type=int, default=_tc.games_per_iteration, help=f'Games per iteration (default: {_tc.games_per_iteration})')
     parser.add_argument('-c', '--spsa-c', type=float, default=_spsa.c, help=f'SPSA perturbation size (default: {_spsa.c})')
     parser.add_argument('-a', '--spsa-a', type=float, default=_spsa.a, help=f'SPSA learning rate (default: {_spsa.a})')
@@ -174,14 +176,15 @@ def main():
     os.makedirs(os.path.join(project_dir, 'logs'), exist_ok=True)
     project_dir_abs = abspath(project_dir)
 
-    # Engine command: dist binary if --engine, otherwise script wrapper
-    if args.engine:
-        engine_cmd = resolve_engine(args.engine)
-    else:
-        engine_cmd = get_engine_cmd(project_dir)
+    # Engine command: dist binary if --engine, otherwise script wrapper (not needed for server-only)
+    if not args.server_only:
+        if args.engine:
+            engine_cmd = resolve_engine(args.engine)
+        else:
+            engine_cmd = get_engine_cmd(project_dir)
 
     # Default book path (absolute, forward slashes)
-    default_book = abspath(os.path.join(tuneup_path(), 'books', '8moves_v3.pgn'))
+    default_book = abspath(os.path.join(tuneup_path(), 'books', 'UHO_2024_6mvs_+085_+094.pgn'))
 
     # --- tuning.json (session-level, shared) ---
     tune_params = {}
@@ -270,33 +273,34 @@ def main():
             f.write('\n')
 
     # --- worker.json (per-machine, local) ---
-    games_dir = abspath(os.path.join(project_dir, 'games'))
-    log_file = abspath(os.path.join(project_dir, 'logs', 'worker.log'))
+    if not args.server_only:
+        games_dir = abspath(os.path.join(project_dir, 'games'))
+        log_file = abspath(os.path.join(project_dir, 'logs', 'worker.log'))
 
-    _wd = WorkerConfig  # shorthand for accessing dataclass defaults
-    worker_config = {
-        'name': platform.node(),
-        'coordinator': _wd.coordinator,
-        'engine': engine_cmd,
-        'cutechess_cli': find_game_runner(),
-        'concurrency': physical_cpu_count(),
-        'opening_book': default_book,
-        'book_format': 'pgn',
-        'book_depth': _wd.book_depth,
-        'games_dir': games_dir,
-        'log_file': log_file,
-        'max_forfeit_pct': _wd.max_forfeit_pct,
-        'parameter_overrides': {
-            '_comment': 'per-machine parameter overrides (e.g., SyzygyPath)',
-        },
-    }
-    if args.ref:
-        worker_config['reference_engine'] = resolve_engine(args.ref)
+        _wd = WorkerConfig  # shorthand for accessing dataclass defaults
+        worker_config = {
+            'name': platform.node(),
+            'coordinator': _wd.coordinator,
+            'engine': engine_cmd,
+            'cutechess_cli': find_game_runner(),
+            'concurrency': physical_cpu_count(),
+            'opening_book': default_book,
+            'book_format': 'pgn',
+            'book_depth': _wd.book_depth,
+            'games_dir': games_dir,
+            'log_file': log_file,
+            'max_forfeit_pct': _wd.max_forfeit_pct,
+            'parameter_overrides': {
+                '_comment': 'per-machine parameter overrides (e.g., SyzygyPath)',
+            },
+        }
+        if args.ref:
+            worker_config['reference_engine'] = resolve_engine(args.ref)
 
-    worker_path = os.path.join(project_dir, 'worker.json')
-    with open(worker_path, 'w') as f:
-        json.dump(worker_config, f, indent=2)
-        f.write('\n')
+        worker_path = os.path.join(project_dir, 'worker.json')
+        with open(worker_path, 'w') as f:
+            json.dump(worker_config, f, indent=2)
+            f.write('\n')
 
     # Summary
     indent = 2 * ' '
@@ -304,13 +308,20 @@ def main():
     if not args.worker_only:
         budget = args.iterations * args.games_per_iteration
         print(f'{indent}tuning.json   - {len(tune_params)} parameters, {args.iterations} iterations, {budget} games')
-    print(f'{indent}worker.json   - concurrency={worker_config["concurrency"]}, engine={engine_cmd}, runner={worker_config["cutechess_cli"]}')
-    if args.ref:
-        print(f'{indent}{14 * " "}  reference_engine={worker_config["reference_engine"]}')
+    if not args.server_only:
+        print(f'{indent}worker.json   - concurrency={worker_config["concurrency"]}, engine={engine_cmd}, runner={worker_config["cutechess_cli"]}')
+        if args.ref:
+            print(f'{indent}{14 * " "}  reference_engine={worker_config["reference_engine"]}')
     print()
     print('Next steps:')
     step = 1
-    print(f'{indent}{step}. Review and edit {"worker.json" if args.worker_only else "tuning.json and worker.json"}')
+    if args.worker_only:
+        edit_files = 'worker.json'
+    elif args.server_only:
+        edit_files = 'tuning.json'
+    else:
+        edit_files = 'tuning.json and worker.json'
+    print(f'{indent}{step}. Review and edit {edit_files}')
     step += 1
     print(f'{indent}{step}. cd {project_dir_abs}')
     step += 1
@@ -319,7 +330,8 @@ def main():
     if not args.worker_only:
         print(f'{indent}{step}. python {coordinator_py} -c tuning.json')
         step += 1
-    print(f'{indent}{step}. python {worker_py} -c worker.json')
+    if not args.server_only:
+        print(f'{indent}{step}. python {worker_py} -c worker.json')
 
     if not args.worker_only and not tune_params:
         warnings.warn('No tunable parameters selected!')

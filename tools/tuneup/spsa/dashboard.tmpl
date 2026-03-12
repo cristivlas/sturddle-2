@@ -1061,6 +1061,7 @@
                     if (d.last_history.theta) {{
                         prevTheta = Object.assign({{}}, d.last_history.theta);
                         historyWindow.push(d.last_history);
+                        if (maxHist > 0 && historyWindow.length > maxHist) historyWindow.shift();
                     }}
                 }}
                 knownHistoryLen = d.history_len;
