@@ -273,6 +273,11 @@
             </div>
             <div class="card" data-chart="params">
                 <div class="card-header" onclick="toggleChart('params')"><span class="caret">&#9660;</span><h2>Parameter Values</h2></div>
+                <div id="pertToggle" style="display:none; padding:2px 0 4px; font-size:13px; gap:4px; flex-shrink:0;">
+                    <span id="togValue" onclick="setPertView('value')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">Value</span>
+                    <span id="togAbs"   onclick="setPertView('pert')"  style="cursor:pointer; padding:1px 8px; border-radius:3px;">|Pert|</span>
+                    <span id="togDelta" onclick="setPertView('delta')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">&Delta;&theta;</span>
+                </div>
                 <div class="chart-wrap"><canvas id="thetaChart"></canvas></div>
             </div>
             <div class="card" data-chart="elo">
@@ -417,6 +422,7 @@
         // Param ranges fetched from /config for engine-space solo mode + convergence
         var paramRanges = {{}};
         var paramInternalRanges = {{}};
+        var _spsaC = null, _spsaGamma = null;
         fetch('/config').then(function(r) {{ return r.json(); }}).then(function(cfg) {{
             var params = cfg.parameters || {{}};
             for (var name in params) {{
@@ -425,6 +431,9 @@
                     paramRanges[name] = [p.original_lower, p.original_upper];
                 paramInternalRanges[name] = p.upper - p.lower;
             }}
+            var sp = cfg.spsa || {{}};
+            _spsaC = sp.c != null ? sp.c : null;
+            _spsaGamma = sp.gamma != null ? sp.gamma : null;
             if (window.updateThetaSubtitle) window.updateThetaSubtitle();
         }}).catch(function() {{}});
     </script>
@@ -512,7 +521,71 @@
                     }};
                 }});
                 var _soloParam = null;
+                var _pertView = 'value';
                 function denorm(v, lo, hi) {{ return (v + 1) * (hi - lo) / 2 + lo; }}
+                function _pertDataForParam(name) {{
+                    if (_spsaC == null || _spsaGamma == null) return null;
+                    var range = paramRanges[name];
+                    var ir = paramInternalRanges[name];
+                    if (!ir) return null;
+                    var scale = range ? (range[1] - range[0]) : ir;
+                    return labels.map(function(k) {{ return Math.max(_spsaC / Math.pow(k + 1, _spsaGamma) * scale, 1.0); }});
+                }}
+                function _deltaDataForParam(name) {{
+                    var range = paramRanges[name];
+                    var d = _origData[name];
+                    return labels.map(function(_, i) {{
+                        if (i === 0 || d[i] == null || d[i-1] == null) return null;
+                        if (range) return denorm(d[i], range[0], range[1]) - denorm(d[i-1], range[0], range[1]);
+                        return d[i] - d[i-1];
+                    }});
+                }}
+                function _updatePertToggle() {{
+                    var tog = document.getElementById('pertToggle');
+                    if (!tog) return;
+                    tog.style.display = _soloParam ? 'flex' : 'none';
+                    var accent = getComputedStyle(document.documentElement).getPropertyValue('--accent-start').trim() || '#667eea';
+                    [['togValue','value'],['togAbs','pert'],['togDelta','delta']].forEach(function(pair) {{
+                        var el = document.getElementById(pair[0]);
+                        var on = _pertView === pair[1];
+                        el.style.background = on ? accent : '#eee';
+                        el.style.color = on ? 'white' : '#666';
+                    }});
+                }}
+                window.setPertView = function(mode) {{
+                    var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
+                    if (!ch || !_soloParam) return;
+                    _pertView = mode;
+                    _updatePertToggle();
+                    ch.data.datasets = ch.data.datasets.filter(function(d) {{ return !d._isThreshold; }});
+                    var soloDs = ch.data.datasets.find(function(d) {{ return d.label === _soloParam; }});
+                    if (!soloDs) return;
+                    if (mode === 'pert') {{
+                        var data = _pertDataForParam(_soloParam);
+                        if (!data) return;
+                        soloDs.data = data;
+                        ch.data.datasets.push({{ label: 'min pert', data: labels.map(function() {{ return 1.0; }}), borderColor: '#e53935', borderDash: [5,3], borderWidth: 1.5, pointRadius: 0, fill: false, _isThreshold: true }});
+                        ch.options.scales.y.min = 0;
+                        delete ch.options.scales.y.max;
+                        ch.options.plugins.title.display = true;
+                        ch.options.plugins.title.text = _soloParam + '  |Pert|';
+                        ch.options.plugins.subtitle = {{ display: false }};
+                    }} else if (mode === 'delta') {{
+                        soloDs.data = _deltaDataForParam(_soloParam);
+                        delete ch.options.scales.y.min;
+                        delete ch.options.scales.y.max;
+                        ch.options.plugins.title.display = true;
+                        ch.options.plugins.title.text = _soloParam + '  \u0394\u03B8';
+                        ch.options.plugins.subtitle = {{ display: false }};
+                    }} else {{
+                        var range = paramRanges[_soloParam];
+                        soloDs.data = range ? _origData[_soloParam].map(function(v) {{ return v != null ? denorm(v, range[0], range[1]) : null; }}) : _origData[_soloParam].slice();
+                        if (range) {{ ch.options.scales.y.min = range[0]; ch.options.scales.y.max = range[1]; }}
+                        else {{ delete ch.options.scales.y.min; delete ch.options.scales.y.max; }}
+                        window.updateThetaSubtitle();
+                    }}
+                    ch.update();
+                }}
                 var CONV_MIN = 5;
                 function sliceConvergence(name, fromIdx, toIdx) {{
                     var range = paramInternalRanges[name];
@@ -532,6 +605,7 @@
                 window.updateThetaSubtitle = function() {{
                     var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
                     if (!ch) return;
+                    if (_pertView !== 'value') return;
                     if (!_soloParam) {{
                         ch.options.plugins.subtitle = {{ display: false }};
                         ch.update('none');
@@ -555,6 +629,7 @@
                         legend: {{
                             display: window.innerWidth > 700,
                             position: 'bottom',
+                            labels: {{ filter: function(item, data) {{ return !data.datasets[item.datasetIndex]._isThreshold; }} }},
                             onClick: function(e, item, legend) {{
                                 var ch = legend.chart;
                                 var name = item.text;
@@ -562,15 +637,21 @@
                                 if (_soloParam === name) {{
                                     // Unsolo: restore all
                                     _soloParam = null;
+                                    _pertView = 'value';
+                                    ch.data.datasets = ch.data.datasets.filter(function(d) {{ return !d._isThreshold; }});
                                     ds.forEach(function(d) {{
+                                        if (d._isThreshold) return;
                                         d.hidden = false;
                                         d.data = _origData[d.label].slice();
                                     }});
                                     delete ch.options.scales.y.min;
                                     delete ch.options.scales.y.max;
                                     ch.options.plugins.title.display = false;
+                                    _updatePertToggle();
                                 }} else {{
                                     // Solo this param
+                                    _pertView = 'value';
+                                    ch.data.datasets = ch.data.datasets.filter(function(d) {{ return !d._isThreshold; }});
                                     _soloParam = name;
                                     var range = paramRanges[name];
                                     ds.forEach(function(d) {{
@@ -596,6 +677,7 @@
                                     }}
                                     ch.options.plugins.title.display = true;
                                     ch.options.plugins.title.text = name + (range ? ' [' + range[0] + ' \u2013 ' + range[1] + ']' : '');
+                                    _updatePertToggle();
                                 }}
                                 ch.resize();
                                 ch.update();

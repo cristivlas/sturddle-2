@@ -357,9 +357,7 @@ class CoordinatorState:
             self.total_minus_draws = 0
             self.total_minus_losses = 0
 
-        theta_plus, theta_minus = self.optimizer.compute_candidates(
-            self.current_delta
-        )
+        theta_plus, theta_minus = self.optimizer.compute_candidates(self.current_delta)
         self.current_work = WorkItem(
             iteration=self.optimizer.iteration,
             theta_plus=theta_plus,
