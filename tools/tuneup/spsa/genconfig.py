@@ -238,13 +238,13 @@ def main():
             tune_params[name] = p
 
         # Auto-calculate c so the tightest param hits the min-perturbation clamp
-        # at ~50% of the budget: c = (N*0.5 + 1)^gamma / min_engine_range
+        # at ~100% of the budget: c = N^gamma / min_engine_range
         if args.spsa_c is not None:
             spsa_c = args.spsa_c
         else:
             min_engine_range = min((p.get('original_upper', p['upper']) - p.get('original_lower', p['lower'])) for p in tune_params.values()) if tune_params else 1.0
-            spsa_c = round((args.iterations * 0.5 + 1) ** _spsa.gamma / min_engine_range, 4)
-            print(f'  Auto c={spsa_c} (min engine range={min_engine_range:.0f}, clamp target=50% of {args.iterations} iters)')
+            spsa_c = round(args.iterations ** _spsa.gamma / min_engine_range, 4)
+            print(f'  Auto c={spsa_c} (min engine range={min_engine_range:.0f}, clamp target={args.iterations} iters)')
         spsa_a = args.spsa_a if args.spsa_a is not None else round(spsa_c * (_spsa.a / _spsa.c), 4)
         if args.spsa_a is None:
             print(f'  Auto a={spsa_a} (c={spsa_c} * ratio {_spsa.a / _spsa.c:.0f})')
