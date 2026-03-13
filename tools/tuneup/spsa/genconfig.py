@@ -160,8 +160,8 @@ def main():
     parser.add_argument('-T', '--threads', type=int, default=1, help='Engine threads (default: 1)')
     parser.add_argument('-i', '--iterations', type=int, default=10000, help='SPSA iterations (default: 10000)')
     parser.add_argument('-g', '--games-per-iteration', type=int, default=_tc.games_per_iteration, help=f'Games per iteration (default: {_tc.games_per_iteration})')
-    parser.add_argument('-c', '--spsa-c', type=float, default=_spsa.c, help=f'SPSA perturbation size (default: {_spsa.c})')
-    parser.add_argument('-a', '--spsa-a', type=float, default=_spsa.a, help=f'SPSA learning rate (default: {_spsa.a})')
+    parser.add_argument('-c', '--spsa-c', type=float, default=None, help=f'SPSA perturbation size (default: auto from param ranges)')
+    parser.add_argument('-a', '--spsa-a', type=float, default=None, help=f'SPSA learning rate (default: auto, scaled from c)')
     args = parser.parse_args()
 
     # Create project directory
@@ -237,6 +237,18 @@ def main():
                 p['original_upper'] = orig_hi
             tune_params[name] = p
 
+        # Auto-calculate c so the tightest param hits the min-perturbation clamp
+        # at ~50% of the budget: c = (N*0.5 + 1)^gamma / min_engine_range
+        if args.spsa_c is not None:
+            spsa_c = args.spsa_c
+        else:
+            min_engine_range = min((p.get('original_upper', p['upper']) - p.get('original_lower', p['lower'])) for p in tune_params.values()) if tune_params else 1.0
+            spsa_c = round((args.iterations * 0.5 + 1) ** _spsa.gamma / min_engine_range, 4)
+            print(f'  Auto c={spsa_c} (min engine range={min_engine_range:.0f}, clamp target=50% of {args.iterations} iters)')
+        spsa_a = args.spsa_a if args.spsa_a is not None else round(spsa_c * (_spsa.a / _spsa.c), 4)
+        if args.spsa_a is None:
+            print(f'  Auto a={spsa_a} (c={spsa_c} * ratio {_spsa.a / _spsa.c:.0f})')
+
         # SSE heartbeat interval (real updates push immediately)
         dashboard_refresh = 60
 
@@ -261,8 +273,8 @@ def main():
             dashboard_refresh=dashboard_refresh,
             spsa=SPSAConfig(
                 budget=args.iterations * args.games_per_iteration,
-                a=args.spsa_a,
-                c=args.spsa_c,
+                a=spsa_a,
+                c=spsa_c,
             ),
             parameters=parameters,
         )
