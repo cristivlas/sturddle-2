@@ -272,12 +272,7 @@
                 <span id="zoomLabel">All</span>
             </div>
             <div class="card" data-chart="params">
-                <div class="card-header" onclick="toggleChart('params')"><span class="caret">&#9660;</span><h2>Parameter Values</h2></div>
-                <div id="pertToggle" style="display:none; padding:2px 0 4px; font-size:13px; gap:4px; flex-shrink:0;">
-                    <span id="togValue" onclick="setPertView('value')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">Value</span>
-                    <span id="togAbs"   onclick="setPertView('pert')"  style="cursor:pointer; padding:1px 8px; border-radius:3px;">|Pert|</span>
-                    <span id="togDelta" onclick="setPertView('delta')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">&Delta;&theta;</span>
-                </div>
+                <div class="card-header" onclick="toggleChart('params')"><span class="caret">&#9660;</span><h2>Parameter Values</h2><div id="pertToggle" style="display:none; margin-left:auto; font-size:13px; gap:4px;" onclick="event.stopPropagation()"><span id="togValue" onclick="setPertView('value')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">Value</span><span id="togAbs" onclick="setPertView('pert')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">|Pert|</span><span id="togDelta" onclick="setPertView('delta')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">&Delta;&theta;</span></div></div>
                 <div class="chart-wrap"><canvas id="thetaChart"></canvas></div>
             </div>
             <div class="card" data-chart="elo">
