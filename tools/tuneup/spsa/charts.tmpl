@@ -632,17 +632,23 @@
                     }}
                     var f = parseInt(document.getElementById('zoomFrom').value) || 0;
                     var t = parseInt(document.getElementById('zoomTo').value) || (_labels.length - 1);
+                    var canvas = document.getElementById('thetaChart');
                     if (_pertView === 'delta') {{
                         var tstat = _trendTStat(_soloParam, f, t);
                         if (tstat != null) {{
                             var at = Math.abs(tstat);
                             var tColor = at >= 2.0 ? '#1B8A2A' : at >= 1.0 ? '#B86800' : '#999';
                             var arrow = tstat > 0 ? '\u2197' : tstat < 0 ? '\u2198' : '\u2192';
-                            ch.options.plugins.subtitle = {{ display: true, text: 'Trend: t=' + tstat.toFixed(1) + ' ' + arrow, font: {{ size: 15, weight: 'bold' }}, color: tColor, padding: {{ bottom: 8 }} }};
+                            ch.options.plugins.subtitle = {{ display: true, text: 'Trend: ' + tstat.toFixed(1) + ' ' + arrow, font: {{ size: 15, weight: 'bold' }}, color: tColor, padding: {{ bottom: 8 }} }};
+                            var dir = tstat > 0 ? 'rising' : 'falling';
+                            var tip = at >= 2.0 ? ('Strong ' + dir + ' trend. The optimizer is confidently pushing this parameter ' + (tstat > 0 ? 'higher' : 'lower') + '.') : at >= 1.0 ? ('Weak ' + dir + ' trend, not yet confident. More iterations may clarify.') : ('No clear trend. This parameter may be near its optimum, or may not affect playing strength.');
+                            canvas.title = tip;
                         }} else {{
                             ch.options.plugins.subtitle = {{ display: false }};
+                            canvas.title = '';
                         }}
                     }} else {{
+                        canvas.title = '';
                         var pct = sliceConvergence(_soloParam, f, t);
                         if (pct != null) {{
                             var convColor = pct < 2 ? '#1B8A2A' : pct < 5 ? '#B86800' : '#C62828';
