@@ -359,8 +359,8 @@
             if (lbl) lbl.textContent = (minVal !== undefined || maxVal !== undefined)
                 ? (_labels[from] || _labels[0]) + ' \u2013 ' + (_labels[to] || _labels[last])
                 : 'All';
-            // Persist
-            try {{ localStorage.setItem('chartZoom', JSON.stringify({{f:from, t:to}})); }} catch(e) {{}}
+            // Persist (clear when full range so new data doesn't get clipped)
+            try {{ if (from <= 0 && to >= last) localStorage.removeItem('chartZoom'); else localStorage.setItem('chartZoom', JSON.stringify({{f:from, t:to}})); }} catch(e) {{}}
             if (window.updateThetaSubtitle) window.updateThetaSubtitle();
         }}
 
