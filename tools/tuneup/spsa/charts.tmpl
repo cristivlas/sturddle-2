@@ -642,6 +642,7 @@
                             ch.options.plugins.subtitle = {{ display: true, text: 'Trend: ' + tstat.toFixed(1) + ' ' + arrow, font: {{ size: 15, weight: 'bold' }}, color: tColor, padding: {{ bottom: 8 }} }};
                             var dir = tstat > 0 ? 'rising' : 'falling';
                             var tip = at >= 2.0 ? ('Strong ' + dir + ' trend. The optimizer is confidently pushing this parameter ' + (tstat > 0 ? 'higher' : 'lower') + '.') : at >= 1.0 ? ('Weak ' + dir + ' trend, not yet confident. More iterations may clarify.') : ('No clear trend. This parameter may be near its optimum, or may not affect playing strength.');
+                            tip += '\n\nTrend = linear regression slope / standard error (t-statistic).';
                             canvas.title = tip;
                         }} else {{
                             ch.options.plugins.subtitle = {{ display: false }};
