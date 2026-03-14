@@ -272,7 +272,7 @@
                 <span id="zoomLabel">All</span>
             </div>
             <div class="card" data-chart="params">
-                <div class="card-header" onclick="toggleChart('params')"><span class="caret">&#9660;</span><h2>Parameter Values</h2><div id="pertToggle" style="display:none; margin-left:auto; font-size:13px; gap:4px;" onclick="event.stopPropagation()"><span id="togValue" onclick="setPertView('value')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">Value</span><span id="togAbs" onclick="setPertView('pert')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">|Pert|</span><span id="togDelta" onclick="setPertView('delta')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">&Delta;&theta;</span></div></div>
+                <div class="card-header" onclick="toggleChart('params')"><span class="caret">&#9660;</span><h2>Parameter Values</h2><div id="pertToggle" style="display:none; margin-left:auto; font-size:13px; gap:4px;" onclick="event.stopPropagation()"><span id="togValue" onclick="setPertView('value')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">Value</span><span id="togAbs" onclick="setPertView('pert')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">|Pert|</span></div></div>
                 <div class="chart-wrap"><canvas id="thetaChart"></canvas></div>
             </div>
             <div class="card" data-chart="elo">
@@ -430,6 +430,8 @@
             _spsaC = sp.c != null ? sp.c : null;
             _spsaGamma = sp.gamma != null ? sp.gamma : null;
             if (window.updateThetaSubtitle) window.updateThetaSubtitle();
+            // Re-apply engine-space range now that paramRanges is populated
+            if (window._reapplySoloRange) window._reapplySoloRange();
         }}).catch(function() {{}});
     </script>
     <script>
@@ -517,7 +519,7 @@
                 }});
                 var _soloParam = null;
                 var _pertView = 'value';
-                try {{ var _sv = JSON.parse(localStorage.getItem('chartSolo')); if (_sv && _sv.p && _origData[_sv.p]) {{ _soloParam = _sv.p; _pertView = _sv.m || 'value'; }} }} catch(e) {{}}
+                try {{ var _sv = JSON.parse(localStorage.getItem('chartSolo')); if (_sv && _sv.p && _origData[_sv.p]) {{ _soloParam = _sv.p; _pertView = (_sv.m === 'pert') ? 'pert' : 'value'; }} }} catch(e) {{}}
                 function denorm(v, lo, hi) {{ return (v + 1) * (hi - lo) / 2 + lo; }}
                 function _trendTStat(name, fromIdx, toIdx) {{
                     var d = _origData[name];
@@ -551,21 +553,12 @@
                     var scale = range ? (range[1] - range[0]) : ir;
                     return labels.map(function(k) {{ return Math.max(_spsaC / Math.pow(k + 1, _spsaGamma) * scale, 1.0); }});
                 }}
-                function _deltaDataForParam(name) {{
-                    var range = paramRanges[name];
-                    var d = _origData[name];
-                    return labels.map(function(_, i) {{
-                        if (i === 0 || d[i] == null || d[i-1] == null) return null;
-                        if (range) return denorm(d[i], range[0], range[1]) - denorm(d[i-1], range[0], range[1]);
-                        return d[i] - d[i-1];
-                    }});
-                }}
                 function _updatePertToggle() {{
                     var tog = document.getElementById('pertToggle');
                     if (!tog) return;
                     tog.style.display = _soloParam ? 'flex' : 'none';
                     var accent = getComputedStyle(document.documentElement).getPropertyValue('--accent-start').trim() || '#667eea';
-                    [['togValue','value'],['togAbs','pert'],['togDelta','delta']].forEach(function(pair) {{
+                    [['togValue','value'],['togAbs','pert']].forEach(function(pair) {{
                         var el = document.getElementById(pair[0]);
                         var on = _pertView === pair[1];
                         el.style.background = on ? accent : '#eee';
@@ -590,19 +583,14 @@
                         delete ch.options.scales.y.max;
                         ch.options.plugins.title.display = true;
                         ch.options.plugins.title.text = _soloParam + '  |Pert|';
-                        ch.options.plugins.subtitle = {{ display: false }};
-                    }} else if (mode === 'delta') {{
-                        soloDs.data = _deltaDataForParam(_soloParam);
-                        delete ch.options.scales.y.min;
-                        delete ch.options.scales.y.max;
-                        ch.options.plugins.title.display = true;
-                        ch.options.plugins.title.text = _soloParam + '  \u0394\u03B8';
-                        window.updateThetaSubtitle();
+                        ch._sub1 = null; ch._sub2 = null;
                     }} else {{
                         var range = paramRanges[_soloParam];
                         soloDs.data = range ? _origData[_soloParam].map(function(v) {{ return v != null ? denorm(v, range[0], range[1]) : null; }}) : _origData[_soloParam].slice();
                         if (range) {{ ch.options.scales.y.min = range[0]; ch.options.scales.y.max = range[1]; }}
                         else {{ delete ch.options.scales.y.min; delete ch.options.scales.y.max; }}
+                        ch.options.plugins.title.display = true;
+                        ch.options.plugins.title.text = _soloParam;
                         window.updateThetaSubtitle();
                     }}
                     ch.update();
@@ -622,44 +610,37 @@
                     var variance = vals.reduce(function(a, v) {{ return a + (v - mean) * (v - mean); }}, 0) / vals.length;
                     return Math.sqrt(variance) / range * 100;
                 }}
+                window._reapplySoloRange = function() {{
+                    if (!_soloParam || _pertView !== 'value') return;
+                    var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
+                    if (!ch) return;
+                    var range = paramRanges[_soloParam];
+                    if (!range) return;
+                    var soloDs = ch.data.datasets.find(function(d) {{ return d.label === _soloParam; }});
+                    if (soloDs) soloDs.data = _origData[_soloParam].map(function(v) {{ return v != null ? denorm(v, range[0], range[1]) : null; }});
+                    ch.options.scales.y.min = range[0];
+                    ch.options.scales.y.max = range[1];
+                    ch.update();
+                }};
                 // Expose globally so applyZoomRange can call it
                 window.updateThetaSubtitle = function() {{
                     var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
                     if (!ch) return;
-                    if (_pertView === 'pert') return;
-                    if (!_soloParam) {{
-                        ch.options.plugins.subtitle = {{ display: false }};
+                    if (_pertView === 'pert' || !_soloParam) {{
+                        ch._sub1 = null; ch._sub2 = null;
                         ch.update('none');
                         return;
                     }}
                     var f = parseInt(document.getElementById('zoomFrom').value) || 0;
                     var t = parseInt(document.getElementById('zoomTo').value) || (_labels.length - 1);
-                    var canvas = document.getElementById('thetaChart');
-                    if (_pertView === 'delta') {{
-                        var tstat = _trendTStat(_soloParam, f, t);
-                        if (tstat != null) {{
-                            var at = Math.abs(tstat);
-                            var tColor = at >= 2.0 ? '#1B8A2A' : at >= 1.0 ? '#B86800' : '#999';
-                            var arrow = tstat > 0 ? '\u2197' : tstat < 0 ? '\u2198' : '\u2192';
-                            ch.options.plugins.subtitle = {{ display: true, text: 'Trend: ' + tstat.toFixed(1) + ' ' + arrow, font: {{ size: 15, weight: 'bold' }}, color: tColor, padding: {{ bottom: 8 }} }};
-                            var dir = tstat > 0 ? 'rising' : 'falling';
-                            var tip = at >= 2.0 ? ('Strong ' + dir + ' trend. The optimizer is confidently pushing this parameter ' + (tstat > 0 ? 'higher' : 'lower') + '.') : at >= 1.0 ? ('Weak ' + dir + ' trend, not yet confident. More iterations may clarify.') : ('No clear trend. This parameter may be near its optimum, or may not affect playing strength.');
-                            tip += '\n\nTrend = linear regression slope / standard error (t-statistic).';
-                            canvas.title = tip;
-                        }} else {{
-                            ch.options.plugins.subtitle = {{ display: false }};
-                            canvas.title = '';
-                        }}
-                    }} else {{
-                        canvas.title = '';
-                        var pct = sliceConvergence(_soloParam, f, t);
-                        if (pct != null) {{
-                            var convColor = pct < 2 ? '#1B8A2A' : pct < 5 ? '#B86800' : '#C62828';
-                            ch.options.plugins.subtitle = {{ display: true, text: 'StdDev/Range: ' + pct.toFixed(1) + '%', font: {{ size: 15, weight: 'bold' }}, color: convColor, padding: {{ bottom: 8 }} }};
-                        }} else {{
-                            ch.options.plugins.subtitle = {{ display: false }};
-                        }}
-                    }}
+                    var pct = sliceConvergence(_soloParam, f, t);
+                    ch._sub1 = pct != null ? {{ text: 'StdDev/Range: ' + pct.toFixed(1) + '%', color: pct < 2 ? '#1B8A2A' : pct < 5 ? '#B86800' : '#C62828' }} : null;
+                    var tstat = _trendTStat(_soloParam, f, t);
+                    if (tstat != null) {{
+                        var at = Math.abs(tstat);
+                        var arrow = tstat > 0 ? '\u2197' : tstat < 0 ? '\u2198' : '\u2192';
+                        ch._sub2 = {{ text: 'Trend: ' + tstat.toFixed(1) + ' ' + arrow, color: at >= 2.0 ? '#1B8A2A' : at >= 1.0 ? '#B86800' : '#999' }};
+                    }} else {{ ch._sub2 = null; }}
                     ch.update('none');
                 }};
                 var thetaOpts = {{
@@ -691,7 +672,7 @@
                                     _updatePertToggle();
                                 }} else {{
                                     // Solo this param (preserve current view mode)
-                                    var keepMode = _soloParam ? _pertView : 'value';
+                                    var keepMode = (_soloParam && _pertView === 'pert') ? 'pert' : 'value';
                                     ch.data.datasets = ch.data.datasets.filter(function(d) {{ return !d._isThreshold; }});
                                     _soloParam = name;
                                     _pertView = 'value';
@@ -719,7 +700,7 @@
                                         delete ch.options.scales.y.max;
                                     }}
                                     ch.options.plugins.title.display = true;
-                                    ch.options.plugins.title.text = name + (range ? ' [' + range[0] + ' \u2013 ' + range[1] + ']' : '');
+                                    ch.options.plugins.title.text = name;
                                     _updatePertToggle();
                                     if (keepMode !== 'value') {{ setPertView(keepMode); return; }}
                                 }}
@@ -735,8 +716,86 @@
                 initChart('thetaChart', {{
                     type: 'line',
                     data: {{ labels: labels, datasets: thetaDatasets }},
-                    options: thetaOpts
+                    options: thetaOpts,
+                    plugins: [{{
+                        id: 'insetSub',
+                        afterDraw: function(chart) {{
+                            var s1 = chart._sub1, s2 = chart._sub2;
+                            if (!s1 && !s2) {{ chart._insetBox = null; return; }}
+                            var ctx = chart.ctx, ca = chart.chartArea;
+                            ctx.save();
+                            ctx.font = 'bold 14px ' + (Chart.defaults.font.family || 'sans-serif');
+                            var lines = [];
+                            if (s1) lines.push(s1);
+                            if (s2) lines.push(s2);
+                            var pad = 6, lh = 20;
+                            var w = Math.max.apply(null, lines.map(function(l) {{ return ctx.measureText(l.text).width; }})) + pad * 2;
+                            var h = lines.length * lh + pad * 2 - 2;
+                            var ix, iy;
+                            if (chart._insetPos) {{
+                                ix = Math.max(ca.left + 4, Math.min(ca.right - w - 4, chart._insetPos.x));
+                                iy = Math.max(ca.top + 4, Math.min(ca.bottom - h - 4, chart._insetPos.y));
+                            }} else {{
+                                ix = ca.right - w - 8; iy = ca.top + 8;
+                            }}
+                            chart._insetBox = {{ x: ix, y: iy, w: w, h: h }};
+                            ctx.fillStyle = 'rgba(255,255,255,0.82)';
+                            ctx.strokeStyle = 'rgba(0,0,0,0.10)';
+                            ctx.lineWidth = 1;
+                            ctx.beginPath();
+                            ctx.roundRect(ix, iy, w, h, 4);
+                            ctx.fill(); ctx.stroke();
+                            ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+                            lines.forEach(function(l, i) {{
+                                ctx.fillStyle = l.color;
+                                ctx.fillText(l.text, ix + pad, iy + pad + i * lh);
+                            }});
+                            ctx.restore();
+                        }}
+                    }}]
                 }});
+                (function() {{
+                    var canvas = document.getElementById('thetaChart');
+                    var _drag = null;
+                    canvas.addEventListener('mousedown', function(e) {{
+                        var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(canvas);
+                        if (!ch || !ch._insetBox) return;
+                        var r = canvas.getBoundingClientRect();
+                        var mx = e.clientX - r.left, my = e.clientY - r.top;
+                        var b = ch._insetBox;
+                        if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {{
+                            _drag = {{ ox: mx - b.x, oy: my - b.y }};
+                            e.stopPropagation();
+                        }}
+                    }});
+                    canvas.addEventListener('mousemove', function(e) {{
+                        var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(canvas);
+                        if (!ch) return;
+                        var r = canvas.getBoundingClientRect();
+                        var mx = e.clientX - r.left, my = e.clientY - r.top;
+                        var b = ch._insetBox;
+                        canvas.style.cursor = (b && mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) ? 'grab' : '';
+                        if (!_drag) return;
+                        ch._insetPos = {{ x: mx - _drag.ox, y: my - _drag.oy }};
+                        ch.update('none');
+                        e.stopPropagation();
+                    }});
+                    canvas.addEventListener('mouseup', function() {{
+                        if (_drag) {{
+                            var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(canvas);
+                            if (ch && ch._insetPos) try {{ localStorage.setItem('insetPos', JSON.stringify(ch._insetPos)); }} catch(e) {{}}
+                        }}
+                        _drag = null;
+                    }});
+                    canvas.addEventListener('mouseleave', function() {{ _drag = null; }});
+                    try {{
+                        var _ip = JSON.parse(localStorage.getItem('insetPos'));
+                        if (_ip && _ip.x != null) {{
+                            var _ich = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(canvas);
+                            if (_ich) _ich._insetPos = _ip;
+                        }}
+                    }} catch(e) {{}}
+                }})();
 
                 makeChart('eloChart', history.map(h => h.elo_diff), 'ELO Diff', '#e91e63');
                 makeChart('akChart', history.map(h => h.a_k), 'a_k', '#2196F3');
@@ -758,7 +817,7 @@
                         }});
                         if (_rRange) {{ _rch.options.scales.y.min = _rRange[0]; _rch.options.scales.y.max = _rRange[1]; }}
                         _rch.options.plugins.title.display = true;
-                        _rch.options.plugins.title.text = _soloParam + (_rRange ? ' [' + _rRange[0] + ' \u2013 ' + _rRange[1] + ']' : '');
+                        _rch.options.plugins.title.text = _soloParam;
                         _updatePertToggle();
                         if (_pertView !== 'value') setPertView(_pertView);
                         else _rch.update();
