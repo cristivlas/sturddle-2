@@ -395,6 +395,12 @@
                     var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(c);
                     if (ch) ch.resize();
                 }});
+                // Re-apply zoom after createPending/resize so that newly created or
+                // resized charts always reflect the current slider range.
+                if (_labels.length) {{
+                    var _sf = document.getElementById('zoomFrom'), _st = document.getElementById('zoomTo');
+                    if (_sf && _st) applyZoomRange(+_sf.value, +_st.value);
+                }}
             }});
         }}
 
