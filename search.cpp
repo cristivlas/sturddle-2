@@ -1417,6 +1417,8 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
         ctxt.reset();
 
+        bool cancelled = false;
+
         {   /* SMP scope start */
             SMPTasks tasks(ctxt, table, score);
 
@@ -1424,34 +1426,40 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
             const auto completed_best = ctxt._prev;
             const auto iter_score = search_iteration(ctxt, table, score);
 
-            if (ctxt.is_cancelled())
+            cancelled = ctxt.is_cancelled();
+
+            if (cancelled)
             {
                 if constexpr(IGNORE_CANCELLED_ITER)
                     ctxt._best_move = completed_best;
-                break;
             }
-            score = iter_score; /* retain the score for completed iterations */
-
-            if (table._reset_window)
+            else
             {
-            #if 0 /* debug */
-                std::cout << "WINDOW RESET(" << i << "): " << score << " (";
-                std::cout << table._w_alpha << ", " << table._w_beta << ")\n";
-            #endif
+                score = iter_score; /* retain the score for completed iterations */
 
-                ctxt.cancel();
-                table._reset_window = false;
+                if (table._reset_window)
+                {
+                #if 0 /* debug */
+                    std::cout << "WINDOW RESET(" << i << "): " << score << " (";
+                    std::cout << table._w_alpha << ", " << table._w_beta << ")\n";
+                #endif
 
-                continue;
+                    ctxt.cancel();
+                    table._reset_window = false;
+
+                    continue;
+                }
+
+                tasks.do_report();
             }
-
-            tasks.do_report();
 
         }   /* SMP scope end */
 
         ASSERT(ctxt.iteration());
 
-        /* post iteration info if there's a registered callback */
+        /* post iteration info if there's a registered callback;
+         * report on cancellation too so that PV stays in sync with bestmove
+        */
         if (Context::_on_iter)
         {
             IterationInfo info = { score, table.nodes(), 0, 0, table.tb_hits() };
@@ -1466,6 +1474,9 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
             (*Context::_on_iter)(Context::_engine, &ctxt, &info);
         }
+
+        if (cancelled)
+            break;
 
         if (ctxt._has_singleton && !table._analysis)
             break;

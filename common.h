@@ -91,7 +91,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define IMPROVEMENT_EXTENSION               false
 
-#define IGNORE_CANCELLED_ITER               true
+#define IGNORE_CANCELLED_ITER               false
 
 #define KILLER_MOVE_HEURISTIC               true
 
