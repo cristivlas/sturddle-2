@@ -1421,11 +1421,15 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
             SMPTasks tasks(ctxt, table, score);
 
             /* main thread search */
+            const auto completed_best = ctxt._prev;
             const auto iter_score = search_iteration(ctxt, table, score);
 
             if (ctxt.is_cancelled())
+            {
+                if constexpr(IGNORE_CANCELLED_ITER)
+                    ctxt._best_move = completed_best;
                 break;
-
+            }
             score = iter_score; /* retain the score for completed iterations */
 
             if (table._reset_window)
