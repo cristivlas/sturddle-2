@@ -763,37 +763,44 @@
                 (function() {{
                     var canvas = document.getElementById('thetaChart');
                     var _drag = null;
+                    function _insetHit(ch, mx, my) {{ var b = ch._insetBox; return b && mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h; }}
+                    function _startDrag(ch, mx, my, e) {{ var b = ch._insetBox; _drag = {{ ox: mx - b.x, oy: my - b.y }}; e.stopPropagation(); }}
+                    function _moveDrag(ch, mx, my, e) {{ ch._insetPos = {{ x: mx - _drag.ox, y: my - _drag.oy }}; ch.update('none'); e.stopPropagation(); }}
+                    function _endDrag(ch) {{ if (ch && ch._insetPos) try {{ localStorage.setItem('insetPos', JSON.stringify(ch._insetPos)); }} catch(e) {{}} _drag = null; }}
                     canvas.addEventListener('mousedown', function(e) {{
                         var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(canvas);
                         if (!ch || !ch._insetBox) return;
                         var r = canvas.getBoundingClientRect();
                         var mx = e.clientX - r.left, my = e.clientY - r.top;
-                        var b = ch._insetBox;
-                        if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {{
-                            _drag = {{ ox: mx - b.x, oy: my - b.y }};
-                            e.stopPropagation();
-                        }}
+                        if (_insetHit(ch, mx, my)) _startDrag(ch, mx, my, e);
                     }});
                     canvas.addEventListener('mousemove', function(e) {{
                         var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(canvas);
                         if (!ch) return;
                         var r = canvas.getBoundingClientRect();
                         var mx = e.clientX - r.left, my = e.clientY - r.top;
-                        var b = ch._insetBox;
-                        canvas.style.cursor = (b && mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) ? 'grab' : '';
+                        canvas.style.cursor = _insetHit(ch, mx, my) ? 'grab' : '';
                         if (!_drag) return;
-                        ch._insetPos = {{ x: mx - _drag.ox, y: my - _drag.oy }};
-                        ch.update('none');
-                        e.stopPropagation();
+                        _moveDrag(ch, mx, my, e);
                     }});
-                    canvas.addEventListener('mouseup', function() {{
-                        if (_drag) {{
-                            var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(canvas);
-                            if (ch && ch._insetPos) try {{ localStorage.setItem('insetPos', JSON.stringify(ch._insetPos)); }} catch(e) {{}}
-                        }}
-                        _drag = null;
-                    }});
+                    canvas.addEventListener('mouseup', function() {{ _endDrag(typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(canvas)); }});
                     canvas.addEventListener('mouseleave', function() {{ _drag = null; }});
+                    canvas.addEventListener('touchstart', function(e) {{
+                        var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(canvas);
+                        if (!ch || !ch._insetBox) return;
+                        var t = e.touches[0], r = canvas.getBoundingClientRect();
+                        var mx = t.clientX - r.left, my = t.clientY - r.top;
+                        if (_insetHit(ch, mx, my)) {{ _startDrag(ch, mx, my, e); e.preventDefault(); }}
+                    }}, {{ passive: false }});
+                    canvas.addEventListener('touchmove', function(e) {{
+                        if (!_drag) return;
+                        var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(canvas);
+                        if (!ch) return;
+                        var t = e.touches[0], r = canvas.getBoundingClientRect();
+                        _moveDrag(ch, t.clientX - r.left, t.clientY - r.top, e);
+                        e.preventDefault();
+                    }}, {{ passive: false }});
+                    canvas.addEventListener('touchend', function() {{ _endDrag(typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(canvas)); }});
                     try {{
                         var _ip = JSON.parse(localStorage.getItem('insetPos'));
                         if (_ip && _ip.x != null) {{
