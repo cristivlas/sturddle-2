@@ -450,6 +450,9 @@
                 history.sort((a,b) => (a.iteration||0) - (b.iteration||0));
                 const labels = history.map(h => h.iteration);
                 _labels = labels;
+                var perfMode = labels.length >= 500;
+                var _pr = perfMode ? 0 : 1;
+                var _tn = perfMode ? 0 : 0.25;
                 var sMax = labels.length - 1;
                 var sf = document.getElementById('zoomFrom');
                 var st = document.getElementById('zoomTo');
@@ -471,7 +474,13 @@
                 const defaultOpts = {{
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: {{ legend: {{ display: false }} }}
+                    parsing: false,
+                    animation: perfMode ? false : {{}},
+                    plugins: {{
+                        legend: {{ display: false }},
+                        decimation: {{ enabled: true, algorithm: 'lttb', samples: 800 }}
+                    }},
+                    scales: {{ x: {{ type: 'linear' }} }}
                 }};
 
                 // Create chart now if visible, otherwise stash for deferred creation
@@ -488,16 +497,15 @@
                     initChart(canvasId, {{
                         type: 'line',
                         data: {{
-                            labels: labels,
                             datasets: [{{
                                 label: label,
                                 data: data,
                                 borderColor: color,
                                 backgroundColor: color + '20',
-                                tension: 0.25,
-                                pointRadius: 1,
+                                tension: _tn,
+                                pointRadius: _pr,
                                 borderWidth: 2,
-                                fill: true
+                                fill: !perfMode
                             }}]
                         }},
                         options: defaultOpts
@@ -511,15 +519,15 @@
                 // Store original normalized data for each param
                 var _origData = {{}};
                 const thetaDatasets = thetaKeys.map((k, i) => {{
-                    var d = history.map(h => (h.theta && k in h.theta) ? h.theta[k] : null);
+                    var d = history.map(h => ({{x: h.iteration, y: (h.theta && k in h.theta) ? h.theta[k] : null}}));
                     _origData[k] = d.slice();
                     return {{
                         label: k,
                         data: d,
                         borderColor: tableau10[i % tableau10.length],
                         backgroundColor: tableau10[i % tableau10.length] + '30',
-                        tension: 0.25,
-                        pointRadius: 1,
+                        tension: _tn,
+                        pointRadius: _pr,
                         borderWidth: 2,
                     }};
                 }});
@@ -533,9 +541,9 @@
                     var range = paramRanges[name];
                     var xs = [], ys = [];
                     for (var i = fromIdx; i <= toIdx; i++) {{
-                        if (d[i] != null) {{
+                        if (d[i] && d[i].y != null) {{
                             xs.push(i);
-                            ys.push(range ? denorm(d[i], range[0], range[1]) : d[i]);
+                            ys.push(range ? denorm(d[i].y, range[0], range[1]) : d[i].y);
                         }}
                     }}
                     if (xs.length < CONV_MIN) return null;
@@ -557,7 +565,7 @@
                     var ir = paramInternalRanges[name];
                     if (!ir) return null;
                     var scale = range ? (range[1] - range[0]) : ir;
-                    return labels.map(function(k) {{ return Math.max(_spsaC / Math.pow(k + 1, _spsaGamma) * scale, 1.0); }});
+                    return labels.map(function(k) {{ return {{x: k, y: Math.max(_spsaC / Math.pow(k + 1, _spsaGamma) * scale, 1.0)}}; }});
                 }}
                 function _updatePertToggle() {{
                     var tog = document.getElementById('pertToggle');
@@ -584,7 +592,7 @@
                         var data = _pertDataForParam(_soloParam);
                         if (!data) return;
                         soloDs.data = data;
-                        ch.data.datasets.push({{ label: 'min pert', data: labels.map(function() {{ return 1.0; }}), borderColor: '#e53935', borderDash: [5,3], borderWidth: 1.5, pointRadius: 0, fill: false, _isThreshold: true }});
+                        ch.data.datasets.push({{ label: 'min pert', data: labels.map(function(k) {{ return {{x: k, y: 1.0}}; }}), borderColor: '#e53935', borderDash: [5,3], borderWidth: 1.5, pointRadius: 0, fill: false, _isThreshold: true }});
                         ch.options.scales.y.min = 0;
                         delete ch.options.scales.y.max;
                         ch.options.plugins.title.display = true;
@@ -592,7 +600,7 @@
                         ch._sub1 = null; ch._sub2 = null;
                     }} else {{
                         var range = paramRanges[_soloParam];
-                        soloDs.data = range ? _origData[_soloParam].map(function(v) {{ return v != null ? denorm(v, range[0], range[1]) : null; }}) : _origData[_soloParam].slice();
+                        soloDs.data = range ? _origData[_soloParam].map(function(pt) {{ return {{x: pt.x, y: pt.y != null ? denorm(pt.y, range[0], range[1]) : null}}; }}) : _origData[_soloParam].slice();
                         if (range) {{ ch.options.scales.y.min = range[0]; ch.options.scales.y.max = range[1]; }}
                         else {{ delete ch.options.scales.y.min; delete ch.options.scales.y.max; }}
                         ch.options.plugins.title.display = true;
@@ -609,7 +617,7 @@
                     if (!d) return null;
                     var vals = [];
                     for (var i = fromIdx; i <= toIdx; i++) {{
-                        if (d[i] != null) vals.push(d[i]);
+                        if (d[i] && d[i].y != null) vals.push(d[i].y);
                     }}
                     if (vals.length < CONV_MIN) return null;
                     var mean = vals.reduce(function(a, b) {{ return a + b; }}, 0) / vals.length;
@@ -623,7 +631,7 @@
                     var range = paramRanges[_soloParam];
                     if (!range) return;
                     var soloDs = ch.data.datasets.find(function(d) {{ return d.label === _soloParam; }});
-                    if (soloDs) soloDs.data = _origData[_soloParam].map(function(v) {{ return v != null ? denorm(v, range[0], range[1]) : null; }});
+                    if (soloDs) soloDs.data = _origData[_soloParam].map(function(pt) {{ return {{x: pt.x, y: pt.y != null ? denorm(pt.y, range[0], range[1]) : null}}; }});
                     ch.options.scales.y.min = range[0];
                     ch.options.scales.y.max = range[1];
                     ch.update();
@@ -652,6 +660,8 @@
                 var thetaOpts = {{
                     responsive: true,
                     maintainAspectRatio: false,
+                    parsing: false,
+                    animation: perfMode ? false : {{}},
                     plugins: {{
                         legend: {{
                             display: window.innerWidth > 700,
@@ -688,8 +698,8 @@
                                         if (d.label === name) {{
                                             d.hidden = false;
                                             if (range) {{
-                                                d.data = _origData[name].map(function(v) {{
-                                                    return v != null ? denorm(v, range[0], range[1]) : null;
+                                                d.data = _origData[name].map(function(pt) {{
+                                                    return {{x: pt.x, y: pt.y != null ? denorm(pt.y, range[0], range[1]) : null}};
                                                 }});
                                             }} else {{
                                                 d.data = _origData[name].slice();
@@ -715,13 +725,14 @@
                                 window.updateThetaSubtitle();
                             }}
                         }},
-                        title: {{ display: false, font: {{ size: 14 }} }}
+                        title: {{ display: false, font: {{ size: 14 }} }},
+                        decimation: {{ enabled: true, algorithm: 'lttb', samples: 800 }}
                     }},
-                    scales: {{ y: {{}} }}
+                    scales: {{ x: {{ type: 'linear' }}, y: {{}} }}
                 }};
                 initChart('thetaChart', {{
                     type: 'line',
-                    data: {{ labels: labels, datasets: thetaDatasets }},
+                    data: {{ datasets: thetaDatasets }},
                     options: thetaOpts,
                     plugins: [{{
                         id: 'insetSub',
@@ -810,9 +821,9 @@
                     }} catch(e) {{}}
                 }})();
 
-                makeChart('eloChart', history.map(h => h.elo_diff), 'ELO Diff', '#e91e63');
-                makeChart('akChart', history.map(h => h.a_k), 'a_k', '#2196F3');
-                makeChart('ckChart', history.map(h => h.c_k), 'c_k', '#FF9800');
+                makeChart('eloChart', history.map(h => ({{x: h.iteration, y: h.elo_diff}})), 'ELO Diff', '#e91e63');
+                makeChart('akChart', history.map(h => ({{x: h.iteration, y: h.a_k}})), 'a_k', '#2196F3');
+                makeChart('ckChart', history.map(h => ({{x: h.iteration, y: h.c_k}})), 'c_k', '#FF9800');
 
                 // Restore solo param + view mode
                 if (_soloParam) {{
@@ -824,7 +835,7 @@
                         _rds.forEach(function(d) {{
                             if (d.label === _soloParam) {{
                                 d.hidden = false;
-                                if (_rRange) d.data = _origData[_soloParam].map(function(v) {{ return v != null ? denorm(v, _rRange[0], _rRange[1]) : null; }});
+                                if (_rRange) d.data = _origData[_soloParam].map(function(pt) {{ return {{x: pt.x, y: pt.y != null ? denorm(pt.y, _rRange[0], _rRange[1]) : null}}; }});
                                 else d.data = _origData[_soloParam].slice();
                             }} else {{ d.hidden = true; }}
                         }});
