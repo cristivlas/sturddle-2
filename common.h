@@ -56,7 +56,6 @@ using score_t = int;
 
 constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
-#define WEIGHT_TUNING_ENABLED               true
 
 #if WEIGHT_TUNING_ENABLED
   #define TUNING_PARTIAL                    true
