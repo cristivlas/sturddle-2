@@ -315,8 +315,8 @@ DECLARE_VALUE(  NULL_MOVE_MIN_DRAUGHT,                0,   -1,       7)
 
 /* null_move_reduction */
 DECLARE_VALUE(  NULL_MOVE_REDUCTION_BASE,             4,    2,       5)
-DECLARE_NORMAL( NULL_MOVE_REDUCTION_DEPTH_PCT,       25,   12,     100)
-DECLARE_NORMAL( NULL_MOVE_REDUCTION_DIV,            278,  200,     300)
+DECLARE_VALUE(  NULL_MOVE_REDUCTION_DEPTH_PCT,       25,   12,     100)
+DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,            278,  200,     300)
 
 /* Do not verify null move below this depth */
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,      20)
