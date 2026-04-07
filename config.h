@@ -294,7 +294,7 @@ DECLARE_VALUE(  KILLER_MOVES_DEPTH_MARGIN,          261,   10,     300)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,       7)
 
 DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,      15)
-DECLARE_VALUE(  MULTICUT_MARGIN,                    189,   20,     200)
+DECLARE_VALUE(  MULTICUT_MARGIN,                    182,   20,     200)
 
 #if USE_MOVE_PREDICTION
 DECLARE_VALUE(  MOVE_PREDICTION_MAX_ITER,             3,    0,      10)
@@ -306,8 +306,8 @@ DECLARE_VALUE(  NNUE_MAX_EVAL,                      459,  400,     600)
 #endif /* WITH_NNUE */
 
 /* is_null_move_ok */
-DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT_PCT,         118,   50,    1000)
-DECLARE_VALUE(  NULL_MOVE_MARGIN,                   104,   40,     250)
+DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT_PCT,          53,   50,    1000)
+DECLARE_VALUE(  NULL_MOVE_MARGIN,                    90,   40,     250)
 DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  3,    2,       5)
 
 /* Minimum depth when verifying */
