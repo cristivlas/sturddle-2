@@ -344,9 +344,38 @@ def main():
         step += 1
     if not args.server_only:
         print(f'{indent}{step}. python {worker_py} -c worker.json')
+        _print_numa_hint(worker_config['concurrency'], indent)
 
     if not args.worker_only and not tune_params:
         warnings.warn('No tunable parameters selected!')
+
+
+def _print_numa_hint(concurrency: int, indent: str):
+    """If this machine is NUMA with 2+ CPU-bearing nodes, print a hint
+    pointing the user at the split/launch helpers. No-op otherwise."""
+    try:
+        from split_numa_config import numa_available, cpu_bearing_nodes
+    except ImportError:
+        return
+    if not numa_available():
+        return
+    nodes = cpu_bearing_nodes()
+    n = len(nodes)
+    if n < 2:
+        return
+    spsa_dir = os.path.dirname(os.path.abspath(__file__))
+    split_py = os.path.join(spsa_dir, 'split_numa_config.py')
+    launch_py = os.path.join(spsa_dir, 'launch_numa_workers.py')
+    print()
+    print(f'{indent}NUMA detected: {n} CPU-bearing nodes. For pinned per-node workers:')
+    if concurrency % n == 0:
+        print(f'{indent}  python {split_py} worker.json')
+        print(f'{indent}  python {launch_py} worker.json')
+    else:
+        lower = (concurrency // n) * n
+        upper = lower + n
+        suggestions = ' or '.join(str(v) for v in (lower, upper) if v > 0)
+        print(f'{indent}  (adjust concurrency to {suggestions} first -- must divide {n} evenly)')
 
 
 if __name__ == '__main__':

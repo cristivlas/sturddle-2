@@ -271,3 +271,31 @@ Games are split evenly: half the chunk's games for theta+ vs reference, half for
 theta- vs reference. The coordinator computes independent win rates for each side
 and derives the SPSA gradient from the difference.
 
+### NUMA (Linux only)
+
+On multi-socket / multi-NUMA-node machines, a single worker's threads and allocations
+get scheduled across nodes by the kernel, causing cross-socket memory traffic and cache
+thrash. Running one worker per NUMA node pinned via `numactl` keeps each worker's memory
+local to its node — typically **5–15% throughput improvement** for chess engine workloads.
+
+**Requirements**: Linux, `libnuma.so.1`, and `numactl` in `PATH`. Windows and macOS are
+not supported at this time — the helpers detect this and no-op silently.
+
+**Workflow**:
+
+```bash
+# 1. Split worker.json into per-node copies (worker-0.json, worker-1.json, ...).
+#    Each copy has suffixed name/log_file/games_dir and concurrency divided evenly.
+python /path/to/tools/tuneup/spsa/split_numa_config.py worker.json
+
+# 2. Launch one worker per CPU-bearing NUMA node, each pinned with numactl.
+#    Ctrl+C on the launcher prompts once ([w]ait / [s]top / Enter) and signals all workers.
+python /path/to/tools/tuneup/spsa/launch_numa_workers.py worker.json
+```
+
+Concurrency must divide evenly across nodes; `split_numa_config.py` will suggest the
+nearest valid values if it doesn't. Memory-only NUMA nodes (no CPUs) are skipped.
+
+`genconfig.py` prints a hint pointing to these helpers when it detects a multi-node
+NUMA machine at project creation.
+
