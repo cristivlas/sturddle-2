@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import ctypes
 import math
 import json
 import logging
@@ -18,6 +19,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -50,11 +52,45 @@ VALIDATE_TIMEOUT = 3       # seconds for chunk-validity HTTP checks
 _current_process = None       # cutechess-cli Popen while games run
 _shutdown_requested = False   # set True after operator chooses "wait"
 _cutechess_debug = False      # set True via --cutechess-debug flag
+_managed_mode = False         # set True by --managed; launcher owns the prompt
 _tool_label = "cutechess-cli"  # display name; updated to "fastchess" at startup
 
 
 _ramdisk_mount = ""  # resolved mount point for the active RAM disk
 _ramdisk_owned = False  # True only if we created the drive this session
+
+
+def _get_numa_node() -> int:
+    """Return the NUMA node of the current process, or -1 if unavailable."""
+    try:
+        libnuma = ctypes.CDLL("libnuma.so.1")
+        if libnuma.numa_available() < 0:
+            return -1
+        cpu = os.sched_getaffinity(0)  # set of CPUs we're allowed to run on
+        # Take the first CPU and ask which node it belongs to
+        first_cpu = min(cpu)
+        return libnuma.numa_node_of_cpu(first_cpu)
+    except (OSError, AttributeError):
+        return -1
+
+
+_numactl_prefix = None  # cached ["numactl", ...] or [] -- see _wrap_numactl
+
+
+def _wrap_numactl(cmd: list) -> list:
+    """Prepend numactl pinning to cmd, caching the prefix on first call.
+
+    Returns cmd unchanged on Windows, non-NUMA machines, or if numactl
+    is not installed -- making this a safe no-op in all those cases.
+    """
+    global _numactl_prefix
+    if _numactl_prefix is None:
+        node = _get_numa_node()
+        if node < 0 or not shutil.which("numactl"):
+            _numactl_prefix = []
+        else:
+            _numactl_prefix = ["numactl", f"--cpunodebind={node}", f"--membind={node}"]
+    return _numactl_prefix + cmd
 
 
 def _needs_ramdisk(worker_config):
@@ -107,10 +143,13 @@ def setup_ramdisk(worker_config) -> str:
         _ramdisk_owned = True
         return drive_root
     else:
-        # Linux/macOS: use /dev/shm (already tmpfs, no root needed)
+        # Linux/macOS: use /dev/shm (already tmpfs, no root needed).
+        # Suffix the mount with the worker name so co-located workers
+        # (e.g. one per NUMA node) don't share or race on teardown.
         if not os.path.isdir("/dev/shm"):
             raise RuntimeError("/dev/shm not available -- cannot create RAM-backed temp")
-        mount = "/dev/shm/spsa_temp"
+        suffix = worker_config.name or platform.node()
+        mount = f"/dev/shm/spsa_temp_{suffix}"
         os.makedirs(mount, exist_ok=True)
         logger.info("Using /dev/shm for engine temp: %s", mount)
         _ramdisk_mount = mount
@@ -401,8 +440,17 @@ def _handle_game_interrupt(proc):
         [s]top -- kill immediately
         Enter  -- dismiss, keep working (default)
     A second Ctrl+C during the wait force-kills the child.
+
+    In --managed mode the launcher owns the prompt; SIGINT always
+    means "stop now" -- kill cutechess and propagate to exit the loop.
     """
     global _shutdown_requested
+
+    if _managed_mode:
+        logger.info("SIGINT under --managed: killing %s", _tool_label)
+        proc.kill()
+        proc.wait()
+        raise KeyboardInterrupt
 
     if _shutdown_requested:
         logger.info("Force stop.")
@@ -440,6 +488,10 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
     else:
         logger.info("Running: %s", " ".join(cmd))
 
+    # Pin cutechess subprocess to same NUMA node as this worker process.
+    # No-op on Windows, non-NUMA machines, or if numactl is not installed.
+    cmd = _wrap_numactl(cmd)
+
     # Isolate child process from Ctrl+C so we can offer a graceful stop.
     # Windows: CREATE_NEW_PROCESS_GROUP prevents CTRL_C_EVENT propagation.
     # Unix: start_new_session puts the child in its own session.
@@ -462,7 +514,7 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
     stdout_buf = []
     stderr_buf = []
     log_path = Path(worker_config.log_file)
-    cc_log_name = _tool_label + ".log"
+    cc_log_name = f"{log_path.stem}-{_tool_label}.log"
     try:
         _cc_log = open(log_path.parent / cc_log_name, "w", buffering=1)
         _cc_log.write("=== chunk %s, iteration %d ===\n" % (work.chunk_id, work.iteration))
@@ -833,6 +885,26 @@ def worker_loop(worker_config: WorkerConfig):
             logger.exception("Terminating.")
             break
 
+def _install_managed_signals():
+    """Wire signal handlers for --managed mode.
+
+    SIGTERM: graceful -- set _shutdown_requested so the worker finishes
+             the current cutechess run, reports results, and exits.
+    SIGINT:  hard stop -- default handler raises KeyboardInterrupt,
+             which _handle_game_interrupt converts into an immediate
+             cutechess kill + loop break (see --managed branch there).
+    """
+    global _managed_mode
+    _managed_mode = True
+
+    def _term_handler(signum, frame):
+        global _shutdown_requested
+        _shutdown_requested = True
+        logger.info("SIGTERM received; will stop after current games complete")
+
+    signal.signal(signal.SIGTERM, _term_handler)
+
+
 def setup_logging(log_file: str, debug: bool, rotate: bool):
     """Configure logging to file and stdout."""
     formatter = logging.Formatter(
@@ -864,6 +936,9 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--cutechess-debug", action="store_true", help="Pass -debug to cutechess-cli (log engine I/O)")
     parser.add_argument("--clean", action="store_true", help="Wipe log file before starting")
+    parser.add_argument("--managed", action="store_true",
+                        help="Non-interactive mode: SIGTERM = graceful, SIGINT = stop now. "
+                             "Used by launch_numa_workers.py.")
     args = parser.parse_args()
 
     config = WorkerConfig.from_json(args.config)
@@ -877,6 +952,10 @@ def main():
     global _cutechess_debug
     _cutechess_debug = args.cutechess_debug
     setup_logging(config.log_file, debug=args.debug, rotate=config.log_rotation)
+
+    if args.managed:
+        _install_managed_signals()
+        logger.info("Running in --managed mode (launcher-driven shutdown)")
 
     logger.info("Starting worker")
     logger.info("Coordinator: %s", config.coordinator)
