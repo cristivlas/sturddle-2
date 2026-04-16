@@ -53,6 +53,22 @@ namespace search
     class TranspositionTable;
 
     /*
+     * Gravity-style decay: when `second` reaches HIST_MAX, halve both
+     * halves of the pair on the next update so the ratio is preserved
+     * while fresh data has room to influence the counter.
+     */
+    INLINE void saturate_history_update(std::pair<int, int>& c, int delta_first)
+    {
+        if (c.second >= HIST_MAX)
+        {
+            c.first  /= 2;
+            c.second /= 2;
+        }
+        c.first += delta_first;
+        ++c.second;
+    }
+
+    /*
      * Search algorithms
      */
     score_t negamax(Context&, TranspositionTable&);
@@ -453,7 +469,7 @@ namespace search
             auto& counters = _hcounters[turn].lookup(pt, move);
         #endif /* USE_BUTTERFLY_TABLES */
 
-            ++counters.second;
+            saturate_history_update(counters, 0);
         }
     }
 
@@ -473,8 +489,7 @@ namespace search
         ASSERT(pt != chess::PieceType::NONE);
         auto& counts = _hcounters[turn].lookup(pt, move);
     #endif /* USE_BUTTERFLY_TABLES */
-        ++counts.first;
-        ++counts.second;
+        saturate_history_update(counts, 1);
     }
 
 
@@ -490,8 +505,7 @@ namespace search
         if (attacker != chess::PieceType::NONE && victim != chess::PieceType::NONE)
         {
             auto& counts = _capture_hcounters[turn][attacker][victim];
-            counts.first += is_cutoff;
-            ++counts.second;
+            saturate_history_update(counts, int(is_cutoff));
         }
     }
 
@@ -535,8 +549,7 @@ namespace search
             if (prev_pt != chess::PieceType::NONE)
             {
                 auto& counts = (*_cmh[turn])[prev_pt][ctxt._move.to_square()].lookup(cur_pt, move);
-                counts.first += is_cutoff;
-                ++counts.second;
+                saturate_history_update(counts, int(is_cutoff));
             }
         }
 
@@ -549,8 +562,7 @@ namespace search
             if (gp_pt != chess::PieceType::NONE)
             {
                 auto& counts = (*_followup[turn])[gp_pt][gp_move.to_square()].lookup(cur_pt, move);
-                counts.first += is_cutoff;
-                ++counts.second;
+                saturate_history_update(counts, int(is_cutoff));
             }
         }
     }

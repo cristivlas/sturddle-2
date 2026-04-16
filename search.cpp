@@ -1059,8 +1059,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         if (ctxt._ply < PLY_HISTORY_MAX && abs(move_score) < MATE_HIGH)
                         {
                             auto& h = table._ply_history[ctxt._ply][ctxt.turn()][next_ctxt->_move];
-                            h.first += next_ctxt->improvement<THEM>() / ctxt.depth();
-                            ++h.second;
+                            saturate_history_update(h, next_ctxt->improvement<THEM>() / ctxt.depth());
                         }
 
                         if (ctxt.depth() >= COUNTER_MOVE_MIN_DEPTH)
