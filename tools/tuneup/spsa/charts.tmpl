@@ -470,7 +470,10 @@
                         if (zf > 0 || zt < sMax) _restoredZoom = [zf, zt];
                     }}
                 }} catch(e) {{}}
-                var tableau10 = ['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'];
+                var palette = [
+                    '#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac',
+                    '#a0cbe8','#ffbe7d','#8cd17d','#b6992d','#499894','#86bcb6','#79706e','#d37295','#d4a6c8','#d7b5a6'
+                ];
                 const defaultOpts = {{
                     responsive: true,
                     maintainAspectRatio: false,
@@ -524,8 +527,8 @@
                     return {{
                         label: k,
                         data: d,
-                        borderColor: tableau10[i % tableau10.length],
-                        backgroundColor: tableau10[i % tableau10.length] + '30',
+                        borderColor: palette[i % palette.length],
+                        backgroundColor: palette[i % palette.length] + '30',
                         tension: _tn,
                         pointRadius: _pr,
                         borderWidth: 2,

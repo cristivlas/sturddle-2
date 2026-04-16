@@ -561,7 +561,7 @@
         }}
 
         var CONVERGENCE_MIN = 5;
-        var GROUP_THRESHOLD = 10;
+        var GROUP_THRESHOLD = 16;
         var groupedMode = false;
         var groupMap = {{}};  // param name -> group key
 
@@ -637,7 +637,8 @@
             for (const [name, value] of Object.entries(theta)) {{
                 if (hiddenParams.has(name)) continue;
                 const tr = document.createElement('tr');
-                if (paramTints[name]) tr.style.background = paramTints[name];
+                var tint = paramTints[name] || (groupedMode && groupMap[name] ? paramTints[groupLabel(groupMap[name])] : '');
+                if (tint) tr.style.background = tint;
                 if (isConv) {{
                     var conv = paramConvergence(name);
                     var sdTxt = conv ? conv.stddev.toFixed(4) : '--';
@@ -841,7 +842,10 @@
             );
         }}
 
-        var tableau10 = ['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'];
+        var palette = [
+            '#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac',
+            '#a0cbe8','#ffbe7d','#8cd17d','#b6992d','#499894','#86bcb6','#79706e','#d37295','#d4a6c8','#d7b5a6'
+        ];
 
         function updateLegend() {{
             if (!thetaChart) return;
@@ -861,8 +865,8 @@
                             label: labelFn ? labelFn(k) : k,
                             _groupKey: k,
                             data: dataFn(k),
-                            borderColor: tableau10[i % tableau10.length],
-                            backgroundColor: tableau10[i % tableau10.length] + '30',
+                            borderColor: palette[i % palette.length],
+                            backgroundColor: palette[i % palette.length] + '30',
                             tension: 0.25,
                             pointRadius: 2,
                             borderWidth: 2,
