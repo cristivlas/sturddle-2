@@ -872,8 +872,11 @@ def worker_loop(worker_config: WorkerConfig):
             logger.info("Interrupted, shutting down.")
             break
         except urllib.error.URLError as e:
-            logger.warning("Connection error: %s, retrying in 5s", e)
-            time.sleep(5)
+            # http_post already retried internally for http_retry_timeout seconds
+            # with exponential backoff; reaching here means the coordinator has
+            # been unreachable for that long. Exit rather than loop forever.
+            logger.error("Coordinator unreachable after %ds: %s. Exiting.", retry_timeout, e)
+            break
         except (subprocess.TimeoutExpired, RetryableError) as e:
             consecutive_errors += 1
             msg = f"{_tool_label} timed out" if isinstance(e, subprocess.TimeoutExpired) else str(e)
