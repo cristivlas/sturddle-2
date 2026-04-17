@@ -19,6 +19,15 @@
             --border: #e0e0e0;
             --border-subtle: #eeeeee;
             --shadow: rgba(0,0,0,0.3);
+            --log-bg: #f5f5f5;
+            --log-num-bg: #eaeaea;
+            --log-num: #666666;
+            --log-text: #000000;
+            --log-hover: rgba(0,0,0,0.06);
+            --log-error: #b71c1c;
+            --log-warning: #8a4500;
+            --log-info: #0a6150;
+            --log-debug: #0d47a1;
         }}
         [data-theme="dark"] {{
             --surface: #1e1f26;
@@ -30,6 +39,15 @@
             --border: #383b47;
             --border-subtle: #2d2f39;
             --shadow: rgba(0,0,0,0.6);
+            --log-bg: #1e1e1e;
+            --log-num-bg: #252526;
+            --log-num: #858585;
+            --log-text: #d4d4d4;
+            --log-hover: rgba(255,255,255,0.05);
+            --log-error: #f48771;
+            --log-warning: #dcdcaa;
+            --log-info: #4ec9b0;
+            --log-debug: #9cdcfe;
         }}
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
@@ -200,7 +218,7 @@
             border: 1px solid var(--border);
             border-radius: 8px;
             overflow: auto;
-            background: #1e1e1e;
+            background: var(--log-bg);
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             font-size: 13px;
             line-height: 1.6;
@@ -210,21 +228,21 @@
             align-items: flex-start;
         }}
         .log-line:hover {{
-            background: rgba(255, 255, 255, 0.05);
+            background: var(--log-hover);
         }}
         .log-num {{
-            color: #858585;
+            color: var(--log-num);
             text-align: right;
             padding: 0 16px;
             min-width: 60px;
             user-select: none;
             flex-shrink: 0;
-            background: #252526;
+            background: var(--log-num-bg);
             position: sticky;
             left: 0;
         }}
         .log-line-content {{
-            color: #d4d4d4;
+            color: var(--log-text);
             white-space: pre;
             flex: 1;
             padding: 0 16px 0 8px;
@@ -241,16 +259,16 @@
             padding: 0px 1px;
         }}
         .log-line-error .log-line-content {{
-            color: #f48771;
+            color: var(--log-error);
         }}
         .log-line-warning .log-line-content {{
-            color: #dcdcaa;
+            color: var(--log-warning);
         }}
         .log-line-info .log-line-content {{
-            color: #4ec9b0;
+            color: var(--log-info);
         }}
         .log-line-debug .log-line-content {{
-            color: #9cdcfe;
+            color: var(--log-debug);
         }}
         .refresh-info {{
             padding: 4px 24px;
