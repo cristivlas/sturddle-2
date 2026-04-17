@@ -10,6 +10,26 @@
         :root {{
             --accent-start: #667eea;
             --accent-end: #764ba2;
+            --surface: #ffffff;
+            --surface-alt: #f0f0f0;
+            --surface-hover: #e0e0e0;
+            --text: #333333;
+            --text-muted: #666666;
+            --text-subtle: #999999;
+            --border: #e0e0e0;
+            --border-subtle: #eeeeee;
+            --shadow: rgba(0,0,0,0.3);
+        }}
+        [data-theme="dark"] {{
+            --surface: #1e1f26;
+            --surface-alt: #2a2c36;
+            --surface-hover: #383b47;
+            --text: #e8e8ec;
+            --text-muted: #b0b2bb;
+            --text-subtle: #878993;
+            --border: #383b47;
+            --border-subtle: #2d2f39;
+            --shadow: rgba(0,0,0,0.6);
         }}
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
@@ -22,9 +42,9 @@
             max-width: 1400px;
             height: calc(100vh - 24px);
             margin: 0 auto;
-            background: white;
+            background: var(--surface);
             border-radius: 10px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            box-shadow: 0 20px 60px var(--shadow);
             overflow: hidden;
             display: flex;
             flex-direction: column;
@@ -42,6 +62,37 @@
         .header h1 {{
             font-size: 18px;
             font-weight: 700;
+        }}
+        .theme-toggle {{
+            display: inline-flex;
+            align-items: center;
+            font-size: 0;
+            line-height: 0;
+        }}
+        .theme-toggle > span {{
+            font-size: 11px;
+            padding: 4px 8px;
+            cursor: pointer;
+            border: 1px solid rgba(255,255,255,0.4);
+            border-left-width: 0;
+            color: rgba(255,255,255,0.75);
+            font-weight: 600;
+            letter-spacing: 0;
+            text-transform: none;
+            user-select: none;
+            background: transparent;
+            line-height: 1;
+        }}
+        .theme-toggle > span:first-child {{
+            border-left-width: 1px;
+            border-radius: 4px 0 0 4px;
+        }}
+        .theme-toggle > span:last-child {{
+            border-radius: 0 4px 4px 0;
+        }}
+        .theme-toggle > span.active {{
+            background: rgba(255,255,255,0.25);
+            color: #fff;
         }}
         .header-buttons {{
             display: flex;
@@ -80,10 +131,12 @@
         .search-input {{
             flex: 1;
             padding: 10px 16px;
-            border: 2px solid #e0e0e0;
+            border: 2px solid var(--border);
             border-radius: 8px;
             font-size: 14px;
             font-family: monospace;
+            background: var(--surface);
+            color: var(--text);
             transition: border-color 0.2s;
         }}
         .search-input:focus {{
@@ -92,7 +145,7 @@
         }}
         .search-stats {{
             font-size: 12px;
-            color: #666;
+            color: var(--text-muted);
             white-space: nowrap;
             min-width: 100px;
         }}
@@ -103,9 +156,9 @@
         .nav-button {{
             width: 32px;
             height: 32px;
-            background: #f0f0f0;
-            color: #666;
-            border: 1px solid #e0e0e0;
+            background: var(--surface-alt);
+            color: var(--text-muted);
+            border: 1px solid var(--border);
             border-radius: 4px;
             font-size: 16px;
             cursor: pointer;
@@ -115,8 +168,8 @@
             transition: all 0.2s;
         }}
         .nav-button:hover {{
-            background: #e0e0e0;
-            color: #333;
+            background: var(--surface-hover);
+            color: var(--text);
         }}
         .nav-button:disabled {{
             opacity: 0.3;
@@ -125,9 +178,9 @@
         .clear-button {{
             width: 32px;
             height: 32px;
-            background: #f0f0f0;
-            color: #666;
-            border: 1px solid #e0e0e0;
+            background: var(--surface-alt);
+            color: var(--text-muted);
+            border: 1px solid var(--border);
             border-radius: 50%;
             font-size: 18px;
             font-weight: bold;
@@ -138,13 +191,13 @@
             transition: all 0.2s;
         }}
         .clear-button:hover {{
-            background: #e0e0e0;
-            color: #333;
+            background: var(--surface-hover);
+            color: var(--text);
         }}
         .log-container {{
             flex: 1;
             min-height: 0;
-            border: 1px solid #e0e0e0;
+            border: 1px solid var(--border);
             border-radius: 8px;
             overflow: auto;
             background: #1e1e1e;
@@ -202,9 +255,9 @@
         .refresh-info {{
             padding: 4px 24px;
             font-size: 12px;
-            color: #999;
+            color: var(--text-subtle);
             text-align: center;
-            border-top: 1px solid #eee;
+            border-top: 1px solid var(--border-subtle);
             flex-shrink: 0;
         }}
         @media (max-width: 700px) {{
@@ -226,6 +279,38 @@
         }}
         applyTimeTheme();
         setInterval(applyTimeTheme, 3600000);
+
+        // Dark mode (tri-state: auto/light/dark; user override persisted in localStorage)
+        function currentThemeMode() {{ return localStorage.getItem('themeMode') || 'auto'; }}
+        function resolvedTheme() {{
+            var m = currentThemeMode();
+            if (m === 'light' || m === 'dark') return m;
+            return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+        }}
+        function applyTheme() {{
+            var t = resolvedTheme();
+            if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+            else document.documentElement.removeAttribute('data-theme');
+            var tog = document.getElementById('themeToggle');
+            if (tog) {{
+                var mode = currentThemeMode();
+                tog.querySelectorAll('span').forEach(function(el) {{
+                    el.classList.toggle('active', el.getAttribute('data-mode') === mode);
+                }});
+            }}
+        }}
+        function setTheme(mode) {{
+            if (mode === 'auto') localStorage.removeItem('themeMode');
+            else localStorage.setItem('themeMode', mode);
+            applyTheme();
+        }}
+        applyTheme();
+        document.addEventListener('DOMContentLoaded', applyTheme);
+        if (window.matchMedia) {{
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {{
+                if (currentThemeMode() === 'auto') applyTheme();
+            }});
+        }}
     </script>
 </head>
 <body>
@@ -233,6 +318,11 @@
         <div class="header">
             <h1>Sturddle SPSA Tuner {version}</h1>
             <div class="header-buttons">
+                <span id="themeToggle" class="theme-toggle">
+                    <span data-mode="auto" onclick="setTheme('auto')">Auto</span><span
+                          data-mode="light" onclick="setTheme('light')">Light</span><span
+                          data-mode="dark" onclick="setTheme('dark')">Dark</span>
+                </span>
                 <a href="/dashboard" class="status-badge">Dashboard</a>
                 <a href="/charts" class="status-badge">Charts</a>
             </div>

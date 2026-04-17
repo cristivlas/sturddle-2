@@ -10,6 +10,36 @@
         :root {{
             --accent-start: #667eea;
             --accent-end: #764ba2;
+            --surface: #ffffff;
+            --surface-alt: #f9f9f9;
+            --surface-hover: #f9f9f9;
+            --table-head-bg: #f0f0f0;
+            --progress-bg: #e0e0e0;
+            --text: #333333;
+            --text-muted: #666666;
+            --text-subtle: #999999;
+            --text-faint: #cccccc;
+            --border: #e0e0e0;
+            --border-subtle: #eeeeee;
+            --shadow: rgba(0,0,0,0.3);
+            --scrollbar: rgba(0,0,0,0.25);
+            --scrollbar-hover: rgba(0,0,0,0.4);
+        }}
+        [data-theme="dark"] {{
+            --surface: #1e1f26;
+            --surface-alt: #262832;
+            --surface-hover: #2e313c;
+            --table-head-bg: #2a2c36;
+            --progress-bg: #3a3d49;
+            --text: #e8e8ec;
+            --text-muted: #b0b2bb;
+            --text-subtle: #878993;
+            --text-faint: #52545e;
+            --border: #383b47;
+            --border-subtle: #2d2f39;
+            --shadow: rgba(0,0,0,0.6);
+            --scrollbar: rgba(255,255,255,0.25);
+            --scrollbar-hover: rgba(255,255,255,0.4);
         }}
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
@@ -22,9 +52,9 @@
             max-width: 1400px;
             height: calc(100vh - 24px);
             margin: 0 auto;
-            background: white;
+            background: var(--surface);
             border-radius: 10px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            box-shadow: 0 20px 60px var(--shadow);
             overflow: hidden;
             display: flex;
             flex-direction: column;
@@ -41,6 +71,37 @@
         .header h1 {{
             font-size: 18px;
             font-weight: 700;
+        }}
+        .theme-toggle {{
+            display: inline-flex;
+            align-items: center;
+            font-size: 0;
+            line-height: 0;
+        }}
+        .theme-toggle > span {{
+            font-size: 11px;
+            padding: 4px 8px;
+            cursor: pointer;
+            border: 1px solid rgba(255,255,255,0.4);
+            border-left-width: 0;
+            color: rgba(255,255,255,0.75);
+            font-weight: 600;
+            letter-spacing: 0;
+            text-transform: none;
+            user-select: none;
+            background: transparent;
+            line-height: 1;
+        }}
+        .theme-toggle > span:first-child {{
+            border-left-width: 1px;
+            border-radius: 4px 0 0 4px;
+        }}
+        .theme-toggle > span:last-child {{
+            border-radius: 0 4px 4px 0;
+        }}
+        .theme-toggle > span.active {{
+            background: rgba(255,255,255,0.25);
+            color: #fff;
         }}
         .header-buttons {{
             display: flex;
@@ -72,10 +133,10 @@
             margin-bottom: 8px;
         }}
         .card {{
-            border: 1px solid #e0e0e0;
+            border: 1px solid var(--border);
             border-radius: 8px;
             padding: 6px 12px;
-            background: #f9f9f9;
+            background: var(--surface-alt);
         }}
         .card .chart-wrap {{
             position: relative;
@@ -87,7 +148,7 @@
         .card h2 {{
             font-size: 12px;
             font-weight: 600;
-            color: #666;
+            color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 0.5px;
             margin-bottom: 4px;
@@ -95,18 +156,18 @@
         .card-value {{
             font-size: 16px;
             font-weight: 700;
-            color: #333;
+            color: var(--text);
             font-family: monospace;
         }}
         .card-subtext {{
             font-size: 12px;
-            color: #999;
+            color: var(--text-subtle);
             margin-top: 4px;
         }}
         .progress-bar {{
             width: 100%;
             height: 14px;
-            background: #e0e0e0;
+            background: var(--progress-bg);
             border-radius: 7px;
             overflow: hidden;
             margin-top: 4px;
@@ -130,7 +191,7 @@
             font-size: 14px;
             font-weight: 700;
             margin-bottom: 10px;
-            color: #333;
+            color: var(--text);
             border-bottom: 2px solid var(--accent-start);
             padding-bottom: 6px;
         }}
@@ -142,10 +203,10 @@
             padding: 8px 12px;
         }}
         th {{
-            background: #f0f0f0;
+            background: var(--table-head-bg);
             font-weight: 600;
             font-size: 11px;
-            color: #666;
+            color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 0.5px;
             overflow: hidden;
@@ -153,8 +214,9 @@
             white-space: nowrap;
         }}
         td {{
-            border-bottom: 1px solid #e0e0e0;
+            border-bottom: 1px solid var(--border);
             font-size: 14px;
+            color: var(--text);
             white-space: nowrap;
         }}
         th:first-child, td:first-child {{
@@ -164,7 +226,7 @@
             text-align: right;
         }}
         tr:hover {{
-            background: #f9f9f9;
+            background: var(--surface-hover);
         }}
         .stats-grid {{
             display: grid;
@@ -173,14 +235,14 @@
             margin-bottom: 8px;
         }}
         .stat {{
-            background: white;
+            background: var(--surface);
             border-left: 4px solid var(--accent-start);
             padding: 4px 10px;
             border-radius: 4px;
         }}
         .stat-label {{
             font-size: 11px;
-            color: #999;
+            color: var(--text-subtle);
             text-transform: uppercase;
             letter-spacing: 0.5px;
             margin-bottom: 2px;
@@ -188,7 +250,7 @@
         .stat-value {{
             font-size: 16px;
             font-weight: 700;
-            color: #333;
+            color: var(--text);
             font-family: monospace;
         }}
         .two-col {{
@@ -244,7 +306,7 @@
         /* Thin scrollbars for all scrollable areas */
         .content, .content div {{
             scrollbar-width: thin;
-            scrollbar-color: rgba(0,0,0,0.25) transparent;
+            scrollbar-color: var(--scrollbar) transparent;
         }}
         .content::-webkit-scrollbar, .content div::-webkit-scrollbar {{
             width: 6px;
@@ -253,18 +315,18 @@
             background: transparent;
         }}
         .content::-webkit-scrollbar-thumb, .content div::-webkit-scrollbar-thumb {{
-            background: rgba(0,0,0,0.25);
+            background: var(--scrollbar);
             border-radius: 3px;
         }}
         .content::-webkit-scrollbar-thumb:hover, .content div::-webkit-scrollbar-thumb:hover {{
-            background: rgba(0,0,0,0.4);
+            background: var(--scrollbar-hover);
         }}
         .refresh-info {{
             padding: 4px 24px;
             font-size: 12px;
-            color: #999;
+            color: var(--text-subtle);
             text-align: center;
-            border-top: 1px solid #eee;
+            border-top: 1px solid var(--border-subtle);
             flex-shrink: 0;
         }}
         #chartSection {{
@@ -398,6 +460,39 @@
         }}
         applyTimeTheme();
         setInterval(applyTimeTheme, 3600000);
+
+        // Dark mode (tri-state: auto/light/dark; user override persisted in localStorage)
+        function currentThemeMode() {{ return localStorage.getItem('themeMode') || 'auto'; }}
+        function resolvedTheme() {{
+            var m = currentThemeMode();
+            if (m === 'light' || m === 'dark') return m;
+            return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+        }}
+        function applyTheme() {{
+            var t = resolvedTheme();
+            if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+            else document.documentElement.removeAttribute('data-theme');
+            var tog = document.getElementById('themeToggle');
+            if (tog) {{
+                var mode = currentThemeMode();
+                tog.querySelectorAll('span').forEach(function(el) {{
+                    el.classList.toggle('active', el.getAttribute('data-mode') === mode);
+                }});
+            }}
+            if (typeof applyChartTheme === 'function') applyChartTheme();
+        }}
+        function setTheme(mode) {{
+            if (mode === 'auto') localStorage.removeItem('themeMode');
+            else localStorage.setItem('themeMode', mode);
+            applyTheme();
+        }}
+        applyTheme();
+        document.addEventListener('DOMContentLoaded', applyTheme);
+        if (window.matchMedia) {{
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {{
+                if (currentThemeMode() === 'auto') applyTheme();
+            }});
+        }}
     </script>
 </head>
 <body>
@@ -405,6 +500,11 @@
         <div class="header">
             <h1>Sturddle SPSA Tuner {version}</h1>
             <div class="header-buttons">
+                <span id="themeToggle" class="theme-toggle">
+                    <span data-mode="auto" onclick="setTheme('auto')">Auto</span><span
+                          data-mode="light" onclick="setTheme('light')">Light</span><span
+                          data-mode="dark" onclick="setTheme('dark')">Dark</span>
+                </span>
                 <a href="/charts" class="status-badge">Charts</a>
                 <a href="/logs" class="status-badge">Logs</a>
                 <span class="status-badge" id="statusBadge" style="background:{status_color}">{status_text}</span>
@@ -452,7 +552,7 @@
                 </div>
                 <div class="stat">
                     <div class="stat-label" id="avgIterLabel">Avg / Iteration</div>
-                    <div class="stat-value"><span id="avgIterValue">--</span> <span id="elapsedIter" style="font-size:13px;color:#999;font-weight:normal"></span></div>
+                    <div class="stat-value"><span id="avgIterValue">--</span> <span id="elapsedIter" style="font-size:13px;color:var(--text-subtle);font-weight:normal"></span></div>
                 </div>
                 <div class="stat" id="totalGamesStat">
                     <div class="stat-label">Total Games</div>
@@ -464,7 +564,7 @@
             <div class="two-col" id="chartSection" style="grid-template-columns: 3fr 2fr;">
                 <div class="card" style="position:relative;">
                     <span id="legendToggle" onclick="toggleLegend()"
-                        style="position:absolute;top:6px;right:8px;z-index:2;font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid #ccc;border-radius:4px;font-weight:600;background:#fff;color:#666;letter-spacing:0;text-transform:none;user-select:none;">Legend</span>
+                        style="position:absolute;top:6px;right:8px;z-index:2;font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid var(--border);border-radius:4px;font-weight:600;background:var(--surface);color:var(--text-muted);letter-spacing:0;text-transform:none;user-select:none;">Legend</span>
                     <div class="chart-wrap"><canvas id="thetaChart"></canvas></div>
                 </div>
                 <div class="col-resize-handle" id="chartParamsHandle"></div>
@@ -472,11 +572,11 @@
                     <h3 style="display:flex;align-items:baseline;gap:8px;">Current Parameters
                         <span id="thetaToggle" style="font-size:0;line-height:0;margin-left:auto;">
                             <span id="togInternal" onclick="setThetaView('internal')"
-                                style="display:none;font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid #ccc;border-radius:4px 0 0 4px;font-weight:600;letter-spacing:0;text-transform:none;">Normal</span><span
+                                style="display:none;font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid var(--border);border-radius:4px 0 0 4px;font-weight:600;letter-spacing:0;text-transform:none;">Normal</span><span
                                 id="togEngine" onclick="setThetaView('engine')"
-                                style="display:none;font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid #ccc;border-left:none;border-radius:0;font-weight:600;letter-spacing:0;text-transform:none;">Engine</span><span
+                                style="display:none;font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid var(--border);border-left:none;border-radius:0;font-weight:600;letter-spacing:0;text-transform:none;">Engine</span><span
                                 id="togConv" onclick="setThetaView('convergence')"
-                                style="font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid #ccc;border-left:none;border-radius:0 4px 4px 0;font-weight:600;letter-spacing:0;text-transform:none;">Conv</span>
+                                style="font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid var(--border);border-left:none;border-radius:0 4px 4px 0;font-weight:600;letter-spacing:0;text-transform:none;">Conv</span>
                         </span>
                     </h3>
                     <table class="params-tbl">
@@ -662,14 +762,14 @@
                         var diff = value - initial[name];
                         if (diff > 0) arrow = ' <span style="color:#4CAF50;font-size:11px;">&#9650;</span>';
                         else if (diff < 0) arrow = ' <span style="color:#f44336;font-size:11px;">&#9660;</span>';
-                        else arrow = ' <span style="color:#ccc;font-size:11px;">&#9644;</span>';
+                        else arrow = ' <span style="color:var(--text-faint);font-size:11px;">&#9644;</span>';
                     }}
                     var dot = '';
                     if (hasPrev && (paramColors[name] || (groupedMode && groupMap[name] && paramColors[groupLabel(groupMap[name])])) && prevTheta[name] !== undefined && typeof ival === 'number') {{
                         var pdiff = ival - prevTheta[name];
                         var sym = pdiff > 0 ? '&#9650;' : pdiff < 0 ? '&#9660;' : '&#9644;';
                         var conv = paramConvergence(name);
-                        var dotStyle = pdiff === 0 ? 'color:#ccc;' : conv ? 'color:' + convColor(conv.pct) + ';' : '';
+                        var dotStyle = pdiff === 0 ? 'color:var(--text-faint);' : conv ? 'color:' + convColor(conv.pct) + ';' : '';
                         dot = '<span style="font-size:9px;margin-right:4px;' + dotStyle + '">' + sym + '</span>';
                     }}
                     tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + name + '">' + dot + name + '</td>'
@@ -690,8 +790,8 @@
                 if (!el) return;
                 var active = (id === 'togInternal' && mode === 'internal') || (id === 'togEngine' && mode === 'engine') || (id === 'togConv' && mode === 'convergence');
                 el.style.background = active ? accent : '';
-                el.style.color = active ? '#fff' : '#666';
-                el.style.borderColor = active ? accent : '#ccc';
+                el.style.color = active ? '#fff' : 'var(--text-muted)';
+                el.style.borderColor = active ? accent : 'var(--border)';
             }});
             renderTheta(showInternal ? currentThetaInternal : currentTheta, showInternal ? initialThetaInternal : initialTheta);
         }}
@@ -831,6 +931,15 @@
             );
         }});
 
+        // --- Chart theme: keep axis/grid colors readable across light/dark ---
+        function applyChartTheme() {{
+            if (typeof Chart === 'undefined') return;
+            var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+            Chart.defaults.color = dark ? '#b0b2bb' : '#666666';
+            Chart.defaults.borderColor = dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.1)';
+            if (typeof thetaChart !== 'undefined' && thetaChart) thetaChart.update('none');
+        }}
+
         // --- Chart ---
         function toRgbTint(cssColor, alpha) {{
             var tmp = document.createElement('div');
@@ -871,9 +980,9 @@
             var btn = document.getElementById('legendToggle');
             if (!btn) return;
             var accent = getComputedStyle(document.documentElement).getPropertyValue('--accent-start').trim();
-            btn.style.background = legendUserShown ? accent : '#fff';
-            btn.style.color = legendUserShown ? '#fff' : '#666';
-            btn.style.borderColor = legendUserShown ? accent : '#ccc';
+            btn.style.background = legendUserShown ? accent : 'var(--surface)';
+            btn.style.color = legendUserShown ? '#fff' : 'var(--text-muted)';
+            btn.style.borderColor = legendUserShown ? accent : 'var(--border)';
         }}
 
         function toggleLegend() {{
@@ -959,6 +1068,7 @@
                 }}
                 updateLegend();
                 updateLegendBtn();
+                applyChartTheme();
                 syncParamColors();
             }} catch (e) {{
                 console.error('Failed to render chart', e);
@@ -1013,9 +1123,9 @@
             var iterEl = document.getElementById('iterValue');
             var gamesEl = document.getElementById('gamesValue');
             iterEl.innerHTML = iteration + ' / ' + maxIters
-                + (etaSession ? ' <span style="font-size:14px;color:#999;font-weight:normal">~' + etaSession + ' left</span>' : '');
+                + (etaSession ? ' <span style="font-size:14px;color:var(--text-subtle);font-weight:normal">~' + etaSession + ' left</span>' : '');
             gamesEl.innerHTML = gamesDone + ' / ' + gamesTotal
-                + (etaIter ? ' <span style="font-size:14px;color:#999;font-weight:normal">~' + etaIter + ' left</span>' : '');
+                + (etaIter ? ' <span style="font-size:14px;color:var(--text-subtle);font-weight:normal">~' + etaIter + ' left</span>' : '');
             document.getElementById('avgIterLabel').textContent = 'Est / Iteration';
             document.getElementById('avgIterValue').textContent = avgIterSec > 0
                 ? formatDuration(avgIterSec * 1000)
@@ -1090,6 +1200,7 @@
                             }}
                             updateLegend();
                             updateLegendBtn();
+                            applyChartTheme();
                         }}
                         thetaChart.data.labels.push(d.last_history.iteration);
                         thetaChart.data.datasets.forEach(ds => {{

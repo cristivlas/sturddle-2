@@ -10,6 +10,28 @@
         :root {{
             --accent-start: #667eea;
             --accent-end: #764ba2;
+            --surface: #ffffff;
+            --surface-alt: #f9f9f9;
+            --text: #333333;
+            --text-muted: #666666;
+            --text-subtle: #999999;
+            --text-faint: #aaaaaa;
+            --border: #e0e0e0;
+            --border-subtle: #eeeeee;
+            --zoom-track: #dddddd;
+            --shadow: rgba(0,0,0,0.3);
+        }}
+        [data-theme="dark"] {{
+            --surface: #1e1f26;
+            --surface-alt: #262832;
+            --text: #e8e8ec;
+            --text-muted: #b0b2bb;
+            --text-subtle: #878993;
+            --text-faint: #52545e;
+            --border: #383b47;
+            --border-subtle: #2d2f39;
+            --zoom-track: #383b47;
+            --shadow: rgba(0,0,0,0.6);
         }}
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
@@ -22,9 +44,9 @@
             max-width: 1400px;
             height: calc(100vh - 24px);
             margin: 0 auto;
-            background: white;
+            background: var(--surface);
             border-radius: 10px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            box-shadow: 0 20px 60px var(--shadow);
             overflow: hidden;
             display: flex;
             flex-direction: column;
@@ -41,6 +63,37 @@
         .header h1 {{
             font-size: 18px;
             font-weight: 700;
+        }}
+        .theme-toggle {{
+            display: inline-flex;
+            align-items: center;
+            font-size: 0;
+            line-height: 0;
+        }}
+        .theme-toggle > span {{
+            font-size: 11px;
+            padding: 4px 8px;
+            cursor: pointer;
+            border: 1px solid rgba(255,255,255,0.4);
+            border-left-width: 0;
+            color: rgba(255,255,255,0.75);
+            font-weight: 600;
+            letter-spacing: 0;
+            text-transform: none;
+            user-select: none;
+            background: transparent;
+            line-height: 1;
+        }}
+        .theme-toggle > span:first-child {{
+            border-left-width: 1px;
+            border-radius: 4px 0 0 4px;
+        }}
+        .theme-toggle > span:last-child {{
+            border-radius: 0 4px 4px 0;
+        }}
+        .theme-toggle > span.active {{
+            background: rgba(255,255,255,0.25);
+            color: #fff;
         }}
         .header-buttons {{
             display: flex;
@@ -66,7 +119,7 @@
         }}
         .card-header .caret {{
             font-size: 10px;
-            color: #999;
+            color: var(--text-subtle);
             margin-right: 6px;
             transition: transform 0.2s;
         }}
@@ -80,7 +133,7 @@
             flex: 0 0 auto;
         }}
         .card.collapsed h2 {{
-            color: #aaa;
+            color: var(--text-faint);
         }}
         .content {{
             padding: 20px 24px;
@@ -91,10 +144,10 @@
             min-height: 0;
         }}
         .card {{
-            border: 1px solid #e0e0e0;
+            border: 1px solid var(--border);
             border-radius: 8px;
             padding: 6px 12px;
-            background: #f9f9f9;
+            background: var(--surface-alt);
             flex: 1;
             display: flex;
             flex-direction: column;
@@ -120,7 +173,7 @@
         .sub-card h2 {{
             font-size: 11px;
             font-weight: 600;
-            color: #666;
+            color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 0.5px;
             margin-bottom: 2px;
@@ -128,7 +181,7 @@
         .card h2 {{
             font-size: 11px;
             font-weight: 600;
-            color: #666;
+            color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 0.5px;
             margin-bottom: 2px;
@@ -148,7 +201,7 @@
             position: absolute;
             left: 0; right: 0; top: 50%; height: 4px;
             transform: translateY(-50%);
-            background: #ddd;
+            background: var(--zoom-track);
             border-radius: 2px;
         }}
         .zoom-track .fill {{
@@ -173,8 +226,8 @@
             width: 22px; height: 22px;
             border-radius: 50%;
             background: var(--accent-start, #667eea);
-            border: 2px solid white;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            border: 2px solid var(--surface);
+            box-shadow: 0 1px 4px var(--shadow);
             cursor: pointer;
         }}
         .zoom-track input[type="range"]::-moz-range-track {{
@@ -186,22 +239,22 @@
             width: 20px; height: 20px;
             border-radius: 50%;
             background: var(--accent-start, #667eea);
-            border: 2px solid white;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            border: 2px solid var(--surface);
+            box-shadow: 0 1px 4px var(--shadow);
             cursor: pointer;
         }}
         .zoom-bar span {{
             font-size: 11px;
-            color: #999;
+            color: var(--text-subtle);
             white-space: nowrap;
             min-width: 7em;
         }}
         .refresh-info {{
             padding: 4px 24px;
             font-size: 12px;
-            color: #999;
+            color: var(--text-subtle);
             text-align: center;
-            border-top: 1px solid #eee;
+            border-top: 1px solid var(--border-subtle);
         }}
         @media (max-width: 700px), (max-height: 500px) {{
             .header {{ flex-wrap: wrap; gap: 6px; justify-content: center; }}
@@ -222,7 +275,7 @@
                     for (var k in saved) {{
                         if (!saved[k]) css += '[data-chart="' + k + '"] > *:not(.card-header) {{ display:none }}'
                             + '[data-chart="' + k + '"] {{ flex:0 0 auto }}'
-                            + '[data-chart="' + k + '"] h2 {{ color:#aaa }}'
+                            + '[data-chart="' + k + '"] h2 {{ color:var(--text-faint) }}'
                             + '[data-chart="' + k + '"] .caret {{ transform:rotate(-90deg) }}';
                     }}
                     if (css) {{
@@ -249,6 +302,39 @@
         }}
         applyTimeTheme();
         setInterval(applyTimeTheme, 3600000);
+
+        // Dark mode (tri-state: auto/light/dark; user override persisted in localStorage)
+        function currentThemeMode() {{ return localStorage.getItem('themeMode') || 'auto'; }}
+        function resolvedTheme() {{
+            var m = currentThemeMode();
+            if (m === 'light' || m === 'dark') return m;
+            return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+        }}
+        function applyTheme() {{
+            var t = resolvedTheme();
+            if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+            else document.documentElement.removeAttribute('data-theme');
+            var tog = document.getElementById('themeToggle');
+            if (tog) {{
+                var mode = currentThemeMode();
+                tog.querySelectorAll('span').forEach(function(el) {{
+                    el.classList.toggle('active', el.getAttribute('data-mode') === mode);
+                }});
+            }}
+            if (typeof applyChartTheme === 'function') applyChartTheme();
+        }}
+        function setTheme(mode) {{
+            if (mode === 'auto') localStorage.removeItem('themeMode');
+            else localStorage.setItem('themeMode', mode);
+            applyTheme();
+        }}
+        applyTheme();
+        document.addEventListener('DOMContentLoaded', applyTheme);
+        if (window.matchMedia) {{
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {{
+                if (currentThemeMode() === 'auto') applyTheme();
+            }});
+        }}
     </script>
 </head>
 <body>
@@ -256,6 +342,11 @@
         <div class="header">
             <h1>Sturddle SPSA Tuner {version}</h1>
             <div class="header-buttons">
+                <span id="themeToggle" class="theme-toggle">
+                    <span data-mode="auto" onclick="setTheme('auto')">Auto</span><span
+                          data-mode="light" onclick="setTheme('light')">Light</span><span
+                          data-mode="dark" onclick="setTheme('dark')">Dark</span>
+                </span>
                 <a href="/dashboard" class="status-badge">Dashboard</a>
                 <a href="/logs" class="status-badge">Logs</a>
             </div>
@@ -362,6 +453,19 @@
             // Persist (clear when full range so new data doesn't get clipped)
             try {{ if (from <= 0 && to >= last) localStorage.removeItem('chartZoom'); else localStorage.setItem('chartZoom', JSON.stringify({{f:from, t:to}})); }} catch(e) {{}}
             if (window.updateThetaSubtitle) window.updateThetaSubtitle();
+        }}
+
+        // Chart theme: update axis/grid colors on all registered charts
+        function applyChartTheme() {{
+            if (typeof Chart === 'undefined') return;
+            var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+            Chart.defaults.color = dark ? '#b0b2bb' : '#666666';
+            Chart.defaults.borderColor = dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.1)';
+            ['thetaChart','eloChart','akChart','ckChart'].forEach(function(id) {{
+                var el = document.getElementById(id);
+                var ch = el && Chart.getChart && Chart.getChart(el);
+                if (ch) ch.update('none');
+            }});
         }}
 
         // Deferred chart creation for canvases hidden at init time
@@ -578,8 +682,8 @@
                     [['togValue','value'],['togAbs','pert']].forEach(function(pair) {{
                         var el = document.getElementById(pair[0]);
                         var on = _pertView === pair[1];
-                        el.style.background = on ? accent : '#eee';
-                        el.style.color = on ? 'white' : '#666';
+                        el.style.background = on ? accent : 'var(--border-subtle)';
+                        el.style.color = on ? 'white' : 'var(--text-muted)';
                     }});
                 }}
                 window.setPertView = function(mode) {{
@@ -827,6 +931,7 @@
                 makeChart('eloChart', history.map(h => ({{x: h.iteration, y: h.elo_diff}})), 'ELO Diff', '#e91e63');
                 makeChart('akChart', history.map(h => ({{x: h.iteration, y: h.a_k}})), 'a_k', '#2196F3');
                 makeChart('ckChart', history.map(h => ({{x: h.iteration, y: h.c_k}})), 'c_k', '#FF9800');
+                applyChartTheme();
 
                 // Restore solo param + view mode
                 if (_soloParam) {{
