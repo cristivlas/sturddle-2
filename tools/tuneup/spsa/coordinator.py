@@ -29,7 +29,7 @@ from pathlib import Path
 from config import TuningConfig, WorkItem, WorkResult
 from spsa import SPSAOptimizer, SPSAState
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 logger = logging.getLogger("coordinator")
 
@@ -137,7 +137,6 @@ class CoordinatorState:
         self.iteration_reference_mode = None  # None until first result, then True/False
         self.iteration_start_time = time.time()
         self.pending_chunks = {}  # chunk_id -> ChunkInfo
-        self.stolen_chunks = {}   # stolen_cid -> (replacement_cid, victim_worker)
 
         # Worker registry: keyed by self-reported name (hostname or worker config
         # "name" field).  Fine for trusted homelab / LAN setups; a public-facing
@@ -245,9 +244,6 @@ class CoordinatorState:
         chunks = [c for c in self.pending_chunks.values() if c.worker_name == name]
         if not chunks:
             if (now - w.last_seen) < self.config.worker_idle_timeout:
-                return WorkerStatus.ONLINE
-            # Worker may still be processing a chunk that was stolen from it
-            if any(wn == name for _, wn in self.stolen_chunks.values()):
                 return WorkerStatus.ONLINE
             return WorkerStatus.TIMED_OUT
         if not any(now - c.assign_time < c.timeout for c in chunks):
@@ -365,7 +361,6 @@ class CoordinatorState:
             num_games=0,  # filled per chunk
         )
         self.pending_chunks = {}
-        self.stolen_chunks = {}
 
         # Reset per-iteration worker counters (including disconnected workers saved in _worker_stats)
         for w in self.workers.values():
@@ -381,93 +376,17 @@ class CoordinatorState:
             self.optimizer.a_k(),
         )
 
-    def _try_steal_chunk(self, worker_name: str) -> tuple[str, int] | None:
-        """Try to reclaim a chunk from a slower worker for reassignment.
-
-        Compares the fast worker's redo-from-scratch time against the
-        slow worker's expected_duration recorded at assignment time.
-        Steal if: the holder is overdue and we're faster, or we can
-        finish before the holder's original deadline.
-
-        Returns (stolen_chunk_id, num_games), or None.
-        """
-        if not self.pending_chunks:
-            return None
-
-        spg = self._worker_sec_per_game(worker_name)
-        now = time.time()
-
-        best_cid = None
-        # Saving must exceed per-chunk startup overhead. EWMA tracks
-        # per-game time so the fixed cost (process spawn, engine init)
-        # is amortized away in large chunks and not visible in the estimate.
-        best_saving = self.config.min_chunk_expected_duration
-
-        for cid, chunk in self.pending_chunks.items():
-            if chunk.worker_name == worker_name:
-                continue
-
-            elapsed = now - chunk.assign_time
-            expected = chunk.expected_duration
-            new_expected = chunk.num_games * spg
-
-            overdue = self._is_overdue(now, chunk.assign_time, expected)
-            if overdue and spg < self._worker_sec_per_game(chunk.worker_name):
-                logger.warning(
-                    "Work steal: %s taking %s [%s] %d games (overdue) -- elapsed=%.1fs expected=%.1fs",
-                    worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected,
-                )
-                best_cid = cid
-                break
-
-            # Don't speed-steal from freshly assigned chunks (prevents chain stealing)
-            if elapsed < self.config.min_chunk_expected_duration:
-                continue
-
-            remaining = expected - elapsed
-            if new_expected * self.config.steal_speed_ratio < remaining:
-                saving = remaining - new_expected
-                logger.debug(
-                    "Work steal: %s eyeing %s [%s] %d games -- elapsed=%.1fs expected=%.1fs new=%.1fs saving=%.1fs",
-                    worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected, new_expected, saving,
-                )
-            else:
-                logger.debug(
-                    "Work steal: %s skip %s [%s] %d games -- elapsed=%.1fs expected=%.1fs new=%.1fs",
-                    worker_name, chunk.worker_name, cid, chunk.num_games, elapsed, expected, new_expected,
-                )
-                continue
-
-            if saving > best_saving:
-                best_cid = cid
-                best_saving = saving
-
-        if best_cid is None:
-            return None
-
-        chunk = self.pending_chunks.pop(best_cid)
-        logger.info(
-            "Work steal: %d games from %s [%s] for %s (%.0fs elapsed, est. saving %.1fs, %.2f s/g)",
-            chunk.num_games, chunk.worker_name, best_cid,
-            worker_name, now - chunk.assign_time, best_saving, spg,
-        )
-        return best_cid, chunk.num_games, chunk.worker_name
-
     def _release_chunk(self, cid: str, reason: str):
-        """Remove a chunk from pending tracking and clean up stolen_chunks."""
+        """Remove a chunk from pending tracking."""
         chunk = self.pending_chunks.pop(cid)
-        stolen_cid = next((k for k, (v, _) in self.stolen_chunks.items() if v == cid), None)
-        if stolen_cid:
-            self.stolen_chunks.pop(stolen_cid)
-        if cid in self.stolen_chunks:
-            self.stolen_chunks.pop(cid)
         logger.warning("Released [%s] (%d games) from %s: %s", cid, chunk.num_games, chunk.worker_name, reason)
 
     def _reclaim_timed_out_chunks(self):
         """Reclaim chunks from unresponsive workers only.
 
-        Overdue chunks from alive workers are left in place -- work stealing
-        handles them with race semantics so no work is wasted.
+        Overdue chunks from alive workers are left in place -- idle workers
+        pick up fresh overflow chunks instead, and the first results to land
+        close the iteration; late duplicates are discarded as stale.
         """
         now = time.time()
         alive = {w.name for w in self._active_workers()}
@@ -540,29 +459,38 @@ class CoordinatorState:
 
             gpi = self.config.games_per_iteration
             remaining = gpi - self._games_assigned()
-            logger.debug("get_work: %s, remaining=%d, completed=%d, in_flight=%d",
-                         worker_name, remaining, self.games_completed, self._games_in_flight())
-            stolen_cid = None
-            stolen_games = 0
-            stolen_from = None
-
+            overflow = False
             if remaining <= 0:
-                steal = self._try_steal_chunk(worker_name)
-                if steal:
-                    stolen_cid, stolen_games, stolen_from = steal
-                    remaining = gpi - self._games_assigned()
-                elif self.draining and not self._restart:
-                    return {"status": "done"}
-                else:
+                # Iteration nominally full but stragglers still hold chunks.
+                # Hand idle workers a fresh overflow chunk so the iteration
+                # closes as soon as *any* worker returns enough results; late
+                # duplicates hit the stale-iteration path in submit_result.
+                if not self.pending_chunks:
+                    if self.draining and not self._restart:
+                        return {"status": "done"}
                     return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
+                # Asker-agnostic cap: gate on in-flight vs games still needed
+                # BEFORE computing chunk size, so fast workers can speculatively
+                # grab a full-size chunk that actually races the straggler.  A
+                # post-check on (in_flight + num_games) would deny fast workers
+                # whose proportional share is large, letting a slower worker in
+                # instead -- the opposite of what overflow is meant to do.
+                # One dispatch may overshoot the nominal ratio; subsequent
+                # requests are denied until submissions reopen room.
+                needed = gpi - self.games_completed
+                if self._games_in_flight() >= needed * self.config.overflow_factor:
+                    return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
+                overflow = True
+                # Budget: one straggler's worth of games per overflow request.
+                remaining = max(c.num_games for c in self.pending_chunks.values())
 
-            if stolen_cid:
-                num_games = stolen_games
-            else:
-                adaptive = self._compute_chunk_size(worker_name, remaining)
-                if chunk_size > 0:
-                    adaptive = min(adaptive, chunk_size)
-                num_games = min(remaining, adaptive)
+            logger.debug("get_work: %s, remaining=%d, completed=%d, in_flight=%d, overflow=%s",
+                         worker_name, remaining, self.games_completed, self._games_in_flight(), overflow)
+
+            adaptive = self._compute_chunk_size(worker_name, remaining)
+            if chunk_size > 0:
+                adaptive = min(adaptive, chunk_size)
+            num_games = min(remaining, adaptive)
 
             if num_games == 0:
                 return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
@@ -590,10 +518,6 @@ class CoordinatorState:
                 expected_duration=expected_duration,
             )
 
-            # Record steal race so either finisher can resolve it
-            if stolen_cid:
-                self.stolen_chunks[stolen_cid] = (chunk_id, stolen_from)
-
             work = WorkItem(
                 iteration=self.current_work.iteration,
                 theta_plus=self.current_work.theta_plus,
@@ -603,9 +527,11 @@ class CoordinatorState:
             )
 
             logger.info(
-                "Assigned %d games to %s [%s] (iter %d, %d/%d, timeout=%ds)",
+                "Assigned %d games to %s [%s] (iter %d, %d/%d%s, timeout=%ds)",
                 num_games, worker_name or "?", chunk_id,
-                work.iteration, self._games_assigned(), gpi, int(timeout),
+                work.iteration, self._games_assigned(), gpi,
+                " overflow" if overflow else "",
+                int(timeout),
             )
             self._notify_dashboard()
             d = work.to_dict()
@@ -633,24 +559,10 @@ class CoordinatorState:
                 )
                 return {"status": "ignored", "reason": "stale iteration"}
 
-            # Resolve chunk: pending (normal), stolen (replaced), or unknown
-            chunk = None
-            if result.chunk_id in self.pending_chunks:
-                chunk = self.pending_chunks.pop(result.chunk_id)
-                stolen_cid = next((k for k, (v, _) in self.stolen_chunks.items() if v == result.chunk_id), None)
-                if stolen_cid:
-                    self.stolen_chunks.pop(stolen_cid)
-                    logger.info("Replacement [%s] from %s won against [%s]", result.chunk_id, result.worker, stolen_cid)
-            elif result.chunk_id in self.stolen_chunks:
-                replacement_cid, _ = self.stolen_chunks.pop(result.chunk_id)
-                if replacement_cid in self.pending_chunks:
-                    replacement = self.pending_chunks.pop(replacement_cid)
-                    logger.info("Got [%s] from %s, cancelled [%s] (%d games)", result.chunk_id, result.worker, replacement_cid, replacement.num_games)
-                else:
-                    return {"status": "ignored", "reason": f"replaced by {replacement_cid}"}
-            else:
+            if result.chunk_id not in self.pending_chunks:
                 logger.warning("Ignoring result for unknown/reclaimed chunk %s from %s", result.chunk_id, result.worker)
                 return {"status": "ignored", "reason": "unknown chunk"}
+            chunk = self.pending_chunks.pop(result.chunk_id)
 
             # Detect mixed mode: reject results that don't match the iteration's mode
             if self.iteration_reference_mode is None:
@@ -913,7 +825,7 @@ class CoordinatorState:
         """Return True if the chunk is still valid work."""
         with self.lock:
             self._touch_worker(worker_name)
-            return chunk_id in self.pending_chunks or chunk_id in self.stolen_chunks
+            return chunk_id in self.pending_chunks
 
     def get_tuning_config_dict(self) -> dict:
         """Tuning config as dict for workers to fetch."""

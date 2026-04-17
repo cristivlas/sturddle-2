@@ -129,9 +129,10 @@ class TuningConfig:
     chunk_timeout_factor: float = 2.0
     min_chunk_timeout: float = 60.0
     min_chunk_expected_duration: float = 60.0
-    # Work-stealing speed ratio: steal if fast_time * ratio < slow_remaining.
-    # 1.0 = break-even, lower = more aggressive (steals even when savings are marginal).
-    steal_speed_ratio: float = 1.0
+    # Cap on total over-assignment past games_per_iteration.  Bounds the maximum
+    # condemned in-flight work at iteration boundary (late results are discarded
+    # as stale). 1.0 = no overflow, 1.15 = up to 15% extra games may be dispatched.
+    overflow_factor: float = 1.15
     # EWMA smoothing factor for worker speed estimates: higher = more weight on recent samples.
     # Lower values (0.1-0.15) give more stable estimates for large chunks at fast TC.
     ewma_alpha: float = 0.2
@@ -172,8 +173,8 @@ class TuningConfig:
             errors.append("overdue_factor must be >= 1")
         if self.chunk_timeout_factor < 1:
             errors.append("chunk_timeout_factor must be >= 1")
-        if self.steal_speed_ratio <= 0 or self.steal_speed_ratio > 1:
-            errors.append("steal_speed_ratio must be in (0, 1]")
+        if self.overflow_factor < 1:
+            errors.append("overflow_factor must be >= 1")
         if not (0 < self.ewma_alpha <= 1):
             errors.append("ewma_alpha must be in (0, 1]")
         if self.ewma_warmup_chunks < 0:
@@ -211,7 +212,7 @@ class TuningConfig:
             "chunk_timeout_factor": self.chunk_timeout_factor,
             "min_chunk_timeout": self.min_chunk_timeout,
             "min_chunk_expected_duration": self.min_chunk_expected_duration,
-            "steal_speed_ratio": self.steal_speed_ratio,
+            "overflow_factor": self.overflow_factor,
             "ewma_alpha": self.ewma_alpha,
             "ewma_warmup_chunks": self.ewma_warmup_chunks,
             "static_dir": self.static_dir,

@@ -171,7 +171,7 @@ interval set by `dashboard_refresh` in tuning.json.
 | `chunk_timeout_factor` | Factor on expected duration for chunk timeout | `2.0` |
 | `min_chunk_timeout` | Minimum chunk timeout in seconds | `60.0` |
 | `min_chunk_expected_duration` | Floor for expected chunk duration | `60.0` |
-| `steal_speed_ratio` | Work-stealing aggressiveness: steal if fast worker's redo time × ratio < holder's remaining time. 1.0 = break-even, lower = more aggressive | `1.0` |
+| `overflow_factor` | Cap on total over-assignment past `games_per_iteration` when workers would otherwise go idle during the iteration tail. `1.0` disables overflow; `1.15` allows up to 15% extra games to be dispatched (bounds condemned work at iteration boundaries) | `1.15` |
 | `ewma_alpha` | EWMA smoothing factor for worker speed estimates. Higher = more weight on recent chunks. Lower values (0.1–0.15) give more stable estimates for large chunks at fast TC | `0.2` |
 | `static_dir` | Directory for static assets (favicon, etc.); empty = disabled | `""` |
 | `validate_interval` | Seconds between chunk-validity checks (0 = disabled) | `5` |
