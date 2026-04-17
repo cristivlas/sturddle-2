@@ -777,6 +777,13 @@
         var currentThroughput = {throughput};
         var iterationStartEpoch = {iteration_start};
         var lastETA = [{total_games}, {games_done}, {games_total}, {iteration}, {max_iters}];
+        // Measured iteration durations (seconds) — populated as iterations complete
+        // after page load. Used for session ETA instead of throughput extrapolation,
+        // which double-counts idle time between chunks.
+        var iterDurations = [];
+        var MAX_ITER_SAMPLES = 10;
+        var prevIterationSeen = {iteration};
+        var prevIterationStartEpoch = {iteration_start};
         const initTheta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}');
         const initThetaInternal = JSON.parse(document.getElementById('theta-internal-data').textContent || '{{}}');
         const initWorkers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
@@ -978,15 +985,31 @@
             var iterElapsed = (Date.now() - iterationStartEpoch * 1000) / 1000;
             var iterTp = (gamesDone > 0 && iterElapsed > 10) ? gamesDone / iterElapsed : 0;
             var tp = Math.max(iterTp, currentThroughput);
-            var etaIter = '', etaSession = '';
             var gamesLeftIter = Math.max(0, gamesTotal - gamesDone);
-            var gamesLeftTotal = gamesLeftIter + Math.max(0, maxIters - iteration) * gamesTotal;
+            var etaIter = '';
             if (tp > 0) {{
                 var fi = formatDuration(gamesLeftIter / tp * 1000);
-                var fs = formatDuration(gamesLeftTotal / tp * 1000);
                 if (fi !== '--') etaIter = fi;
+            }}
+
+            // Session ETA: use measured iteration duration when available; fall
+            // back to throughput extrapolation until the first iteration bump.
+            var avgIterSec = iterDurations.length > 0
+                ? iterDurations.reduce(function(a, b) {{ return a + b; }}, 0) / iterDurations.length
+                : 0;
+            var etaSession = '';
+            if (avgIterSec > 0) {{
+                var fullItersLeft = Math.max(0, maxIters - iteration - 1);
+                var currentIterRemaining = Math.max(0, avgIterSec - iterElapsed);
+                var sessionSec = fullItersLeft * avgIterSec + currentIterRemaining;
+                var fs = formatDuration(sessionSec * 1000);
+                if (fs !== '--') etaSession = fs;
+            }} else if (tp > 0) {{
+                var gamesLeftTotal = gamesLeftIter + Math.max(0, maxIters - iteration) * gamesTotal;
+                var fs = formatDuration(gamesLeftTotal / tp * 1000);
                 if (fs !== '--') etaSession = fs;
             }}
+
             var iterEl = document.getElementById('iterValue');
             var gamesEl = document.getElementById('gamesValue');
             iterEl.innerHTML = iteration + ' / ' + maxIters
@@ -994,7 +1017,9 @@
             gamesEl.innerHTML = gamesDone + ' / ' + gamesTotal
                 + (etaIter ? ' <span style="font-size:14px;color:#999;font-weight:normal">~' + etaIter + ' left</span>' : '');
             document.getElementById('avgIterLabel').textContent = 'Est / Iteration';
-            document.getElementById('avgIterValue').textContent = tp > 0 ? formatDuration(gamesTotal / tp * 1000) : '--';
+            document.getElementById('avgIterValue').textContent = avgIterSec > 0
+                ? formatDuration(avgIterSec * 1000)
+                : (tp > 0 ? formatDuration(gamesTotal / tp * 1000) : '--');
         }}
 
         // --- SSE live updates ---
@@ -1102,6 +1127,16 @@
             applyTimeTheme();
 
             // ETA
+            // Record completed iteration duration when iteration number advances.
+            if (d.iteration > prevIterationSeen && prevIterationStartEpoch) {{
+                var dur = d.iteration_start - prevIterationStartEpoch;
+                if (dur > 0) {{
+                    iterDurations.push(dur);
+                    if (iterDurations.length > MAX_ITER_SAMPLES) iterDurations.shift();
+                }}
+            }}
+            prevIterationSeen = d.iteration;
+            prevIterationStartEpoch = d.iteration_start;
             iterationStartEpoch = d.iteration_start;
             lastETA = [d.total_games, d.games_done, d.games_total, d.iteration, d.max_iters];
             updateETA.apply(null, lastETA);
