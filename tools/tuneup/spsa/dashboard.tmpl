@@ -24,6 +24,9 @@
             --shadow: rgba(0,0,0,0.3);
             --scrollbar: rgba(0,0,0,0.25);
             --scrollbar-hover: rgba(0,0,0,0.4);
+            --conv-good: #1B8A2A;
+            --conv-ok: #B86800;
+            --conv-bad: #C62828;
         }}
         [data-theme="dark"] {{
             --surface: #1e1f26;
@@ -40,6 +43,9 @@
             --shadow: rgba(0,0,0,0.6);
             --scrollbar: rgba(255,255,255,0.25);
             --scrollbar-hover: rgba(255,255,255,0.4);
+            --conv-good: #7ed890;
+            --conv-ok: #ffb54c;
+            --conv-bad: #ff7b7b;
         }}
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
@@ -710,7 +716,7 @@
             return count > 0 ? sum / count : null;
         }}
         var CONV_THRESHOLDS = [2, 5];
-        var CONV_COLORS = ['#1B8A2A', '#B86800', '#C62828'];
+        var CONV_COLORS = ['var(--conv-good)', 'var(--conv-ok)', 'var(--conv-bad)'];
         function convColor(pct) {{
             return pct < CONV_THRESHOLDS[0] ? CONV_COLORS[0] : pct < CONV_THRESHOLDS[1] ? CONV_COLORS[1] : CONV_COLORS[2];
         }}
