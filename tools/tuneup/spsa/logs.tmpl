@@ -482,15 +482,44 @@
             renderLines(true);
         }}
 
+        // Return true if the currently-highlighted match is within the viewport.
+        function currentMatchInView() {{
+            var cur = matches[currentMatchIndex];
+            if (!cur) return false;
+            var firstLine = Math.floor(container.scrollTop / LINE_HEIGHT);
+            var lastLine = Math.ceil((container.scrollTop + container.clientHeight) / LINE_HEIGHT);
+            return cur.lineIndex >= firstLine && cur.lineIndex <= lastLine;
+        }}
+
         function navigateNext() {{
             if (matches.length === 0) return;
-            currentMatchIndex = (currentMatchIndex + 1) % matches.length;
+            if (currentMatchInView()) {{
+                currentMatchIndex = (currentMatchIndex + 1) % matches.length;
+            }} else {{
+                // User scrolled away -- jump to first match at or below the viewport top.
+                var firstLine = Math.floor(container.scrollTop / LINE_HEIGHT);
+                var found = -1;
+                for (var i = 0; i < matches.length; i++) {{
+                    if (matches[i].lineIndex >= firstLine) {{ found = i; break; }}
+                }}
+                currentMatchIndex = found === -1 ? 0 : found;
+            }}
             scrollToCurrentMatch();
         }}
 
         function navigatePrev() {{
             if (matches.length === 0) return;
-            currentMatchIndex = (currentMatchIndex - 1 + matches.length) % matches.length;
+            if (currentMatchInView()) {{
+                currentMatchIndex = (currentMatchIndex - 1 + matches.length) % matches.length;
+            }} else {{
+                // User scrolled away -- jump to last match at or above the viewport bottom.
+                var lastLine = Math.ceil((container.scrollTop + container.clientHeight) / LINE_HEIGHT);
+                var found = -1;
+                for (var i = matches.length - 1; i >= 0; i--) {{
+                    if (matches[i].lineIndex <= lastLine) {{ found = i; break; }}
+                }}
+                currentMatchIndex = found === -1 ? matches.length - 1 : found;
+            }}
             scrollToCurrentMatch();
         }}
 
