@@ -181,7 +181,7 @@ class SPSAOptimizer:
 
         return theta_plus, theta_minus
 
-    def update(self, delta: Dict[str, int], score_plus: float, score_minus: float) -> Dict[str, float]:
+    def update(self, delta: Dict[str, int], score_plus: float, score_minus: float, games: int) -> Dict[str, float]:
         """
         Compute gradient estimate and update theta.
 
@@ -189,6 +189,8 @@ class SPSAOptimizer:
             delta: perturbation vector from generate_perturbation()
             score_plus: aggregated win rate for theta_plus
             score_minus: aggregated win rate for theta_minus
+            games: number of games played this iteration (for accurate totals
+                when games_per_iteration changes mid-session)
 
         Returns:
             Updated theta dict.
@@ -219,6 +221,7 @@ class SPSAOptimizer:
             "elo_diff": self.elo_estimate(score_plus) - self.elo_estimate(score_minus),
             "a_k": ak,
             "c_k": ck,
+            "games": games,
         })
 
         self.state.theta = new_theta
@@ -226,7 +229,7 @@ class SPSAOptimizer:
 
         return new_theta
 
-    def advance(self, score_plus: float, score_minus: float):
+    def advance(self, score_plus: float, score_minus: float, games: int):
         """Advance iteration counter without updating theta (skipped update)."""
         k = self.state.iteration
         self.state.history.append({
@@ -239,6 +242,7 @@ class SPSAOptimizer:
             "a_k": self.a_k(),
             "c_k": self.c_k(),
             "skipped": True,
+            "games": games,
         })
         self.state.iteration = k + 1
 

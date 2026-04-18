@@ -151,8 +151,7 @@ class CoordinatorState:
         self.server_start_time = time.time()
         self._prepare_iteration()
         self.total_games_at_start = (
-            self.optimizer.iteration * self.config.games_per_iteration
-            + self.games_completed
+            self._historical_games_total() + self.games_completed
         )
 
         # Log if resuming with partial progress
@@ -162,6 +161,13 @@ class CoordinatorState:
                 self.optimizer.iteration, self.games_completed,
                 self.config.games_per_iteration,
             )
+
+    def _historical_games_total(self) -> int:
+        """Total games across all completed iterations, honoring per-entry
+        games count when recorded. Falls back to current games_per_iteration
+        for legacy entries (pre-games-field state files)."""
+        gpi = self.config.games_per_iteration
+        return sum(h["games"] if "games" in h else gpi for h in self.optimizer.state.history)
 
     def _estimate_game_duration(self, overrides: dict = None) -> float:
         """Estimate wall-clock seconds per game from time control or search depth.
@@ -693,9 +699,9 @@ class CoordinatorState:
                 k, avg_score_plus, avg_score_minus,
             )
             new_theta = old_theta
-            self.optimizer.advance(avg_score_plus, avg_score_minus)
+            self.optimizer.advance(avg_score_plus, avg_score_minus, games=self.games_completed)
         else:
-            new_theta = self.optimizer.update(self.current_delta, avg_score_plus, avg_score_minus)
+            new_theta = self.optimizer.update(self.current_delta, avg_score_plus, avg_score_minus, games=self.games_completed)
 
         # ELO estimates
         elo_plus = self.optimizer.elo_estimate(avg_score_plus)
@@ -910,7 +916,7 @@ class CoordinatorState:
                 "games_per_iteration": gpi,
                 "games_assigned": self._games_assigned(),
                 "games_pending": self._games_in_flight(),
-                "total_games": self.optimizer.iteration * gpi + self.games_completed,
+                "total_games": self._historical_games_total() + self.games_completed,
                 "total_games_at_start": self.total_games_at_start,
                 "throughput": round(throughput, 2),
                 "theta": self._get_display_values(),
