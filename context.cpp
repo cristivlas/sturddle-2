@@ -1518,7 +1518,11 @@ namespace search
      */
     std::string Context::epd(const State& state)
     {
+    #if NATIVE_BUILD
+        return chess::epd::to_string(state);
+    #else
         return cython_wrapper::call(_epd, state);
+    #endif /* NATIVE_BUILD */
     }
 
 

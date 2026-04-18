@@ -2173,6 +2173,98 @@ namespace chess
         {
             return (tok.front() == '-') ? true : parse_square(tok, pos.en_passant_square);
         }
+
+        /**
+         * Serialize a position as a 4-field EPD string:
+         *   <piece placement> <side to move> <castling rights> <en passant target>
+         * Matches the format produced by python-chess Board.epd(), which is what
+         * the Python callback in __init__.pyx returns. No halfmove/fullmove fields.
+         */
+        template<typename P> INLINE std::string to_string(const P& pos)
+        {
+            std::string s;
+            s.reserve(80);
+
+            /* piece placement, ranks 8..1, files a..h */
+            for (int rank = 7; rank >= 0; --rank)
+            {
+                int empty = 0;
+                for (int file = 0; file < 8; ++file)
+                {
+                    const auto sq = Square(rank * 8 + file);
+                    const auto piece = pos.piece_type_at(sq);
+                    if (piece == PieceType::NONE)
+                    {
+                        ++empty;
+                    }
+                    else
+                    {
+                        if (empty)
+                        {
+                            s += char('0' + empty);
+                            empty = 0;
+                        }
+                        s += PIECE_SYMBOL[pos.piece_color_at(sq)][piece];
+                    }
+                }
+                if (empty)
+                    s += char('0' + empty);
+                if (rank > 0)
+                    s += '/';
+            }
+
+            /* side to move */
+            s += ' ';
+            s += (pos.turn == Color::WHITE) ? 'w' : 'b';
+
+            /* castling rights */
+            s += ' ';
+            const size_t castling_start = s.size();
+            if (pos.castling_rights & BB_SQUARES[H1]) s += 'K';
+            if (pos.castling_rights & BB_SQUARES[A1]) s += 'Q';
+            if (pos.castling_rights & BB_SQUARES[H8]) s += 'k';
+            if (pos.castling_rights & BB_SQUARES[A8]) s += 'q';
+            if (s.size() == castling_start)
+                s += '-';
+
+            /* en passant target
+             *
+             * Match python-chess Board.epd() behavior: emit the ep square only
+             * if there is an opposing pawn that could capture en passant next
+             * move (pseudo-legal). Otherwise emit '-'. The raw field is still
+             * round-trip safe through parse_fen since parse_en_passant_target
+             * accepts '-'.
+             */
+            s += ' ';
+            bool ep_shown = false;
+            if (pos.en_passant_square != UNDEFINED)
+            {
+                const int ep_file = square_file(pos.en_passant_square);
+                const int ep_rank = square_rank(pos.en_passant_square);
+                const int capture_rank = (ep_rank == 5) ? 4 : (ep_rank == 2) ? 3 : -1;
+                if (capture_rank >= 0)
+                {
+                    const Color capturer = (ep_rank == 5) ? Color::WHITE : Color::BLACK;
+                    const Bitboard own_pawns = pos.pawns & pos.occupied_co(capturer);
+                    for (int df = -1; df <= 1; df += 2)
+                    {
+                        const int f = ep_file + df;
+                        if (f < 0 || f > 7) continue;
+                        if (own_pawns & BB_SQUARES[capture_rank * 8 + f])
+                        {
+                            ep_shown = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (ep_shown)
+                s += square_name(pos.en_passant_square);
+            else
+                s += '-';
+
+            return s;
+        }
     } /* namespace */
 
     template<typename P> INLINE bool parse_fen(const std::string& fen, P& pos)

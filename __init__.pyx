@@ -205,6 +205,10 @@ cdef extern from 'chess.h' namespace 'chess':
     bool parse_fen[T](const string&, T&)
 
 
+cdef extern from 'chess.h' namespace 'chess::epd':
+    cdef string epd_to_string "chess::epd::to_string" (const State&)
+
+
 cdef extern from 'zobrist.h' namespace 'chess':
     cdef uint64_t zobrist_hash(const State&)
 
@@ -1242,6 +1246,15 @@ def board_from_fen(fen: str):
     board = BoardState()
     if parse_fen(fen.encode(), board._state):
         return board
+
+
+def epd_native(state: BoardState):
+    '''
+    Serialize a BoardState via the native C++ chess::epd::to_string,
+    bypassing the Python callback used by Context::epd(). For cross-checking
+    against python-chess board.epd() in unit tests.
+    '''
+    return epd_to_string(state._state).decode()
 
 
 def set_syzygy_path(path):
