@@ -104,6 +104,28 @@ def find_game_runner():
     return 'cutechess-cli'
 
 
+def parse_version():
+    path = os.path.join(root_path(), 'version.h')
+    with open(path) as f:
+        text = f.read()
+    major = re.search(r'^#define\s+STURDDLE_VERSION_MAJOR\s+(\d+)', text, re.M).group(1)
+    minor = re.search(r'^#define\s+STURDDLE_VERSION_MINOR\s+(\d+)', text, re.M).group(1)
+    patch = re.search(r'^#define\s+STURDDLE_VERSION_PATCH\s+"([^"]+)"', text, re.M).group(1)
+    return f'{major}.{minor}.{patch}'
+
+
+def resolve_native_engine():
+    version = parse_version()
+    windows = sysconfig.get_platform().startswith('win')
+    name = f'sturddle-{version}.exe' if windows else f'sturddle-{version}'
+    path = os.path.join(root_path(), 'dist', 'native', name)
+    if not os.path.isfile(path):
+        print(f'Error: Native engine not found: {path}', file=sys.stderr)
+        print(f'Build it with: python tools/make-native.py', file=sys.stderr)
+        sys.exit(1)
+    return abspath(path)
+
+
 def resolve_engine(value):
     """Resolve engine: if value is a path, canonicalize it; otherwise look up version in dist/. Exits on failure."""
     if os.path.exists(value):
@@ -151,6 +173,7 @@ def main():
     parser.add_argument('-w', '--worker-only', action='store_true', help='Generate worker.json only (no engine needed)')
     parser.add_argument('-s', '--server-only', action='store_true', help='Generate tuning.json (coordinator) only, skip worker.json')
     parser.add_argument('-e', '--engine', metavar='VERSION_OR_PATH', help='Engine version from dist/ (e.g., 2.5.1-pieces) or path to binary')
+    parser.add_argument('--native', action='store_true', help='Use default native engine from dist/native/ (mutually exclusive with --engine)')
     parser.add_argument('-r', '--ref', metavar='VERSION_OR_PATH', help='Reference engine version from dist/ (e.g., 2.5.0) or path to binary')
     _tc = TuningConfig()
     _spsa = SPSAConfig()
@@ -176,10 +199,16 @@ def main():
     os.makedirs(os.path.join(project_dir, 'logs'), exist_ok=True)
     project_dir_abs = abspath(project_dir)
 
-    # Engine command: dist binary if --engine, otherwise script wrapper (not needed for server-only)
+    if args.native and args.engine:
+        print('Error: --native and --engine are mutually exclusive', file=sys.stderr)
+        sys.exit(1)
+
+    # Engine command: dist binary if --engine, native binary if --native, otherwise script wrapper (not needed for server-only)
     if not args.server_only:
         if args.engine:
             engine_cmd = resolve_engine(args.engine)
+        elif args.native:
+            engine_cmd = resolve_native_engine()
         else:
             engine_cmd = get_engine_cmd(project_dir)
 
