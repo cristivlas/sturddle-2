@@ -281,6 +281,11 @@
         @media (max-width: 700px) {{
             .header {{ flex-wrap: wrap; gap: 6px; justify-content: center; }}
             .container {{ height: auto; min-height: 100vh; }}
+            .theme-toggle > span {{ font-size: 0; padding: 4px 6px; }}
+            .theme-toggle > span::before {{ font-size: 14px; line-height: 1; }}
+            .theme-toggle > span[data-mode="auto"]::before {{ content: '\25D0'; }}
+            .theme-toggle > span[data-mode="light"]::before {{ content: '\2600'; }}
+            .theme-toggle > span[data-mode="dark"]::before {{ content: '\263E'; }}
         }}
     </style>
     <!-- Time-of-day theme (keep in sync across dashboard/charts/logs templates) -->

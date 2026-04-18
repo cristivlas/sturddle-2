@@ -283,6 +283,11 @@
             .resize-handle {{ display: none !important; }}
             .col-resize-handle {{ display: none !important; }}
             #legendToggle {{ display: none !important; }}
+            .theme-toggle > span {{ font-size: 0; padding: 4px 6px; }}
+            .theme-toggle > span::before {{ font-size: 14px; line-height: 1; }}
+            .theme-toggle > span[data-mode="auto"]::before {{ content: '\25D0'; }}
+            .theme-toggle > span[data-mode="light"]::before {{ content: '\2600'; }}
+            .theme-toggle > span[data-mode="dark"]::before {{ content: '\263E'; }}
             .section {{ margin-top: 12px !important; }}
             #chartSection {{ height: auto !important; flex-direction: column !important; }}
             #chartSection > .card {{ height: auto; flex: unset !important; width: auto !important; min-width: 0 !important; }}

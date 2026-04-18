@@ -142,6 +142,7 @@
             gap: 12px;
             flex: 1;
             min-height: 0;
+            overflow: hidden;
         }}
         .card {{
             border: 1px solid var(--border);
@@ -223,7 +224,7 @@
         .zoom-track input[type="range"]::-webkit-slider-thumb {{
             -webkit-appearance: none;
             pointer-events: auto;
-            width: 22px; height: 22px;
+            width: 18px; height: 18px;
             border-radius: 50%;
             background: var(--accent-start, #667eea);
             border: 2px solid var(--surface);
@@ -236,7 +237,7 @@
         }}
         .zoom-track input[type="range"]::-moz-range-thumb {{
             pointer-events: auto;
-            width: 20px; height: 20px;
+            width: 16px; height: 16px;
             border-radius: 50%;
             background: var(--accent-start, #667eea);
             border: 2px solid var(--surface);
@@ -248,6 +249,48 @@
             color: var(--text-subtle);
             white-space: nowrap;
             min-width: 7em;
+        }}
+        .resize-handle {{
+            flex-shrink: 0;
+            height: 10px;
+            cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cpath d='M12 2L7 7h3v10h-3l5 5 5-5h-3V7h3z' fill='%23fff' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E") 12 12, row-resize;
+            position: relative;
+            z-index: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .resize-handle::before {{
+            content: '';
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 50%;
+            height: 4px;
+            margin-top: -2px;
+            background: var(--accent-start);
+            border-radius: 2px;
+            opacity: 0;
+            transition: opacity 0.15s;
+            pointer-events: none;
+        }}
+        .resize-handle:hover::before, .resize-handle.dragging::before {{
+            opacity: 1;
+        }}
+        .resize-handle::after {{
+            content: '';
+            display: block;
+            width: 48px;
+            height: 4px;
+            border-radius: 2px;
+            transition: opacity 0.15s;
+            position: relative;
+            z-index: 1;
+            background: var(--accent-start);
+            opacity: 0;
+        }}
+        .resize-handle:hover::after, .resize-handle.dragging::after {{
+            opacity: 1;
         }}
         .refresh-info {{
             padding: 4px 24px;
@@ -263,6 +306,12 @@
             .card {{ min-height: 200px; }}
             .card.collapsed {{ min-height: 0; }}
             a[href="/logs"] {{ display: none; }}
+            .resize-handle {{ display: none !important; }}
+            .theme-toggle > span {{ font-size: 0; padding: 4px 6px; }}
+            .theme-toggle > span::before {{ font-size: 14px; line-height: 1; }}
+            .theme-toggle > span[data-mode="auto"]::before {{ content: '\25D0'; }}
+            .theme-toggle > span[data-mode="light"]::before {{ content: '\2600'; }}
+            .theme-toggle > span[data-mode="dark"]::before {{ content: '\263E'; }}
         }}
     </style>
     <!-- Pre-render collapsed state from localStorage to prevent flicker -->
@@ -366,6 +415,7 @@
                 <div class="card-header" onclick="toggleChart('params')"><span class="caret">&#9660;</span><h2>Parameter Values</h2><div id="pertToggle" style="display:none; margin-left:auto; font-size:13px; gap:4px;" onclick="event.stopPropagation()"><span id="togValue" onclick="setPertView('value')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">Value</span><span id="togAbs" onclick="setPertView('pert')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">|Pert|</span></div></div>
                 <div class="chart-wrap"><canvas id="thetaChart"></canvas></div>
             </div>
+            <div class="resize-handle" id="paramsResize"></div>
             <div class="card" data-chart="elo">
                 <div class="card-header" onclick="toggleChart('elo')"><span class="caret">&#9660;</span><h2>ELO Difference</h2></div>
                 <div class="chart-wrap"><canvas id="eloChart"></canvas></div>
@@ -492,6 +542,31 @@
             var pre = document.getElementById('pre-collapse');
             if (pre) pre.remove();
             localStorage.setItem('chartVis', JSON.stringify(chartVis));
+            // Params resize handle: only visible when params is expanded AND
+            // at least one card below is expanded (otherwise there is nothing
+            // to resize against, and params should fill all available space).
+            var anyBelowOpen = chartVis.elo || chartVis.rates;
+            var rh = document.getElementById('paramsResize');
+            if (rh) rh.style.display = (chartVis.params && anyBelowOpen) ? '' : 'none';
+            var pc = document.querySelector('[data-chart="params"]');
+            if (pc) {{
+                if (chartVis.params && anyBelowOpen) {{
+                    var savedH = parseInt(localStorage.getItem('chartParamsH'), 10);
+                    if (savedH > 0) {{
+                        // Clamp against available content space so the fixed
+                        // height doesn't push siblings out of the viewport.
+                        var content = pc.closest('.content');
+                        var avail = content ? content.clientHeight : 0;
+                        var maxH = avail > 0 ? avail - 150 : savedH;
+                        var h = Math.max(120, Math.min(savedH, maxH));
+                        pc.style.flex = 'none';
+                        pc.style.height = h + 'px';
+                    }}
+                }} else {{
+                    pc.style.flex = '';
+                    pc.style.height = '';
+                }}
+            }}
             requestAnimationFrame(function() {{
                 createPending();
                 // Resize existing charts after layout reflow
@@ -519,6 +594,79 @@
         }}
 
         document.addEventListener('DOMContentLoaded', applyVis);
+
+        // Drag-resize for the "Parameter Values" card height.
+        (function() {{
+            function resizeAllCharts() {{
+                document.querySelectorAll('[data-chart]:not(.collapsed) canvas').forEach(function(c) {{
+                    var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(c);
+                    if (ch) ch.resize();
+                }});
+            }}
+            document.addEventListener('DOMContentLoaded', function() {{
+                var card = document.querySelector('[data-chart="params"]');
+                var handle = document.getElementById('paramsResize');
+                if (!card || !handle) return;
+                handle.addEventListener('mousedown', function(eDown) {{
+                    if (window.innerWidth <= 700) return;
+                    if (!chartVis.params) return;
+                    eDown.preventDefault();
+                    handle.classList.add('dragging');
+                    var startY = eDown.clientY;
+                    var startH = card.getBoundingClientRect().height;
+                    var content = card.closest('.content');
+                    // Min height = natural collapsed size. Measured by briefly
+                    // toggling .collapsed (synchronous reads, no paint flash).
+                    var prevFlex = card.style.flex, prevH = card.style.height;
+                    card.style.flex = ''; card.style.height = '';
+                    card.classList.add('collapsed');
+                    var collapsedH = card.offsetHeight;
+                    card.classList.remove('collapsed');
+                    card.style.flex = prevFlex; card.style.height = prevH;
+                    // Constants for max computation
+                    var MIN_EXPANDED = 160;     // min useful height of an expanded below-card
+                    var RESERVED = 10 + 24;     // handle + two 12px gaps
+                    function dynMax() {{
+                        var openCount = (chartVis.elo ? 1 : 0) + (chartVis.rates ? 1 : 0);
+                        return content.clientHeight - RESERVED
+                             - (2 - openCount) * collapsedH
+                             - openCount * MIN_EXPANDED;
+                    }}
+                    function onMove(e) {{
+                        var target = startH + e.clientY - startY;
+                        // Grow past current max -> auto-collapse bottommost expanded below-card.
+                        while (target > dynMax() && (chartVis.elo || chartVis.rates)) {{
+                            var key = chartVis.rates ? 'rates' : 'elo';
+                            chartVis[key] = false;
+                            var bc = document.querySelector('[data-chart="' + key + '"]');
+                            if (bc) bc.classList.add('collapsed');
+                        }}
+                        if (!chartVis.elo && !chartVis.rates) {{
+                            // Both collapsed: let params fill via flex:1
+                            card.style.flex = '';
+                            card.style.height = '';
+                        }} else {{
+                            target = Math.max(collapsedH, Math.min(target, dynMax()));
+                            card.style.flex = 'none';
+                            card.style.height = target + 'px';
+                        }}
+                        resizeAllCharts();
+                    }}
+                    function onUp() {{
+                        handle.classList.remove('dragging');
+                        localStorage.setItem('chartVis', JSON.stringify(chartVis));
+                        if (card.style.height) {{
+                            localStorage.setItem('chartParamsH', parseInt(card.style.height, 10));
+                        }}
+                        applyVis();
+                        window.removeEventListener('mousemove', onMove);
+                        window.removeEventListener('mouseup', onUp);
+                    }}
+                    window.addEventListener('mousemove', onMove);
+                    window.addEventListener('mouseup', onUp);
+                }});
+            }});
+        }})();
     </script>
 
     <script>{chart_js}</script>
