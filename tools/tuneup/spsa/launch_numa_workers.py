@@ -70,19 +70,41 @@ def _wait_all(procs) -> int:
 
 
 def _prompt_action() -> str:
-    """Return 'wait', 'stop', or 'dismiss'."""
+    """Return 'wait', 'stop', or 'dismiss'.
+
+    KeyboardInterrupt propagates up -- the caller treats Ctrl+C at the
+    prompt as "user really wants out, escalate to force kill".
+    """
     try:
         answer = input(
             "\nGames in progress. [w]ait and stop | [s]top now | "
             "[Enter] to dismiss "
         ).strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         return "dismiss"
     if answer == "w":
         return "wait"
     if answer == "s":
         return "stop"
     return "dismiss"
+
+
+def _hard_kill(procs) -> None:
+    """SIGKILL any still-alive worker and reap. Re-entrant-safe."""
+    _signal_all(procs, signal.SIGKILL)
+    for p in procs:
+        try:
+            p.wait()
+        except KeyboardInterrupt:
+            # SIGKILL'd procs exit near-instantly; just keep reaping.
+            continue
+
+
+def _wait_with_grace(procs, timeout: float) -> None:
+    """Wait up to timeout seconds for all procs to exit. Interruptible."""
+    deadline = time.monotonic() + timeout
+    while _alive(procs) and time.monotonic() < deadline:
+        time.sleep(0.2)
 
 
 def main() -> int:
@@ -154,31 +176,36 @@ def main() -> int:
             if graceful_shutdown:
                 # Second Ctrl+C during the wait phase -- escalate.
                 print("\nForce killing workers.", file=sys.stderr)
-                _signal_all(procs, signal.SIGKILL)
-                _wait_all(procs)
+                _hard_kill(procs)
                 return 130
 
-            action = _prompt_action()
-            if action == "wait":
-                print(
-                    "Waiting for workers to finish current games "
-                    "(Ctrl+C again to force kill)...",
-                    file=sys.stderr,
-                )
-                graceful_shutdown = True
-                _signal_all(procs, signal.SIGTERM)
-            elif action == "stop":
-                print("Stopping workers now.", file=sys.stderr)
-                _signal_all(procs, signal.SIGTERM)
-                # Give them a moment to clean up, then SIGKILL stragglers.
-                deadline = time.monotonic() + 5.0
-                while _alive(procs) and time.monotonic() < deadline:
-                    time.sleep(0.2)
-                if _alive(procs):
-                    _signal_all(procs, signal.SIGKILL)
-                _wait_all(procs)
+            # Any further Ctrl+C (at the prompt, during the grace sleep,
+            # etc.) means "stop second-guessing me" -- escalate to SIGKILL.
+            try:
+                action = _prompt_action()
+                if action == "wait":
+                    print(
+                        "Waiting for workers to finish current games "
+                        "(Ctrl+C again to force kill)...",
+                        file=sys.stderr,
+                    )
+                    graceful_shutdown = True
+                    _signal_all(procs, signal.SIGTERM)
+                elif action == "stop":
+                    print("Stopping workers now.", file=sys.stderr)
+                    # SIGINT (not SIGTERM): worker's --managed mode maps
+                    # SIGTERM to "graceful" and SIGINT to "kill cutechess
+                    # and exit", which is the semantic we want here.
+                    _signal_all(procs, signal.SIGINT)
+                    _wait_with_grace(procs, 5.0)
+                    if _alive(procs):
+                        _hard_kill(procs)
+                    return 130
+                # else: dismiss -- resume waiting
+            except KeyboardInterrupt:
+                print("\nForce killing workers.", file=sys.stderr)
+                _hard_kill(procs)
                 return 130
-            # else: dismiss -- resume waiting
 
     return _wait_all(procs)
 
