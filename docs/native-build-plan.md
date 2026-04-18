@@ -212,7 +212,17 @@ python -c "import sys; sys.path.insert(0,'.'); import chess_engine; chess_engine
   smoke-tested end-to-end on this machine.
 - **Generate `weights.h` from the TF model.** Unblocks `SHARED_WEIGHTS=0`
   and a single-file executable that doesn't need `weights.bin` next to
-  it. Uses `tools/nnue/train.py`'s export path.
+  it. Uses `tools/nnue/train.py`'s export path. Implemented as
+  `--embed [MODEL]` in `make-native.py`; reasonable build time for the
+  current Raptor-III model (~114 MB text header, ~minutes to compile
+  `context.cpp`).
+- **Switch the embed path from text `weights.h` to C23 `#embed`** when
+  the model grows large enough that `context.cpp` compile time /
+  memory becomes painful. `#embed "weights.bin"` inlines the raw binary
+  into a `constexpr unsigned char[]` with near-zero preprocessor cost
+  and eliminates the `tools/nnue/train.py` regen step entirely.
+  Requires Clang 19+ / GCC 15+ (MSVC doesn't ship it yet; not a concern
+  since we're clang-cl only).
 - **Cleanup of unused callbacks in `Context`.** `_pgn`, `_print_state`,
   `_report`, `_engine`, `_book_init`, `_book_lookup`, `_on_next` could
   be gated out entirely once the Cython path is retired (if ever).
