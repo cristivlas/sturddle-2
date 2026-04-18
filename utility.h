@@ -21,9 +21,12 @@
 #pragma once
 
 #include <chrono>
+#include <cstdio>
 #include <random>
 #include <stdexcept>
-#include "Python.h"
+#if !NATIVE_BUILD
+  #include "Python.h"
+#endif /* !NATIVE_BUILD */
 
 
 enum class CancelReason
@@ -36,6 +39,42 @@ extern void cancel_search(CancelReason);
 
 namespace
 {
+#if NATIVE_BUILD
+    /*
+     * Native-build shim: no Python, no GIL. `call` is a direct invocation;
+     * `call_nogil` keeps the noexcept contract (required by the search entry
+     * wrappers in search.h) and logs uncaught exceptions to stderr.
+     */
+    struct cython_wrapper
+    {
+        struct GIL_State {};
+
+        template <typename R, typename... Params, typename... Args>
+        static INLINE R call(R (*fn)(Params...), Args&&... args)
+        {
+            ASSERT(fn);
+            return fn(std::forward<Args>(args)...);
+        }
+
+        template <typename R, typename... Params, typename... Args>
+        static INLINE R call_nogil(R (*fn)(Params...), Args&&... args) noexcept
+        {
+            try
+            {
+                return fn(std::forward<Args>(args)...);
+            }
+            catch (const std::exception& e)
+            {
+                std::fprintf(stderr, "C++ exception: %s\n", e.what());
+            }
+            catch (...)
+            {
+                std::fprintf(stderr, "C++ exception (unknown)\n");
+            }
+            return R();
+        }
+    };
+#else
     /*
      * Utility for calling into Cython.
      * Not strictly needed if the cython functions are marked 'with gil'.
@@ -93,6 +132,7 @@ namespace
             return R();
         }
     };
+#endif /* NATIVE_BUILD */
 
 
     /*

@@ -2007,7 +2007,9 @@ void cancel_search(CancelReason reason)
         _exit(1);
 
     case CancelReason::PY_ERROR:
+    #if !NATIVE_BUILD
         PyErr_Print();
+    #endif /* !NATIVE_BUILD */
         _exit(2);
     }
 }
