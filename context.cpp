@@ -373,7 +373,7 @@ static struct Model
         {
             throw std::runtime_error("Error reading weights from: " + weights_path.string());
         }
-        Context::log_message(LogLevel::INFO, "Loaded " + weights_path.string());
+        Context::log_message(LogLevel::DEBUG, "Loaded " + weights_path.string());
     }
 
     std::string default_weights_path;
