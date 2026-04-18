@@ -1,226 +1,237 @@
 # Native Executable Build — Plan of Action
 
+## Status
+
+First Windows milestone **complete** on branch `2.5.1-hnat`. Native
+`dist/native/sturddle-2.5.1-hnat.exe` builds cleanly, runs UCI end-to-end,
+and produces bit-identical search output to the Cython `.pyd` at the same
+depth. Linux build and per-arch variants are pending.
+
 ## Goal
 
-Build Sturddle as a standalone native executable (no Python runtime, no Cython)
-on both Linux and Windows, reusing the existing `uci_native.cpp` UCI loop.
+Build Sturddle as a standalone native executable (no Python runtime, no
+Cython) on both Linux and Windows, reusing the existing `uci_native.cpp`
+UCI loop.
 
 ## Guiding decisions
 
-- **Windows first, clang-cl only.** The `sturddle.exe` target is built with
-  `clang-cl.exe` (LLVM), the same toolchain `tools/make-win.bat` already uses
-  for the Cython `.pyd`. MSVC `cl.exe` is **not** a supported compiler for the
-  native build — the codebase uses clang-specific flags (`-march=native`,
-  `-Ofast`, `-Wno-nan-infinity-disabled`) and libc++-style constructs that
-  pre-date MSVC's C++20 `<format>` maturity. Linux and macOS follow once the
-  Windows binary is validated.
-- **Keep the Python/Cython build path working.** All changes are gated by a new
-  `NATIVE_BUILD` define. `setup.py` continues to produce `chess_engine*.pyd`
-  from the same source tree, and `tools/make-win.bat` is the primary validator
-  after each edit (`-Werror` catches breakage in both build modes).
-- **Bootstrap with `SHARED_WEIGHTS=1`.** This avoids the dependency on a
-  generated `weights.h`. The executable loads `weights.bin` from its own
-  directory at startup. Regenerating `weights.h` from the TF model via
-  `tools/nnue/train.py` is a later, separate milestone.
-- **Minimum viable UCI first.** Drop everything that's not on the native UCI
-  hot path (PGN export, SMP thread reports, `vmem_avail`, Python-side book
-  lookup). `NATIVE_BOOK` is already the default.
+- **Windows first, clang-cl only.** `sturddle*.exe` is built with
+  `clang-cl.exe` (LLVM). MSVC `cl.exe` is **not** a supported compiler —
+  the codebase uses clang-specific flags (`-march=native`, `-Ofast`,
+  `-Wno-nan-infinity-disabled`). Linux and macOS follow.
+- **Keep the Python/Cython build path working.** All changes are gated by
+  a `NATIVE_BUILD` define. `setup.py` / `tools/make-win.bat` continues to
+  produce `chess_engine*.pyd` from the same source tree.
+- **Bootstrap with `SHARED_WEIGHTS=1`.** `weights.bin` is loaded at
+  startup from the exe directory. Regenerating `weights.h` from the TF
+  model (for single-file distribution) is a later milestone.
+- **Minimum viable UCI first.** Python-only callbacks (`_pgn`,
+  `_print_state`, `_report`, `_on_next`, `_engine`, etc.) stay `nullptr`
+  in native mode; call sites already null-check them.
 
-## Prerequisite: weights.bin
+## Step 1 — Native EPD serializer ✓ (commit `fe57881`)
 
-`SHARED_WEIGHTS=1` makes `Context::init()` call `model.load_weights(exe_dir / "weights.bin")`.
-A `weights.bin` already ships in the repo root; for the initial build, copy it next
-to the executable. Long-term, `tools/nnue/train.py` exports this file from the
-TF model.
+Added `chess::epd::to_string(const State&)` in `chess.h` alongside the
+existing parsers. Under `NATIVE_BUILD`, `Context::epd()` calls it
+directly instead of routing through the Python callback.
 
-Compiled-in path (`SHARED_WEIGHTS=0`) is a follow-up that requires regenerating
-`weights.h` from the current TF model — out of scope for this first milestone.
+**Non-obvious detail discovered during test authoring:** python-chess's
+`Board.epd()` suppresses the en-passant square if no pawn could legally
+capture (pseudo-legal ep check). The native serializer must match — a
+raw FEN field like `... e6` silently becomes `... -` in python-chess when
+there's no capturing pawn. Implemented with a short bitboard check
+(~20 LoC).
 
-## Step 1 — Native EPD serializer
+Tests (`test/unit_test.py`): 10 functions cross-checking native vs.
+python-chess output — startpos, empty board, all 13 castling subsets,
+legal/illegal ep targets, empty-run digit compression, every piece
+symbol, move sequences (Ruy Lopez, QGD, Sicilian, Italian, Closed
+Sicilian, KID), FEN corpus, round-trip stability.
 
-`Context::epd()` currently delegates to Python (`context.cpp:1521`). Used by the
-native UCI loop for `debug` output, `LOG_DEBUG` traces, and book-move logging.
+## Step 2 — No-op `cython_wrapper` under `NATIVE_BUILD` ✓ (commit `018943f`)
 
-- Add `chess::epd::to_string(const State&)` in `chess.h` next to the existing
-  `parse_pos`/`parse_side_to_move`/`parse_castling`/`parse_en_passant_target`
-  (chess.h:2092+).
-- FEN fields: piece placement, side to move, castling rights, en-passant
-  square, halfmove clock, fullmove number. Halfmove/fullmove come from
-  `Context::_history->_fifty` and `_history->size()` respectively (the Python
-  version reads them off `chess.Board`).
-- Under `NATIVE_BUILD`, `Context::epd()` calls the native serializer directly
-  instead of `cython_wrapper::call(_epd, state)`.
+`utility.h`:
+- `#include "Python.h"` gated behind `#if !NATIVE_BUILD`.
+- Native `cython_wrapper`: empty `GIL_State`, `call` is a direct
+  invocation (with `ASSERT(fn)`), `call_nogil` keeps the `noexcept`
+  contract (required by the search entry wrappers in `search.h`) and
+  logs uncaught exceptions to `stderr` via `std::fprintf`.
+- `CancelReason` enum and `cancel_search` declaration stay visible to
+  both builds — they're generic cancellation primitives, not
+  Python-specific.
 
-## Step 2 — No-op `cython_wrapper`
+`context.cpp:cancel_search`: only the `PyErr_Print()` line is gated under
+`#if !NATIVE_BUILD`; the rest (Context::cancel + log + _exit) remains
+identical in both builds.
 
-`utility.h` currently includes `Python.h` unconditionally. Under `NATIVE_BUILD`:
+## Step 3 — Gate `Python.h` + install default callback sinks ✓ (commit `dce7a35`)
 
-- Skip `#include "Python.h"`.
-- `GIL_State` becomes an empty struct.
-- `call(fn, args...)` becomes a direct invocation (null-check on `fn`).
-- `call_nogil(fn, args...)` becomes a `try/catch` that logs to stderr on
-  exception (no `PyErr_SetString`).
-- `cancel_search(CancelReason)` — leave the signature, but the
-  `PY_ERROR`/`PY_SIGNAL` reasons will never fire in native mode.
+`context.h:30`: opaque `using PyObject = struct _object;` replaces
+`#include "Python.h"` under `NATIVE_BUILD`. Callback signatures compile
+unchanged.
 
-Affected call sites (unchanged source, just swap the wrapper):
-`context.h:1152,1684`; `context.cpp:69,433,716,1521`; `search.cpp:85,1362,1387`;
-`search.h:80,84,88`.
+`context.cpp`: added `native_log_message` (writes to stderr with level
+prefix) and `native_vmem_avail` (returns 0 — OS-native paths in
+`search.cpp` handle Windows/Linux/Mac natively). Installed as defaults
+for `_log_message` and `_vmem_avail` under `NATIVE_BUILD`. Other
+Python-only callbacks stay `nullptr` and are already null-checked at
+every call site.
 
-## Step 3 — Gate Python includes and Python-only callbacks
+(This fold-in also covers what the plan originally called Step 4 — a
+separate logger was unnecessary since the minimal stderr sink is enough
+for the first milestone.)
 
-- `context.h:30` — wrap `#include "Python.h"` in `#ifndef NATIVE_BUILD`. Add a
-  forward-declaration of `PyObject` (as an opaque struct) for native builds, so
-  the existing `static PyObject* _engine` and callback signatures still compile.
-- `context.h:478–490` — keep the callback table as-is. In native mode the
-  unused pointers (`_book_init`, `_book_lookup`, `_pgn`, `_print_state`,
-  `_report`, `_on_next`, `_vmem_avail`) stay `nullptr` and the call sites
-  already null-check them (verify `context.h:1151` and `search.cpp:1362`).
-- `context.cpp:66–84` — replace `PyErr_SetString` in the SEGV handler with
-  `_exit(-1)` after `dump_backtrace(std::cerr)`.
+## Step 4 — `main_native.cpp` + `version.h` ✓ (commit `ab5accb`)
 
-## Step 4 — Logger
+New `version.h` is the single source of truth for version numbers:
 
-`Context::log_message` (`context.cpp:714`) routes to Python `logging`. Under
-`NATIVE_BUILD`:
-
-- Write directly to `stderr` with a level prefix, or
-- Append to a log file opened once (path via env var or `--log` arg).
-
-The `_log_message` function-pointer indirection can go away in native mode,
-but it's simpler to set it to an internal C++ sink during `Context::init`.
-
-## Step 5 — `main()` entry point
-
-New file `main_native.cpp`:
-
-- Parse argv: `--name`, `--version`, `--debug`, `--dev`, optional
-  `--weights=<path>`, `--log=<path>`.
-- Populate the `params` `unordered_map` that `uci_loop()` expects
-  (`uci_native.cpp:1470`).
-- Call `search::Context::init(exe_dir)` before `uci_loop(params)`.
-- Return the exit code from `uci_loop`.
-
-Version string: reuse the build-stamp approach from `setup.py`
-(`-DBUILD_STAMP=MMDDYY`), drop the Cython-side version assembly.
-
-## Step 6 — Build system
-
-**No CMake.** Mirror the existing `tools/make-win.bat` / `tools/make` idiom —
-a thin shell script that invokes the compiler directly. The native target has
-six translation units; a build-system dependency would be out of character for
-this repo and adds an install requirement developers don't currently have.
-
-### `tools/make-win-native.bat` (Windows, first milestone)
-
-Invokes `clang-cl.exe` directly — no MSVC fallback, no `vcvarsall.bat` dance.
-If LLVM isn't on the developer's machine at the expected path, the build
-fails fast with a clear error, matching the existing `make-win.bat` behavior.
-
-```bat
-@setlocal
-set CL_EXE=C:\Program Files\LLVM\bin\clang-cl.exe
-set OUT=dist\native
-if not exist %OUT% mkdir %OUT%
-
-set SOURCES=chess.cpp context.cpp search.cpp uci_native.cpp tbprobe.cpp main_native.cpp
-
-set DEFINES=-DNATIVE_BUILD=1 -DNATIVE_UCI=1 -DNATIVE_BOOK=1 -DWITH_NNUE ^
-            -DSHARED_WEIGHTS -DCALLBACK_PERIOD=8192 -DNO_ASSERT
-
-set INCLUDES=-I. -I./libpopcnt -I./magic-bits/include -I./version2 -I./Fathom/src
-
-set CXXFLAGS=/std:c++20 /fp:fast /O2 /MP -march=native -Werror ^
-             -Wno-deprecated-declarations -Wno-unused-command-line-argument ^
-             -Wno-unused-label -Wno-unused-variable -Wno-nan-infinity-disabled ^
-             /D_FORTIFY_SOURCE=0 /GS-
-
-"%CL_EXE%" %CXXFLAGS% %DEFINES% %INCLUDES% %SOURCES% ^
-    /link /OUT:%OUT%\sturddle.exe /LTCG:OFF
-if errorlevel 1 exit /b 1
-
-copy /Y weights.bin %OUT%\
-copy /Y book.bin %OUT%\
-@endlocal
+```c
+#define STURDDLE_VERSION_MAJOR 2
+#define STURDDLE_VERSION_MINOR 5
+#define STURDDLE_VERSION_PATCH "1-hnat"
+#define STURDDLE_VERSION "2.5.1-hnat"   // assembled via preprocessor concat
 ```
 
-`/MP` gives clang-cl intra-invocation parallelism. Full rebuild; incremental
-builds can be added if compile time becomes painful.
+Consumed by:
+- `main_native.cpp` — uses `STURDDLE_VERSION` literal.
+- `__init__.pyx` — `cdef extern` reads the three macros, preserves
+  `__major__` / `__minor__` / `__patch__` / `__build__` shape so
+  `tools/build.py` is untouched.
+- `tools/make-native.py` — regex-extracts MAJOR/MINOR/PATCH to build the
+  output filename.
 
-### `tools/make-native` (Linux/Mac, follow-up milestone)
+`main_native.cpp` is 83 LoC: parses `-D/--dev-mode` and `-v/--verbose`,
+derives `exe_dir` from `argv[0]`, calls `search::Context::init(exe_dir)`
+inside a try/catch, populates the `params` map (`name`, `version`,
+`dir`, optional `debug`/`dev_mode`), calls `uci_loop(params)`.
 
-Equivalent shell script, mirroring `tools/make` — same define set, `-std=c++20`,
-`-O3`, `-march=native`, clang-18 or gcc-13, `-stdlib=libc++` + `-fuse-ld=lld`
-to match `setup.py:274–282`.
+## Step 5 — Build system ✓ (commit `12771ce`)
 
-### Flag parity with `setup.py`
+**Python script, not a .bat.** `tools/make-native.py` handles Windows
+now and is shaped to accept a Linux branch later. Benefits over a bat
+file: regex-based version extraction (vs. `findstr` + delayed
+expansion), native `ThreadPoolExecutor` for parallel compile,
+cross-platform dispatch via `sys.platform`, clean `tempfile.TemporaryDirectory`
+for intermediates.
 
-Risk: native script and `setup.py` drift over time. Accepted for v1 — the
-native subset is much smaller (no Cython flags, no Python include dirs, no
-`PyMODINIT_FUNC` macros). Drift is caught by running both `make-win.bat` and
-`make-win-native.bat` after changes; `-Werror` is on in both.
+### Shape
 
-If duplication becomes a maintenance issue, factor the flags into
-`tools/compile_flags.py` that both scripts source. Deferred.
+```
+python tools/make-native.py [ARCH]
+```
 
-### Multi-arch variants
+`ARCH ∈ {native (default), AVX, AVX2, AVX2_VNNI, AVX512, AVX512_BF16}`.
+Arch-flag table mirrors `tools/build.py:109-120`.
 
-Cython build ships `chess_engine_avx*.pyd` via `tools/build.py`. Equivalent
-native variants (`sturddle-avx2.exe`, etc.) follow the same pattern — loop over
-arch names in the bat file. Not in this milestone. First target is a single
-`sturddle.exe` built with `-march=native`.
+### Output
 
-## Step 7 — Runtime assets
+| Variant | Filename |
+|---------|----------|
+| PyInstaller bundle (existing `tools/build.py`) | `dist/sturddle-2.5.1-hnat.exe` |
+| Native, `-march=native` (dev default) | `dist/native/sturddle-2.5.1-hnat.exe` |
+| Native, AVX2 | `dist/native/sturddle-2.5.1-hnat-avx2.exe` |
+| Native, AVX2+VNNI | `dist/native/sturddle-2.5.1-hnat-avx2-vnni.exe` |
+| Native, AVX-512+BF16 | `dist/native/sturddle-2.5.1-hnat-avx512-bf16.exe` |
 
-Next to the executable:
+The `dist/native/` subdir disambiguates from the PyInstaller `dist/*.exe`
+at the path level — no `-native` suffix in the filename itself.
 
-- `weights.bin` — NNUE weights (required for `SHARED_WEIGHTS=1`).
-- `book.bin` — opening book, if `OwnBook` is enabled (`NATIVE_BOOK` reads from
-  `params["dir"] / "book.bin"`; set `dir` to `argv[0]`'s parent).
-- Syzygy TBs — optional; path configured via UCI `setoption SyzygyPath`.
+### Compile/link specifics
 
-## Step 8 — Validation
+- Parallel compile: one `clang-cl /c` per source file via
+  `ThreadPoolExecutor(max_workers=os.cpu_count())`. `/MP` flag is
+  **omitted** (clang-cl silently ignores it; the per-file invocation is
+  the only way to actually parallelize).
+- `.obj` files go to a `tempfile.TemporaryDirectory` — auto-cleaned on
+  exit, no cross-arch stale-reuse risk by construction.
+- MSVC env bootstrap: if `%INCLUDE%` isn't set, the script runs
+  `vcvars64.bat` and inherits its env before invoking `clang-cl`.
+- **Critical linker flag: `/STACK:33554432`** (32 MB). Default 1 MB
+  overflows during search — surfaces as exit code `-1073741571`
+  (`0xC00000FD` = `STATUS_STACK_OVERFLOW`) and silent empty stdout
+  under MSYS bash. Matches the `editbin /STACK:33554432` post-process
+  in `tools/build.py:195`.
 
-Per-edit loop:
+### Non-obvious Cython-side include
 
-1. `tools\make-win.bat` — confirms Cython build still green (primary gate;
-   `-Werror` catches any flag or header breakage).
-2. `tools\make-win-native.bat` — confirms the native target also compiles.
+`uci_native.cpp` uses `_isatty`/`_fileno` on Windows. These come from
+`<io.h>`. Previously satisfied transitively via `Python.h` → native
+build broke once that transitive path was gated out. Added explicit
+`#include <io.h>` on Windows — harmless in the Cython build, required
+for native.
 
-End-to-end validation after all steps:
+## Step 6 — Runtime assets ✓
 
-1. `go depth 12` from startpos: bestmove and node count from
-   `dist\native\sturddle.exe` should match the current
-   `chess_engine.cp312-win_amd64.pyd`-hosted run within noise.
-2. UCI options round-trip: `setoption name Hash value 256`,
-   `setoption name Threads value 4`, etc.
-3. Perft regression: `go perft 6` from startpos against reference
-   119,060,324.
-4. Cutechess-cli sanity match: 100 games native vs. Python-hosted, same
-   binary version — expect ~50% score.
-5. Linux build (clang-18) — repeat 1–3.
+Copied next to the exe by `make-native.py`:
 
-## Step 9 — Cleanup / follow-ups (not in this milestone)
+- `weights.bin` — NNUE weights (required for `SHARED_WEIGHTS=1`)
+- `book.bin` — Polyglot opening book (consumed by `NATIVE_BOOK`)
+- Syzygy TBs — optional, `setoption name SyzygyPath value <path>`
 
-- Generate `weights.h` from the current TF model (`tools/nnue/train.py`) so
-  `SHARED_WEIGHTS=0` is possible and we can ship a single-file executable.
-- Replace `sturddle.cfg` (Python `exec()`-based) with either pure UCI
-  `setoption` or a small INI parser. Low priority — every `DECLARE_VALUE`
-  param is already exposed via `setoption`.
-- Strip `PyObject*` from `Context` entirely once the Cython build path is
-  retired (if ever).
+## Step 7 — Validation ✓
 
-## Scope estimate
+Per-edit loop used throughout:
+1. `tools\make-win.bat` — Cython build green (`-Werror` gate).
+2. `python tools\make-native.py` — native target green.
 
-| Task                          | LoC (new) | LoC (modified) |
-|-------------------------------|-----------|----------------|
-| Native EPD serializer         | ~60       | ~5             |
-| No-op `cython_wrapper`        | ~25       | ~10            |
-| Python.h gating + callbacks   | ~0        | ~15            |
-| Logger                        | ~20       | ~5             |
-| `main_native.cpp`             | ~80       | 0              |
-| `CMakeLists.txt`              | ~120      | 0              |
-| **Total**                     | **~305**  | **~35**        |
+End-to-end validation of native `sturddle-2.5.1-hnat.exe`:
 
-Risk: low. Core search/eval/move-gen is untouched; all changes are at the
-Cython boundary or the UCI entry point.
+| Test | Result |
+|------|--------|
+| Perft 6 from startpos | **119,060,324** ✓ (matches reference) |
+| `go depth 10` — native vs. `.pyd` | cp 26, 105,979 nodes, same PV ✓ |
+| `go depth 11` — native vs. `.pyd` | cp 26, 145,598 nodes, same PV ✓ |
+| `go depth 12` — native vs. `.pyd` | cp 18, 261,747 nodes, same PV ✓ |
+| `test/unit_test.py` (EPD + all unit tests) | all passed ✓ |
+| Cython `make-win.bat` | still green ✓ |
+
+Bit-for-bit identical search output at matching depths. Engine is ready
+for GUI integration and tournament play.
+
+**Lesson from validation:** `main.py`'s `load_engine()` auto-selects the
+best CPU-arch `chess_engine_avx*.pyd`. Rebuilding only the baseline via
+`make-win.bat` leaves arch-specific variants stale — `python main.py`
+silently loads the old one, leading to spurious "divergence" vs. the
+native exe. For parity tests against the current source, bypass
+`main.py`:
+
+```
+python -c "import sys; sys.path.insert(0,'.'); import chess_engine; chess_engine.uci('Sturddle', debug=False, dev_mode=False)"
+```
+
+## Remaining work (not in this milestone)
+
+- **Linux build.** `build_linux()` in `make-native.py` is currently
+  `sys.exit('stub')`. Implement using clang++-18 or gcc-13,
+  `-stdlib=libc++` + `-fuse-ld=lld` to match `setup.py:274–282`. Stack
+  size: Linux default (8 MB main + larger thread stacks) is typically
+  enough, but if not, set via `pthread_attr_setstacksize` in
+  `thread_pool.hpp` rather than a linker flag.
+- **Per-arch variants tested.** Infrastructure is in place
+  (`make-native.py AVX2` etc.) but only the `native` arch has been
+  smoke-tested end-to-end on this machine.
+- **Generate `weights.h` from the TF model.** Unblocks `SHARED_WEIGHTS=0`
+  and a single-file executable that doesn't need `weights.bin` next to
+  it. Uses `tools/nnue/train.py`'s export path.
+- **Cleanup of unused callbacks in `Context`.** `_pgn`, `_print_state`,
+  `_report`, `_engine`, `_book_init`, `_book_lookup`, `_on_next` could
+  be gated out entirely once the Cython path is retired (if ever).
+- **`sturddle.cfg` replacement.** Currently loaded by Python `exec()`
+  in `__init__.pyx:1231`. Every tunable is already exposed via UCI
+  `setoption` so no C++ parser is strictly needed for native operation.
+  Low priority.
+
+## Actual scope
+
+| Task                                        | Commit     |
+|---------------------------------------------|------------|
+| Native EPD serializer + cross-check tests   | `fe57881`  |
+| `cython_wrapper` shim                       | `018943f`  |
+| `Python.h` gating + default callback sinks  | `dce7a35`  |
+| `version.h` + `main_native.cpp`             | `ab5accb`  |
+| `make-native.py` parallel build + io.h fix  | `12771ce`  |
+| Plan doc                                    | `19231ae`  |
+
+~420 lines added across C++ (epd serializer, shim, main, defaults),
+Cython (version bindings), and Python (build script + tests). Core
+search/eval/move-gen untouched.

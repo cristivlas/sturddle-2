@@ -12,6 +12,7 @@ Output: dist/native/sturddle-<version><arch-suffix>.exe (Windows)
 Copies weights.bin and book.bin next to the binary.
 """
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -113,6 +114,16 @@ def build_linux(arch, version, build_stamp):
     sys.exit('ERROR: Linux native build not implemented yet (stub).')
 
 
+def write_sha256(exe_path):
+    h = hashlib.sha256()
+    with open(exe_path, 'rb') as f:
+        for chunk in iter(lambda: f.read(65536), b''):
+            h.update(chunk)
+    dgst_path = Path(f'{exe_path}-sha256.txt')
+    dgst_path.write_bytes(f'{h.hexdigest()} *{exe_path.name}\n'.encode())
+    return dgst_path
+
+
 def main():
     parser = argparse.ArgumentParser(description='Build native Sturddle binary')
     parser.add_argument('arch', nargs='?', default='native', choices=list(ARCH_FLAGS.keys()), help='Target SIMD architecture')
@@ -134,7 +145,10 @@ def main():
         if src.exists():
             shutil.copy(src, OUT_DIR / asset)
 
+    dgst = write_sha256(exe)
+
     print(f'\nBuilt {exe}')
+    print(f'Digest {dgst}')
 
 
 if __name__ == '__main__':
