@@ -1271,9 +1271,14 @@ def syzygy_path():
 init_static_callbacks()
 Context.init(os.path.dirname(__file__).encode())
 
-__major__   = 2
-__minor__   = 5
-__patch__   = '1-hsat'
+cdef extern from 'version.h':
+    int STURDDLE_VERSION_MAJOR
+    int STURDDLE_VERSION_MINOR
+    const char* STURDDLE_VERSION_PATCH
+
+__major__   = STURDDLE_VERSION_MAJOR
+__minor__   = STURDDLE_VERSION_MINOR
+__patch__   = STURDDLE_VERSION_PATCH.decode()
 __build__   = [str(__major__), f'{int(__minor__):d}', str(__patch__), timestamp().decode()]
 
 
