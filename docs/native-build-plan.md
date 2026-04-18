@@ -2,10 +2,10 @@
 
 ## Status
 
-First Windows milestone **complete** on branch `2.5.1-hnat`. Native
-`dist/native/sturddle-2.5.1-hnat.exe` builds cleanly, runs UCI end-to-end,
-and produces bit-identical search output to the Cython `.pyd` at the same
-depth. Linux build and per-arch variants are pending.
+Windows and Linux milestones **complete** on branch `2.5.1-hnat`. Native
+`dist/native/sturddle-2.5.1-hnat[.exe]` builds cleanly on both platforms,
+runs UCI end-to-end, and (on Windows) produces bit-identical search output
+to the Cython `.pyd` at the same depth. Per-arch variants are pending.
 
 ## Goal
 
@@ -199,14 +199,67 @@ native exe. For parity tests against the current source, bypass
 python -c "import sys; sys.path.insert(0,'.'); import chess_engine; chess_engine.uci('Sturddle', debug=False, dev_mode=False)"
 ```
 
+## Step 8 — Linux build ✓
+
+`build_linux()` in `make-native.py` mirrors `setup.py:230–295`:
+
+- **Compiler via `CXX` env var**, no auto-detection. Required.
+  Smoke-tested with `CXX=clang++-20`; gcc ≥ 13 branch wired but untested.
+- **Version gate.** Parses the `N.N.N` from `$CXX --version`; rejects
+  clang < 16 / gcc < 13, matching `MIN_CLANG_VER` / `MIN_GCC_VER`.
+- **Target triplet via `$CXX -dumpmachine`.** Feeds the `-L/usr/lib/llvm-<ver>/lib/<triplet>`
+  secondary libdir. Previously hardcoded to `x86_64-pc-linux-gnu` in both
+  `make-native.py` and `setup.py`; fixed in both files so ARM/other
+  Linux targets work without editing the scripts.
+- **Clang path adds:** `-stdlib=libc++ -fexperimental-library`
+  + `-fuse-ld=lld -L/usr/lib/llvm-<ver>/lib[/<triplet>]`
+  `-L/usr/local/opt/llvm/lib/c++ -lc++ -lc++experimental`.
+- **`-ffast-math` instead of `-Ofast`.** Clang 20 errors on `-Ofast`
+  under `-Werror`; `-O3 -ffast-math` is the documented replacement and
+  matches the Windows `/fp:fast` intent. **Caveat:** the Cython Linux
+  build does *not* enable `-ffast-math`, so Linux-native eval may diverge
+  bit-for-bit from the Cython Linux `.so`; Windows native remains parity
+  against Windows `.pyd`.
+- **`context.cpp:segv_handler` gated.** The linux-only `PyErr_SetString`
+  call needed `#if !NATIVE_BUILD`; the `dump_backtrace` + `sigaction`
+  wiring stays active in both builds (a native crash still dumps).
+- **Output** `dist/native/sturddle-<version>[-arch]` — no `.exe`.
+- Stack size: default 8 MB main was sufficient for depth 10 parity runs;
+  no `pthread_attr_setstacksize` needed so far.
+
+Smoke-tested: `uci`, `isready`, `position startpos`, `go depth 10` all
+green; weights.bin loads from exe dir, AVX512/FMA path selected on this
+host.
+
+## Step 9 — Native log-level filter ✓
+
+Before this step, `native_log_message()` in `context.cpp` printed every
+level unconditionally — `[DEBUG]` traces (init banners, move-ordering
+dumps, etc.) leaked to stderr even in non-verbose runs.
+
+New state:
+
+- **`search::native_log_level`** (new `extern` in `context.h`, default
+  `LogLevel::INFO`). `native_log_message()` drops messages below
+  threshold unless the existing `force` flag is set — same semantics
+  as the Cython `forceLevel` param.
+- **Single sync point:** `uci_native.cpp::sync_native_log_level()`
+  mirrors the file-static `_debug` bool into `native_log_level`
+  (`DEBUG` ↔ `INFO`). Called from `uci_loop` startup (reflects
+  `params["debug"]` / `-v`) and from the `Debug` UCI option via a
+  thin `OptionDebug` subclass of `OptionBool` that chains
+  `OptionBool::set()` + `sync_native_log_level()`.
+- **Cython build unaffected.** The sync helper is `#if NATIVE_BUILD`
+  internally; `OptionDebug` compiles in both builds and reduces to a
+  no-op wrapper when `NATIVE_BUILD` is undefined. Python-side logging
+  continues to manage levels via `logging.getLogger().setLevel()`.
+
+Validated: `go depth 6` without `-v` emits only `[INFO]/[WARN]/[ERROR]`;
+`-v` or `setoption name Debug value true` (under `-D`) re-enables
+`[DEBUG]` lines; toggling back to `false` immediately silences them.
+
 ## Remaining work (not in this milestone)
 
-- **Linux build.** `build_linux()` in `make-native.py` is currently
-  `sys.exit('stub')`. Implement using clang++-18 or gcc-13,
-  `-stdlib=libc++` + `-fuse-ld=lld` to match `setup.py:274–282`. Stack
-  size: Linux default (8 MB main + larger thread stacks) is typically
-  enough, but if not, set via `pthread_attr_setstacksize` in
-  `thread_pool.hpp` rather than a linker flag.
 - **Per-arch variants tested.** Infrastructure is in place
   (`make-native.py AVX2` etc.) but only the `native` arch has been
   smoke-tested end-to-end on this machine.
@@ -240,6 +293,8 @@ python -c "import sys; sys.path.insert(0,'.'); import chess_engine; chess_engine
 | `Python.h` gating + default callback sinks  | `dce7a35`  |
 | `version.h` + `main_native.cpp`             | `ab5accb`  |
 | `make-native.py` parallel build + io.h fix  | `12771ce`  |
+| Linux build + `segv_handler` gating + triplet fix | (pending) |
+| Native log-level filter                     | (pending)  |
 | Plan doc                                    | `19231ae`  |
 
 ~420 lines added across C++ (epd serializer, shim, main, defaults),
