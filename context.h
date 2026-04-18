@@ -65,8 +65,17 @@ enum class LogLevel : int
 };
 
 
+
 namespace search
 {
+#if NATIVE_BUILD
+    /* Threshold consumed by native_log_message(). Messages below this
+     * level are dropped unless `force` is set. Toggled by --verbose,
+     * the UCI `debug` startup param, and `setoption name Debug`.
+     * Matches Python's logging.setLevel() semantics on the Cython side. */
+    extern LogLevel native_log_level;
+#endif /* NATIVE_BUILD */
+
     using time = std::chrono::time_point<std::chrono::steady_clock>;
 
     using Bitboard = chess::Bitboard;

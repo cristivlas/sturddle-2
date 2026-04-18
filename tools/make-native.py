@@ -114,7 +114,73 @@ def build_windows(arch, version, build_stamp, embed):
 
 
 def build_linux(arch, version, build_stamp, embed):
-    sys.exit('ERROR: Linux native build not implemented yet (stub).')
+    cxx = os.environ.get('CXX')
+    if not cxx:
+        sys.exit('ERROR: set CXX (e.g. CXX=clang++-20) before invoking this script.')
+
+    cxx_ver = subprocess.check_output([cxx, '--version'], text=True)
+    m = re.search(r'(\d+)\.\d+\.\d+', cxx_ver)
+    if not m:
+        sys.exit(f'ERROR: cannot parse {cxx} version from:\n{cxx_ver}')
+    cc_ver = int(m.group(1))
+    is_clang = 'clang' in Path(cxx).name
+    triplet = subprocess.check_output([cxx, '-dumpmachine'], text=True).strip()
+
+    if is_clang and cc_ver < 16:
+        sys.exit(f'ERROR: {cxx} v{cc_ver}. clang >= 16 required.')
+    if (not is_clang) and cc_ver < 13:
+        sys.exit(f'ERROR: {cxx} v{cc_ver}. gcc >= 13 required.')
+
+    exe = OUT_DIR / f'sturddle-{version}{ARCH_SUFFIX[arch]}'
+
+    cxxflags = ['-std=c++20', '-O3', '-ffast-math'] + ARCH_FLAGS[arch] + [
+        '-Wextra', '-Werror',
+        '-Wno-unused-label', '-Wno-unknown-pragmas',
+        '-Wno-unused-parameter', '-Wno-unused-variable',
+        '-Wno-empty-body', '-Wno-int-in-bool-context',
+        '-fno-stack-protector', '-D_FORTIFY_SOURCE=0',
+    ]
+    if is_clang:
+        cxxflags += [
+            '-Wno-macro-redefined', '-Wno-deprecated-declarations',
+            '-Wno-nan-infinity-disabled',
+            '-stdlib=libc++', '-fexperimental-library',
+        ]
+
+    defines = DEFINES if embed else DEFINES + ['SHARED_WEIGHTS']
+    define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}']
+    include_args = [f'-I{d}' for d in INCLUDES]
+
+    with tempfile.TemporaryDirectory(prefix='sturddle-native-') as tmp:
+        tmp_dir = Path(tmp)
+
+        def compile_one(src):
+            obj = tmp_dir / (Path(src).stem + '.o')
+            cmd = [cxx, '-c'] + cxxflags + define_args + include_args + [src, '-o', str(obj)]
+            print(' '.join(cmd))
+            rc = subprocess.call(cmd, cwd=REPO_ROOT)
+            if rc != 0:
+                raise RuntimeError(f'compile failed: {src} (rc={rc})')
+            return obj
+
+        with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
+            objs = list(pool.map(compile_one, SOURCES))
+
+        link_cmd = [cxx] + [str(o) for o in objs] + ['-o', str(exe), '-lpthread']
+        if is_clang:
+            link_cmd += [
+                '-fuse-ld=lld',
+                f'-L/usr/lib/llvm-{cc_ver}/lib/',
+                f'-L/usr/lib/llvm-{cc_ver}/lib/{triplet}',
+                '-L/usr/local/opt/llvm/lib/c++',
+                '-stdlib=libc++', '-lc++', '-lc++experimental',
+            ]
+        print(' '.join(link_cmd))
+        rc = subprocess.call(link_cmd, cwd=REPO_ROOT)
+        if rc != 0:
+            sys.exit(rc)
+
+    return exe
 
 
 def ensure_weights_h(model_path):

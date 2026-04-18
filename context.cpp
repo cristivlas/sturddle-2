@@ -66,8 +66,10 @@ using std::chrono::nanoseconds;
 static void segv_handler(int sig)
 {
     dump_backtrace(std::cerr);
+#if !NATIVE_BUILD
     cython_wrapper::GIL_State gil_state;
     PyErr_SetString(PyExc_Exception, "Segmentation Fault");
+#endif /* !NATIVE_BUILD */
 }
 
 static void setup_crash_handler()
@@ -614,8 +616,12 @@ namespace search
 
 #if NATIVE_BUILD
     /* Default sinks so native builds work without Cython-installed callbacks. */
-    static void native_log_message(int level, const std::string& msg, bool /*force*/)
+    LogLevel native_log_level = LogLevel::INFO;
+
+    static void native_log_message(int level, const std::string& msg, bool force)
     {
+        if (!force && level < int(native_log_level))
+            return;
         static constexpr const char* names[] = { "?", "DEBUG", "INFO", "WARN", "ERROR" };
         const auto name = (level >= 1 && level <= 4) ? names[level] : names[0];
         std::fprintf(stderr, "[%s] %s\n", name, msg.c_str());

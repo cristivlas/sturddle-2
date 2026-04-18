@@ -271,11 +271,12 @@ else:
             if '-arch arm64' in environ.get('ARCHFLAGS', ''):
                 print('ARM64 Target, skipping extra compiler and linker flags.')
             else:
+                triplet = subprocess.check_output([cc, '-dumpmachine'], text=True).strip()
                 args += ['-stdlib=libc++', '-fexperimental-library']
                 link += [
                     '-fuse-ld=lld',
                     f'-L/usr/lib/llvm-{cc_ver}/lib/',
-                    f'-L/usr/lib/llvm-{cc_ver}/lib/x86_64-pc-linux-gnu',
+                    f'-L/usr/lib/llvm-{cc_ver}/lib/{triplet}',
                     '-L/usr/local/opt/llvm/lib/c++',
                     '-lc++',
                     '-lc++experimental',

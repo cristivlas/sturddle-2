@@ -254,6 +254,27 @@ namespace
         }
     };
 
+    /* Sync the native logger threshold with the current _debug flag.
+     * Call after any write to _debug. Cython builds defer to Python's
+     * logging module, so this is a no-op there. */
+    static void sync_native_log_level()
+    {
+#if NATIVE_BUILD
+        search::native_log_level = _debug ? LogLevel::DEBUG : LogLevel::INFO;
+#endif /* NATIVE_BUILD */
+    }
+
+    struct OptionDebug : public OptionBool
+    {
+        OptionDebug(const std::string& name, bool& b) : OptionBool(name, b) {}
+
+        void set(std::string_view value) override
+        {
+            OptionBool::set(value);
+            sync_native_log_level();
+        }
+    };
+
     struct OptionParam : public OptionBase
     {
         const Param _p;
@@ -535,7 +556,7 @@ public:
         if (params["dev_mode"] == "true")
         {
             _options.emplace("algorithm", std::make_unique<OptionAlgo>(_algorithm));
-            _options.emplace("debug", std::make_unique<OptionBool>("Debug", _debug));
+            _options.emplace("debug", std::make_unique<OptionDebug>("Debug", _debug));
             _options.emplace("weightsfile", std::make_unique<OptionWeights>());
         }
         _options.emplace("bestbookmove", std::make_unique<OptionBool>("BestBookMove", _best_book_move));
@@ -1483,6 +1504,7 @@ void uci_loop(Params params)
 #endif /* WITH_NNUE */
 
     _debug = (debug == "true");
+    sync_native_log_level();
     std::string err;
     try
     {
