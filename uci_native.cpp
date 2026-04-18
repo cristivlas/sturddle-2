@@ -23,6 +23,7 @@ using Params = std::unordered_map<std::string, std::string>;
 #include <sstream>
 #include <vector>
 #if _WIN32
+  #include <io.h>
   #include <tlhelp32.h>
 #else
   #include <unistd.h>
