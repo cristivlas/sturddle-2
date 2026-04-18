@@ -1110,7 +1110,9 @@
                 console.error('Failed to render charts', e);
             }}
         }})();
-    // Update chart legend visibility on resize
+    // Update chart legend visibility on resize. Only the main theta chart
+    // has a conditional legend; other charts (ELO, a_k, c_k) keep legend
+    // permanently hidden per their own options, so don't touch them.
     var _resizeTimer;
     window.addEventListener('resize', function() {{
         clearTimeout(_resizeTimer);
@@ -1119,7 +1121,9 @@
             document.querySelectorAll('canvas').forEach(function(c) {{
                 var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(c);
                 if (!ch) return;
-                ch.options.plugins.legend.display = show;
+                if (c.id === 'thetaChart') {{
+                    ch.options.plugins.legend.display = show;
+                }}
                 ch.resize();
                 ch.update();
             }});
