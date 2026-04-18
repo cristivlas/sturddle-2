@@ -27,7 +27,14 @@
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set> /* unordered_multiset */
-#include "Python.h"
+#if NATIVE_BUILD
+  /* Opaque PyObject forward decl so callback signatures still compile.
+   * The pointer is never dereferenced or passed to the Python C API.
+   */
+  using PyObject = struct _object;
+#else
+  #include "Python.h"
+#endif /* NATIVE_BUILD */
 #include "config.h"
 #include "search.h"
 #include "utility.h"

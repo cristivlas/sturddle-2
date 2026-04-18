@@ -612,13 +612,35 @@ namespace search
     std::vector<MovesCache> _moves_cache(SMP_CORES);
     std::vector<PV> Context::_pvs(SMP_CORES);
 
-    /* Cython callbacks */
+#if NATIVE_BUILD
+    /* Default sinks so native builds work without Cython-installed callbacks. */
+    static void native_log_message(int level, const std::string& msg, bool /*force*/)
+    {
+        static constexpr const char* names[] = { "?", "DEBUG", "INFO", "WARN", "ERROR" };
+        const auto name = (level >= 1 && level <= 4) ? names[level] : names[0];
+        std::fprintf(stderr, "[%s] %s\n", name, msg.c_str());
+    }
+
+    /* Last-resort fallback for initial_hash_size(); the OS-native branches in
+     * search.cpp handle all three platforms, so this is only hit if those fail.
+     */
+    static size_t native_vmem_avail()
+    {
+        return 0;
+    }
+#endif /* NATIVE_BUILD */
+
+    /* Cython callbacks (stubbed with native defaults under NATIVE_BUILD) */
     PyObject* Context::_engine = nullptr;
 
     bool (*Context::_book_init)(const std::string&) = nullptr;
     BaseMove (*Context::_book_lookup)(const State&, bool) = nullptr;
     std::string (*Context::_epd)(const State&) = nullptr;
+#if NATIVE_BUILD
+    void (*Context::_log_message)(int, const std::string&, bool) = native_log_message;
+#else
     void (*Context::_log_message)(int, const std::string&, bool) = nullptr;
+#endif /* NATIVE_BUILD */
 
     void (*Context::_on_iter)(PyObject*, Context*, const IterationInfo*) = nullptr;
     void (*Context::_on_move)(PyObject*, const std::string&, int) = nullptr;
@@ -627,7 +649,11 @@ namespace search
     std::string(*Context::_pgn)(Context*) = nullptr;
     void (*Context::_print_state)(const State&, bool) = nullptr;
     void (*Context::_report)(PyObject*, std::vector<Context*>&) = nullptr;
+#if NATIVE_BUILD
+    size_t (*Context::_vmem_avail)() = native_vmem_avail;
+#else
     size_t (*Context::_vmem_avail)() = nullptr;
+#endif /* NATIVE_BUILD */
 
     std::string Context::_syzygy_path;
 
