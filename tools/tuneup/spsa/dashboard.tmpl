@@ -68,6 +68,7 @@
         .header {{
             background: linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%);
             color: white;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.35);
             padding: 10px 24px;
             display: flex;
             justify-content: space-between;
@@ -95,7 +96,7 @@
             letter-spacing: 0;
             text-transform: none;
             user-select: none;
-            background: transparent;
+            background: rgba(0,0,0,0.18);
             line-height: 1;
         }}
         .theme-toggle > span:first-child {{
@@ -106,7 +107,7 @@
             border-radius: 0 4px 4px 0;
         }}
         .theme-toggle > span.active {{
-            background: rgba(255,255,255,0.25);
+            background: rgba(0,0,0,0.35);
             color: #fff;
         }}
         .header-buttons {{
@@ -114,7 +115,7 @@
             gap: 8px;
         }}
         .status-badge {{
-            background: rgba(255,255,255,0.2);
+            background: rgba(0,0,0,0.25);
             padding: 6px 16px;
             border-radius: 16px;
             font-weight: 600;
@@ -457,8 +458,9 @@
     </style>
     <!-- Time-of-day theme (keep in sync across dashboard/charts/logs templates) -->
     <script>
+        var forceHour = null;
         function applyTimeTheme() {{
-            var h = new Date().getHours();
+            var h = (forceHour !== null) ? forceHour : new Date().getHours();
             var s, e;
             if      (h >= 6  && h < 12) {{ s = '#5ba0b5'; e = '#82c4d8'; }}
             else if (h >= 12 && h < 18) {{ s = '#667eea'; e = '#764ba2'; }}
@@ -471,6 +473,18 @@
         }}
         applyTimeTheme();
         setInterval(applyTimeTheme, 3600000);
+        // Debug: Shift+T cycles forced time-of-day theme (auto/morning/afternoon/evening/night)
+        document.addEventListener('keydown', function(ev) {{
+            if (ev.key !== 'T' || ev.ctrlKey || ev.altKey || ev.metaKey) return;
+            var t = ev.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+            var cycle = [null, 6, 12, 18, 0];
+            var i = cycle.indexOf(forceHour);
+            forceHour = cycle[(i + 1) % cycle.length];
+            console.log('[theme] forceHour =', forceHour);
+            applyTimeTheme();
+            ev.preventDefault();
+        }});
 
         // Dark mode (tri-state: auto/light/dark; user override persisted in localStorage)
         function currentThemeMode() {{ return localStorage.getItem('themeMode') || 'auto'; }}
