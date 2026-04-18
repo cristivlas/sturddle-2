@@ -293,8 +293,8 @@ Validated: `go depth 6` without `-v` emits only `[INFO]/[WARN]/[ERROR]`;
 | `Python.h` gating + default callback sinks  | `dce7a35`  |
 | `version.h` + `main_native.cpp`             | `ab5accb`  |
 | `make-native.py` parallel build + io.h fix  | `12771ce`  |
-| Linux build + `segv_handler` gating + triplet fix | (pending) |
-| Native log-level filter                     | (pending)  |
+| Linux build + `segv_handler` gating + triplet fix | `1e24a89` |
+| Native log-level filter                     | `1e24a89`  |
 | Plan doc                                    | `19231ae`  |
 
 ~420 lines added across C++ (epd serializer, shim, main, defaults),
