@@ -76,7 +76,7 @@ def build_windows(arch, version, build_stamp, embed):
 
     exe = OUT_DIR / f'sturddle-{version}{ARCH_SUFFIX[arch]}.exe'
 
-    cxxflags = ['/std:c++20', '/EHsc', '/fp:fast', '/O2', '/MD'] + ARCH_FLAGS[arch] + [
+    cxxflags = ['/std:c++20', '/EHsc', '/fp:fast', '/O2', '/MT'] + ARCH_FLAGS[arch] + [
         '-O3', '-Ofast', '-Werror', '-Wmissing-field-initializers',
         '-Wno-deprecated-declarations', '-Wno-unused-command-line-argument',
         '-Wno-unused-label', '-Wno-unused-variable', '-Wno-nan-infinity-disabled',
