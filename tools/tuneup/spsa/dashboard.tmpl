@@ -902,7 +902,7 @@
 
         // --- Initial render from baked-in data ---
         const sessionStart = '{session_start}';
-        const totalGamesAtStart = {total_games_at_start};
+        var totalGamesAtStart = {total_games_at_start};
         var currentThroughput = {throughput};
         var iterationStartEpoch = {iteration_start};
         var lastETA = [{total_games}, {games_done}, {games_total}, {iteration}, {max_iters}];
@@ -1183,6 +1183,7 @@
             document.getElementById('ckValue').textContent = d.c_k.toFixed(6);
             document.getElementById('totalGamesValue').textContent = d.total_games;
             currentThroughput = d.throughput;
+            if (typeof d.total_games_at_start === 'number') totalGamesAtStart = d.total_games_at_start;
             updateSinceRestart(d.total_games);
 
             // Status badge
