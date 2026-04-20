@@ -42,7 +42,7 @@
 
 #if WITH_NNUE
   #include "nnue.h"
-  #if !(SHARED_WEIGHTS)
+  #if !SHARED_WEIGHTS && defined(USE_WEIGHTS_H)
     #include "weights.h"
   #endif
 #endif
@@ -393,7 +393,8 @@ static struct Model
 
 
 #if !SHARED_WEIGHTS
-/* weights are compiled-in */
+#ifdef USE_WEIGHTS_H
+/* Legacy debug path: weights baked in as constexpr arrays from weights.h */
 #define INIT_LAYER(layer, name) layer.set_weights(name ## _w, name ## _b)
 
 void Model::init()
@@ -409,6 +410,44 @@ void Model::init()
     INIT_LAYER(LMOVES, move);
 #endif
 }
+#else /* default: C23/C++26 #embed of weights.bin */
+#if !defined(__has_embed)
+  #error "embedded build requires #embed support (GCC 15+, Clang 19+, MSVC 17.15+); define USE_WEIGHTS_H to use the weights.h fallback"
+#endif
+#if __has_embed("weights.bin") != __STDC_EMBED_FOUND__
+  #error "weights.bin not found; run tools/fetch_weights.py before building"
+#endif
+
+void Model::init()
+{
+    static constexpr unsigned char WEIGHTS_DATA[] = {
+        #embed "weights.bin"
+    };
+
+    struct membuf : std::streambuf
+    {
+        membuf(const char* data, size_t size)
+        {
+            char* p = const_cast<char*>(data);
+            setg(p, p, p + size);
+        }
+    } buf(reinterpret_cast<const char*>(WEIGHTS_DATA), sizeof(WEIGHTS_DATA));
+
+    std::istream file(&buf);
+    file.exceptions(std::ios::failbit | std::ios::badbit);
+
+    /* Same order as Model::load_weights file-based path */
+    L1B.load_weights(file);
+    L1A.load_weights(file);
+    LATTN.load_weights(file);
+    L2.load_weights(file);
+    L3.load_weights(file);
+    EVAL.load_weights(file);
+#if USE_MOVE_PREDICTION
+    LMOVES.load_weights(file);
+#endif
+}
+#endif /* USE_WEIGHTS_H */
 #else
 
 void Model::init()

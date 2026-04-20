@@ -1,15 +1,21 @@
 import re
 import subprocess
+import sys
 import sysconfig
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from os import cpu_count, environ, pathsep
+from os import cpu_count, environ, path, pathsep
 
 from Cython.Build import cythonize
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
 import armcpu
+
+sys.path.insert(0, path.join(path.dirname(path.abspath(__file__)), 'tools'))
+import fetch_weights
+
+fetch_weights.ensure()
 
 MIN_CLANG_VER = 16
 MIN_GCC_VER = 13

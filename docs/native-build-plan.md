@@ -23,8 +23,8 @@ UCI loop.
   a `NATIVE_BUILD` define. `setup.py` / `tools/make-win.bat` continues to
   produce `chess_engine*.pyd` from the same source tree.
 - **Bootstrap with `SHARED_WEIGHTS=1`.** `weights.bin` is loaded at
-  startup from the exe directory. Regenerating `weights.h` from the TF
-  model (for single-file distribution) is a later milestone.
+  startup from the exe directory. Single-file distribution uses
+  `#embed "weights.bin"` (enabled by `make-native.py --embed`).
 - **Minimum viable UCI first.** Python-only callbacks (`_pgn`,
   `_print_state`, `_report`, `_on_next`, `_engine`, etc.) stay `nullptr`
   in native mode; call sites already null-check them.
@@ -263,19 +263,10 @@ Validated: `go depth 6` without `-v` emits only `[INFO]/[WARN]/[ERROR]`;
 - **Per-arch variants tested.** Infrastructure is in place
   (`make-native.py AVX2` etc.) but only the `native` arch has been
   smoke-tested end-to-end on this machine.
-- **Generate `weights.h` from the TF model.** Unblocks `SHARED_WEIGHTS=0`
-  and a single-file executable that doesn't need `weights.bin` next to
-  it. Uses `tools/nnue/train.py`'s export path. Implemented as
-  `--embed [MODEL]` in `make-native.py`; reasonable build time for the
-  current Raptor-III model (~114 MB text header, ~minutes to compile
-  `context.cpp`).
-- **Switch the embed path from text `weights.h` to C23 `#embed`** when
-  the model grows large enough that `context.cpp` compile time /
-  memory becomes painful. `#embed "weights.bin"` inlines the raw binary
-  into a `constexpr unsigned char[]` with near-zero preprocessor cost
-  and eliminates the `tools/nnue/train.py` regen step entirely.
-  Requires Clang 19+ / GCC 15+ (MSVC doesn't ship it yet; not a concern
-  since we're clang-cl only).
+- **Embed via `#embed` ✓.** `make-native.py --embed` now uses C23/C++26
+  `#embed "weights.bin"` in `context.cpp`; no `weights.h`, no TF
+  dependency at build time. Requires GCC 15+ / Clang 19+ / MSVC 17.15+.
+  Legacy `weights.h` path preserved under `-DUSE_WEIGHTS_H` for debug.
 - **Cleanup of unused callbacks in `Context`.** `_pgn`, `_print_state`,
   `_report`, `_engine`, `_book_init`, `_book_lookup`, `_on_next` could
   be gated out entirely once the Cython path is retired (if ever).

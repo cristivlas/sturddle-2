@@ -21,7 +21,7 @@
  */
 #include "common.h"
 #include "chess.h"
-#include <fstream>
+#include <istream>
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
@@ -516,7 +516,7 @@ namespace nnue
             }
         }
 
-        void load_weights(std::ifstream& file)
+        void load_weights(std::istream& file)
         {
             auto w = std::make_unique<float[]>(I * OUTPUTS);
             auto b = std::make_unique<float[]>(OUTPUTS);
