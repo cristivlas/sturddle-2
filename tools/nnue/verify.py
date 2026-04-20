@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
 Verify NNUE binary weights for proper clipping and rounding.
-Architecture: 1280-accumulator with attention modulation.
+Architecture: 1280-accumulator with attention modulation, 8-way bucketing.
 """
 import sys
+from pathlib import Path
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import fetch_weights
 
 Q_SCALE = 1024
 
@@ -14,10 +18,12 @@ Q_MAX_A = 32767 / Q_SCALE / 66
 # Constraint B: for hidden_1b layer
 Q_MAX_B = 32767 / Q_SCALE / 19
 
+ACTIVE_INPUTS = 897
 ACCUMULATOR_SIZE = 1280
 POOL_SIZE = 8
-ATTN_BUCKETS = 4
-HIDDEN2_BUCKETS = 4
+MAIN_BUCKETS = 8
+ATTN_BUCKETS = 8
+HIDDEN2_BUCKETS = 8
 
 # Layer definitions: (name, kernel_shape, bias_shape, constraint_type)
 # constraint_type: 'A', 'B', or None
@@ -25,15 +31,15 @@ HIDDEN2_BUCKETS = 4
 
 LAYERS = [
     ('hidden_1b', (256, 64), (64,), 'B'),
-    ('hidden_1a', (3588, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), 'A'),
-    ('spatial_attn', (64 * ATTN_BUCKETS, 32), (32,), None),  # bucketed: 64 inputs × 4 buckets
-    ('hidden_2', (ACCUMULATOR_SIZE // POOL_SIZE * HIDDEN2_BUCKETS, 16), (16,), None),  # bucketed: 160 inputs × 4 buckets
+    ('hidden_1a', (ACTIVE_INPUTS * MAIN_BUCKETS, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), 'A'),
+    ('spatial_attn', (64 * ATTN_BUCKETS, 32), (32,), None),
+    ('hidden_2', (ACCUMULATOR_SIZE // POOL_SIZE * HIDDEN2_BUCKETS, 16), (16,), None),
     ('hidden_3', (16, 16), (16,), None),
     ('out', (16, 1), (1,), None),
 ]
 
 # Optional move prediction layer
-MOVE_LAYER = ('move', (897, 4096), (4096,), 'A')
+MOVE_LAYER = ('move', (ACTIVE_INPUTS, 4096), (4096,), 'A')
 
 
 def get_constraint_params(constraint_type):
@@ -127,11 +133,11 @@ def verify_layers(data, layers, offset=0):
 
 
 def main():
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <weights.bin>")
+    if len(sys.argv) > 2:
+        print(f"Usage: {sys.argv[0]} [weights.bin]")
         sys.exit(1)
-    
-    filepath = sys.argv[1]
+
+    filepath = sys.argv[1] if len(sys.argv) == 2 else str(fetch_weights.ensure())
     print(f"Loading: {filepath}")
     print(f"Q_SCALE = {Q_SCALE}")
     print(f"Q_MAX_A = {Q_MAX_A:.10f} (hidden_1a, move)")
