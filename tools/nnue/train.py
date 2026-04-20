@@ -24,8 +24,9 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 ACCUMULATOR_SIZE = 1280
 ATTN_FAN_OUT = 32
 POOL_SIZE = 8
-ATTN_BUCKETS = 4  # Number of buckets for spatial attention layer
-HIDDEN2_BUCKETS = 4  # Number of buckets for hidden_2 layer
+MAIN_BUCKETS = 8  # Number of buckets for hidden_1a / BucketShift
+ATTN_BUCKETS = 8  # Number of buckets for spatial attention layer
+HIDDEN2_BUCKETS = 8  # Number of buckets for hidden_2 layer
 
 Q_SCALE = 1024
 
@@ -39,6 +40,10 @@ Q_MAX_B = 32767  / Q_SCALE / 19
 Q_MIN_B = -Q_MAX_B
 
 SCALE = 100.0
+
+# Square color masks for OCB detection
+LIGHT_SQUARES = np.uint64(0x55AA55AA55AA55AA)
+DARK_SQUARES = np.uint64(0xAA55AA55AA55AA55)
 
 
 def configure_logging(args):
@@ -133,6 +138,10 @@ def make_model(args, strategy):
             return tf.cast(f, tf.float32)
 
     class BucketShift(tf.keras.layers.Layer):
+        def __init__(self, num_buckets, **kwargs):
+            super(BucketShift, self).__init__(**kwargs)
+            self.num_buckets = num_buckets
+
         def call(self, features):
             # Extract already-unpacked pawn bits from features
             # Pawns are pieces index 2 (white) and 3 (black) in the 12 bitboards
@@ -146,22 +155,25 @@ def make_model(args, strategy):
             # Count total pawns on the board
             pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
 
-            # Assign bucket based on pawn count
-            # Bucket 0: 0-3 pawns, Bucket 1: 4-7 pawns
-            # Bucket 2: 8-11 pawns, Bucket 3: 12-16 pawns
-            bucket_id = tf.cast(tf.minimum(pawn_count // 4, 3), tf.int32)
+            # Assign bucket based on pawn count.
+            # With N buckets and 16 pawns max, each bucket spans (16 / N) pawns.
+            bucket_width = tf.constant(max(1, 16 // self.num_buckets), dtype=tf.float32)
+            bucket_id = tf.cast(
+                tf.minimum(pawn_count // bucket_width, self.num_buckets - 1),
+                tf.int32
+            )
 
             # tf.print("\nPawn count:", pawn_count, "\nBucket id:", bucket_id)
 
-            # Shift features into 4 buckets
+            # Shift features into N buckets
             num_features = tf.shape(features)[1]
-            bucket_mask = tf.one_hot(bucket_id, 4, dtype=features.dtype)
+            bucket_mask = tf.one_hot(bucket_id, self.num_buckets, dtype=features.dtype)
             bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
 
-            features_tiled = tf.tile(tf.expand_dims(features, 1), [1, 4, 1])
+            features_tiled = tf.tile(tf.expand_dims(features, 1), [1, self.num_buckets, 1])
             sparse = features_tiled * bucket_mask
 
-            return tf.reshape(sparse, [-1, 4 * num_features])
+            return tf.reshape(sparse, [-1, self.num_buckets * num_features])
 
 
     class AttnBucketShift(tf.keras.layers.Layer):
@@ -178,7 +190,11 @@ def make_model(args, strategy):
             # Extract pawn bits from features (same logic as BucketShift)
             pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
             pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
-            bucket_id = tf.cast(tf.minimum(pawn_count // 4, self.num_buckets - 1), tf.int32)
+            bucket_width = tf.constant(max(1, 16 // self.num_buckets), dtype=tf.float32)
+            bucket_id = tf.cast(
+                tf.minimum(pawn_count // bucket_width, self.num_buckets - 1),
+                tf.int32
+            )
 
             # Shift features into buckets (same approach as BucketShift)
             num_features = tf.shape(hidden_1b)[1]
@@ -205,7 +221,11 @@ def make_model(args, strategy):
             # Extract pawn bits from features
             pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
             pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
-            bucket_id = tf.cast(tf.minimum(pawn_count // 4, self.num_buckets - 1), tf.int32)
+            bucket_width = tf.constant(max(1, 16 // self.num_buckets), dtype=tf.float32)
+            bucket_id = tf.cast(
+                tf.minimum(pawn_count // bucket_width, self.num_buckets - 1),
+                tf.int32
+            )
 
             # Shift features into buckets
             num_features = tf.shape(pooled)[1]
@@ -246,7 +266,7 @@ def make_model(args, strategy):
         concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
 
         # Apply bucketing
-        bucketed = BucketShift(name='bucket_shift')(concat)
+        bucketed = BucketShift(MAIN_BUCKETS, name='bucket_shift')(concat)
 
         constr_a = QConstraint(Q_MIN_A, Q_MAX_A)
         hidden_1a = Dense(
@@ -591,6 +611,68 @@ def tf_unpack_bits(bitboards):
     return tf.reshape(isolated_bits, [-1, 12 * 64])
 
 
+def popcount(bb):
+    """Count bits in uint64 array using parallel bit counting."""
+    bb = bb.astype(np.uint64)
+    bb = bb - ((bb >> 1) & np.uint64(0x5555555555555555))
+    bb = (bb & np.uint64(0x3333333333333333)) + ((bb >> 2) & np.uint64(0x3333333333333333))
+    bb = (bb + (bb >> 4)) & np.uint64(0x0F0F0F0F0F0F0F0F)
+    return ((bb * np.uint64(0x0101010101010101)) >> 56).astype(np.float32)
+
+
+def detect_ocb(x):
+    """
+    Detect opposite-colored bishop endgame positions (bishops + pawns only).
+    x: shape (batch, 13) - bitboards + side-to-move
+    Returns: boolean array of shape (batch,)
+    """
+    black_bishops = x[:, 6]
+    white_bishops = x[:, 7]
+
+    # Check each side's bishop square colors
+    white_on_light = (white_bishops & LIGHT_SQUARES) != 0
+    white_on_dark = (white_bishops & DARK_SQUARES) != 0
+    black_on_light = (black_bishops & LIGHT_SQUARES) != 0
+    black_on_dark = (black_bishops & DARK_SQUARES) != 0
+
+    # Single color only (no bishop pair)
+    white_light_only = white_on_light & ~white_on_dark
+    white_dark_only = white_on_dark & ~white_on_light
+    black_light_only = black_on_light & ~black_on_dark
+    black_dark_only = black_on_dark & ~black_on_light
+
+    # OCB: opposite colors, neither side has bishop pair
+    is_ocb = (white_light_only & black_dark_only) | (white_dark_only & black_light_only)
+
+    # Only apply to pure bishop endgames: no knights, rooks, or queens
+    other_pieces = x[:, 4] | x[:, 5] | x[:, 8] | x[:, 9] | x[:, 10] | x[:, 11]
+
+    return is_ocb & (other_pieces == 0)
+
+
+# DEBUG: Remove this function once OCB feature is verified
+def decode_position(array):
+    """Decode bitboards to python-chess board for debugging."""
+    import chess
+    turn = array[12]
+    bitboards = [int(x) for x in list(array[:12])]
+    board = chess.Board(fen=None)
+    for b in bitboards:
+        board.occupied |= b
+    for b in bitboards[::2]:
+        board.occupied_co[chess.BLACK] |= b
+    for b in bitboards[1::2]:
+        board.occupied_co[chess.WHITE] |= b
+    board.kings = bitboards[0] | bitboards[1]
+    board.pawns = bitboards[2] | bitboards[3]
+    board.knights = bitboards[4] | bitboards[5]
+    board.bishops = bitboards[6] | bitboards[7]
+    board.rooks = bitboards[8] | bitboards[9]
+    board.queens = bitboards[10] | bitboards[11]
+    board.turn = bool(turn)
+    return board
+
+
 def dataset_from_file(args, filepath, strategy, callbacks):
     # Features are packed as np.uint64
     packed_feature_count = int(np.ceil(args.hot_encoding / 64))
@@ -685,6 +767,9 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             # Convert to win probability: -1->0.0, 0->0.5, 1->1.0
             y_outcome = (y_outcome_white_pov + 1.0) / 2.0
 
+            # Capture draw status before smoothing (for OCB adjustment)
+            is_draw = np.squeeze(y_outcome == 0.5)
+
             y_outcome = y_outcome * (1 - args.outcome_smoothing) + 0.5 * args.outcome_smoothing
 
             mask = None
@@ -710,6 +795,32 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 x = x[mask]
                 y_eval = y_eval[mask]
                 y_outcome = y_outcome[mask]
+                is_draw = is_draw[mask]
+
+            # OCB draw adjustment (must be before balance)
+            if args.ocb_draw_margin > 0:
+                piece_count_ocb = np.zeros(x.shape[0], dtype=np.float32)
+                for i in range(12):
+                    piece_count_ocb += popcount(x[:, i])
+
+                margin = args.ocb_draw_margin / SCALE
+                within_margin = np.abs(np.squeeze(y_eval)) <= margin
+                is_ocb = detect_ocb(x)
+                is_endgame = piece_count_ocb <= args.ocb_max_pieces
+
+                not_already_zero = np.squeeze(y_eval) != 0
+                ocb_mask = is_draw & within_margin & is_ocb & is_endgame & not_already_zero
+
+                # DEBUG: Remove this block once OCB feature is verified
+                if args.debug and np.any(ocb_mask):
+                    indices = np.where(ocb_mask)[0][:3]  # First 3 matches
+                    for idx in indices:
+                        board = decode_position(x[idx])
+                        print(f"OCB adjustment: {board.epd()} eval={y_eval[idx][0]*SCALE:.0f}cp -> 0")
+
+                # Apply adjustment
+                if np.any(ocb_mask):
+                    y_eval = np.where(ocb_mask[:, np.newaxis], 0.0, y_eval)
 
             if args.balance:
                 # Create balanced white/black batches by synthesizing symmetrical possitions
@@ -727,14 +838,6 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 y_outcome = tf.concat([y_outcome, y_outcome_flipped], axis=0)
 
             # Compute piece count ratio (0 to 1) for dynamic outcome weighting
-            def popcount(bb):
-                """Count bits in uint64 array using parallel bit counting."""
-                bb = bb.astype(np.uint64)
-                bb = bb - ((bb >> 1) & np.uint64(0x5555555555555555))
-                bb = (bb & np.uint64(0x3333333333333333)) + ((bb >> 2) & np.uint64(0x3333333333333333))
-                bb = (bb + (bb >> 4)) & np.uint64(0x0F0F0F0F0F0F0F0F)
-                return ((bb * np.uint64(0x0101010101010101)) >> 56).astype(np.float32)
-
             piece_count = np.zeros(x.shape[0], dtype=np.float32)
             for i in range(12):
                 piece_count += popcount(x[:, i])
@@ -936,34 +1039,6 @@ def set_weights(from_model, to_model):
 
         if len(to_layer.get_weights()):  # Trainable?
             try:
-                to_weights = to_layer.get_weights()
-                # Handle spatial_attn layer shape mismatch (unbucketed -> bucketed input)
-                if name == 'spatial_attn' and len(params) == 2 and len(to_weights) == 2:
-                    old_kernel, old_bias = params
-                    new_kernel, new_bias = to_weights
-                    # Check if source is unbucketed (64, 32) and target is bucketed (64*N, 32)
-                    if old_kernel.shape[0] < new_kernel.shape[0] and new_kernel.shape[0] % old_kernel.shape[0] == 0:
-                        num_buckets = new_kernel.shape[0] // old_kernel.shape[0]
-                        print(f"Converting spatial_attn: {old_kernel.shape} -> {new_kernel.shape} ({num_buckets} buckets)")
-                        # Tile weights across input buckets to preserve learned representation
-                        # Each bucket gets a copy of the original weights
-                        params = [
-                            np.tile(old_kernel, (num_buckets, 1)),
-                            old_bias  # bias stays the same size (32,)
-                        ]
-                # Handle hidden_2 layer shape mismatch (unbucketed -> bucketed input)
-                elif name == 'hidden_2' and len(params) == 2 and len(to_weights) == 2:
-                    old_kernel, old_bias = params
-                    new_kernel, new_bias = to_weights
-                    # Check if conversion is needed: old (160, 16) -> new (640, 16)
-                    if old_kernel.shape[0] < new_kernel.shape[0] and new_kernel.shape[0] % old_kernel.shape[0] == 0:
-                        num_buckets = new_kernel.shape[0] // old_kernel.shape[0]
-                        print(f"Converting hidden_2: {old_kernel.shape} -> {new_kernel.shape} ({num_buckets} buckets)")
-                        # Tile kernel across input buckets
-                        params = [
-                            np.tile(old_kernel, (num_buckets, 1)),
-                            old_bias  # bias stays the same size (16,)
-                        ]
                 to_layer.set_weights(params)
             except Exception:
                 logging.exception(name)
@@ -1038,7 +1113,7 @@ def main(args):
             )
             callbacks.append(model_checkpoint_callback)
 
-        model.summary(line_length=140)
+        model.summary(line_length=148)
         if not args.model:
             print('*****************************************************************')
             print(' WARNING: checkpoint path not provided, model WILL NOT BE SAVED! ')
@@ -1115,6 +1190,8 @@ if __name__ == '__main__':
         parser.add_argument('--no-capture', action='store_true', help='exclude captures from training')
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
         parser.add_argument('--discard-mismatch', type=float, default=0, help='discard examples where |eval| > threshold (in centipawns) AND game outcome disagrees')
+        parser.add_argument('--ocb-draw-margin', type=float, default=0, help='force eval to 0 for OCB draws within margin in centipawns (0=disabled)')
+        parser.add_argument('--ocb-max-pieces', type=int, default=12, help='max total pieces (incl. kings) for OCB draw adjustment')
 
         parser.add_argument('--outcome-weight', type=float, default=0.1, help='weight for outcome loss vs eval loss')
         parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')

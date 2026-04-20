@@ -86,8 +86,8 @@ namespace nnue
     using weight_t = float;
 
     constexpr int ACTIVE_INPUTS = 897;
-    constexpr int ATTN_BUCKETS = 4;
-    constexpr int HIDDEN2_BUCKETS = 4;
+    constexpr int ATTN_BUCKETS = 8;
+    constexpr int HIDDEN2_BUCKETS = 8;
     constexpr int EVAL_SCALE = 100;
     constexpr int MAX_ACTIVE_INPUTS = 65; // 32 pieces + 32 occupancy mask + turn
     constexpr auto POOL_STRIDE = Vec8s::size();
@@ -98,7 +98,7 @@ namespace nnue
 
     INLINE int get_bucket(const State& state)
     {
-        return std::min<int>(chess::popcount(state.pawns) / 4, 3);
+        return std::min<int>(chess::popcount(state.pawns) / 2, 7);
     }
 
     #if INSTRSET >= 9
@@ -687,12 +687,12 @@ namespace nnue
 
     template <int M, int N, int O> struct Accumulator
     {
-        static_assert(ACTIVE_INPUTS * 4 == M);
+        static constexpr int NUM_BUCKETS = 8;
+        static_assert(ACTIVE_INPUTS * NUM_BUCKETS == M);
 
         static constexpr int INPUTS = round_up<INPUT_STRIDE>(M);
         static constexpr int OUTPUTS_A = N;
         static constexpr int OUTPUTS_B = O;
-        static constexpr int NUM_BUCKETS = 4;
 
         struct Bucket
         {

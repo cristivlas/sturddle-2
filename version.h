@@ -1,8 +1,8 @@
 #pragma once
 
 #define STURDDLE_VERSION_MAJOR 2
-#define STURDDLE_VERSION_MINOR 5
-#define STURDDLE_VERSION_PATCH "1-hnat"
+#define STURDDLE_VERSION_MINOR 6
+#define STURDDLE_VERSION_PATCH "0-rc1"
 
 #define _STURDDLE_STR(x) #x
 #define _STURDDLE_XSTR(x) _STURDDLE_STR(x)

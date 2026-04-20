@@ -1279,7 +1279,7 @@ cdef extern from 'version.h':
 __major__   = STURDDLE_VERSION_MAJOR
 __minor__   = STURDDLE_VERSION_MINOR
 __patch__   = STURDDLE_VERSION_PATCH.decode()
-__build__   = [str(__major__), f'{int(__minor__):d}', str(__patch__), timestamp().decode()]
+__build__   = [str(__major__), str(__minor__), str(__patch__), timestamp().decode()]
 
 
 def version():
