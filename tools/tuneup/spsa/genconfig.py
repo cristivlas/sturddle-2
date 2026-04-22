@@ -147,6 +147,25 @@ def resolve_engine(value):
     return abspath(path)
 
 
+_PYI_MAGIC = b'MEI\x0c\x0b\x0a\x0b\x0e'
+
+
+def is_pyinstaller_onefile(path: str) -> bool:
+    """Detect PyInstaller --onefile binaries by scanning the tail for the CArchive cookie magic."""
+    if not path or not os.path.isfile(path):
+        return False
+    if path.lower().endswith(('.py', '.bat', '.cmd', '.sh')):
+        return False
+    try:
+        size = os.path.getsize(path)
+        chunk = min(size, 4 * 1024 * 1024)
+        with open(path, 'rb') as f:
+            f.seek(size - chunk)
+            return _PYI_MAGIC in f.read(chunk)
+    except OSError:
+        return False
+
+
 def get_engine_cmd(project_dir):
     """
     Get engine command for worker config.
@@ -337,6 +356,10 @@ def main():
         }
         if args.ref:
             worker_config['reference_engine'] = resolve_engine(args.ref)
+
+        # Enable ramdisk only if an engine is a PyInstaller --onefile binary.
+        if is_pyinstaller_onefile(engine_cmd) or is_pyinstaller_onefile(worker_config.get('reference_engine', '')):
+            worker_config['ramdisk'] = True
 
         worker_path = os.path.join(project_dir, 'worker.json')
         with open(worker_path, 'w') as f:

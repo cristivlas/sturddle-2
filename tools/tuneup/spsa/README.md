@@ -216,7 +216,7 @@ interval set by `dashboard_refresh` in tuning.json.
 | `log_rotation` | Enable daily log rotation (keeps 30 days of rotated files) | `true` |
 | `name` | Worker identity reported to coordinator; defaults to hostname if empty | `""` |
 | `reference_engine` | Path to a fixed reference engine for reference mode (see below); empty = standard mode | `""` |
-| `ramdisk` | Auto-create a RAM disk for PyInstaller temp extraction (see below); set `false` to disable | `true` |
+| `ramdisk` | Auto-create a RAM disk for PyInstaller temp extraction (see below); genconfig enables this automatically when the engine is a PyInstaller `--onefile` binary | `false` |
 | `ramdisk_drive` | Override drive letter for RAM disk (e.g. `"R:"`); empty = auto-select | `""` |
 | `auto_install_imdisk` | Auto-download and install ImDisk on Windows if not found; set `false` to manage manually | `true` |
 | `ramdisk_size` | Override RAM disk size in MB (0 = auto-estimate from engine sizes and concurrency) | `0` |
@@ -240,8 +240,10 @@ next startup via a marker file.
 **Linux**: Uses `/dev/shm` (tmpfs, already RAM-backed on most systems). No drivers or
 elevation needed. If `/dev/shm` is not available, the worker raises an error.
 
-Skipped entirely when all engines are `.py` scripts (no PyInstaller extraction).
-Set `"ramdisk": false` in `worker.json` to disable.
+Disabled by default. `genconfig.py` scans the engine and reference-engine binaries for
+the PyInstaller CArchive magic and sets `"ramdisk": true` only when a `--onefile` bundle
+is detected; `.py` scripts and native builds leave it off. Override in `worker.json` if
+needed.
 
 ### Reference Mode
 
