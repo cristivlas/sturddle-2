@@ -3,8 +3,7 @@
 Generate SPSA tuning project from engine parameters.
 
 Uses get_param_info() from chess_engine (same pattern as genlakas.py/gentune.py)
-to create a project directory with tuning.json, worker.json, and (on Windows)
-an engine wrapper batch file, ready for hand-editing.
+to create a project directory with tuning.json and worker.json, ready for hand-editing.
 
 Usage:
     python genconfig.py <project_name> [-D 8] [-H 256] [-T 1]
@@ -16,7 +15,6 @@ Creates:
     tuneup/<project_name>/
         tuning.json     # session config (edit before running)
         worker.json     # local worker config (edit per machine)
-        engine.bat      # engine wrapper (Windows only)
 """
 
 import argparse
@@ -166,33 +164,13 @@ def is_pyinstaller_onefile(path: str) -> bool:
         return False
 
 
-def get_engine_cmd(project_dir):
-    """
-    Get engine command for worker config.
-
-    On Windows: creates engine.bat wrapper and returns absolute path to it.
-    On Linux: returns absolute path to main.py directly.
-    """
-    engine_py = abspath(os.path.join(root_path(), 'main.py'))
-    windows = sysconfig.get_platform().startswith('win')
-
-    if windows:
-        bat_path = os.path.join(project_dir, 'engine.bat')
-        with open(bat_path, 'w') as f:
-            f.write(f'@"{sys.executable}" "{engine_py}" %*\n')
-        return abspath(bat_path)
-    else:
-        return engine_py
-
-
 def main():
     parser = argparse.ArgumentParser(description='Generate SPSA tuning project from engine parameters.')
     parser.add_argument('project', help='Project name (creates tuneup/<project>/)')
     parser.add_argument('tune', nargs='*', default='all', help='Parameter names to tune (or "all")')
     parser.add_argument('-w', '--worker-only', action='store_true', help='Generate worker.json only (no engine needed)')
     parser.add_argument('-s', '--server-only', action='store_true', help='Generate tuning.json (coordinator) only, skip worker.json')
-    parser.add_argument('-e', '--engine', metavar='VERSION_OR_PATH', help='Engine version from dist/ (e.g., 2.5.1-pieces) or path to binary')
-    parser.add_argument('--native', action='store_true', help='Use default native engine from dist/native/ (mutually exclusive with --engine)')
+    parser.add_argument('-e', '--engine', metavar='VERSION_OR_PATH', help='Engine version from dist/ (e.g., 2.5.1-pieces) or path to binary; defaults to dist/native/ build')
     parser.add_argument('-r', '--ref', metavar='VERSION_OR_PATH', help='Reference engine version from dist/ (e.g., 2.5.0) or path to binary')
     _tc = TuningConfig()
     _spsa = SPSAConfig()
@@ -218,18 +196,9 @@ def main():
     os.makedirs(os.path.join(project_dir, 'logs'), exist_ok=True)
     project_dir_abs = abspath(project_dir)
 
-    if args.native and args.engine:
-        print('Error: --native and --engine are mutually exclusive', file=sys.stderr)
-        sys.exit(1)
-
-    # Engine command: dist binary if --engine, native binary if --native, otherwise script wrapper (not needed for server-only)
+    # Engine command: explicit path/version via -e, otherwise the native build from dist/native/.
     if not args.server_only:
-        if args.engine:
-            engine_cmd = resolve_engine(args.engine)
-        elif args.native:
-            engine_cmd = resolve_native_engine()
-        else:
-            engine_cmd = get_engine_cmd(project_dir)
+        engine_cmd = resolve_engine(args.engine) if args.engine else resolve_native_engine()
 
     # Default book path (absolute, forward slashes)
     default_book = abspath(os.path.join(tuneup_path(), 'books', 'UHO_2024_6mvs_+085_+094.pgn'))

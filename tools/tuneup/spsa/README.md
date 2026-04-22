@@ -17,13 +17,6 @@ heterogeneous LANs, mixed Linux/Windows.
 - [cutechess-cli](https://github.com/cutechess/cutechess) or [fastchess](https://github.com/Disservin/fastchess) installed on each worker machine (fastchess recommended for high concurrency)
 - Engine build prepped for tuning (see [Tuning the Engine](../../../README.md#tuning-the-engine) in the main README)
 
-**Windows stack size caveat**: Using `main.py` directly (via the `engine.bat`
-wrapper) is convenient because it avoids a full packaged build, but `python.exe`
-has a limited default stack. At higher search depths this can cause stack
-overflows in the C extension. On Linux, thread stacks grow on demand so this
-is not an issue. If you see crashes on Windows, use a full build instead (see
-`tools/build.py`) — it configures a sufficiently large stack for the executable.
-
 ## Quick Start (single machine)
 
 ### 1. Generate a tuning project
@@ -37,14 +30,16 @@ python tools/tuneup/spsa/genconfig.py my-test -D 8 -i 50 -g 100
 This creates `tuneup/my-test/` with:
 - `tuning.json` — session config (parameters, SPSA settings, search control)
 - `worker.json` — local worker config (engine path, book, concurrency)
-- `engine.bat` — engine wrapper (Windows only)
+
+By default the worker is wired to the native build at `dist/native/sturddle-<version>`
+(build with `python tools/make-native.py`). Pass `-e` to pick a different binary.
 
 Options:
 - First argument is the project name
 - `all` (default) — tune all parameters, or list specific names
 - `-w` — generate worker.json only (no engine needed)
 - `-s` — generate tuning.json (coordinator) only, skip worker.json
-- `-e VERSION` — use a dist/ engine binary (e.g., `-e 2.5.1-pieces`)
+- `-e VERSION_OR_PATH` — override the engine: dist/ version (e.g., `-e 2.5.1-pieces`) or a full path (script/bat/binary)
 - `--ref VERSION` — reference engine from dist/ for reference mode (e.g., `--ref 2.5.0`)
 - `-D` — fixed search depth (mutually exclusive with `-t`)
 - `-t` — time control, e.g. `1+0.1` (default)
