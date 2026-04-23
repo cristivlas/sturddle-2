@@ -426,6 +426,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            overflow: hidden;
         }}
         .col-resize-handle::before {{
             content: '';
@@ -1347,7 +1348,8 @@
         if (savedH) cs.style.height = parseInt(savedH) + 'px';
         makeDragResize(rh, function(e) {{
             var startY = e.clientY, startH = cs.getBoundingClientRect().height;
-            var maxH = cs.closest('.content').getBoundingClientRect().bottom - cs.getBoundingClientRect().top - rh.offsetHeight - 80;
+            var bp = document.querySelector('.bottom-panel');
+            var maxH = startH + bp.getBoundingClientRect().height;
             return {{
                 move: function(e) {{ cs.style.height = Math.max(120, Math.min(startH + e.clientY - startY, maxH)) + 'px'; }},
                 save: function() {{ localStorage.setItem('dashSplitH', Math.round(cs.getBoundingClientRect().height)); }}
