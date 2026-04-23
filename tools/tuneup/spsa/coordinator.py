@@ -387,6 +387,19 @@ class CoordinatorState:
         chunk = self.pending_chunks.pop(cid)
         logger.warning("Released [%s] (%d games) from %s: %s", cid, chunk.num_games, chunk.worker_name, reason)
 
+    def _graceful_disconnect(self, worker_name: str):
+        """Register a worker's clean shutdown: release its chunks, snapshot its
+        stats, remove it from the active registry.  Idempotent / no-op if the
+        worker is already gone (e.g., evicted earlier for mode mismatch)."""
+        if worker_name not in self.workers:
+            return
+        w = self.workers[worker_name]
+        for cid in [c for c, ci in self.pending_chunks.items() if ci.worker_name == worker_name]:
+            self._release_chunk(cid, "worker %s shutting down" % worker_name)
+        self._worker_stats[worker_name] = (w.games_completed, w.chunks_completed, w.games_completed_iter)
+        del self.workers[worker_name]
+        logger.info("Worker %s disconnected gracefully", worker_name)
+
     def _reclaim_timed_out_chunks(self):
         """Reclaim chunks from unresponsive workers only.
 
@@ -556,6 +569,8 @@ class CoordinatorState:
 
             if not result.chunk_id or not result.worker:
                 logger.error("Malformed result: %s", result)
+                if result.shutting_down:
+                    self._graceful_disconnect(result.worker)
                 return {"status": "ignored", "reason": "malformed result"}
 
             if result.iteration != self.optimizer.iteration:
@@ -563,10 +578,14 @@ class CoordinatorState:
                     "Ignoring stale result (%d games) for iteration %d from %s (current: %d)",
                     result.num_games, result.iteration, result.worker, self.optimizer.iteration,
                 )
+                if result.shutting_down:
+                    self._graceful_disconnect(result.worker)
                 return {"status": "ignored", "reason": "stale iteration"}
 
             if result.chunk_id not in self.pending_chunks:
                 logger.warning("Ignoring result for unknown/reclaimed chunk %s from %s", result.chunk_id, result.worker)
+                if result.shutting_down:
+                    self._graceful_disconnect(result.worker)
                 return {"status": "ignored", "reason": "unknown chunk"}
             chunk = self.pending_chunks.pop(result.chunk_id)
 
@@ -587,6 +606,8 @@ class CoordinatorState:
             # is unbalanced, and there's no way to know which side got shorted.
             if result.num_games % 2 != 0:
                 logger.warning("Rejecting odd result (%d games) from %s [%s]", result.num_games, result.worker, result.chunk_id)
+                if result.shutting_down:
+                    self._graceful_disconnect(result.worker)
                 return {"status": "ignored", "reason": "odd game count"}
 
             self.games_completed += result.num_games
@@ -619,13 +640,8 @@ class CoordinatorState:
                     spg = w.sec_per_game or self._base_sec_per_game
                     if w.sec_per_game <= 0 or result.num_games * spg >= self.config.min_chunk_expected_duration:
                         w.update_speed(result.num_games, time.time() - chunk.assign_time)
-                # Graceful disconnect: worker announced it won't request more work
                 if result.shutting_down:
-                    for cid in [c for c, ci in self.pending_chunks.items() if ci.worker_name == result.worker]:
-                        self._release_chunk(cid, "worker %s shutting down" % result.worker)
-                    self._worker_stats[result.worker] = (w.games_completed, w.chunks_completed, w.games_completed_iter)
-                    del self.workers[result.worker]
-                    logger.info("Worker %s disconnected gracefully", result.worker)
+                    self._graceful_disconnect(result.worker)
 
             if result.reference_mode:
                 logger.info(
