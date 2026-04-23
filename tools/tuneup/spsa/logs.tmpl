@@ -176,45 +176,35 @@
             display: flex;
             gap: 4px;
         }}
-        .nav-button {{
+        .nav-button, .clear-button {{
             width: 32px;
             height: 32px;
             background: var(--surface-alt);
-            color: var(--text-muted);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            font-size: 16px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.2s;
-        }}
-        .nav-button:hover {{
-            background: var(--surface-hover);
             color: var(--text);
-        }}
-        .nav-button:disabled {{
-            opacity: 0.3;
-            cursor: not-allowed;
-        }}
-        .clear-button {{
-            width: 32px;
-            height: 32px;
-            background: var(--surface-alt);
-            color: var(--text-muted);
             border: 1px solid var(--border);
-            border-radius: 50%;
             font-size: 18px;
             font-weight: bold;
+            line-height: 1;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: all 0.2s;
+            transition: all 0.15s;
         }}
-        .clear-button:hover {{
-            background: var(--surface-hover);
+        .nav-button {{ border-radius: 4px; }}
+        .clear-button {{ border-radius: 50%; }}
+        .nav-button:hover, .clear-button:hover {{
+            background: var(--accent-start);
+            border-color: var(--accent-start);
+            color: #fff;
+        }}
+        .nav-button:disabled, .clear-button:disabled {{
+            opacity: 0.3;
+            cursor: default;
+        }}
+        .nav-button:disabled:hover, .clear-button:disabled:hover {{
+            background: var(--surface-alt);
+            border-color: var(--border);
             color: var(--text);
         }}
         .log-container {{
@@ -390,10 +380,10 @@
                 <input type="text" id="searchInput" class="search-input" placeholder="Search logs...">
                 <span class="search-stats" id="searchStats"></span>
                 <div class="search-nav">
-                    <button class="nav-button" id="prevButton" onclick="navigatePrev()" title="Previous match (Shift+Enter)">&#x2191;</button>
-                    <button class="nav-button" id="nextButton" onclick="navigateNext()" title="Next match (Enter)">&#x2193;</button>
+                    <button class="nav-button" id="prevButton" onclick="navigatePrev()" title="Previous match (Shift+Enter)" disabled>&#x25B2;</button>
+                    <button class="nav-button" id="nextButton" onclick="navigateNext()" title="Next match (Enter)" disabled>&#x25BC;</button>
                 </div>
-                <button class="clear-button" onclick="clearSearch()" title="Clear search">&#xd7;</button>
+                <button class="clear-button" id="clearButton" onclick="clearSearch()" title="Clear search" disabled>&#x2715;</button>
             </div>
 
             <div class="log-container" id="logContainer"></div>
@@ -414,6 +404,7 @@
         var searchStats = document.getElementById('searchStats');
         var prevButton = document.getElementById('prevButton');
         var nextButton = document.getElementById('nextButton');
+        var clearButton = document.getElementById('clearButton');
 
         var matches = [];
         var currentMatchIndex = -1;
@@ -528,6 +519,7 @@
                 nextButton.disabled = true;
                 renderLines(true);
             }}
+            clearButton.disabled = query === '';
         }}
 
         function scrollToCurrentMatch() {{
