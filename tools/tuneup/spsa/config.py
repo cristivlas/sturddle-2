@@ -290,8 +290,8 @@ class WorkerConfig:
     reference_engine: str = ""
     # Auto-create RAM disk for PyInstaller extraction at high concurrency.
     # Finds an unused drive letter (Windows) or tmpfs mount (Linux).
-    # Set false to disable. Skipped when all engines are .py scripts.
-    ramdisk: bool = True
+    # Only needed for PyInstaller --onefile engines; genconfig enables it automatically when detected.
+    ramdisk: bool = False
     # Override drive letter / mount point for RAM disk (e.g. "R:"). Empty = auto-select.
     ramdisk_drive: str = ""
     # Auto-download and install ImDisk on Windows if not found. Set false to manage ImDisk manually.
