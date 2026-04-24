@@ -347,6 +347,7 @@
             align-items: stretch;
             display: flex;
             gap: 0;
+            overflow: hidden;
         }}
         #chartSection > .card {{
             height: 100%;
@@ -1351,7 +1352,7 @@
             var bp = document.querySelector('.bottom-panel');
             var maxH = startH + bp.getBoundingClientRect().height;
             return {{
-                move: function(e) {{ cs.style.height = Math.max(120, Math.min(startH + e.clientY - startY, maxH)) + 'px'; }},
+                move: function(e) {{ cs.style.height = Math.max(0, Math.min(startH + e.clientY - startY, maxH)) + 'px'; }},
                 save: function() {{ localStorage.setItem('dashSplitH', Math.round(cs.getBoundingClientRect().height)); }}
             }};
         }});
