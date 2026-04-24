@@ -225,6 +225,8 @@
             font-size: 14px;
             color: var(--text);
             white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }}
         th:first-child, td:first-child {{
             text-align: left;
@@ -302,6 +304,7 @@
             min-height: 0;
             display: flex;
             gap: 0;
+            overflow: hidden;
         }}
         .bottom-panel > .section {{
             display: flex;
@@ -1324,12 +1327,29 @@
                 curRatio = r;
                 leftEl.style.flex = 'none';
                 rightEl.style.flex = 'none';
-                leftEl.style.width = 'calc(' + (r * 100).toFixed(3) + '% - 5px)';
-                rightEl.style.width = 'calc(' + ((1 - r) * 100).toFixed(3) + '% - 5px)';
+                leftEl.style.display = '';
+                rightEl.style.display = '';
+                if (r <= 0) {{
+                    leftEl.style.display = 'none';
+                    leftEl.style.width = '0';
+                    rightEl.style.width = 'calc(100% - 10px)';
+                }} else if (r >= 1) {{
+                    leftEl.style.width = 'calc(100% - 10px)';
+                    rightEl.style.display = 'none';
+                    rightEl.style.width = '0';
+                }} else {{
+                    leftEl.style.width = 'calc(' + (r * 100).toFixed(3) + '% - 5px)';
+                    rightEl.style.width = 'calc(' + ((1 - r) * 100).toFixed(3) + '% - 5px)';
+                }}
             }}
             function clampRatio(r) {{
                 var w = handle.parentElement.getBoundingClientRect().width || 1000;
-                return Math.max(minLeft / w, Math.min((w - minRight) / w, r));
+                r = Math.max(minLeft / w, Math.min((w - minRight) / w, r));
+                // Snap to exact edges when near them, so the user can fully
+                // collapse without needing pixel-perfect cursor placement.
+                if (r < 0.02) r = 0;
+                else if (r > 0.98) r = 1;
+                return r;
             }}
             var saved = parseFloat(localStorage.getItem(storageKey));
             applyRatio(clampRatio(isNaN(saved) ? defaultRatio : saved));
@@ -1358,10 +1378,10 @@
         }});
 
         // Vertical column splits
-        makeColResizable(document.getElementById('chartParamsHandle'), cs.querySelector('.card'), cs.querySelector('.section'), 'dashChartParamsRatio', 0.6, 280, 200);
+        makeColResizable(document.getElementById('chartParamsHandle'), cs.querySelector('.card'), cs.querySelector('.section'), 'dashChartParamsRatio', 0.6, 0, 0);
         var bp = document.querySelector('.bottom-panel');
         var bpSections = bp.querySelectorAll('.section');
-        makeColResizable(document.getElementById('workersHistHandle'), bpSections[0], bpSections[1], 'dashWorkersHistRatio', 0.5, 360, 420);
+        makeColResizable(document.getElementById('workersHistHandle'), bpSections[0], bpSections[1], 'dashWorkersHistRatio', 0.5, 0, 0);
     }})();
     </script>
 </body>
