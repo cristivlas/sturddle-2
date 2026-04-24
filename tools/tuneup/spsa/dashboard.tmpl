@@ -64,7 +64,36 @@
             overflow: hidden;
             display: flex;
             flex-direction: column;
+            position: relative;
         }}
+        .badge-slot {{
+            position: relative;
+            display: inline-flex;
+            min-width: 170px;
+            justify-content: center;
+        }}
+        .badge-slot .status-badge {{
+            width: 100%;
+            text-align: center;
+        }}
+        .toast {{
+            position: absolute;
+            inset: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            letter-spacing: 0.3px;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s;
+        }}
+        .toast.show {{
+            opacity: 1;
+        }}
+        #toastOverdue {{ z-index: 1; background: #b86800; }}
+        #toastTimedOut {{ z-index: 2; background: #c62828; }}
         .header {{
             background: linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%);
             color: white;
@@ -541,7 +570,11 @@
                 </span>
                 <a href="/charts" class="status-badge">Charts</a>
                 <a href="/logs" class="status-badge">Logs</a>
-                <span class="status-badge" id="statusBadge" style="background:{status_color}">{status_text}</span>
+                <span class="badge-slot">
+                    <span class="status-badge" id="statusBadge" style="background:{status_color}">{status_text}</span>
+                    <span id="toastOverdue" class="status-badge toast toast-warn"></span>
+                    <span id="toastTimedOut" class="status-badge toast toast-error"></span>
+                </span>
             </div>
         </div>
 
@@ -849,10 +882,11 @@
             workers.sort((a, b) => b.games_completed - a.games_completed);
             const tbody = document.getElementById('workersBody');
             tbody.innerHTML = '';
+            var overdueCount = 0, timedOutCount = 0;
             workers.forEach(w => {{
                 var style, status;
-                if (w.status === 1) {{ style = 'color:#FF9800;font-weight:bold'; status = 'overdue'; }}
-                else if (w.status === 2 || !w.alive) {{ style = 'color:#f44336;font-weight:bold'; status = 'timed out'; }}
+                if (w.status === 1) {{ style = 'color:#FF9800;font-weight:bold'; status = 'overdue'; overdueCount++; }}
+                else if (w.status === 2 || !w.alive) {{ style = 'color:#f44336;font-weight:bold'; status = 'timed out'; timedOutCount++; }}
                 else {{ style = 'color:#4CAF50'; status = 'online'; }}
                 var tip = w.name;
                 if (w.sec_per_game != null) tip += ' | ' + w.sec_per_game.toFixed(1) + ' sec/game';
@@ -869,6 +903,20 @@
             }});
             latestWorkers = workers;
             lastWorkerUpdate = Date.now();
+            updateWorkerToasts(overdueCount, timedOutCount);
+        }}
+
+        function updateWorkerToasts(overdue, timedOut) {{
+            var t = document.getElementById('toastTimedOut');
+            var o = document.getElementById('toastOverdue');
+            if (t) {{
+                t.textContent = timedOut + ' worker' + (timedOut === 1 ? '' : 's') + ' timed out';
+                t.classList.toggle('show', timedOut > 0);
+            }}
+            if (o) {{
+                o.textContent = overdue + ' worker' + (overdue === 1 ? '' : 's') + ' overdue';
+                o.classList.toggle('show', overdue > 0);
+            }}
         }}
 
         // Tick last-seen counters client-side between SSE pushes
