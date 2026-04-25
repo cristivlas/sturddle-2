@@ -306,7 +306,10 @@ class CoordinatorState:
 
         # Cap unproven workers until EWMA has warmed up
         if warming_up:
-            cap = max(12, int(self.config.min_chunk_timeout / self._base_sec_per_game))
+            if w and w.concurrency > 0:
+                cap = w.concurrency
+            else:
+                cap = max(12, int(self.config.min_chunk_timeout / self._base_sec_per_game))
             chunk = min(chunk, cap)
         else:
             # Floor: don't hand out chunks so small that startup overhead
@@ -493,17 +496,6 @@ class CoordinatorState:
                     if self.draining and not self._restart:
                         return {"status": "done"}
                     return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
-                # Asker-agnostic cap: gate on in-flight vs games still needed
-                # BEFORE computing chunk size, so fast workers can speculatively
-                # grab a full-size chunk that actually races the straggler.  A
-                # post-check on (in_flight + num_games) would deny fast workers
-                # whose proportional share is large, letting a slower worker in
-                # instead -- the opposite of what overflow is meant to do.
-                # One dispatch may overshoot the nominal ratio; subsequent
-                # requests are denied until submissions reopen room.
-                needed = gpi - self.games_completed
-                if self._games_in_flight() >= needed * self.config.overflow_factor:
-                    return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
                 overflow = True
                 # Budget: one straggler's worth of games per overflow request.
                 remaining = max(c.num_games for c in self.pending_chunks.values())
@@ -516,23 +508,24 @@ class CoordinatorState:
                 adaptive = min(adaptive, chunk_size)
             num_games = min(remaining, adaptive)
 
-            if num_games == 0:
-                return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
-
-            # Mode unit: 4 for reference (each half must be even), 2 otherwise.
-            # When the worker reports concurrency (>=1.2.1), align chunks to
-            # whole cutechess waves so no cores idle on a tail wave -- but only
-            # by rounding DOWN, never padding up (padding up would overcommit a
-            # slow worker's share and re-create the straggler).  Pre-1.2.1
-            # workers and tail/sub-wave cases get the legacy mode_unit rounding.
             mode_unit = 4 if self.iteration_reference_mode else 2
             wc = self.workers[worker_name].concurrency if worker_name in self.workers else 0
             unit = wc * mode_unit // math.gcd(wc, mode_unit) if wc > 0 else mode_unit
 
-            if wc > 0 and num_games >= unit and num_games < remaining:
-                num_games = (num_games // unit) * unit
+            if wc > 0 and self.config.validate_interval > 0:
+                num_games = max(unit, ((num_games + unit // 2) // unit) * unit)
             else:
+                if num_games == 0:
+                    return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
                 num_games = ((num_games + mode_unit - 1) // mode_unit) * mode_unit
+
+            # Overflow cap: post-rounding so the configured factor is the real
+            # ceiling on (in_flight + this dispatch).  Pre-check would let one
+            # rounded chunk overshoot by up to max_chunk_size.
+            if overflow:
+                needed = gpi - self.games_completed
+                if self._games_in_flight() + num_games > needed * self.config.overflow_factor:
+                    return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
 
             # Generate unique chunk ID and compute timeout
             chunk_id = uuid.uuid4().hex[:12]
