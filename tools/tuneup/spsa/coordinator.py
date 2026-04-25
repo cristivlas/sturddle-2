@@ -560,10 +560,11 @@ class CoordinatorState:
             )
 
             logger.info(
-                "Assigned %d games to %s [%s] (iter %d, %d/%d%s, timeout=%ds)",
+                "Assigned %d games to %s [%s] (iter %d, %d/%d%s, conc=%s, timeout=%ds)",
                 num_games, worker_name or "?", chunk_id,
                 work.iteration, self._games_assigned(), gpi,
                 " overflow" if overflow else "",
+                wc if wc > 0 else "?",
                 int(timeout),
             )
             self._notify_dashboard()
@@ -929,6 +930,7 @@ class CoordinatorState:
                     "games_completed": w.games_completed,
                     "sec_per_game": round(self._worker_sec_per_game(name), 1),
                     "chunk_eta": round(eta_per_worker.get(name, 0), 0),
+                    "concurrency": w.concurrency,
                 })
 
             has_normalized = self._has_normalized_params()

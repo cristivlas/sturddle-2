@@ -671,12 +671,12 @@
                 <div class="section" style="margin-top: 0;">
                     <h3>Workers</h3>
                     <table style="table-layout:fixed; width:100%;">
-                        <colgroup><col style="width:18%"><col style="width:16%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:15%"></colgroup>
-                        <thead><tr><th>Name</th><th>Status</th><th>Seen</th><th>Assigned</th><th>Iter</th><th>Session</th></tr></thead>
+                        <colgroup><col style="width:22%"><col style="width:18%"><col style="width:10%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>
+                        <thead><tr><th>Name</th><th>Seen</th><th>CPU</th><th>Assigned</th><th>Iter</th><th>Session</th></tr></thead>
                     </table>
                     <div style="max-height: 340px; overflow-y: auto;">
                     <table style="table-layout:fixed; width:100%;">
-                        <colgroup><col style="width:18%"><col style="width:16%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:15%"></colgroup>
+                        <colgroup><col style="width:22%"><col style="width:18%"><col style="width:10%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>
                         <tbody id="workersBody"></tbody>
                     </table>
                     </div>
@@ -887,14 +887,15 @@
                 if (w.status === 1) {{ style = 'color:#FF9800;font-weight:bold'; status = 'overdue'; overdueCount++; }}
                 else if (w.status === 2 || !w.alive) {{ style = 'color:#f44336;font-weight:bold'; status = 'timed out'; timedOutCount++; }}
                 else {{ style = 'color:#4CAF50'; status = 'online'; }}
-                var tip = w.name;
+                var tip = w.name + ' | ' + status;
                 if (w.sec_per_game != null) tip += ' | ' + w.sec_per_game.toFixed(1) + ' sec/game';
                 if (w.chunk_eta > 0) tip += ' | ETA ~' + formatDuration(w.chunk_eta * 1000);
                 const tr = document.createElement('tr');
                 tr.title = tip;
+                var conc = (w.concurrency && w.concurrency > 0) ? w.concurrency : '?';
                 tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + w.name + '</td>'
-                             + '<td style="overflow:hidden;text-overflow:ellipsis;' + style + '">' + status + '</td>'
-                             + '<td class="worker-seen">' + Math.round(w.last_seen_ago) + 's ago</td>'
+                             + '<td class="worker-seen" style="' + style + '">' + Math.round(w.last_seen_ago) + 's ago</td>'
+                             + '<td>' + conc + '</td>'
                              + '<td>' + w.games_assigned + '</td>'
                              + '<td>' + w.games_completed_iter + '</td>'
                              + '<td>' + w.games_completed + '</td>';
