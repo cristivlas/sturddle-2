@@ -343,7 +343,7 @@
             min-width: 0;
             overflow: hidden;
         }}
-        .bottom-panel > .section > div:last-child {{
+        .bottom-panel > .section > .scroll-wrap {{
             flex: 1;
             min-height: 0;
             max-height: none !important;
@@ -711,7 +711,7 @@
                         <colgroup id="workersHeadCols"><col style="width:22%"><col style="width:18%"><col style="width:10%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>
                         <thead><tr id="workersHeadRow"><th>Name</th><th>Seen</th><th>CPU</th><th>Assigned</th><th>Iter</th><th>Session</th></tr></thead>
                     </table>
-                    <div style="max-height: 340px; overflow-y: auto;">
+                    <div class="scroll-wrap" style="max-height: 340px; overflow-y: auto;">
                     <table style="table-layout:fixed; width:100%;">
                         <colgroup id="workersBodyCols"><col style="width:22%"><col style="width:18%"><col style="width:10%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>
                         <tbody id="workersBody"></tbody>
@@ -727,7 +727,7 @@
                         <thead><tr id="historyHeadRow"><th>Iter</th><th>Score Diff</th><th>ELO Diff</th><th>a_k</th><th>c_k</th></tr></thead>
                     </table>
                     </div>
-                    <div style="max-height: 340px; overflow-y: auto;">
+                    <div class="scroll-wrap" style="max-height: 340px; overflow-y: auto;">
                     <table style="table-layout:fixed; width:100%;">
                         <colgroup id="historyBodyCols"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
                         <tbody id="historyBody"></tbody>
@@ -1478,6 +1478,8 @@
             var bodyCols = bodyCg.querySelectorAll('col');
             var nCols = headCols.length;
             var headTbl = headCg.parentElement;
+            var bodyTbl = bodyCg.parentElement;
+            var bodyWrapper = bodyTbl.parentElement;
             var section = headTbl.closest('.section') || headTbl.parentElement;
             // Anchor for the full-column drag-indicator overlay
             var sStyle = getComputedStyle(section);
@@ -1524,22 +1526,30 @@
                             overlay.className = leftLine.className = 'col-drag-line';
                             section.appendChild(overlay);
                             section.appendChild(leftLine);
-                            // The -3 px fudge nudges the indicator under the col-resize
-                            // cursor's *visual* center: on the OS theme this was tuned
-                            // against, the cursor's hotspot sits ~3 px right of the
-                            // double-arrow's visual midpoint, so the line at the true
-                            // boundary looked offset. Cosmetic only; safe to drop or
-                            // retune for a different cursor theme.
                             function placeOverlay() {{
                                 var sRect = section.getBoundingClientRect();
                                 var thRect = headRow.querySelectorAll('th')[idx].getBoundingClientRect();
-                                var top = (headTbl.getBoundingClientRect().top - sRect.top - sBorderTop) + 'px';
+                                var headRect = headTbl.getBoundingClientRect();
+                                // End the line at the visible content edge, not the
+                                // section bottom: with flex:1 wrappers the section can
+                                // extend past the last row, otherwise the line draws
+                                // ghost rows below the data.
+                                var bottomY = Math.min(bodyTbl.getBoundingClientRect().bottom,
+                                                       bodyWrapper.getBoundingClientRect().bottom);
+                                var topPx = (headRect.top - sRect.top - sBorderTop) + 'px';
+                                var heightPx = (bottomY - headRect.top) + 'px';
+                                // The -3 px fudge nudges the indicator under the col-resize
+                                // cursor's *visual* center: on the OS theme this was tuned
+                                // against, the cursor's hotspot sits ~3 px right of the
+                                // double-arrow's visual midpoint, so the line at the true
+                                // boundary looked offset. Cosmetic only; safe to drop or
+                                // retune for a different cursor theme.
                                 overlay.style.left = (thRect.right - sRect.left - sBorderLeft - 3) + 'px';
-                                overlay.style.top = top;
-                                overlay.style.bottom = '0';
+                                overlay.style.top = topPx;
+                                overlay.style.height = heightPx;
                                 leftLine.style.left = (thRect.left - sRect.left - sBorderLeft - 3) + 'px';
-                                leftLine.style.top = top;
-                                leftLine.style.bottom = '0';
+                                leftLine.style.top = topPx;
+                                leftLine.style.height = heightPx;
                             }}
                             placeOverlay();
                             return {{
