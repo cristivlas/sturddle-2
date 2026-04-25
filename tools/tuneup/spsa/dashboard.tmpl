@@ -314,6 +314,7 @@
             .params-tbl col:nth-child(2), .params-tbl col:nth-child(3) {{ width: 25% !important; }}
             .resize-handle {{ display: none !important; }}
             .col-resize-handle {{ display: none !important; }}
+            .th-grip {{ display: none !important; }}
             #legendToggle {{ display: none !important; }}
             .theme-toggle > span {{ font-size: 0; padding: 4px 6px; }}
             .theme-toggle > span::before {{ font-size: 14px; line-height: 1; }}
@@ -491,6 +492,42 @@
         }}
         .col-resize-handle:hover::after, .col-resize-handle.dragging::after {{
             opacity: 1;
+        }}
+        .th-grip {{
+            position: absolute;
+            top: 0;
+            right: -4px;
+            bottom: 0;
+            width: 8px;
+            cursor: col-resize;
+            user-select: none;
+            z-index: 2;
+        }}
+        .th-grip::after {{
+            content: '';
+            position: absolute;
+            top: 25%;
+            bottom: 25%;
+            left: 50%;
+            width: 2px;
+            margin-left: -1px;
+            background: var(--accent-start);
+            border-radius: 1px;
+            opacity: 0;
+            transition: opacity 0.15s;
+            pointer-events: none;
+        }}
+        .th-grip:hover::after, .th-grip.dragging::after {{
+            opacity: 1;
+        }}
+        .col-drag-line {{
+            position: absolute;
+            width: 2px;
+            margin-left: -1px;
+            background: var(--accent-start);
+            border-radius: 1px;
+            pointer-events: none;
+            z-index: 5;
         }}
     </style>
     <!-- Time-of-day theme (keep in sync across dashboard/charts/logs templates) -->
@@ -671,12 +708,12 @@
                 <div class="section" style="margin-top: 0;">
                     <h3>Workers</h3>
                     <table style="table-layout:fixed; width:100%;">
-                        <colgroup><col style="width:22%"><col style="width:18%"><col style="width:10%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>
-                        <thead><tr><th>Name</th><th>Seen</th><th>CPU</th><th>Assigned</th><th>Iter</th><th>Session</th></tr></thead>
+                        <colgroup id="workersHeadCols"><col style="width:22%"><col style="width:18%"><col style="width:10%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>
+                        <thead><tr id="workersHeadRow"><th>Name</th><th>Seen</th><th>CPU</th><th>Assigned</th><th>Iter</th><th>Session</th></tr></thead>
                     </table>
                     <div style="max-height: 340px; overflow-y: auto;">
                     <table style="table-layout:fixed; width:100%;">
-                        <colgroup><col style="width:22%"><col style="width:18%"><col style="width:10%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>
+                        <colgroup id="workersBodyCols"><col style="width:22%"><col style="width:18%"><col style="width:10%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>
                         <tbody id="workersBody"></tbody>
                     </table>
                     </div>
@@ -686,13 +723,13 @@
                     <h3 id="historyTitle">History (latest {dashboard_history})</h3>
                     <div style="flex-shrink: 0;">
                     <table style="table-layout:fixed; width:100%;">
-                        <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
-                        <thead><tr><th>Iter</th><th>Score Diff</th><th>ELO Diff</th><th>a_k</th><th>c_k</th></tr></thead>
+                        <colgroup id="historyHeadCols"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
+                        <thead><tr id="historyHeadRow"><th>Iter</th><th>Score Diff</th><th>ELO Diff</th><th>a_k</th><th>c_k</th></tr></thead>
                     </table>
                     </div>
                     <div style="max-height: 340px; overflow-y: auto;">
                     <table style="table-layout:fixed; width:100%;">
-                        <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
+                        <colgroup id="historyBodyCols"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
                         <tbody id="historyBody"></tbody>
                     </table>
                     </div>
@@ -725,6 +762,7 @@
         var hiddenParams = new Set();
         var prevTheta = {{}};
         var paramRanges = {{}};
+        var thetaColResizer = null;
 
         function fmtVal(v, decimals) {{
             return (typeof v === 'number' && !Number.isInteger(v)) ? v.toFixed(decimals || 6) : v;
@@ -800,6 +838,7 @@
             }} else {{
                 hr.innerHTML = '<th>Parameter</th><th>Initial</th><th>Current</th>';
             }}
+            if (thetaColResizer) thetaColResizer.reattach();
             const tbody = document.getElementById('thetaBody');
             tbody.innerHTML = '';
             var dec = showInternal ? 5 : 6;
@@ -1430,6 +1469,118 @@
         var bp = document.querySelector('.bottom-panel');
         var bpSections = bp.querySelectorAll('.section');
         makeColResizable(document.getElementById('workersHistHandle'), bpSections[0], bpSections[1], 'dashWorkersHistRatio', 0.5, 0, 0);
+
+        // Per-column resize: drag a grip on the right edge of any <th> to widen
+        // its column at the expense of the next; paired head/body colgroups stay
+        // in sync, widths persist in localStorage.
+        function makeTableColumnsResizable(headCg, bodyCg, headRow, storageKey) {{
+            var headCols = headCg.querySelectorAll('col');
+            var bodyCols = bodyCg.querySelectorAll('col');
+            var nCols = headCols.length;
+            var headTbl = headCg.parentElement;
+            var section = headTbl.closest('.section') || headTbl.parentElement;
+            // Anchor for the full-column drag-indicator overlay
+            var sStyle = getComputedStyle(section);
+            if (sStyle.position === 'static') section.style.position = 'relative';
+            // `left`/`top` for absolute children are measured from the padding-box,
+            // but getBoundingClientRect() returns the border-box; subtract the
+            // section's border to keep the indicator pixel-aligned to the column.
+            var sBorderLeft = parseFloat(sStyle.borderLeftWidth) || 0;
+            var sBorderTop = parseFloat(sStyle.borderTopWidth) || 0;
+            function applyWidths(pcts) {{
+                for (var i = 0; i < nCols; i++) {{
+                    headCols[i].style.width = pcts[i] + '%';
+                    if (bodyCols[i]) bodyCols[i].style.width = pcts[i] + '%';
+                }}
+            }}
+            function readPcts() {{
+                var out = [];
+                for (var i = 0; i < nCols; i++) out.push(parseFloat(headCols[i].style.width) || 0);
+                return out;
+            }}
+            try {{
+                var saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+                if (Array.isArray(saved) && saved.length === nCols) applyWidths(saved);
+            }} catch (e) {{}}
+            function attach() {{
+                var ths = headRow.querySelectorAll('th');
+                if (ths.length !== nCols) return;
+                for (var i = 0; i < ths.length - 1; i++) {{
+                    (function(idx, th) {{
+                        if (th.querySelector('.th-grip')) return;
+                        th.style.position = 'relative';
+                        var grip = document.createElement('div');
+                        grip.className = 'th-grip';
+                        th.appendChild(grip);
+                        makeDragResize(grip, function(eDown) {{
+                            var pcts = readPcts();
+                            var startX = eDown.clientX;
+                            var startA = pcts[idx], startB = pcts[idx + 1];
+                            var tableW = headTbl.getBoundingClientRect().width || 1;
+                            var minPct = 5;
+                            var moved = false;
+                            var overlay = document.createElement('div');
+                            var leftLine = document.createElement('div');
+                            overlay.className = leftLine.className = 'col-drag-line';
+                            section.appendChild(overlay);
+                            section.appendChild(leftLine);
+                            // The -3 px fudge nudges the indicator under the col-resize
+                            // cursor's *visual* center: on the OS theme this was tuned
+                            // against, the cursor's hotspot sits ~3 px right of the
+                            // double-arrow's visual midpoint, so the line at the true
+                            // boundary looked offset. Cosmetic only; safe to drop or
+                            // retune for a different cursor theme.
+                            function placeOverlay() {{
+                                var sRect = section.getBoundingClientRect();
+                                var thRect = headRow.querySelectorAll('th')[idx].getBoundingClientRect();
+                                var top = (headTbl.getBoundingClientRect().top - sRect.top - sBorderTop) + 'px';
+                                overlay.style.left = (thRect.right - sRect.left - sBorderLeft - 3) + 'px';
+                                overlay.style.top = top;
+                                overlay.style.bottom = '0';
+                                leftLine.style.left = (thRect.left - sRect.left - sBorderLeft - 3) + 'px';
+                                leftLine.style.top = top;
+                                leftLine.style.bottom = '0';
+                            }}
+                            placeOverlay();
+                            return {{
+                                move: function(e) {{
+                                    moved = true;
+                                    var dPct = ((e.clientX - startX) / tableW) * 100;
+                                    var a = startA + dPct, b = startB - dPct;
+                                    if (a < minPct) {{ b -= (minPct - a); a = minPct; }}
+                                    if (b < minPct) {{ a -= (minPct - b); b = minPct; }}
+                                    pcts[idx] = a; pcts[idx + 1] = b;
+                                    applyWidths(pcts);
+                                    placeOverlay();
+                                }},
+                                save: function() {{
+                                    overlay.remove();
+                                    leftLine.remove();
+                                    if (moved) localStorage.setItem(storageKey, JSON.stringify(readPcts()));
+                                }}
+                            }};
+                        }});
+                    }})(i, ths[i]);
+                }}
+            }}
+            attach();
+            return {{ reattach: attach }};
+        }}
+        thetaColResizer = makeTableColumnsResizable(
+            document.getElementById('thetaHeadCols'),
+            document.getElementById('thetaBodyCols'),
+            document.getElementById('thetaHeadRow'),
+            'dashThetaColPcts');
+        makeTableColumnsResizable(
+            document.getElementById('workersHeadCols'),
+            document.getElementById('workersBodyCols'),
+            document.getElementById('workersHeadRow'),
+            'dashWorkersColPcts');
+        makeTableColumnsResizable(
+            document.getElementById('historyHeadCols'),
+            document.getElementById('historyBodyCols'),
+            document.getElementById('historyHeadRow'),
+            'dashHistoryColPcts');
     }})();
     </script>
 </body>
