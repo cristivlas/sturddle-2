@@ -50,7 +50,6 @@ class WorkerInfo:
     games_completed: int = 0
     games_completed_iter: int = 0 # games completed in current iteration
     _spg_ewma: float = 0.0        # exponentially weighted moving average (sec/game)
-    _ewma_alpha: float = 0.2      # smoothing factor: higher = more weight on recent
     cutechess_overrides: dict = field(default_factory=dict)  # worker-local tc/depth
     concurrency: int = 0          # cutechess parallel slots; 0 = unknown (pre-1.2.1 worker)
 
@@ -62,16 +61,21 @@ class WorkerInfo:
     def games_per_second(self) -> float:
         return 1.0 / self._spg_ewma if self._spg_ewma > 0 else 0.0
 
-    def update_speed(self, games: int, elapsed: float):
-        """Update EWMA speed estimate from a completed chunk."""
-        if elapsed <= 0 or games <= 0:
+    def update_speed(self, games: int, elapsed: float, tau_seconds: float):
+        """Update EWMA speed estimate from a completed chunk.
+
+        Time-weighted: alpha = elapsed / (elapsed + tau_seconds).  Long chunks
+        weight more (more samples); tau_seconds sets the "trust horizon".
+        """
+        if elapsed <= 0 or games <= 0 or tau_seconds <= 0:
             return
         sample = elapsed / games
         old = self._spg_ewma
         if self._spg_ewma <= 0:
             self._spg_ewma = sample  # first observation
         else:
-            self._spg_ewma = self._ewma_alpha * sample + (1 - self._ewma_alpha) * self._spg_ewma
+            alpha = elapsed / (elapsed + tau_seconds)
+            self._spg_ewma = alpha * sample + (1 - alpha) * self._spg_ewma
         logger.debug("Speed update %s: %d games in %.1fs (%.2f s/g), ewma %.2f -> %.2f", self.name, games, elapsed, sample, old, self._spg_ewma)
 
 
@@ -221,7 +225,7 @@ class CoordinatorState:
         if name not in self.workers:
             if self.optimizer.is_done():
                 return  # don't accept new workers after job is done
-            w = WorkerInfo(name=name, last_seen=now, _ewma_alpha=self.config.ewma_alpha)
+            w = WorkerInfo(name=name, last_seen=now)
             saved = self._worker_stats.pop(name, None)
             if saved:
                 w.games_completed, w.chunks_completed, w.games_completed_iter = saved
@@ -671,7 +675,7 @@ class CoordinatorState:
                     # progressively smaller allocations (death spiral).
                     spg = w.sec_per_game or self._base_sec_per_game
                     if w.sec_per_game <= 0 or result.num_games * spg >= self.config.min_chunk_expected_duration:
-                        w.update_speed(result.num_games, time.time() - chunk.assign_time)
+                        w.update_speed(result.num_games, time.time() - chunk.assign_time, self.config.min_chunk_expected_duration)
                 if result.shutting_down:
                     self._graceful_disconnect(result.worker)
 
