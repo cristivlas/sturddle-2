@@ -516,7 +516,12 @@ class CoordinatorState:
             unit = wc * mode_unit // math.gcd(wc, mode_unit) if wc > 0 else mode_unit
 
             if wc > 0 and self.config.validate_interval > 0:
-                rounded = ((num_games + unit // 2) // unit) * unit
+                if remaining > gpi // 2:
+                    # Early phase: round UP -- plenty of work, prefer bigger chunks.
+                    rounded = ((num_games + unit - 1) // unit) * unit
+                else:
+                    # Late phase: round to nearest -- small overshoots cost more.
+                    rounded = ((num_games + unit // 2) // unit) * unit
                 if rounded > remaining:
                     rounded = (num_games // unit) * unit  # never overshoot remaining
                 num_games = max(unit, rounded)
@@ -531,8 +536,13 @@ class CoordinatorState:
             if overflow:
                 needed = gpi - self.games_completed
                 if self._games_in_flight() + num_games > needed * self.config.overflow_factor:
-                    self._iter_overflow_retries += 1
-                    return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
+                    # Tail-end bypass: if this chunk would close the iteration
+                    # AND is no bigger than the smallest in-flight chunk (i.e.,
+                    # likely lands before any straggler), let it through.
+                    smallest_pending = min(c.num_games for c in self.pending_chunks.values())
+                    if not (num_games >= needed and num_games <= smallest_pending):
+                        self._iter_overflow_retries += 1
+                        return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
 
             # Generate unique chunk ID and compute timeout
             chunk_id = uuid.uuid4().hex[:12]
