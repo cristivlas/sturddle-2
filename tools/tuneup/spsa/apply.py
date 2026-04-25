@@ -48,6 +48,80 @@ def compute_range(value, range_pct):
     return round(value - half), round(value + half)
 
 
+def _realign(new, old, prev):
+    """Preserve column alignment when a numeric token changes width.
+
+    If new is narrower than old, left-pad new with spaces.
+    If new is wider, eat the extra characters from prev (the separator/whitespace
+    preceding new). Returns (new, prev).
+    """
+    diff = len(new) - len(old)
+    if diff < 0:
+        return ' ' * -diff + new, prev
+    if diff > 0:
+        return new, prev[:-diff]
+    return new, prev
+
+
+# Global toggle. Set by main() from --dry-run; each file-writing site checks it.
+DRY_RUN = False
+
+
+def _to_engine(param, theta_val):
+    """Silent version of denormalize for bulk computations (no per-call logging)."""
+    if param is not None and getattr(param, 'is_normalized', False):
+        lo, hi = param.original_lower, param.original_upper
+        return int(round((theta_val + 1) * (hi - lo) / 2 + lo))
+    return int(round(theta_val))
+
+
+def compute_param_drifts(state, tuning):
+    """Per-param drift info from full exploration history (engine space).
+
+    Returns list of dicts {name, current, lo, hi, drift_pct} sorted by
+    drift_pct descending. Empty list if no history.
+    """
+    history = state.get('history', [])
+    current_theta = state.get('theta', {})
+    if not history or not current_theta:
+        return []
+
+    drifts = []
+    for name, t_current in current_theta.items():
+        param = tuning.parameters.get(name)
+        current = _to_engine(param, t_current)
+        if current == 0:
+            continue
+        vals = [current]
+        for h in history:
+            t = h.get('theta', {}).get(name)
+            if t is not None:
+                vals.append(_to_engine(param, t))
+        lo, hi = min(vals), max(vals)
+        swing = max(abs(current - lo), abs(current - hi))
+        drifts.append({
+            'name': name,
+            'current': current,
+            'lo': lo,
+            'hi': hi,
+            'drift_pct': 100.0 * swing / abs(current),
+        })
+    drifts.sort(key=lambda d: d['drift_pct'], reverse=True)
+    return drifts
+
+
+def compute_min_safe_range(state, tuning):
+    """Smallest --range %% that covers every explored value of every param.
+
+    Returns (pct, driving_param) or (None, None) if no history.
+    """
+    drifts = compute_param_drifts(state, tuning)
+    if not drifts:
+        return None, None
+    top = drifts[0]
+    return top['drift_pct'], top['name']
+
+
 def update_config(config_file, engine_values, finalize=False, range_pct=None):
     """Patch DECLARE_PARAM/DECLARE_VALUE/DECLARE_NORMAL lines in config.h.
 
@@ -78,33 +152,21 @@ def update_config(config_file, engine_values, finalize=False, range_pct=None):
                     found.add(name)
                     before, old_val, sep1, old_lo, sep2, old_hi, close = match.groups()
 
-                    # Finalize macro first so alignment accounts for name change
+                    # Finalize: rename the macro without padding compensation,
+                    # so the line looks the same as any pre-existing DECLARE_VALUE.
                     if finalize and macro != 'DECLARE_VALUE':
-                        pad = ' ' * (len(macro) - len('DECLARE_VALUE'))
-                        before = before.replace(macro + '(', 'DECLARE_VALUE(' + pad, 1)
+                        before = before.replace(macro + '(', 'DECLARE_VALUE(', 1)
                         finalized.add(name)
 
                     new_val = str(value)
-
-                    # Preserve column alignment for value
-                    if len(new_val) < len(old_val):
-                        new_val = ' ' * (len(old_val) - len(new_val)) + new_val
-                    elif len(new_val) > len(old_val):
-                        before = before[:-(len(new_val) - len(old_val))]
+                    new_val, before = _realign(new_val, old_val, before)
 
                     # Adjust bounds if requested
                     new_lo, new_hi = old_lo, old_hi
                     if range_pct is not None:
                         lo, hi = compute_range(value, range_pct)
-                        new_lo, new_hi = str(lo), str(hi)
-                        if len(new_lo) < len(old_lo):
-                            new_lo = ' ' * (len(old_lo) - len(new_lo)) + new_lo
-                        elif len(new_lo) > len(old_lo):
-                            sep1 = sep1[:-(len(new_lo) - len(old_lo))]
-                        if len(new_hi) < len(old_hi):
-                            new_hi = ' ' * (len(old_hi) - len(new_hi)) + new_hi
-                        elif len(new_hi) > len(old_hi):
-                            sep2 = sep2[:-(len(new_hi) - len(old_hi))]
+                        new_lo, sep1 = _realign(str(lo), old_lo, sep1)
+                        new_hi, sep2 = _realign(str(hi), old_hi, sep2)
 
                     line = line[:match.start()] + before + new_val + sep1 + new_lo + sep2 + new_hi + close + line[match.end():]
                     if line != original_line:
@@ -114,7 +176,7 @@ def update_config(config_file, engine_values, finalize=False, range_pct=None):
                     break
         updated_lines.append(line)
 
-    if updated or finalized:
+    if (updated or finalized) and not DRY_RUN:
         with open(config_file, 'w') as f:
             f.writelines(updated_lines)
         if updated:
@@ -229,7 +291,7 @@ def update_piece_values(header_file, engine_values):
 
         result_lines.append(line)
 
-    if updated:
+    if updated and not DRY_RUN:
         with open(header_file, 'w', encoding='utf-8', newline='') as f:
             f.writelines(result_lines)
         logging.info(f"Patched {len(updated)} piece value(s) in {header_file}")
@@ -368,11 +430,11 @@ def update_tables(tables_file, pst_values):
 
         result.append(line)
 
-    if updated:
+    if updated and not DRY_RUN:
         with open(tables_file, 'w', encoding='utf-8', newline='') as f:
             f.writelines(result)
         logging.info(f"Patched {len(updated)} PST value(s) in {tables_file}")
-    else:
+    elif not updated:
         logging.info(f"No PST changes in {tables_file}")
 
     return updated, found
@@ -399,15 +461,8 @@ def adjust_piece_param_bounds(config_file, engine_values, range_pct):
             if match:
                 prefix, old_lo, sep, old_hi, trailing = match.groups()
                 lo, hi = compute_range(engine_values[name], range_pct)
-                new_lo, new_hi = str(lo), str(hi)
-                if len(new_lo) < len(old_lo):
-                    new_lo = ' ' * (len(old_lo) - len(new_lo)) + new_lo
-                elif len(new_lo) > len(old_lo):
-                    prefix = prefix[:-(len(new_lo) - len(old_lo))]
-                if len(new_hi) < len(old_hi):
-                    new_hi = ' ' * (len(old_hi) - len(new_hi)) + new_hi
-                elif len(new_hi) > len(old_hi):
-                    sep = sep[:-(len(new_hi) - len(old_hi))]
+                new_lo, prefix = _realign(str(lo), old_lo, prefix)
+                new_hi, sep = _realign(str(hi), old_hi, sep)
                 line = line[:match.start()] + prefix + new_lo + sep + new_hi + trailing + line[match.end():]
                 if line != original_line:
                     adjusted.add(name)
@@ -415,7 +470,7 @@ def adjust_piece_param_bounds(config_file, engine_values, range_pct):
                 break
         result_lines.append(line)
 
-    if adjusted:
+    if adjusted and not DRY_RUN:
         with open(config_file, 'w') as f:
             f.writelines(result_lines)
         logging.info(f"Adjusted {len(adjusted)} piece param bound(s) in {config_file}")
@@ -435,10 +490,19 @@ def main():
     parser.add_argument('--finalize', action='store_true', help='Convert DECLARE_PARAM/DECLARE_NORMAL to DECLARE_VALUE')
     parser.add_argument('--range', type=float, default=None, metavar='PCT', dest='range_pct',
                         help='Adjust parameter bounds to value +/- PCT%% of value (e.g. 20 to narrow, 150 to widen)')
+    parser.add_argument('--auto-range', action='store_true',
+                        help='Use the minimum safe --range computed from exploration history')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Compute and report changes without writing any files')
     args = parser.parse_args()
 
     if args.range_pct is not None and args.range_pct <= 0:
         parser.error('--range must be > 0')
+    if args.auto_range and args.range_pct is not None:
+        parser.error('--range and --auto-range are mutually exclusive')
+
+    global DRY_RUN
+    DRY_RUN = args.dry_run
 
     # Accept either a project directory or a tuning.json file directly
     if os.path.isfile(args.project) and args.project.endswith('.json'):
@@ -476,6 +540,21 @@ def main():
 
     iteration = state.get('iteration', '?')
     logging.info(f"State at iteration {iteration}, {len(theta)} parameter(s)")
+
+    # Report the minimum safe --range based on full exploration history,
+    # along with per-param drift sorted by swing percentage.
+    drifts = compute_param_drifts(state, tuning)
+    if drifts:
+        logging.info("Per-param drift (sorted by swing %%):")
+        for d in drifts:
+            logging.info(f"  {d['name']}: current={d['current']}, range=[{d['lo']}, {d['hi']}], drift={d['drift_pct']:.1f}%")
+        top = drifts[0]
+        logging.info(f"Minimum safe --range: {top['drift_pct']:.1f}% (driven by {top['name']})")
+    if args.auto_range:
+        if not drifts:
+            parser.error('--auto-range requested but no exploration history available')
+        args.range_pct = drifts[0]['drift_pct']
+        logging.info(f"Using --auto-range = {args.range_pct:.1f}%")
 
     # Convert all theta values to engine-space integers
     logging.info(f"Denormalizing {len(theta)} parameter(s):")
