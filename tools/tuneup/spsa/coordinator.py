@@ -140,6 +140,11 @@ class CoordinatorState:
         self.iteration_start_time = time.time()
         self.pending_chunks = {}  # chunk_id -> ChunkInfo
 
+        # Per-iteration counters for wall-clock breakdown logging
+        self._iter_overflow_retries = 0
+        self._iter_boundary_retries = 0
+        self._iter_stale_submissions = 0
+
         # Worker registry: keyed by self-reported name (hostname or worker config
         # "name" field).  Fine for trusted homelab / LAN setups; a public-facing
         # deployment would need IP-based validation or auth tokens.
@@ -311,13 +316,6 @@ class CoordinatorState:
             else:
                 cap = max(12, int(self.config.min_chunk_timeout / self._base_sec_per_game))
             chunk = min(chunk, cap)
-        else:
-            # Floor: don't hand out chunks so small that startup overhead
-            # dominates.  Naturally inactive for long TC (spg >= threshold).
-            spg = self._worker_sec_per_game(worker_name)
-            if spg > 0:
-                min_games = int(self.config.min_chunk_expected_duration / spg)
-                chunk = max(chunk, min(remaining, min_games))
 
         # If remainder is too small to split, take it all
         if remaining - chunk < num_workers:
@@ -372,6 +370,10 @@ class CoordinatorState:
             num_games=0,  # filled per chunk
         )
         self.pending_chunks = {}
+
+        self._iter_overflow_retries = 0
+        self._iter_boundary_retries = 0
+        self._iter_stale_submissions = 0
 
         # Reset per-iteration worker counters (including disconnected workers saved in _worker_stats)
         for w in self.workers.values():
@@ -495,6 +497,7 @@ class CoordinatorState:
                 if not self.pending_chunks:
                     if self.draining and not self._restart:
                         return {"status": "done"}
+                    self._iter_boundary_retries += 1
                     return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
                 overflow = True
                 # Budget: one straggler's worth of games per overflow request.
@@ -513,7 +516,10 @@ class CoordinatorState:
             unit = wc * mode_unit // math.gcd(wc, mode_unit) if wc > 0 else mode_unit
 
             if wc > 0 and self.config.validate_interval > 0:
-                num_games = max(unit, ((num_games + unit // 2) // unit) * unit)
+                rounded = ((num_games + unit // 2) // unit) * unit
+                if rounded > remaining:
+                    rounded = (num_games // unit) * unit  # never overshoot remaining
+                num_games = max(unit, rounded)
             else:
                 if num_games == 0:
                     return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
@@ -525,6 +531,7 @@ class CoordinatorState:
             if overflow:
                 needed = gpi - self.games_completed
                 if self._games_in_flight() + num_games > needed * self.config.overflow_factor:
+                    self._iter_overflow_retries += 1
                     return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
 
             # Generate unique chunk ID and compute timeout
@@ -582,6 +589,7 @@ class CoordinatorState:
                 return {"status": "ignored", "reason": "malformed result"}
 
             if result.iteration != self.optimizer.iteration:
+                self._iter_stale_submissions += 1
                 logger.warning(
                     "Ignoring stale result (%d games) for iteration %d from %s (current: %d)",
                     result.num_games, result.iteration, result.worker, self.optimizer.iteration,
@@ -697,6 +705,11 @@ class CoordinatorState:
 
     def _complete_iteration(self):
         """Finalize current iteration: update theta, save state, log."""
+        # Wall-clock breakdown (active games-running phase only; non-game time
+        # = (next iter_start) - (this completion) per consecutive log timestamps)
+        iter_wall_clock = time.time() - self.iteration_start_time
+        chunks_killed = len(self.pending_chunks)
+
         total = self.total_wins + self.total_draws + self.total_losses
         dw = self.config.spsa.draw_weight
 
@@ -734,6 +747,11 @@ class CoordinatorState:
         logger.info("=" * 60)
         logger.info("Iteration %d complete (%d games, W=%d D=%d L=%d)",
                      k, total, self.total_wins, self.total_draws, self.total_losses)
+        logger.info(
+            "Timing: games_phase=%.1fs, killed_chunks=%d, overflow_retries=%d, boundary_retries=%d, stale_submissions=%d",
+            iter_wall_clock, chunks_killed,
+            self._iter_overflow_retries, self._iter_boundary_retries, self._iter_stale_submissions,
+        )
         if total_plus > 0 and total_minus > 0:
             logger.info(
                 "Reference mode: theta+ %dW/%dD/%dL (%d games), theta- %dW/%dD/%dL (%d games)",
