@@ -13,6 +13,7 @@ import argparse
 import json
 import logging
 import logging.handlers
+import math
 import mimetypes
 import os
 import sys
@@ -29,7 +30,7 @@ from pathlib import Path
 from config import TuningConfig, WorkItem, WorkResult
 from spsa import SPSAOptimizer, SPSAState
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 logger = logging.getLogger("coordinator")
 
@@ -51,6 +52,7 @@ class WorkerInfo:
     _spg_ewma: float = 0.0        # exponentially weighted moving average (sec/game)
     _ewma_alpha: float = 0.2      # smoothing factor: higher = more weight on recent
     cutechess_overrides: dict = field(default_factory=dict)  # worker-local tc/depth
+    concurrency: int = 0          # cutechess parallel slots; 0 = unknown (pre-1.2.1 worker)
 
     @property
     def sec_per_game(self) -> float:
@@ -424,7 +426,7 @@ class CoordinatorState:
             self.dashboard_version += 1
             self.dashboard_changed.notify_all()
 
-    def get_work(self, chunk_size: int, worker_name: str, cutechess_overrides: dict, worker_server_start: float) -> dict:
+    def get_work(self, chunk_size: int, worker_name: str, cutechess_overrides: dict, worker_server_start: float, worker_concurrency: int = 0) -> dict:
         """
         Assign a chunk of games to a worker.
 
@@ -434,6 +436,7 @@ class CoordinatorState:
         Args:
             chunk_size: requested games (0 = let coordinator decide)
             worker_name: worker hostname for tracking
+            worker_concurrency: cutechess parallel slots on the worker (0 = unknown, pre-1.2.1)
 
         Returns:
             WorkItem dict, or {"status": "done"/"retry"/"config_changed"}.
@@ -450,6 +453,8 @@ class CoordinatorState:
                 return {"status": "config_changed"}
             if cutechess_overrides and worker_name in self.workers:
                 self.workers[worker_name].cutechess_overrides = cutechess_overrides
+            if worker_concurrency > 0 and worker_name in self.workers:
+                self.workers[worker_name].concurrency = worker_concurrency
 
             if self.optimizer.is_done():
                 return {"status": "done"}
@@ -514,11 +519,20 @@ class CoordinatorState:
             if num_games == 0:
                 return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
 
-            # Must be even; reference mode needs multiple of 4 so each half is even
-            if self.iteration_reference_mode:
-                num_games = ((num_games + 3) // 4) * 4
+            # Mode unit: 4 for reference (each half must be even), 2 otherwise.
+            # When the worker reports concurrency (>=1.2.1), align chunks to
+            # whole cutechess waves so no cores idle on a tail wave -- but only
+            # by rounding DOWN, never padding up (padding up would overcommit a
+            # slow worker's share and re-create the straggler).  Pre-1.2.1
+            # workers and tail/sub-wave cases get the legacy mode_unit rounding.
+            mode_unit = 4 if self.iteration_reference_mode else 2
+            wc = self.workers[worker_name].concurrency if worker_name in self.workers else 0
+            unit = wc * mode_unit // math.gcd(wc, mode_unit) if wc > 0 else mode_unit
+
+            if wc > 0 and num_games >= unit and num_games < remaining:
+                num_games = (num_games // unit) * unit
             else:
-                num_games += num_games % 2
+                num_games = ((num_games + mode_unit - 1) // mode_unit) * mode_unit
 
             # Generate unique chunk ID and compute timeout
             chunk_id = uuid.uuid4().hex[:12]
@@ -1228,7 +1242,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                 return
             cc_overrides = data.get("cutechess_overrides")
             worker_server_start = data.get("server_start", 0)
-            result = self.coordinator.get_work(chunk_size, worker_name, cc_overrides, worker_server_start)
+            worker_concurrency = data.get("concurrency", 0)
+            result = self.coordinator.get_work(chunk_size, worker_name, cc_overrides, worker_server_start, worker_concurrency)
             if result is False:
                 self.send_error(403)
                 return
