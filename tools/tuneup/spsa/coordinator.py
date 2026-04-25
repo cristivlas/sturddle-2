@@ -516,14 +516,21 @@ class CoordinatorState:
             unit = wc * mode_unit // math.gcd(wc, mode_unit) if wc > 0 else mode_unit
 
             if wc > 0 and self.config.validate_interval > 0:
-                if remaining > gpi // 2:
-                    # Early phase: round UP -- plenty of work, prefer bigger chunks.
-                    rounded = ((num_games + unit - 1) // unit) * unit
+                # Round up if the bigger chunk lands within iter ETA; else round
+                # to nearest so the chunk doesn't extend iter wall-clock.
+                chunk_up = ((num_games + unit - 1) // unit) * unit
+                spg = self.workers[worker_name].sec_per_game
+                total_speed = sum(w.games_per_second for w in self._active_workers())
+                use_round_up = True
+                if total_speed > 0 and spg > 0:
+                    iter_eta = (gpi - self.games_completed) / total_speed
+                    use_round_up = chunk_up * spg <= iter_eta
+                if use_round_up:
+                    rounded = chunk_up
                 else:
-                    # Late phase: round to nearest -- small overshoots cost more.
                     rounded = ((num_games + unit // 2) // unit) * unit
                 if rounded > remaining:
-                    rounded = (num_games // unit) * unit  # never overshoot remaining
+                    rounded = (num_games // unit) * unit
                 num_games = max(unit, rounded)
             else:
                 if num_games == 0:
@@ -536,11 +543,10 @@ class CoordinatorState:
             if overflow:
                 needed = gpi - self.games_completed
                 if self._games_in_flight() + num_games > needed * self.config.overflow_factor:
-                    # Tail-end bypass: if this chunk would close the iteration
-                    # AND is no bigger than the smallest in-flight chunk (i.e.,
-                    # likely lands before any straggler), let it through.
-                    smallest_pending = min(c.num_games for c in self.pending_chunks.values())
-                    if not (num_games >= needed and num_games <= smallest_pending):
+                    # Tail-end bypass: chunks no bigger than the largest in-flight
+                    # chunk are not the new worst-case straggler -- let them race.
+                    largest_pending = max(c.num_games for c in self.pending_chunks.values())
+                    if num_games > largest_pending:
                         self._iter_overflow_retries += 1
                         return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
 
