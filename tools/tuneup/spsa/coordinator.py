@@ -298,17 +298,12 @@ class CoordinatorState:
         runtime only -- blind to intra-iter idle, retries, and boundary overhead."""
         return sum(w.games_per_second for w in self._active_workers())
 
-    def _iter_throughput(self, now: float) -> float:
-        """Realized games/sec for the current iteration (includes intra-iter idle);
-        falls back to worker EWMA when no chunks have landed yet."""
-        elapsed = max(0.0, now - self.iteration_start_time)
-        if self.games_completed > 0 and elapsed > 0:
-            return self.games_completed / elapsed
-        return self._worker_throughput()
-
-    def _iter_eta_seconds(self, now: float) -> float:
-        """Seconds remaining for current iteration (0 = unknown)."""
-        tp = self._iter_throughput(now)
+    def _iter_eta_seconds(self) -> float:
+        """Seconds remaining for current iteration (0 = unknown).
+        Uses worker EWMA throughput -- stable across chunk landings, slightly
+        optimistic (ignores intra-iter idle) but smoothness wins for both
+        dashboard and scheduler."""
+        tp = self._worker_throughput()
         if tp <= 0:
             return 0.0
         games_left = max(0, self.config.games_per_iteration - self.games_completed)
@@ -320,7 +315,7 @@ class CoordinatorState:
         if self.optimizer.is_done():
             return {"iter_eta_s": 0, "session_eta_s": 0, "avg_iter_sec": 0}
 
-        iter_eta_s = self._iter_eta_seconds(now)
+        iter_eta_s = self._iter_eta_seconds()
         avg_iter = self._iter_duration_ewma
         iter_elapsed = max(0.0, now - self.iteration_start_time)
         full_iters_left = max(0, self.optimizer.max_iterations - self.optimizer.iteration - 1)
@@ -584,7 +579,7 @@ class CoordinatorState:
                 spg = self.workers[worker_name].sec_per_game
                 use_round_up = True
                 if spg > 0:
-                    iter_eta = self._iter_eta_seconds(time.time())
+                    iter_eta = self._iter_eta_seconds()
                     if iter_eta > 0:
                         use_round_up = chunk_up * spg <= iter_eta
                 if use_round_up:
