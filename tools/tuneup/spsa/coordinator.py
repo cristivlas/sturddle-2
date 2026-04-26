@@ -32,6 +32,9 @@ from spsa import SPSAOptimizer, SPSAState
 
 VERSION = "1.2.1"
 
+# Per-iteration EWMA alpha for session-ETA smoothing (~3-iter half-life).
+ITER_DURATION_EWMA_ALPHA = 0.3
+
 logger = logging.getLogger("coordinator")
 
 
@@ -148,6 +151,11 @@ class CoordinatorState:
         self._iter_overflow_retries = 0
         self._iter_boundary_retries = 0
         self._iter_stale_submissions = 0
+
+        # Smoothed iteration wall-clock (seconds), updated on each completion.
+        # In-memory only; resets across restarts -- ETA falls back to throughput
+        # extrapolation until the first iteration lands.
+        self._iter_duration_ewma: float = 0.0
 
         # Worker registry: keyed by self-reported name (hostname or worker config
         # "name" field).  Fine for trusted homelab / LAN setups; a public-facing
@@ -284,6 +292,53 @@ class CoordinatorState:
             remaining = max(0, chunk.expected_duration - (now - chunk.assign_time))
             eta[chunk.worker_name] = eta.get(chunk.worker_name, 0) + remaining
         return eta
+
+    def _worker_throughput(self) -> float:
+        """Sum of EWMA games/sec across active workers.  Reflects per-chunk
+        runtime only -- blind to intra-iter idle, retries, and boundary overhead."""
+        return sum(w.games_per_second for w in self._active_workers())
+
+    def _iter_throughput(self, now: float) -> float:
+        """Realized games/sec for the current iteration (includes intra-iter idle);
+        falls back to worker EWMA when no chunks have landed yet."""
+        elapsed = max(0.0, now - self.iteration_start_time)
+        if self.games_completed > 0 and elapsed > 0:
+            return self.games_completed / elapsed
+        return self._worker_throughput()
+
+    def _iter_eta_seconds(self, now: float) -> float:
+        """Seconds remaining for current iteration (0 = unknown)."""
+        tp = self._iter_throughput(now)
+        if tp <= 0:
+            return 0.0
+        games_left = max(0, self.config.games_per_iteration - self.games_completed)
+        return games_left / tp
+
+    def _compute_etas(self, now: float) -> dict:
+        """Iter / session ETAs for the dashboard.  Clients interpolate against
+        arrival time -- no server clock on the wire."""
+        if self.optimizer.is_done():
+            return {"iter_eta_s": 0, "session_eta_s": 0, "avg_iter_sec": 0}
+
+        iter_eta_s = self._iter_eta_seconds(now)
+        avg_iter = self._iter_duration_ewma
+        iter_elapsed = max(0.0, now - self.iteration_start_time)
+        full_iters_left = max(0, self.optimizer.max_iterations - self.optimizer.iteration - 1)
+
+        if avg_iter > 0:
+            current_iter_remaining = max(0.0, avg_iter - iter_elapsed)
+            session_eta_s = full_iters_left * avg_iter + current_iter_remaining
+        else:
+            # No completed iters this run -- throughput extrapolation ignores
+            # per-iter overhead (mode-switch, theta update, drain) and is
+            # systematically optimistic.  Show nothing until the EWMA seeds.
+            session_eta_s = 0.0
+
+        return {
+            "iter_eta_s": round(iter_eta_s, 1),
+            "session_eta_s": round(session_eta_s, 1),
+            "avg_iter_sec": round(avg_iter, 1),
+        }
 
     def _chunk_timeout_for(self, worker_name: str, num_games: int) -> float:
         """Timeout for a chunk based on expected duration."""
@@ -521,14 +576,17 @@ class CoordinatorState:
 
             if wc > 0 and self.config.validate_interval > 0:
                 # Round up if the bigger chunk lands within iter ETA; else round
-                # to nearest so the chunk doesn't extend iter wall-clock.
+                # to nearest so the chunk doesn't extend iter wall-clock.  Use
+                # realized iter throughput (includes idle) so the round-up bias
+                # reflects true remaining wall-clock -- fewer chunks dispatched
+                # amortizes per-chunk worker startup cost.
                 chunk_up = ((num_games + unit - 1) // unit) * unit
                 spg = self.workers[worker_name].sec_per_game
-                total_speed = sum(w.games_per_second for w in self._active_workers())
                 use_round_up = True
-                if total_speed > 0 and spg > 0:
-                    iter_eta = (gpi - self.games_completed) / total_speed
-                    use_round_up = chunk_up * spg <= iter_eta
+                if spg > 0:
+                    iter_eta = self._iter_eta_seconds(time.time())
+                    if iter_eta > 0:
+                        use_round_up = chunk_up * spg <= iter_eta
                 if use_round_up:
                     rounded = chunk_up
                 else:
@@ -729,6 +787,15 @@ class CoordinatorState:
         # = (next iter_start) - (this completion) per consecutive log timestamps)
         iter_wall_clock = time.time() - self.iteration_start_time
         chunks_killed = len(self.pending_chunks)
+
+        # Feed iteration-duration EWMA (drives session ETA on the dashboard).
+        if self._iter_duration_ewma <= 0:
+            self._iter_duration_ewma = iter_wall_clock
+        else:
+            self._iter_duration_ewma = (
+                ITER_DURATION_EWMA_ALPHA * iter_wall_clock
+                + (1 - ITER_DURATION_EWMA_ALPHA) * self._iter_duration_ewma
+            )
 
         total = self.total_wins + self.total_draws + self.total_losses
         dw = self.config.spsa.draw_weight
@@ -996,6 +1063,7 @@ class CoordinatorState:
                 "server_start": self.server_start_time,
                 "iteration_start": self.iteration_start_time,
                 "has_normalized": has_normalized,
+                **self._compute_etas(now),
             }
             if has_normalized:
                 result["theta_internal"] = dict(self.optimizer.theta)
@@ -1111,6 +1179,9 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             session_start=session_start,
             server_start=server_start,
             iteration_start=data["iteration_start"],
+            iter_eta_s=data["iter_eta_s"],
+            session_eta_s=data["session_eta_s"],
+            avg_iter_sec=data["avg_iter_sec"],
         )
 
     def _render_charts_page(self) -> str:
@@ -1216,7 +1287,9 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                     "c_k": data["c_k"],
                     "total_games": data["total_games"],
                     "total_games_at_start": data["total_games_at_start"],
-                    "throughput": data["throughput"],
+                    "iter_eta_s": data["iter_eta_s"],
+                    "session_eta_s": data["session_eta_s"],
+                    "avg_iter_sec": data["avg_iter_sec"],
                     "theta": data.get("theta", {}),
                     "workers": data.get("workers", []),
                     "last_history": history[-1] if history else None,

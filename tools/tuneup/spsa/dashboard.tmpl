@@ -995,16 +995,14 @@
         // --- Initial render from baked-in data ---
         const sessionStart = '{session_start}';
         var totalGamesAtStart = {total_games_at_start};
-        var currentThroughput = {throughput};
         var iterationStartEpoch = {iteration_start};
-        var lastETA = [{total_games}, {games_done}, {games_total}, {iteration}, {max_iters}];
-        // Measured iteration durations (seconds) — populated as iterations complete
-        // after page load. Used for session ETA instead of throughput extrapolation,
-        // which double-counts idle time between chunks.
-        var iterDurations = [];
-        var MAX_ITER_SAMPLES = 10;
-        var prevIterationSeen = {iteration};
-        var prevIterationStartEpoch = {iteration_start};
+        // ETAs computed server-side; client tracks local arrival time so the
+        // displayed countdown is independent of client/server clock skew.
+        var etaIterS = {iter_eta_s};
+        var etaSessionS = {session_eta_s};
+        var avgIterSec = {avg_iter_sec};
+        var etaReceivedAt = Date.now();
+        var lastETA = [{games_done}, {games_total}, {iteration}, {max_iters}];
         const initTheta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}');
         const initThetaInternal = JSON.parse(document.getElementById('theta-internal-data').textContent || '{{}}');
         const initWorkers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
@@ -1019,13 +1017,12 @@
         renderHistory(historyWindow);
         updateHistoryTitle({history_total});
         updateSinceRestart({total_games});
-        updateETA({total_games}, {games_done}, {games_total}, {iteration}, {max_iters});
+        updateETA({games_done}, {games_total}, {iteration}, {max_iters});
         setInterval(function() {{
             // Elapsed clock always ticks
             var e = (Date.now() - iterationStartEpoch * 1000) / 1000;
             document.getElementById('elapsedIter').textContent = '(' + formatDuration(e * 1000) + ')';
-            // Only refine ETA on timer after a full iteration has completed
-            if (lastETA[3] >= 1) updateETA.apply(null, lastETA);
+            updateETA.apply(null, lastETA);
         }}, 1000);
 
         // --- Fetch initial parameter values from config ---
@@ -1212,45 +1209,23 @@
             var el = document.getElementById('totalGamesStat');
             if (el) el.title = since > 0 ? since + ' since restart' : '';
         }}
-        function updateETA(totalGames, gamesDone, gamesTotal, iteration, maxIters) {{
-            var iterElapsed = (Date.now() - iterationStartEpoch * 1000) / 1000;
-            var iterTp = (gamesDone > 0 && iterElapsed > 10) ? gamesDone / iterElapsed : 0;
-            var tp = Math.max(iterTp, currentThroughput);
-            var gamesLeftIter = Math.max(0, gamesTotal - gamesDone);
-            var etaIter = '';
-            if (tp > 0) {{
-                var fi = formatDuration(gamesLeftIter / tp * 1000);
-                if (fi !== '--') etaIter = fi;
-            }}
+        function updateETA(gamesDone, gamesTotal, iteration, maxIters) {{
+            // Interpolate the server's ETAs forward to "now" using the local
+            // arrival time, so the countdown ticks smoothly between SSE events
+            // without depending on server-vs-client clock alignment.
+            var sinceRx = (Date.now() - etaReceivedAt) / 1000;
+            function fmt(s) {{ var f = formatDuration(s * 1000); return f === '--' ? '' : f; }}
+            var etaIter = etaIterS > 0 ? fmt(Math.max(0, etaIterS - sinceRx)) : '';
+            var etaSession = etaSessionS > 0 ? fmt(Math.max(0, etaSessionS - sinceRx)) : '';
 
-            // Session ETA: use measured iteration duration when available; fall
-            // back to throughput extrapolation until the first iteration bump.
-            var avgIterSec = iterDurations.length > 0
-                ? iterDurations.reduce(function(a, b) {{ return a + b; }}, 0) / iterDurations.length
-                : 0;
-            var etaSession = '';
-            if (avgIterSec > 0) {{
-                var fullItersLeft = Math.max(0, maxIters - iteration - 1);
-                var currentIterRemaining = Math.max(0, avgIterSec - iterElapsed);
-                var sessionSec = fullItersLeft * avgIterSec + currentIterRemaining;
-                var fs = formatDuration(sessionSec * 1000);
-                if (fs !== '--') etaSession = fs;
-            }} else if (tp > 0) {{
-                var gamesLeftTotal = gamesLeftIter + Math.max(0, maxIters - iteration) * gamesTotal;
-                var fs = formatDuration(gamesLeftTotal / tp * 1000);
-                if (fs !== '--') etaSession = fs;
-            }}
-
-            var iterEl = document.getElementById('iterValue');
-            var gamesEl = document.getElementById('gamesValue');
-            iterEl.innerHTML = iteration + ' / ' + maxIters
+            document.getElementById('iterValue').innerHTML = iteration + ' / ' + maxIters
                 + (etaSession ? ' <span style="font-size:14px;color:var(--text-subtle);font-weight:normal">~' + etaSession + ' left</span>' : '');
-            gamesEl.innerHTML = gamesDone + ' / ' + gamesTotal
+            document.getElementById('gamesValue').innerHTML = gamesDone + ' / ' + gamesTotal
                 + (etaIter ? ' <span style="font-size:14px;color:var(--text-subtle);font-weight:normal">~' + etaIter + ' left</span>' : '');
-            document.getElementById('avgIterLabel').textContent = 'Est / Iteration';
+            document.getElementById('avgIterLabel').textContent = avgIterSec > 0 ? 'Est / Iteration' : 'Avg / Iteration';
             document.getElementById('avgIterValue').textContent = avgIterSec > 0
                 ? formatDuration(avgIterSec * 1000)
-                : (tp > 0 ? formatDuration(gamesTotal / tp * 1000) : '--');
+                : '--';
         }}
 
         // --- SSE live updates ---
@@ -1274,7 +1249,6 @@
             document.getElementById('akValue').textContent = d.a_k.toFixed(6);
             document.getElementById('ckValue').textContent = d.c_k.toFixed(6);
             document.getElementById('totalGamesValue').textContent = d.total_games;
-            currentThroughput = d.throughput;
             if (typeof d.total_games_at_start === 'number') totalGamesAtStart = d.total_games_at_start;
             updateSinceRestart(d.total_games);
 
@@ -1359,19 +1333,13 @@
             // Theme
             applyTimeTheme();
 
-            // ETA
-            // Record completed iteration duration when iteration number advances.
-            if (d.iteration > prevIterationSeen && prevIterationStartEpoch) {{
-                var dur = d.iteration_start - prevIterationStartEpoch;
-                if (dur > 0) {{
-                    iterDurations.push(dur);
-                    if (iterDurations.length > MAX_ITER_SAMPLES) iterDurations.shift();
-                }}
-            }}
-            prevIterationSeen = d.iteration;
-            prevIterationStartEpoch = d.iteration_start;
+            // ETA — server computes; client just interpolates from local arrival time.
             iterationStartEpoch = d.iteration_start;
-            lastETA = [d.total_games, d.games_done, d.games_total, d.iteration, d.max_iters];
+            etaIterS = d.iter_eta_s;
+            etaSessionS = d.session_eta_s;
+            avgIterSec = d.avg_iter_sec;
+            etaReceivedAt = Date.now();
+            lastETA = [d.games_done, d.games_total, d.iteration, d.max_iters];
             updateETA.apply(null, lastETA);
 
             // Footer
