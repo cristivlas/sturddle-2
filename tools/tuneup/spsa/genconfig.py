@@ -32,6 +32,7 @@ import warnings
 from config import (
     EngineConfig, SPSAConfig, TuningConfig, Parameter, WorkerConfig,
 )
+from recommend import ParamSpec, recommend, format_recommendation, constrain_for
 
 
 def physical_cpu_count():
@@ -164,12 +165,94 @@ def is_pyinstaller_onefile(path: str) -> bool:
         return False
 
 
+def _build_tune_params(tune_arg):
+    """Load chess_engine and build tune_params from get_param_info(). Exits on unknown name."""
+    sys.path.append(root_path())
+    from chess_engine import get_param_info
+
+    params = {}
+    for name, (val, lo, hi, grp, normal) in get_param_info().items():
+        if grp == 'Settings':
+            continue
+        if normal:
+            unscaled_val = val
+            v = 2 * (val - lo) / (hi - lo) - 1
+            if v < -1 or v > 1:
+                raise ValueError(f'{name}: {v} (unscaled: {unscaled_val}) is out of range')
+            params[name] = (v, -1.0, 1.0, grp, 'float', lo, hi)
+        else:
+            ptype = 'float' if isinstance(val, float) else 'int'
+            params[name] = (val, lo, hi, grp, ptype, None, None)
+
+    if not isinstance(tune_arg, list):
+        tune_arg = [tune_arg]
+    all_names = sorted(params.keys())
+    tune_names = set()
+    for p in tune_arg:
+        if p == 'all':
+            tune_names.update(all_names)
+        elif p in params:
+            tune_names.add(p)
+        else:
+            print(f'Error: Unknown parameter: {p}', file=sys.stderr)
+            print(f'Available: {", ".join(all_names)}', file=sys.stderr)
+            sys.exit(1)
+
+    tune_params = {}
+    for name in sorted(tune_names):
+        val, lo, hi, grp, ptype, orig_lo, orig_hi = params[name]
+        p = {
+            'init': val,
+            'lower': lo,
+            'upper': hi,
+            'type': ptype,
+        }
+        if orig_lo is not None:
+            p['original_lower'] = orig_lo
+            p['original_upper'] = orig_hi
+        tune_params[name] = p
+
+    return tune_params
+
+
+def _print_recommendations(tune_params, iterations, gamma, a_to_c_ratio, target_r=None, target_c=None):
+    """Dry-run: build ParamSpec list from tune_params and delegate to recommend module."""
+    if not tune_params:
+        print('No tunable parameters to analyze.')
+        return
+
+    def is_int_like(x):
+        return isinstance(x, int) or (isinstance(x, float) and x.is_integer())
+
+    specs = []
+    for name, p in tune_params.items():
+        if 'original_lower' in p:
+            lo, hi = p['original_lower'], p['original_upper']
+            center = (p['init'] + 1) * (hi - lo) / 2 + lo
+        else:
+            lo, hi = p['lower'], p['upper']
+            center = p['init']
+        is_int = is_int_like(lo) and is_int_like(hi)
+        fixed_lo, fixed_hi, floor = constrain_for(lo, hi)
+        # Genconfig: current bounds == engine cap (fresh from get_param_info), so pass as both.
+        specs.append(ParamSpec(name=name, center=center, current_lo=lo, current_hi=hi,
+                               is_int=is_int, cap_lo=lo, cap_hi=hi,
+                               fixed_lo=fixed_lo, fixed_hi=fixed_hi, floor=floor))
+
+    rec = recommend(specs, iterations, gamma, a_to_c_ratio, target_r=target_r, target_c=target_c)
+    format_recommendation(rec, center_label='init')
+
+
 def main():
     parser = argparse.ArgumentParser(description='Generate SPSA tuning project from engine parameters.')
-    parser.add_argument('project', help='Project name (creates tuneup/<project>/)')
+    parser.add_argument('project', nargs='?', default=None, help='Project name (creates tuneup/<project>/) -- omit with --dry-run')
     parser.add_argument('tune', nargs='*', default='all', help='Parameter names to tune (or "all")')
     parser.add_argument('-w', '--worker-only', action='store_true', help='Generate worker.json only (no engine needed)')
     parser.add_argument('-s', '--server-only', action='store_true', help='Generate tuning.json (coordinator) only, skip worker.json')
+    parser.add_argument('--dry-run', '--check-ranges', dest='dry_run', action='store_true', help='Report engine-space range distribution and SPSA schedule implications; write nothing')
+    target_grp = parser.add_mutually_exclusive_group()
+    target_grp.add_argument('--target-r', type=float, default=None, help='Override R_target (engine-space range) for --check-ranges; default is geometric mean of current ranges')
+    target_grp.add_argument('--target-c', type=float, default=None, help='Override c (perturbation fraction); R_target is derived as N^gamma / c')
     parser.add_argument('-e', '--engine', metavar='VERSION_OR_PATH', help='Engine version from dist/ (e.g., 2.5.1-pieces) or path to binary; defaults to dist/native/ build')
     parser.add_argument('-r', '--ref', metavar='VERSION_OR_PATH', help='Reference engine version from dist/ (e.g., 2.5.0) or path to binary')
     _tc = TuningConfig()
@@ -183,6 +266,22 @@ def main():
     parser.add_argument('-c', '--spsa-c', type=float, default=None, help=f'SPSA perturbation size (default: auto from param ranges)')
     parser.add_argument('-a', '--spsa-a', type=float, default=None, help=f'SPSA learning rate (default: auto, scaled from c)')
     args = parser.parse_args()
+
+    if args.dry_run:
+        if args.worker_only:
+            parser.error('--dry-run is incompatible with --worker-only (no params to analyze)')
+        # In dry-run there is no project; the first positional is also a tune name.
+        if args.project is None:
+            tune_arg = args.tune
+        else:
+            rest = args.tune if isinstance(args.tune, list) else []
+            tune_arg = [args.project] + rest
+        tune_params = _build_tune_params(tune_arg)
+        _print_recommendations(tune_params, args.iterations, _spsa.gamma, _spsa.a / _spsa.c, target_r=args.target_r, target_c=args.target_c)
+        return
+
+    if not args.project:
+        parser.error('project name required (or pass --dry-run)')
 
     # Create project directory
     if os.path.isabs(args.project):
@@ -207,52 +306,7 @@ def main():
     tune_params = {}
 
     if not args.worker_only:
-        sys.path.append(root_path())
-        from chess_engine import get_param_info
-
-        params = {}
-        for name, (val, lo, hi, grp, normal) in get_param_info().items():
-            if grp == 'Settings':
-                continue
-            if normal:
-                unscaled_val = val
-                val = 2 * (val - lo) / (hi - lo) - 1
-                if val < -1 or val > 1:
-                    raise ValueError(f'{name}: {val} (unscaled: {unscaled_val}) is out of range')
-                params[name] = (val, -1.0, 1.0, grp, 'float', lo, hi)
-            else:
-                ptype = 'float' if isinstance(val, float) else 'int'
-                params[name] = (val, lo, hi, grp, ptype, None, None)
-
-        # Resolve 'all' and build tune list
-        if not isinstance(args.tune, list):
-            args.tune = [args.tune]
-
-        all_names = sorted(params.keys())
-        tune_names = set()
-        for p in args.tune:
-            if p == 'all':
-                tune_names.update(all_names)
-            elif p in params:
-                tune_names.add(p)
-            else:
-                print(f'Error: Unknown parameter: {p}', file=sys.stderr)
-                print(f'Available: {", ".join(all_names)}', file=sys.stderr)
-                sys.exit(1)
-
-        # Build tunable params
-        for name in sorted(tune_names):
-            val, lo, hi, grp, ptype, orig_lo, orig_hi = params[name]
-            p = {
-                'init': val,
-                'lower': lo,
-                'upper': hi,
-                'type': ptype,
-            }
-            if orig_lo is not None:
-                p['original_lower'] = orig_lo
-                p['original_upper'] = orig_hi
-            tune_params[name] = p
+        tune_params = _build_tune_params(args.tune)
 
         # Auto-calculate c so the tightest param hits the min-perturbation clamp
         # at ~100% of the budget: c = N^gamma / min_engine_range
