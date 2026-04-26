@@ -1218,13 +1218,14 @@
             var rawPct = remaining > 0 ? pending / remaining * 100 : (pending > 0 ? Infinity : 0);
             fill.style.width = Math.min(100, rawPct) + '%';
             fill.textContent = rawPct > 0 ? (isFinite(rawPct) ? Math.round(rawPct) + '%' : '∞') : '';
-            // In overschedule mode, drift the gradient's end color toward
-            // --conv-good proportional to excess (rawPct/100 - 1, clamped to 1).
-            // Single continuous gradient -- no hard split. Cap the green mix
-            // so even at peak excess the bar stays in palette, not lime.
+            // In overschedule mode, drift the gradient's end color toward a
+            // forest green proportional to excess. Excess reaches 1 at 150%
+            // scheduled (rather than 200%) so the shift is more aggressive,
+            // and the green mix peaks at 80%. Target hex is hardcoded -- the
+            // mint --conv-good token is the wrong hue for "deep forest".
             if (rawPct >= 100) {{
-                var greenPct = (Math.min(1, rawPct / 100 - 1) * 60).toFixed(0);
-                fill.style.background = 'linear-gradient(90deg, var(--accent-start) 0%, color-mix(in srgb, var(--accent-end), var(--conv-good) ' + greenPct + '%) 100%)';
+                var greenPct = (Math.min(1, (rawPct / 100 - 1) * 2) * 80).toFixed(0);
+                fill.style.background = 'linear-gradient(90deg, var(--accent-start) 0%, color-mix(in srgb, var(--accent-end), #1F5C2A ' + greenPct + '%) 100%)';
             }} else {{
                 fill.style.background = '';
             }}
