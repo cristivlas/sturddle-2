@@ -640,6 +640,9 @@
                 <div class="card">
                     <h2>Scheduled Games</h2>
                     <div class="card-value"><span id="pendingValue">{games_pending}</span> / <span id="remainingValue">--</span></div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="schedFill" style="width: 0%;"></div>
+                    </div>
                 </div>
             </div>
 
@@ -1014,6 +1017,7 @@
         renderTheta(hasNormalized ? currentThetaInternal : currentTheta, hasNormalized ? initialThetaInternal : initialTheta);
         renderWorkers(initWorkers);
         document.getElementById('remainingValue').textContent = {games_total} - {games_done};
+        updateSchedFill({games_pending}, {games_total} - {games_done});
         renderHistory(historyWindow);
         updateHistoryTitle({history_total});
         updateSinceRestart({total_games});
@@ -1209,6 +1213,22 @@
             var el = document.getElementById('totalGamesStat');
             if (el) el.title = since > 0 ? since + ' since restart' : '';
         }}
+        function updateSchedFill(pending, remaining) {{
+            var fill = document.getElementById('schedFill');
+            var rawPct = remaining > 0 ? pending / remaining * 100 : (pending > 0 ? Infinity : 0);
+            fill.style.width = Math.min(100, rawPct) + '%';
+            fill.textContent = rawPct > 0 ? (isFinite(rawPct) ? Math.round(rawPct) + '%' : '∞') : '';
+            // In overschedule mode, drift the gradient's end color toward
+            // --conv-good proportional to excess (rawPct/100 - 1, clamped to 1).
+            // Single continuous gradient -- no hard split. Cap the green mix
+            // so even at peak excess the bar stays in palette, not lime.
+            if (rawPct >= 100) {{
+                var greenPct = (Math.min(1, rawPct / 100 - 1) * 60).toFixed(0);
+                fill.style.background = 'linear-gradient(90deg, var(--accent-start) 0%, color-mix(in srgb, var(--accent-end), var(--conv-good) ' + greenPct + '%) 100%)';
+            }} else {{
+                fill.style.background = '';
+            }}
+        }}
         function updateETA(gamesDone, gamesTotal, iteration, maxIters) {{
             // Interpolate the server's ETAs forward to "now" using the local
             // arrival time, so the countdown ticks smoothly between SSE events
@@ -1244,6 +1264,7 @@
             document.getElementById('gamesFill').textContent = Math.round(d.iter_progress) + '%';
             document.getElementById('pendingValue').textContent = d.games_pending;
             document.getElementById('remainingValue').textContent = d.games_total - d.games_done;
+            updateSchedFill(d.games_pending, d.games_total - d.games_done);
 
             // Stats
             document.getElementById('akValue').textContent = d.a_k.toFixed(6);
