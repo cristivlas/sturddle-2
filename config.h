@@ -367,7 +367,7 @@ DECLARE_NORMAL(  COUNTER_MOVE_BONUS,                 215,  180,     240)
 DECLARE_VALUE(  COUNTER_MOVE_MIN_DEPTH,               2,    0,       5)
 
 DECLARE_NORMAL(  HIST_MAX,                         23708, 16000,  32000)
-DECLARE_NORMAL(  HISTORY_SCORE_DIV,                   84,    60,    100)
+DECLARE_NORMAL(  HISTORY_SCORE_DIV,                   84,    60,    150)
 DECLARE_NORMAL(  HISTORY_SCORE_MUL,                  313,   200,    400)
 DECLARE_VALUE(  HISTORY_HIGH,                        91,   50,     150)
 DECLARE_VALUE(  HISTORY_LOW,                         12,    0,      30)
