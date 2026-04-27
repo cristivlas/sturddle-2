@@ -295,9 +295,16 @@ def main():
                             help='Override R_target for recommendations')
     target_grp.add_argument('--target-c', type=float, default=None,
                             help='Override c; R_target derived as N^gamma / c')
+    parser.add_argument('--min-pert-pct', type=float, default=5.0,
+                        help='End-of-run perturbation floor as %% of narrowest inlier range '
+                             '(allowed [5, 20], default 5). Higher = larger c, keeps '
+                             'perturbations bigger for longer. Ignored when --target-c is given.')
     parser.add_argument('--write-tuning', default=None, metavar='PATH',
                         help='Write a fresh tuning.json to PATH (default: dry-run)')
     args = parser.parse_args()
+
+    if not (5.0 <= args.min_pert_pct <= 20.0):
+        parser.error(f'--min-pert-pct must be in [5, 20], got {args.min_pert_pct}')
 
     # Fail fast if --write-tuning would clobber. Better to error before any
     # output than to print a full report and bury the failure at the end.
@@ -353,6 +360,7 @@ def main():
             specs, suggested_iters, tuning.spsa.gamma,
             tuning.spsa.a / tuning.spsa.c,
             target_r=args.target_r, target_c=args.target_c,
+            min_pert_pct=args.min_pert_pct,
         )
 
     print(f'Source run: {project_dir}')

@@ -74,34 +74,45 @@ def constrain_for(current_lo, current_hi):
 def recommend(specs: List[ParamSpec], iterations: int, gamma: float,
               a_to_c_ratio: float, target_r: Optional[float] = None,
               target_c: Optional[float] = None,
-              outlier_ratio: Optional[float] = 5.0) -> Recommendation:
+              outlier_ratio: Optional[float] = 5.0,
+              min_pert_pct: float = 5.0) -> Recommendation:
     """Compute SPSA schedule recommendation.
 
     outlier_ratio: params whose current width exceeds outlier_ratio * median
-    width are excluded from the auto-derived R_target geometric mean *and*
-    keep their existing bounds (action='keep'). Without this, a single big-
-    range param drags R_target down and gets absurdly narrowed. Set to None
-    or 0 to disable. Ignored when target_r/target_c is given.
+    width are detected as scale outliers. Their R is rescaled on a log axis
+    (R_target * log(current_w) / log(median_inlier_w)) so a wide outlier
+    stays slightly wider than inliers without dwarfing them -- e.g. a
+    16k-wide param against 120-median inliers comes down to ~250, not 16k.
+    Outliers are also excluded from the auto-derived R_target geometric
+    mean. Set to None or 0 to disable.
+
+    min_pert_pct: floor for the end-of-run perturbation as a percent of
+    R_min (the narrowest param's range). Without this, c is sized so c_k
+    hits the integer ±1 clamp at iter N, which drops below the noise floor
+    long before that. Default 5% means c_k hits max(1, 5%·R_min) at iter N.
+    Set to 0 to recover the legacy "1-unit clamp at end" behavior.
     """
     if not specs:
         raise ValueError('no params')
     if target_r is not None and target_c is not None:
         raise ValueError('target_r and target_c are mutually exclusive')
 
-    # Outlier detection (only meaningful when auto-deriving R_target, and
-    # only with enough specs that "median" is robust -- with 2 specs the
-    # median is whichever happens to be at index 1, so the smaller one
+    # Outlier detection (need >=3 specs for the median to be robust -- with
+    # 2 specs the median is whichever sits at index 1, so the smaller one
     # would never be flagged).
-    auto_R = target_r is None and target_c is None
     outlier_names: Set[str] = set()
-    if auto_R and outlier_ratio and len(specs) >= 3:
-        sorted_widths = sorted([s.current_hi - s.current_lo for s in specs if s.current_hi > s.current_lo])
-        if sorted_widths:
-            median_w = sorted_widths[len(sorted_widths) // 2]
+    median_inlier_w: Optional[float] = None
+    if outlier_ratio and len(specs) >= 3:
+        all_widths = sorted([s.current_hi - s.current_lo for s in specs if s.current_hi > s.current_lo])
+        if all_widths:
+            median_w = all_widths[len(all_widths) // 2]
             outlier_names = {
                 s.name for s in specs
                 if (s.current_hi - s.current_lo) > outlier_ratio * median_w
             }
+            inlier_widths = [w for w in all_widths if w <= outlier_ratio * median_w]
+            if inlier_widths:
+                median_inlier_w = inlier_widths[len(inlier_widths) // 2]
 
     if target_c is not None:
         R_target = max(1, round((iterations ** gamma) / target_c))
@@ -122,18 +133,23 @@ def recommend(specs: List[ParamSpec], iterations: int, gamma: float,
         else:
             target_src = f'geometric mean of {len(widths)} current ranges'
 
-    c = round((iterations ** gamma) / R_target, 4)
+    if target_c is not None:
+        c = round(target_c, 4)
+    else:
+        inlier_widths_for_floor = [s.current_hi - s.current_lo for s in specs if s.current_hi > s.current_lo and s.name not in outlier_names]
+        R_min_current = min(inlier_widths_for_floor) if inlier_widths_for_floor else R_target
+        pert_floor = max(1.0, R_min_current * min_pert_pct / 100.0) if min_pert_pct else 1.0
+        c = round(pert_floor * (iterations ** gamma) / R_target, 4)
     a = round(c * a_to_c_ratio, 4)
     actions = []
     for s in specs:
-        if s.name in outlier_names:
+        if s.name in outlier_names and median_inlier_w and median_inlier_w > 1:
+            # Log-scale rescale: outlier_R = R_target * log(cur_w)/log(median_inlier_w).
+            # Keeps outliers slightly larger than inliers (ratio = log of the
+            # current-width ratio) without preserving their full magnitude.
             cur_w = s.current_hi - s.current_lo
-            actions.append(ParamAction(
-                name=s.name, center=s.center,
-                current_lo=s.current_lo, current_hi=s.current_hi, current_w=cur_w,
-                new_lo=s.current_lo, new_hi=s.current_hi,
-                action='keep', is_int=s.is_int,
-            ))
+            R_outlier = max(1, round(R_target * math.log(cur_w) / math.log(median_inlier_w)))
+            actions.append(_recommend_one(s, R_outlier))
         else:
             actions.append(_recommend_one(s, R_target))
     return Recommendation(iterations, gamma, R_target, c, a, target_src, actions)
