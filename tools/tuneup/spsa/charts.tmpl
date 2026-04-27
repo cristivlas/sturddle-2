@@ -809,29 +809,52 @@
                 var _pertView = 'value';
                 try {{ var _sv = JSON.parse(localStorage.getItem('chartSolo')); if (_sv && _sv.p && _origData[_sv.p]) {{ _soloParam = _sv.p; _pertView = (_sv.m === 'pert') ? 'pert' : 'value'; }} }} catch(e) {{}}
                 function denorm(v, lo, hi) {{ return (v + 1) * (hi - lo) / 2 + lo; }}
-                function _trendTStat(name, fromIdx, toIdx) {{
-                    var d = _origData[name];
-                    if (!d) return null;
-                    var range = paramRanges[name];
-                    var xs = [], ys = [];
-                    for (var i = fromIdx; i <= toIdx; i++) {{
-                        if (d[i] && d[i].y != null) {{
-                            xs.push(i);
-                            ys.push(range ? denorm(d[i].y, range[0], range[1]) : d[i].y);
+                // Window stats in engine-space (when range known) or normalized space.
+                // slope is in engine units per iteration (caller scales to per-1k).
+                // Cached by (name, fromIdx, toIdx) — zoom drag fires this on every
+                // pointermove, but identical integer indices map to identical stats.
+                var _wsCache = {{ k: null, v: null }};
+                function _windowStats(name, fromIdx, toIdx) {{
+                    var key = name + '|' + fromIdx + '|' + toIdx;
+                    if (_wsCache.k === key) return _wsCache.v;
+                    var result = (function() {{
+                        var d = _origData[name];
+                        if (!d) return null;
+                        var range = paramRanges[name];
+                        var xs = [], ys = [];
+                        for (var i = fromIdx; i <= toIdx; i++) {{
+                            if (d[i] && d[i].y != null) {{
+                                xs.push(d[i].x);
+                                ys.push(range ? denorm(d[i].y, range[0], range[1]) : d[i].y);
+                            }}
                         }}
-                    }}
-                    if (xs.length < CONV_MIN) return null;
-                    var n = xs.length, mx = 0, my = 0;
-                    for (var i = 0; i < n; i++) {{ mx += xs[i]; my += ys[i]; }}
-                    mx /= n; my /= n;
-                    var sxy = 0, sxx = 0;
-                    for (var i = 0; i < n; i++) {{ var dx = xs[i] - mx; sxy += dx * (ys[i] - my); sxx += dx * dx; }}
-                    if (sxx === 0) return null;
-                    var slope = sxy / sxx;
-                    var sse = 0;
-                    for (var i = 0; i < n; i++) {{ var r = ys[i] - (my + slope * (xs[i] - mx)); sse += r * r; }}
-                    var se = Math.sqrt(sse / ((n - 2) * sxx));
-                    return se > 0 ? slope / se : null;
+                        if (xs.length < CONV_MIN) return null;
+                        var n = xs.length, mx = 0, my = 0;
+                        for (var i = 0; i < n; i++) {{ mx += xs[i]; my += ys[i]; }}
+                        mx /= n; my /= n;
+                        var sxy = 0, sxx = 0, syy = 0;
+                        for (var i = 0; i < n; i++) {{
+                            var dx = xs[i] - mx, dy = ys[i] - my;
+                            sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
+                        }}
+                        var slope = sxx > 0 ? sxy / sxx : null;
+                        var tstat = null;
+                        if (slope != null && n > 2) {{
+                            var sse = 0;
+                            for (var i = 0; i < n; i++) {{ var r = ys[i] - (my + slope * (xs[i] - mx)); sse += r * r; }}
+                            var se = Math.sqrt(sse / ((n - 2) * sxx));
+                            tstat = se > 0 ? slope / se : null;
+                        }}
+                        return {{
+                            iterFrom: xs[0], iterTo: xs[n - 1], n: n,
+                            yStart: ys[0], yEnd: ys[n - 1],
+                            mean: my, sigma: Math.sqrt(syy / n),
+                            slope: slope, tstat: tstat,
+                            rangeKnown: !!range, range: range
+                        }};
+                    }})();
+                    _wsCache.k = key; _wsCache.v = result;
+                    return result;
                 }}
                 function _pertDataForParam(name) {{
                     if (_spsaC == null || _spsaGamma == null) return null;
@@ -883,20 +906,20 @@
                     }}
                     ch.update();
                 }}
-                var CONV_MIN = 5;
-                function sliceConvergence(name, fromIdx, toIdx) {{
-                    var range = paramInternalRanges[name];
-                    if (!range || range === 0) return null;
-                    var d = _origData[name];
-                    if (!d) return null;
-                    var vals = [];
-                    for (var i = fromIdx; i <= toIdx; i++) {{
-                        if (d[i] && d[i].y != null) vals.push(d[i].y);
+                var CONV_MIN = 20;
+                // σ as % of param range. _windowStats.sigma is in engine units when
+                // rangeKnown (divide by engine-space width), otherwise in normalized
+                // [-1,+1] space (divide by paramInternalRanges, which is the
+                // normalized width — always 2 for symmetric SPSA). Both branches
+                // yield the same dimensionless percentage.
+                function _sigmaPct(name, st) {{
+                    if (!st) return null;
+                    if (st.rangeKnown) {{
+                        var w = st.range[1] - st.range[0];
+                        return w > 0 ? st.sigma / w * 100 : null;
                     }}
-                    if (vals.length < CONV_MIN) return null;
-                    var mean = vals.reduce(function(a, b) {{ return a + b; }}, 0) / vals.length;
-                    var variance = vals.reduce(function(a, v) {{ return a + (v - mean) * (v - mean); }}, 0) / vals.length;
-                    return Math.sqrt(variance) / range * 100;
+                    var ir = paramInternalRanges[name];
+                    return (ir && ir > 0) ? st.sigma / ir * 100 : null;
                 }}
                 window._reapplySoloRange = function() {{
                     if (!_soloParam) return;
@@ -921,25 +944,73 @@
                     ch.options.scales.y.max = range[1];
                     ch.update();
                 }};
+                function _fmt(v) {{
+                    var a = Math.abs(v);
+                    if (a >= 100) return v.toFixed(0);
+                    if (a >= 10) return v.toFixed(1);
+                    return v.toFixed(2);
+                }}
+                function _signed(v) {{ return (v >= 0 ? '+' : '') + _fmt(v); }}
+                // Read CSS var (e.g. '--surface', '--text') with fallback. Note:
+                // values are color hex strings, not rgba — combine with alpha at
+                // the call site by using a hex8 suffix (e.g. + 'd0' for ~82% alpha).
+                function _cssColor(varName, fallback) {{
+                    var v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+                    return v || fallback;
+                }}
                 // Expose globally so applyZoomRange can call it
                 window.updateThetaSubtitle = function() {{
                     var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
                     if (!ch) return;
                     if (_pertView === 'pert' || !_soloParam) {{
-                        ch._sub1 = null; ch._sub2 = null;
+                        ch._sub1 = null; ch._sub2 = null; ch._sub3 = null;
+                        ch._stats = null;
                         ch.update('none');
                         return;
                     }}
                     var f = parseInt(document.getElementById('zoomFrom').value) || 0;
                     var t = parseInt(document.getElementById('zoomTo').value) || (_labels.length - 1);
-                    var pct = sliceConvergence(_soloParam, f, t);
-                    ch._sub1 = pct != null ? {{ text: 'StdDev/Range: ' + pct.toFixed(1) + '%', color: pct < 2 ? '#1B8A2A' : pct < 5 ? '#B86800' : '#C62828' }} : null;
-                    var tstat = _trendTStat(_soloParam, f, t);
-                    if (tstat != null) {{
-                        var at = Math.abs(tstat);
-                        var arrow = tstat > 0 ? '\u2197' : tstat < 0 ? '\u2198' : '\u2192';
-                        ch._sub2 = {{ text: 'Trend: ' + tstat.toFixed(1) + ' ' + arrow, color: at >= 2.0 ? '#1B8A2A' : at >= 1.0 ? '#B86800' : '#999' }};
+                    var st = _windowStats(_soloParam, f, t);
+                    ch._stats = st;
+                    if (!st) {{
+                        ch._sub1 = null; ch._sub2 = null; ch._sub3 = null;
+                        ch.update('none');
+                        return;
+                    }}
+                    // Line 1: Delta over window (engine units + % of range)
+                    var delta = st.yEnd - st.yStart;
+                    var deltaTxt = '\u0394: ' + _signed(delta);
+                    if (st.rangeKnown) {{
+                        var rspan = st.range[1] - st.range[0];
+                        if (rspan > 0) deltaTxt += '  (' + _signed(delta / rspan * 100) + '% of range)';
+                    }}
+                    // Color sentinel resolved at draw time so theme changes apply
+                    // without needing to rerun this function.
+                    ch._sub1 = {{ text: deltaTxt, color: 'theme:text' }};
+                    // Line 2: StdDev/Range %, with engine-unit \u00b11\u03c3 if known
+                    var pct = _sigmaPct(_soloParam, st);
+                    if (pct != null) {{
+                        var sigTxt = '\u03c3/Range: ' + pct.toFixed(1) + '%';
+                        if (st.rangeKnown) sigTxt += '  (\u00b1' + _fmt(st.sigma) + ')';
+                        ch._sub2 = {{ text: sigTxt, color: pct < 2 ? '#1B8A2A' : pct < 5 ? '#B86800' : '#C62828' }};
                     }} else {{ ch._sub2 = null; }}
+                    // Line 3: Slope per 1k iter + significance qualifier.
+                    // Qualifier uses |t| thresholds (not exact p-values) -- |t|>=2
+                    // ~ p<.05 only at large n (df->infty crit ~1.96); CONV_MIN=20
+                    // keeps that approximation honest. Suppress the directional
+                    // arrow when |t|<1 since the sign isn't trustworthy.
+                    if (st.slope != null) {{
+                        var per1k = st.slope * 1000;
+                        var at = st.tstat != null ? Math.abs(st.tstat) : 0;
+                        var trustDir = at >= 1.0;
+                        var arrow = !trustDir ? '\u2192' : per1k > 0 ? '\u2197' : per1k < 0 ? '\u2198' : '\u2192';
+                        var qual, color;
+                        if (st.tstat == null)   {{ qual = '';            color = '#999';    }}
+                        else if (at >= 2.0)     {{ qual = '  (|t|>2)';   color = '#1B8A2A'; }}
+                        else if (at >= 1.0)     {{ qual = '  (|t|>1)';   color = '#B86800'; }}
+                        else                    {{ qual = '  (noise)';   color = '#999';    }}
+                        ch._sub3 = {{ text: 'Slope: ' + _signed(per1k) + '/1k iter ' + arrow + qual, color: color }};
+                    }} else {{ ch._sub3 = null; }}
                     ch.update('none');
                 }};
                 var thetaOpts = {{
@@ -1015,21 +1086,149 @@
                     }},
                     scales: {{ x: {{ type: 'linear' }}, y: {{}} }}
                 }};
+                // Initial value (iter 0, engine units if known) per param
+                function _initialValueEng(name) {{
+                    var d = _origData[name];
+                    if (!d || !d.length || d[0].y == null) return null;
+                    var range = paramRanges[name];
+                    return range ? denorm(d[0].y, range[0], range[1]) : d[0].y;
+                }}
                 initChart('thetaChart', {{
                     type: 'line',
                     data: {{ datasets: thetaDatasets }},
                     options: thetaOpts,
                     plugins: [{{
+                        id: 'soloRefs',
+                        beforeDatasetsDraw: function(chart) {{
+                            if (!_soloParam || _pertView !== 'value') return;
+                            var st = chart._stats;
+                            var ca = chart.chartArea;
+                            var ys = chart.scales.y, xs = chart.scales.x;
+                            if (!ys || !xs) return;
+                            var ctx = chart.ctx;
+                            ctx.save();
+                            ctx.beginPath();
+                            ctx.rect(ca.left, ca.top, ca.right - ca.left, ca.bottom - ca.top);
+                            ctx.clip();
+                            // ±1σ band around mean (sigma is from sqrt(sum of
+                            // squares / n), so always finite & non-negative)
+                            if (st && st.sigma > 0) {{
+                                var yLo = ys.getPixelForValue(st.mean - st.sigma);
+                                var yHi = ys.getPixelForValue(st.mean + st.sigma);
+                                var top = Math.min(yLo, yHi), bot = Math.max(yLo, yHi);
+                                ctx.fillStyle = 'rgba(102,126,234,0.10)';
+                                ctx.fillRect(ca.left, top, ca.right - ca.left, bot - top);
+                                // Mean line
+                                var ym = ys.getPixelForValue(st.mean);
+                                ctx.strokeStyle = 'rgba(102,126,234,0.55)';
+                                ctx.lineWidth = 1;
+                                ctx.setLineDash([]);
+                                ctx.beginPath();
+                                ctx.moveTo(ca.left, ym); ctx.lineTo(ca.right, ym);
+                                ctx.stroke();
+                            }}
+                            // Current cₖ half-band bracket at right edge of visible window
+                            if (_spsaC != null && _spsaGamma != null && st) {{
+                                var ir = paramInternalRanges[_soloParam];
+                                if (ir) {{
+                                    var scale = st.rangeKnown ? (st.range[1] - st.range[0]) : ir;
+                                    var ck = _spsaC / Math.pow(st.iterTo + 1, _spsaGamma) * scale;
+                                    if (isFinite(ck) && ck > 0) {{
+                                        var px = xs.getPixelForValue(st.iterTo);
+                                        // Clamp to chart area
+                                        px = Math.max(ca.left + 1, Math.min(ca.right - 1, px));
+                                        var pyTop = ys.getPixelForValue(st.yEnd + ck);
+                                        var pyBot = ys.getPixelForValue(st.yEnd - ck);
+                                        var brTop = Math.min(pyTop, pyBot), brBot = Math.max(pyTop, pyBot);
+                                        var darkBr = document.documentElement.getAttribute('data-theme') === 'dark';
+                                        ctx.strokeStyle = darkBr ? 'rgba(200,200,205,1.0)' : 'rgba(80,80,80,1.0)';
+                                        ctx.lineWidth = 3;
+                                        ctx.lineCap = 'round';
+                                        ctx.setLineDash([]);
+                                        ctx.beginPath();
+                                        ctx.moveTo(px, brTop); ctx.lineTo(px, brBot);
+                                        var tick = 7;
+                                        ctx.moveTo(px - tick, brTop); ctx.lineTo(px + tick, brTop);
+                                        ctx.moveTo(px - tick, brBot); ctx.lineTo(px + tick, brBot);
+                                        ctx.stroke();
+                                        ctx.lineCap = 'butt';
+                                        chart._ckLabelPos = {{ px: px, py: (brTop + brBot) / 2, tick: tick }};
+                                    }} else {{
+                                        chart._ckLabelPos = null;
+                                    }}
+                                }} else {{
+                                    chart._ckLabelPos = null;
+                                }}
+                            }} else {{
+                                chart._ckLabelPos = null;
+                            }}
+                            // Initial value (θ₀) dashed line
+                            var y0 = _initialValueEng(_soloParam);
+                            if (y0 != null && isFinite(y0)) {{
+                                var py0 = ys.getPixelForValue(y0);
+                                ctx.strokeStyle = 'rgba(120,120,120,0.7)';
+                                ctx.lineWidth = 1;
+                                ctx.setLineDash([4, 4]);
+                                ctx.beginPath();
+                                ctx.moveTo(ca.left, py0); ctx.lineTo(ca.right, py0);
+                                ctx.stroke();
+                                ctx.setLineDash([]);
+                                chart._theta0LabelY = py0;
+                            }} else {{
+                                chart._theta0LabelY = null;
+                            }}
+                            ctx.restore();
+                        }},
+                        afterDatasetsDraw: function(chart) {{
+                            if (!_soloParam || _pertView !== 'value') return;
+                            var ca = chart.chartArea;
+                            var ctx = chart.ctx;
+                            ctx.save();
+                            ctx.beginPath();
+                            ctx.rect(ca.left, ca.top, ca.right - ca.left, ca.bottom - ca.top);
+                            ctx.clip();
+                            ctx.font = 'bold 20px ' + (Chart.defaults.font.family || 'sans-serif');
+                            // Halo for legibility against the data line (theme-aware)
+                            var darkHalo = document.documentElement.getAttribute('data-theme') === 'dark';
+                            ctx.lineWidth = 4;
+                            // 'd9' ~ 85% alpha
+                            ctx.strokeStyle = darkHalo ? (_cssColor('--surface', '#1e1f26') + 'd9') : '#ffffffd9';
+                            ctx.lineJoin = 'round';
+                            // ±cₖ label on top of line
+                            var clp = chart._ckLabelPos;
+                            if (clp) {{
+                                ctx.fillStyle = darkHalo ? 'rgba(200,200,205,1.0)' : 'rgba(80,80,80,1.0)';
+                                ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+                                var lbl = '±cₖ';
+                                var lx = clp.px - clp.tick - 8;
+                                if (lx - ctx.measureText(lbl).width < ca.left + 2) {{
+                                    ctx.textAlign = 'left';
+                                    lx = clp.px + clp.tick + 8;
+                                }}
+                                ctx.strokeText(lbl, lx, clp.py);
+                                ctx.fillText(lbl, lx, clp.py);
+                            }}
+                            // θ₀ label on top of line
+                            if (chart._theta0LabelY != null) {{
+                                ctx.fillStyle = darkHalo ? 'rgba(200,200,205,1.0)' : 'rgba(80,80,80,1.0)';
+                                ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+                                ctx.strokeText('θ₀', ca.left + 4, chart._theta0LabelY - 3);
+                                ctx.fillText('θ₀', ca.left + 4, chart._theta0LabelY - 3);
+                            }}
+                            ctx.restore();
+                        }}
+                    }}, {{
                         id: 'insetSub',
                         afterDraw: function(chart) {{
-                            var s1 = chart._sub1, s2 = chart._sub2;
-                            if (!s1 && !s2) {{ chart._insetBox = null; return; }}
+                            var s1 = chart._sub1, s2 = chart._sub2, s3 = chart._sub3;
+                            if (!s1 && !s2 && !s3) {{ chart._insetBox = null; return; }}
                             var ctx = chart.ctx, ca = chart.chartArea;
                             ctx.save();
                             ctx.font = 'bold 14px ' + (Chart.defaults.font.family || 'sans-serif');
                             var lines = [];
                             if (s1) lines.push(s1);
                             if (s2) lines.push(s2);
+                            if (s3) lines.push(s3);
                             var pad = 6, lh = 20;
                             var w = Math.max.apply(null, lines.map(function(l) {{ return ctx.measureText(l.text).width; }})) + pad * 2;
                             var h = lines.length * lh + pad * 2 - 2;
@@ -1041,15 +1240,20 @@
                                 ix = ca.right - w - 8; iy = ca.top + 8;
                             }}
                             chart._insetBox = {{ x: ix, y: iy, w: w, h: h }};
-                            ctx.fillStyle = 'rgba(255,255,255,0.82)';
-                            ctx.strokeStyle = 'rgba(0,0,0,0.10)';
+                            var darkInset = document.documentElement.getAttribute('data-theme') === 'dark';
+                            // hex8: 'e0' ~ 88% alpha, 'd0' ~ 82%
+                            ctx.fillStyle = darkInset ? (_cssColor('--surface', '#1e1f26') + 'e0') : '#ffffffd0';
+                            ctx.strokeStyle = darkInset ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)';
                             ctx.lineWidth = 1;
                             ctx.beginPath();
                             ctx.roundRect(ix, iy, w, h, 4);
                             ctx.fill(); ctx.stroke();
                             ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+                            var textFallback = darkInset ? '#e8e8ec' : '#333';
                             lines.forEach(function(l, i) {{
-                                ctx.fillStyle = l.color;
+                                ctx.fillStyle = (l.color === 'theme:text')
+                                    ? _cssColor('--text', textFallback)
+                                    : l.color;
                                 ctx.fillText(l.text, ix + pad, iy + pad + i * lh);
                             }});
                             ctx.restore();
