@@ -704,7 +704,12 @@
             if (window.updateThetaSubtitle) window.updateThetaSubtitle();
             // Re-apply engine-space range now that paramRanges is populated
             if (window._reapplySoloRange) window._reapplySoloRange();
-        }}).catch(function() {{}});
+        }}).catch(function() {{
+            // If /config never arrives, undo the pert-deferral hide so the user
+            // at least sees the value-mode chart instead of a blank panel.
+            var c = document.getElementById('thetaChart');
+            if (c) c.style.visibility = '';
+        }});
     </script>
     <script>
         (function() {{
@@ -901,8 +906,11 @@
                         // The initial restore tried to enter pert mode before the
                         // /config fetch had populated _spsaC/_spsaGamma, so the
                         // swap silently bailed out and left the chart in a hybrid
-                        // value/pert state. Retry now that those are ready.
+                        // value/pert state. Retry now that those are ready, then
+                        // unhide (the restore block hid the canvas to avoid the
+                        // value->pert flash in between).
                         setPertView('pert');
+                        document.getElementById('thetaChart').style.visibility = '';
                         return;
                     }}
                     var range = paramRanges[_soloParam];
@@ -1107,6 +1115,12 @@
                 if (_soloParam) {{
                     var _rch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
                     if (_rch) {{
+                        // If we want pert but /config hasn't populated _spsaC yet,
+                        // the value-mode setup below would flash before
+                        // _reapplySoloRange completes the swap. Hide through it.
+                        if (_pertView === 'pert' && (_spsaC == null || _spsaGamma == null)) {{
+                            document.getElementById('thetaChart').style.visibility = 'hidden';
+                        }}
                         var _rds = _rch.data.datasets;
                         var _rRange = paramRanges[_soloParam];
                         _rch.data.datasets = _rds.filter(function(d) {{ return !d._isThreshold; }});
