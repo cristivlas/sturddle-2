@@ -1245,7 +1245,7 @@
                 + (etaSession ? ' <span style="font-size:14px;color:var(--text-subtle);font-weight:normal">~' + etaSession + ' left</span>' : '');
             document.getElementById('gamesValue').innerHTML = gamesDone + ' / ' + gamesTotal
                 + (etaIter ? ' <span style="font-size:14px;color:var(--text-subtle);font-weight:normal">~' + etaIter + ' left</span>' : '');
-            document.getElementById('avgIterLabel').textContent = avgIterSec > 0 ? 'Est / Iteration' : 'Avg / Iteration';
+            document.getElementById('avgIterLabel').textContent = 'Avg / Iteration';
             document.getElementById('avgIterValue').textContent = avgIterSec > 0
                 ? formatDuration(avgIterSec * 1000)
                 : '--';
