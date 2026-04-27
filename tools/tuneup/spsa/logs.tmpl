@@ -155,10 +155,11 @@
             flex: 1;
             display: flex;
             margin: 0;
+            position: relative;
         }}
         .search-input {{
             flex: 1;
-            padding: 10px 16px;
+            padding: 10px 110px 10px 16px;
             border: 2px solid var(--border);
             border-radius: 8px;
             font-size: 14px;
@@ -172,10 +173,14 @@
             border-color: var(--accent-start);
         }}
         .search-stats {{
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
             font-size: 12px;
             color: var(--text-muted);
             white-space: nowrap;
-            min-width: 100px;
+            pointer-events: none;
         }}
         .search-nav {{
             display: flex;
@@ -392,8 +397,8 @@
             <div class="search-bar">
                 <form id="searchForm" onsubmit="return false;">
                 <input type="text" id="searchInput" class="search-input" placeholder="Search logs...">
-                </form>
                 <span class="search-stats" id="searchStats"></span>
+                </form>
                 <div class="search-nav">
                     <button class="nav-button" id="prevButton" onclick="navigatePrev()" title="Previous match (Shift+Enter)" disabled><svg viewBox="0 0 16 16"><polyline points="3,11 8,5 13,11"/></svg></button>
                     <button class="nav-button" id="nextButton" onclick="navigateNext()" title="Next match (Enter)" disabled><svg viewBox="0 0 16 16"><polyline points="3,5 8,11 13,5"/></svg></button>
