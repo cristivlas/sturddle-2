@@ -890,11 +890,30 @@
                         if (!data) return;
                         soloDs.data = data;
                         ch.data.datasets.push({{ label: 'min pert', data: labels.map(function(k) {{ return {{x: k, y: 1.0}}; }}), borderColor: '#e53935', borderDash: [5,3], borderWidth: 1.5, pointRadius: 0, fill: false, _isThreshold: true }});
+                        // Recent-slice σ in engine units (or normalized if range
+                        // unknown -- skip in that case since |Pert| is engine-space).
+                        var lastIdx2 = labels.length - 1;
+                        var qSpan2 = Math.floor(labels.length / 4);
+                        if (qSpan2 >= CONV_MIN) {{
+                            var late2 = _windowStats(_soloParam, lastIdx2 - qSpan2 + 1, lastIdx2);
+                            if (late2 && late2.rangeKnown && late2.sigma > 0) {{
+                                ch.data.datasets.push({{
+                                    label: 'σ (recent)',
+                                    data: labels.map(function(k) {{ return {{x: k, y: late2.sigma}}; }}),
+                                    borderColor: '#1976d2',
+                                    borderDash: [3, 3],
+                                    borderWidth: 1.5,
+                                    pointRadius: 0,
+                                    fill: false,
+                                    _isThreshold: true
+                                }});
+                            }}
+                        }}
                         ch.options.scales.y.min = 0;
                         delete ch.options.scales.y.max;
                         ch.options.plugins.title.display = true;
                         ch.options.plugins.title.text = _soloParam + '  |Pert|';
-                        ch._sub1 = null; ch._sub2 = null;
+                        ch._sub1 = null; ch._sub2 = null; ch._sub3 = null; ch._sub4 = null; ch._sub5 = null;
                     }} else {{
                         var range = paramRanges[_soloParam];
                         soloDs.data = range ? _origData[_soloParam].map(function(pt) {{ return {{x: pt.x, y: pt.y != null ? denorm(pt.y, range[0], range[1]) : null}}; }}) : _origData[_soloParam].slice();
@@ -963,7 +982,7 @@
                     var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
                     if (!ch) return;
                     if (_pertView === 'pert' || !_soloParam) {{
-                        ch._sub1 = null; ch._sub2 = null; ch._sub3 = null;
+                        ch._sub1 = null; ch._sub2 = null; ch._sub3 = null; ch._sub4 = null; ch._sub5 = null;
                         ch._stats = null;
                         ch.update('none');
                         return;
@@ -973,7 +992,7 @@
                     var st = _windowStats(_soloParam, f, t);
                     ch._stats = st;
                     if (!st) {{
-                        ch._sub1 = null; ch._sub2 = null; ch._sub3 = null;
+                        ch._sub1 = null; ch._sub2 = null; ch._sub3 = null; ch._sub4 = null; ch._sub5 = null;
                         ch.update('none');
                         return;
                     }}
@@ -1011,6 +1030,44 @@
                         else                    {{ qual = '  (noise)';   color = '#999';    }}
                         ch._sub3 = {{ text: 'Slope: ' + _signed(per1k) + '/1k iter ' + arrow + qual, color: color }};
                     }} else {{ ch._sub3 = null; }}
+                    // Line 4: Full-run convergence ratio = σ(last 25%) / σ(first 25%).
+                    // <0.7 tighter (good), 0.7–1.0 holding, ≥1.0 wider. Always
+                    // uses the full run regardless of zoom.
+                    var lastIdx = _labels.length - 1;
+                    var qSpan = Math.floor(_labels.length / 4);
+                    var late = null;
+                    if (qSpan >= CONV_MIN) {{
+                        var early = _windowStats(_soloParam, 0, qSpan - 1);
+                        late = _windowStats(_soloParam, lastIdx - qSpan + 1, lastIdx);
+                        if (early && late && early.sigma > 0) {{
+                            var ratio = late.sigma / early.sigma;
+                            var rcolor, rlabel;
+                            if (ratio < 0.7)      {{ rcolor = '#1B8A2A'; rlabel = ' (tighter)'; }}
+                            else if (ratio < 1.0) {{ rcolor = '#B86800'; rlabel = ' (holding)'; }}
+                            else                  {{ rcolor = '#C62828'; rlabel = ' (wider)';   }}
+                            ch._sub4 = {{ text: 'Conv: ' + ratio.toFixed(2) + 'x' + rlabel, color: rcolor }};
+                        }} else {{ ch._sub4 = null; }}
+                    }} else {{ ch._sub4 = null; }}
+                    // Line 5: ETA to noise floor -- iters until cₖ drops below σ.
+                    // Solve c/(k+1)^γ · scale = σ  =>  k = (c·scale/σ)^(1/γ) - 1.
+                    // Already-there if current cₖ <= σ.
+                    if (late && late.rangeKnown && late.sigma > 0
+                            && _spsaC != null && _spsaGamma != null && _spsaGamma > 0) {{
+                        var scaleEta = late.range[1] - late.range[0];
+                        var kNow = _labels[lastIdx];
+                        var ckNow = _spsaC / Math.pow(kNow + 1, _spsaGamma) * scaleEta;
+                        if (ckNow <= late.sigma) {{
+                            // Green by intent (positive verdict), not theme-text.
+                            ch._sub5 = {{ text: 'ETA: at noise floor', color: '#1B8A2A' }};
+                        }} else {{
+                            var kCross = Math.pow(_spsaC * scaleEta / late.sigma, 1 / _spsaGamma) - 1;
+                            var iters = Math.max(0, Math.round(kCross - kNow));
+                            var etaTxt;
+                            if (iters >= 1000) etaTxt = '~' + (iters / 1000).toFixed(1) + 'k iter';
+                            else etaTxt = '~' + iters + ' iter';
+                            ch._sub5 = {{ text: 'ETA: ' + etaTxt + ' to noise floor', color: 'theme:text' }};
+                        }}
+                    }} else {{ ch._sub5 = null; }}
                     ch.update('none');
                 }};
                 var thetaOpts = {{
@@ -1220,8 +1277,8 @@
                     }}, {{
                         id: 'insetSub',
                         afterDraw: function(chart) {{
-                            var s1 = chart._sub1, s2 = chart._sub2, s3 = chart._sub3;
-                            if (!s1 && !s2 && !s3) {{ chart._insetBox = null; return; }}
+                            var s1 = chart._sub1, s2 = chart._sub2, s3 = chart._sub3, s4 = chart._sub4, s5 = chart._sub5;
+                            if (!s1 && !s2 && !s3 && !s4 && !s5) {{ chart._insetBox = null; return; }}
                             var ctx = chart.ctx, ca = chart.chartArea;
                             ctx.save();
                             ctx.font = 'bold 14px ' + (Chart.defaults.font.family || 'sans-serif');
@@ -1229,6 +1286,8 @@
                             if (s1) lines.push(s1);
                             if (s2) lines.push(s2);
                             if (s3) lines.push(s3);
+                            if (s4) lines.push(s4);
+                            if (s5) lines.push(s5);
                             var pad = 6, lh = 20;
                             var w = Math.max.apply(null, lines.map(function(l) {{ return ctx.measureText(l.text).width; }})) + pad * 2;
                             var h = lines.length * lh + pad * 2 - 2;
