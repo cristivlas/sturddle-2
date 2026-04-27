@@ -151,6 +151,11 @@
             gap: 12px;
             align-items: center;
         }}
+        .search-bar form {{
+            flex: 1;
+            display: flex;
+            margin: 0;
+        }}
         .search-input {{
             flex: 1;
             padding: 10px 16px;
@@ -182,14 +187,22 @@
             background: var(--surface-alt);
             color: var(--text);
             border: 1px solid var(--border);
-            font-size: 18px;
-            font-weight: bold;
-            line-height: 1;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
+            padding: 0;
             transition: all 0.15s;
+        }}
+        .nav-button svg, .clear-button svg {{
+            width: 14px;
+            height: 14px;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 2.5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            pointer-events: none;
         }}
         .nav-button {{ border-radius: 4px; }}
         .clear-button {{ border-radius: 50%; }}
@@ -377,13 +390,15 @@
 
         <div class="content">
             <div class="search-bar">
+                <form id="searchForm" onsubmit="return false;">
                 <input type="text" id="searchInput" class="search-input" placeholder="Search logs...">
+                </form>
                 <span class="search-stats" id="searchStats"></span>
                 <div class="search-nav">
-                    <button class="nav-button" id="prevButton" onclick="navigatePrev()" title="Previous match (Shift+Enter)" disabled>&#x25B2;</button>
-                    <button class="nav-button" id="nextButton" onclick="navigateNext()" title="Next match (Enter)" disabled>&#x25BC;</button>
+                    <button class="nav-button" id="prevButton" onclick="navigatePrev()" title="Previous match (Shift+Enter)" disabled><svg viewBox="0 0 16 16"><polyline points="3,11 8,5 13,11"/></svg></button>
+                    <button class="nav-button" id="nextButton" onclick="navigateNext()" title="Next match (Enter)" disabled><svg viewBox="0 0 16 16"><polyline points="3,5 8,11 13,5"/></svg></button>
                 </div>
-                <button class="clear-button" id="clearButton" onclick="clearSearch()" title="Clear search" disabled>&#x2715;</button>
+                <button class="clear-button" id="clearButton" onclick="clearSearch()" title="Clear search" disabled><svg viewBox="0 0 16 16"><line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg></button>
             </div>
 
             <div class="log-container" id="logContainer"></div>
@@ -580,11 +595,15 @@
 
         searchInput.addEventListener('input', performSearch);
 
+        document.getElementById('searchForm').addEventListener('submit', function(e) {{
+            e.preventDefault();
+            navigateNext();
+        }});
+
         searchInput.addEventListener('keydown', function(e) {{
-            if (e.key === 'Enter') {{
+            if (e.key === 'Enter' && e.shiftKey) {{
                 e.preventDefault();
-                if (e.shiftKey) navigatePrev();
-                else navigateNext();
+                navigatePrev();
             }}
         }});
 
@@ -592,6 +611,13 @@
             if ((e.ctrlKey || e.metaKey) && e.key === 'f') {{
                 e.preventDefault();
                 searchInput.focus();
+            }} else if (e.key === 'Enter') {{
+                var tag = document.activeElement && document.activeElement.tagName;
+                if (tag === 'BODY' || tag === 'DIV') {{
+                    e.preventDefault();
+                    if (e.shiftKey) navigatePrev();
+                    else navigateNext();
+                }}
             }} else if (e.key === 'Escape') {{
                 clearSearch();
             }}
