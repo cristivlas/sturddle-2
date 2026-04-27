@@ -1373,7 +1373,7 @@
                     }} catch(e) {{}}
                 }})();
 
-                makeChart('eloChart', history.map(h => ({{x: h.iteration, y: h.elo_diff}})), 'ELO Diff', '#e91e63');
+                makeChart('eloChart', history.map(h => ({{x: h.iteration, y: h.elo_diff}})), 'ELO Diff', '#10b981');
                 makeChart('akChart', history.map(h => ({{x: h.iteration, y: h.a_k}})), 'a_k', '#2196F3');
                 makeChart('ckChart', history.map(h => ({{x: h.iteration, y: h.c_k}})), 'c_k', '#FF9800');
                 applyChartTheme();
