@@ -12,7 +12,7 @@ suggested bounds. Two contexts:
 
 import math
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Set
 
 
 @dataclass
@@ -73,11 +73,35 @@ def constrain_for(current_lo, current_hi):
 
 def recommend(specs: List[ParamSpec], iterations: int, gamma: float,
               a_to_c_ratio: float, target_r: Optional[float] = None,
-              target_c: Optional[float] = None) -> Recommendation:
+              target_c: Optional[float] = None,
+              outlier_ratio: Optional[float] = 5.0) -> Recommendation:
+    """Compute SPSA schedule recommendation.
+
+    outlier_ratio: params whose current width exceeds outlier_ratio * median
+    width are excluded from the auto-derived R_target geometric mean *and*
+    keep their existing bounds (action='keep'). Without this, a single big-
+    range param drags R_target down and gets absurdly narrowed. Set to None
+    or 0 to disable. Ignored when target_r/target_c is given.
+    """
     if not specs:
         raise ValueError('no params')
     if target_r is not None and target_c is not None:
         raise ValueError('target_r and target_c are mutually exclusive')
+
+    # Outlier detection (only meaningful when auto-deriving R_target, and
+    # only with enough specs that "median" is robust -- with 2 specs the
+    # median is whichever happens to be at index 1, so the smaller one
+    # would never be flagged).
+    auto_R = target_r is None and target_c is None
+    outlier_names: Set[str] = set()
+    if auto_R and outlier_ratio and len(specs) >= 3:
+        sorted_widths = sorted([s.current_hi - s.current_lo for s in specs if s.current_hi > s.current_lo])
+        if sorted_widths:
+            median_w = sorted_widths[len(sorted_widths) // 2]
+            outlier_names = {
+                s.name for s in specs
+                if (s.current_hi - s.current_lo) > outlier_ratio * median_w
+            }
 
     if target_c is not None:
         R_target = max(1, round((iterations ** gamma) / target_c))
@@ -86,15 +110,32 @@ def recommend(specs: List[ParamSpec], iterations: int, gamma: float,
         R_target = max(1, round(target_r))
         target_src = 'user-specified'
     else:
-        widths = [s.current_hi - s.current_lo for s in specs if s.current_hi > s.current_lo]
+        widths = [s.current_hi - s.current_lo for s in specs
+                  if s.current_hi > s.current_lo and s.name not in outlier_names]
         if not widths:
             raise ValueError('all params have zero/negative width; cannot derive R_target')
         R_target = max(1, round(math.exp(sum(math.log(w) for w in widths) / len(widths))))
-        target_src = f'geometric mean of {len(widths)} current ranges'
+        if outlier_names:
+            target_src = (f'geometric mean of {len(widths)} inliers '
+                          f'(excluded {len(outlier_names)} outlier'
+                          f'{"s" if len(outlier_names) != 1 else ""})')
+        else:
+            target_src = f'geometric mean of {len(widths)} current ranges'
 
     c = round((iterations ** gamma) / R_target, 4)
     a = round(c * a_to_c_ratio, 4)
-    actions = [_recommend_one(s, R_target) for s in specs]
+    actions = []
+    for s in specs:
+        if s.name in outlier_names:
+            cur_w = s.current_hi - s.current_lo
+            actions.append(ParamAction(
+                name=s.name, center=s.center,
+                current_lo=s.current_lo, current_hi=s.current_hi, current_w=cur_w,
+                new_lo=s.current_lo, new_hi=s.current_hi,
+                action='keep', is_int=s.is_int,
+            ))
+        else:
+            actions.append(_recommend_one(s, R_target))
     return Recommendation(iterations, gamma, R_target, c, a, target_src, actions)
 
 
