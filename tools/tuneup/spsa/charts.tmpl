@@ -705,8 +705,8 @@
             // Re-apply engine-space range now that paramRanges is populated
             if (window._reapplySoloRange) window._reapplySoloRange();
         }}).catch(function() {{
-            // If /config never arrives, undo the pert-deferral hide so the user
-            // at least sees the value-mode chart instead of a blank panel.
+            // If /config never arrives, undo the solo-restore hide so the user
+            // sees normalized data rather than a blank panel.
             var c = document.getElementById('thetaChart');
             if (c) c.style.visibility = '';
         }});
@@ -956,12 +956,16 @@
                         return;
                     }}
                     var range = paramRanges[_soloParam];
-                    if (!range) return;
+                    if (!range) {{
+                        document.getElementById('thetaChart').style.visibility = '';
+                        return;
+                    }}
                     var soloDs = ch.data.datasets.find(function(d) {{ return d.label === _soloParam; }});
                     if (soloDs) soloDs.data = _origData[_soloParam].map(function(pt) {{ return {{x: pt.x, y: pt.y != null ? denorm(pt.y, range[0], range[1]) : null}}; }});
                     ch.options.scales.y.min = range[0];
                     ch.options.scales.y.max = range[1];
                     ch.update();
+                    document.getElementById('thetaChart').style.visibility = '';
                 }};
                 function _fmt(v) {{
                     var a = Math.abs(v);
@@ -1378,10 +1382,14 @@
                 if (_soloParam) {{
                     var _rch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
                     if (_rch) {{
-                        // If we want pert but /config hasn't populated _spsaC yet,
-                        // the value-mode setup below would flash before
-                        // _reapplySoloRange completes the swap. Hide through it.
-                        if (_pertView === 'pert' && (_spsaC == null || _spsaGamma == null)) {{
+                        // Hide canvas through the restore: in pert mode we wait
+                        // for _spsaC/_spsaGamma (so _reapplySoloRange can swap to
+                        // pert data), in value mode we wait for paramRanges (so
+                        // engine-space y-axis denormalization can happen). Both
+                        // come from /config; if it's still in flight we'd otherwise
+                        // flash the multi-line normalized view first.
+                        var _haveCfg = (_spsaC != null && _spsaGamma != null);
+                        if (!_haveCfg) {{
                             document.getElementById('thetaChart').style.visibility = 'hidden';
                         }}
                         var _rds = _rch.data.datasets;
