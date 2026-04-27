@@ -1201,8 +1201,10 @@
         function formatDuration(ms) {{
             if (ms == null || !isFinite(ms) || ms < 0) return '--';
             var sec = Math.round(ms / 1000);
-            if (sec < 120) return sec + 's';
-            var min = Math.round(sec / 60);
+            if (sec < 60) return sec + 's';
+            var min = Math.floor(sec / 60);
+            var rem = sec % 60;
+            if (min < 10) return rem > 0 ? min + 'm ' + rem + 's' : min + 'm';
             if (min < 120) return min + 'm';
             var hrs = (min / 60).toFixed(1);
             if (hrs < 48) return hrs + 'h';
