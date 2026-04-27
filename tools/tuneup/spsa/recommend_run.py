@@ -228,11 +228,11 @@ def _iter_recommendation(summary, current_iters):
     if sig >= 0.30:
         return int(round(current_iters * 1.5)), (
             f'median Conv {med:.2f}x (holding/wider) but {drift_str} params still drifting '
-            '-> 1.5x iterations may help, also consider raising games_per_iteration'
+            '-> 1.5x iterations may help'
         )
     return current_iters, (
         f'median Conv {med:.2f}x (holding/wider) and only {drift_str} drifting -> stalled; '
-        'more iterations unlikely to help, raise games_per_iteration or widen ranges'
+        'more iterations unlikely to help, widen ranges'
     )
 
 
