@@ -894,9 +894,17 @@
                     return Math.sqrt(variance) / range * 100;
                 }}
                 window._reapplySoloRange = function() {{
-                    if (!_soloParam || _pertView !== 'value') return;
+                    if (!_soloParam) return;
                     var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
                     if (!ch) return;
+                    if (_pertView === 'pert') {{
+                        // The initial restore tried to enter pert mode before the
+                        // /config fetch had populated _spsaC/_spsaGamma, so the
+                        // swap silently bailed out and left the chart in a hybrid
+                        // value/pert state. Retry now that those are ready.
+                        setPertView('pert');
+                        return;
+                    }}
                     var range = paramRanges[_soloParam];
                     if (!range) return;
                     var soloDs = ch.data.datasets.find(function(d) {{ return d.label === _soloParam; }});
