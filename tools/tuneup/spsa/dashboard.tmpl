@@ -257,6 +257,11 @@
             overflow: hidden;
             text-overflow: ellipsis;
         }}
+        .solo-link:hover {{
+            text-decoration: underline;
+            text-decoration-style: dotted;
+            text-underline-offset: 3px;
+        }}
         th:first-child, td:first-child {{
             text-align: left;
         }}
@@ -859,7 +864,7 @@
                     if (conv) pctColor = 'color:' + convColor(conv.pct) + ';font-weight:600;';
                     var tip = name;
                     if (conv) tip += '\nWindow: last ' + conv.window + ' iterations';
-                    tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + tip + '">' + name + '</td>'
+                    tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" title="' + tip + '"><span class="solo-link">' + name + '</span></td>'
                                  + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + sdTxt + '</td>'
                                  + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;' + pctColor + '">' + pctTxt + '</td>';
                 }} else {{
@@ -880,10 +885,14 @@
                         var dotStyle = pdiff === 0 ? 'color:var(--text-faint);' : conv ? 'color:' + convColor(conv.pct) + ';' : '';
                         dot = '<span style="font-size:9px;margin-right:4px;' + dotStyle + '">' + sym + '</span>';
                     }}
-                    tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + name + '">' + dot + name + '</td>'
+                    tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" title="' + name + '">' + dot + '<span class="solo-link">' + name + '</span></td>'
                                  + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + initVal + '</td>'
                                  + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + fmtVal(value, dec) + arrow + '</td>';
                 }}
+                tr.querySelector('.solo-link').addEventListener('click', function() {{
+                    localStorage.setItem('chartSolo', JSON.stringify({{p: name, m: 'value'}}));
+                    location.href = '/charts';
+                }});
                 tbody.appendChild(tr);
             }}
         }}
