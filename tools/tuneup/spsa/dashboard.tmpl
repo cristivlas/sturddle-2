@@ -891,6 +891,11 @@
                 }}
                 tr.querySelector('.solo-link').addEventListener('click', function() {{
                     localStorage.setItem('chartSolo', JSON.stringify({{p: name, m: 'value'}}));
+                    try {{
+                        var vis = JSON.parse(localStorage.getItem('chartVis')) || {{}};
+                        vis.params = true;
+                        localStorage.setItem('chartVis', JSON.stringify(vis));
+                    }} catch(e) {{}}
                     location.href = '/charts';
                 }});
                 tbody.appendChild(tr);
