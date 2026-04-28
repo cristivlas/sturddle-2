@@ -512,23 +512,6 @@
             user-select: none;
             z-index: 2;
         }}
-        .th-grip::after {{
-            content: '';
-            position: absolute;
-            top: 25%;
-            bottom: 25%;
-            left: 50%;
-            width: 2px;
-            margin-left: -1px;
-            background: var(--accent-start);
-            border-radius: 1px;
-            opacity: 0;
-            transition: opacity 0.15s;
-            pointer-events: none;
-        }}
-        .th-grip:hover::after, .th-grip.dragging::after {{
-            opacity: 1;
-        }}
         .col-drag-line {{
             position: absolute;
             width: 2px;
