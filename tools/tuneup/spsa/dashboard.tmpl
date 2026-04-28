@@ -248,6 +248,9 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
         }}
         th:hover {{
             background: var(--surface-hover);
@@ -323,7 +326,7 @@
             .params-tbl col:nth-child(2), .params-tbl col:nth-child(3) {{ width: 25% !important; }}
             .resize-handle {{ display: none !important; }}
             .col-resize-handle {{ display: none !important; }}
-            .th-grip {{ display: none !important; }}
+            .th-grip {{ width: 24px; right: -12px; }}
             #legendToggle {{ display: none !important; }}
             .theme-toggle > span {{ font-size: 0; padding: 4px 6px; }}
             .theme-toggle > span::before {{ font-size: 14px; line-height: 1; }}
@@ -510,6 +513,8 @@
             width: 8px;
             cursor: col-resize;
             user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: none;
             z-index: 2;
         }}
         .col-drag-line {{
@@ -1381,22 +1386,25 @@
     // --- Resize handles (horizontal row split + vertical column splitters) ---
     (function() {{
         // Shared drag boilerplate: mobile guard, dragging class, move/up listeners, chart resize.
-        // onStart(e) is called on mousedown and must return {{ move(e), save() }}.
+        // onStart(e) is called on pointerdown and must return {{ move(e), save() }}.
         function makeDragResize(handle, onStart) {{
-            handle.addEventListener('mousedown', function(eDown) {{
-                if (window.innerWidth <= 700) return;
+            handle.addEventListener('pointerdown', function(eDown) {{
+                if (eDown.button !== undefined && eDown.button !== 0) return;
                 eDown.preventDefault();
+                try {{ handle.setPointerCapture(eDown.pointerId); }} catch(e) {{}}
                 handle.classList.add('dragging');
                 var h = onStart(eDown);
                 function onMove(e) {{ h.move(e); if (thetaChart) thetaChart.resize(); }}
                 function onUp() {{
                     handle.classList.remove('dragging');
                     h.save();
-                    window.removeEventListener('mousemove', onMove);
-                    window.removeEventListener('mouseup', onUp);
+                    handle.removeEventListener('pointermove', onMove);
+                    handle.removeEventListener('pointerup', onUp);
+                    handle.removeEventListener('pointercancel', onUp);
                 }}
-                window.addEventListener('mousemove', onMove);
-                window.addEventListener('mouseup', onUp);
+                handle.addEventListener('pointermove', onMove);
+                handle.addEventListener('pointerup', onUp);
+                handle.addEventListener('pointercancel', onUp);
             }});
         }}
 
