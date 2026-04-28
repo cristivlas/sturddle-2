@@ -717,7 +717,7 @@
                     <h3>Workers</h3>
                     <table style="table-layout:fixed; width:100%;">
                         <colgroup id="workersHeadCols"><col style="width:22%"><col style="width:18%"><col style="width:10%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>
-                        <thead><tr id="workersHeadRow"><th>Name</th><th>Seen</th><th>CPU</th><th>Assigned</th><th>Iter</th><th>Session</th></tr></thead>
+                        <thead><tr id="workersHeadRow"><th>Name</th><th>Seen</th><th>vCPU</th><th>Assigned</th><th>Iter</th><th>Session</th></tr></thead>
                     </table>
                     <div class="scroll-wrap" style="max-height: 340px; overflow-y: auto;">
                     <table style="table-layout:fixed; width:100%;">
@@ -863,7 +863,6 @@
                     var pctColor = '';
                     if (conv) pctColor = 'color:' + convColor(conv.pct) + ';font-weight:600;';
                     var tip = name;
-                    if (conv) tip += '\nWindow: last ' + conv.window + ' iterations';
                     tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" title="' + tip + '"><span class="solo-link">' + name + '</span></td>'
                                  + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + sdTxt + '</td>'
                                  + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;' + pctColor + '">' + pctTxt + '</td>';
