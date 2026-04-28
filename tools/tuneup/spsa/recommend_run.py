@@ -121,10 +121,12 @@ def _pst_recommendation(theta, tuning):
 
 
 def _conv_ratio(history, name):
-    """σ(last 25%) / σ(first 25%) on normalized theta. Returns None if
-    too few points or first-quartile σ is zero."""
-    pts = [h.get('theta', {}).get(name) for h in history]
-    pts = [p for p in pts if p is not None]
+    """σ_detrended(last 25%) / σ_detrended(first 25%) on normalized theta.
+    Detrended so a still-drifting param doesn't appear "wider" just from the
+    trend contributing variance to the window. Returns None if too few points
+    or early σ is zero."""
+    pts = [(h.get('iteration'), h.get('theta', {}).get(name)) for h in history]
+    pts = [(i, y) for (i, y) in pts if i is not None and y is not None]
     n = len(pts)
     q = n // 4
     if q < CONV_MIN:
@@ -132,12 +134,23 @@ def _conv_ratio(history, name):
     early = pts[:q]
     late = pts[-q:]
 
-    def sigma(vals):
-        m = sum(vals) / len(vals)
-        return math.sqrt(sum((v - m) ** 2 for v in vals) / len(vals))
+    def sigma_detrended(slice_pts):
+        xs = [p[0] for p in slice_pts]
+        ys = [p[1] for p in slice_pts]
+        nn = len(xs)
+        mx = sum(xs) / nn
+        my = sum(ys) / nn
+        sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+        sxx = sum((x - mx) ** 2 for x in xs)
+        syy = sum((y - my) ** 2 for y in ys)
+        if sxx == 0:
+            return math.sqrt(syy / nn)
+        slope = sxy / sxx
+        sse = sum((y - (my + slope * (x - mx))) ** 2 for x, y in zip(xs, ys))
+        return math.sqrt(sse / nn)
 
-    s0 = sigma(early)
-    s1 = sigma(late)
+    s0 = sigma_detrended(early)
+    s1 = sigma_detrended(late)
     if s0 == 0:
         return None
     return s1 / s0

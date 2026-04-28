@@ -838,17 +838,24 @@
                             sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
                         }}
                         var slope = sxx > 0 ? sxy / sxx : null;
+                        // sse = sum of squared residuals around the trend; falls
+                        // back to syy (no-trend total SS) when slope can't be fit.
+                        var sse = syy;
+                        if (slope != null) {{
+                            sse = 0;
+                            for (var i = 0; i < n; i++) {{ var r = ys[i] - (my + slope * (xs[i] - mx)); sse += r * r; }}
+                        }}
                         var tstat = null;
                         if (slope != null && n > 2) {{
-                            var sse = 0;
-                            for (var i = 0; i < n; i++) {{ var r = ys[i] - (my + slope * (xs[i] - mx)); sse += r * r; }}
                             var se = Math.sqrt(sse / ((n - 2) * sxx));
                             tstat = se > 0 ? slope / se : null;
                         }}
                         return {{
                             iterFrom: xs[0], iterTo: xs[n - 1], n: n,
                             yStart: ys[0], yEnd: ys[n - 1],
-                            mean: my, sigma: Math.sqrt(syy / n),
+                            mean: my,
+                            sigma: Math.sqrt(syy / n),
+                            sigmaDetrended: Math.sqrt(sse / n),
                             slope: slope, tstat: tstat,
                             rangeKnown: !!range, range: range
                         }};
@@ -1034,17 +1041,19 @@
                         else                    {{ qual = '  (noise)';   color = '#999';    }}
                         ch._sub3 = {{ text: 'Slope: ' + _signed(per1k) + '/1k iter ' + arrow + qual, color: color }};
                     }} else {{ ch._sub3 = null; }}
-                    // Line 4: Full-run convergence ratio = σ(last 25%) / σ(first 25%).
-                    // <0.7 tighter (good), 0.7–1.0 holding, ≥1.0 wider. Always
-                    // uses the full run regardless of zoom.
+                    // Line 4: Full-run convergence ratio = σ_detrended(last 25%)
+                    // / σ_detrended(first 25%). Detrended so a still-drifting param
+                    // doesn't appear "wider" just from the trend itself contributing
+                    // variance to the window. <0.7 tighter (good), 0.7–1.0 holding,
+                    // ≥1.0 wider. Always uses the full run regardless of zoom.
                     var lastIdx = _labels.length - 1;
                     var qSpan = Math.floor(_labels.length / 4);
                     var late = null;
                     if (qSpan >= CONV_MIN) {{
                         var early = _windowStats(_soloParam, 0, qSpan - 1);
                         late = _windowStats(_soloParam, lastIdx - qSpan + 1, lastIdx);
-                        if (early && late && early.sigma > 0) {{
-                            var ratio = late.sigma / early.sigma;
+                        if (early && late && early.sigmaDetrended > 0) {{
+                            var ratio = late.sigmaDetrended / early.sigmaDetrended;
                             var rcolor, rlabel;
                             if (ratio < 0.7)      {{ rcolor = '#1B8A2A'; rlabel = ' (tighter)'; }}
                             else if (ratio < 1.0) {{ rcolor = '#B86800'; rlabel = ' (holding)'; }}
