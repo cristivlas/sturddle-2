@@ -249,6 +249,10 @@
             text-overflow: ellipsis;
             white-space: nowrap;
         }}
+        th:hover {{
+            background: var(--surface-hover);
+            box-shadow: inset 2px 0 0 var(--border), inset -2px 0 0 var(--border);
+        }}
         td {{
             border-bottom: 1px solid var(--border);
             font-size: 14px;
@@ -717,7 +721,7 @@
                     <h3>Workers</h3>
                     <table style="table-layout:fixed; width:100%;">
                         <colgroup id="workersHeadCols"><col style="width:22%"><col style="width:18%"><col style="width:10%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>
-                        <thead><tr id="workersHeadRow"><th>Name</th><th>Seen</th><th>vCPU</th><th>Assigned</th><th>Iter</th><th>Session</th></tr></thead>
+                        <thead><tr id="workersHeadRow"><th>Name</th><th>Seen</th><th style="text-transform:none">vCPU</th><th>Assigned</th><th>Iter</th><th>Session</th></tr></thead>
                     </table>
                     <div class="scroll-wrap" style="max-height: 340px; overflow-y: auto;">
                     <table style="table-layout:fixed; width:100%;">
