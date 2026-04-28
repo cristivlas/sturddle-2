@@ -1207,12 +1207,41 @@
                     plugins: [{{
                         id: 'soloRefs',
                         beforeDatasetsDraw: function(chart) {{
-                            if (!_soloParam || _pertView !== 'value') return;
-                            var st = chart._stats;
+                            if (!_soloParam) return;
                             var ca = chart.chartArea;
                             var ys = chart.scales.y, xs = chart.scales.x;
                             if (!ys || !xs) return;
                             var ctx = chart.ctx;
+                            // Conv mode: draw vertical dashed lines at the boundaries
+                            // of the early/late slices used by the rightmost Conv point.
+                            // Helps users see *which* iter ranges the latest reading compares.
+                            if (_pertView === 'conv') {{
+                                var d = _origData[_soloParam];
+                                if (!d || d.length === 0) return;
+                                var q = Math.floor(d.length / 4);
+                                if (q < CONV_MIN) return;
+                                var earlyEnd = d[q - 1].x;
+                                var lateStart = d[d.length - q].x;
+                                ctx.save();
+                                ctx.beginPath();
+                                ctx.rect(ca.left, ca.top, ca.right - ca.left, ca.bottom - ca.top);
+                                ctx.clip();
+                                ctx.strokeStyle = 'rgba(120,120,120,0.55)';
+                                ctx.lineWidth = 1;
+                                ctx.setLineDash([4, 4]);
+                                [earlyEnd, lateStart].forEach(function(iter) {{
+                                    var px = xs.getPixelForValue(iter);
+                                    if (px < ca.left || px > ca.right) return;
+                                    ctx.beginPath();
+                                    ctx.moveTo(px, ca.top);
+                                    ctx.lineTo(px, ca.bottom);
+                                    ctx.stroke();
+                                }});
+                                ctx.restore();
+                                return;
+                            }}
+                            if (_pertView !== 'value') return;
+                            var st = chart._stats;
                             ctx.save();
                             ctx.beginPath();
                             ctx.rect(ca.left, ca.top, ca.right - ca.left, ca.bottom - ca.top);
