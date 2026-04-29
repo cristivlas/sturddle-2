@@ -35,6 +35,13 @@ from config import (
 from recommend import ParamSpec, recommend, format_recommendation, constrain_for
 
 
+# Knob choices for --check-ranges. The shared recommend module no longer
+# carries defaults; each caller picks its own (see feedback memory).
+CHECK_OUTLIER_RATIO = 5.0
+CHECK_MIN_PERT_PCT = 5.0
+CHECK_SAFETY_PAD = 1.2
+
+
 def physical_cpu_count():
     """Return the number of physical CPU cores (not logical/hyperthreaded)."""
     try:
@@ -239,7 +246,11 @@ def _print_recommendations(tune_params, iterations, gamma, a_to_c_ratio, target_
                                is_int=is_int, cap_lo=lo, cap_hi=hi,
                                fixed_lo=fixed_lo, fixed_hi=fixed_hi, floor=floor))
 
-    rec = recommend(specs, iterations, gamma, a_to_c_ratio, target_r=target_r, target_c=target_c)
+    rec = recommend(specs, iterations, gamma, a_to_c_ratio,
+                    target_r=target_r, target_c=target_c,
+                    outlier_ratio=CHECK_OUTLIER_RATIO,
+                    min_pert_pct=CHECK_MIN_PERT_PCT,
+                    safety_pad=CHECK_SAFETY_PAD)
     format_recommendation(rec, center_label='init')
 
 

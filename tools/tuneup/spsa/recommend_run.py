@@ -29,6 +29,11 @@ from recommend import (
 
 
 CONV_MIN = 20  # mirror charts.tmpl threshold
+# Knob defaults that the shared recommend module no longer carries. Each
+# caller picks its own values (see feedback memory: defaults hide drift).
+OUTLIER_RATIO = 5.0
+MIN_PERT_PCT_DEFAULT = 5.0
+SAFETY_PAD_DEFAULT = 1.2
 
 # Match piece-square table params (PS_<piece>_<square> or PS_KEG_<square>);
 # same regex apply.py uses to skip them from --rebalance.
@@ -308,16 +313,22 @@ def main():
                             help='Override R_target for recommendations')
     target_grp.add_argument('--target-c', type=float, default=None,
                             help='Override c; R_target derived as N^gamma / c')
-    parser.add_argument('--min-pert-pct', type=float, default=5.0,
+    parser.add_argument('--min-pert-pct', type=float, default=MIN_PERT_PCT_DEFAULT,
                         help='End-of-run perturbation floor as %% of narrowest inlier range '
                              '(allowed [5, 20], default 5). Higher = larger c, keeps '
                              'perturbations bigger for longer. Ignored when --target-c is given.')
+    parser.add_argument('--safety-pad', type=float, default=SAFETY_PAD_DEFAULT,
+                        help='Multiplier on auto-derived R_target (default 1.2, allowed [1.0, 3.0]). '
+                             'Bias toward wider ranges to avoid saturation cliffs. Set to 1.0 to '
+                             'disable. Ignored when --target-r or --target-c is given.')
     parser.add_argument('--write-tuning', default=None, metavar='PATH',
                         help='Write a fresh tuning.json to PATH (default: dry-run)')
     args = parser.parse_args()
 
     if not (5.0 <= args.min_pert_pct <= 20.0):
         parser.error(f'--min-pert-pct must be in [5, 20], got {args.min_pert_pct}')
+    if not (1.0 <= args.safety_pad <= 3.0):
+        parser.error(f'--safety-pad must be in [1.0, 3.0], got {args.safety_pad}')
 
     # Fail fast if --write-tuning would clobber. Better to error before any
     # output than to print a full report and bury the failure at the end.
@@ -373,7 +384,9 @@ def main():
             specs, suggested_iters, tuning.spsa.gamma,
             tuning.spsa.a / tuning.spsa.c,
             target_r=args.target_r, target_c=args.target_c,
+            outlier_ratio=OUTLIER_RATIO,
             min_pert_pct=args.min_pert_pct,
+            safety_pad=args.safety_pad,
         )
 
     print(f'Source run: {project_dir}')

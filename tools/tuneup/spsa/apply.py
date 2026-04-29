@@ -11,6 +11,13 @@ import sys
 from config import TuningConfig
 from recommend import ParamSpec, recommend, format_recommendation, constrain_for
 
+
+# Knob choices for --rebalance. The shared recommend module no longer
+# carries defaults; each caller picks its own (see feedback memory).
+REBALANCE_OUTLIER_RATIO = 5.0
+REBALANCE_MIN_PERT_PCT = 5.0
+REBALANCE_SAFETY_PAD = 1.2
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Piece weight param names -> index in PIECE_VALUES array {0, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING}
@@ -632,7 +639,10 @@ def main():
         iterations = args.iterations if args.iterations is not None else tuning.max_iterations()
         rec = recommend(specs, iterations, tuning.spsa.gamma,
                         tuning.spsa.a / tuning.spsa.c,
-                        target_r=args.target_r, target_c=args.target_c)
+                        target_r=args.target_r, target_c=args.target_c,
+                        outlier_ratio=REBALANCE_OUTLIER_RATIO,
+                        min_pert_pct=REBALANCE_MIN_PERT_PCT,
+                        safety_pad=REBALANCE_SAFETY_PAD)
         format_recommendation(rec, center_label='value')
         sys.stdout.flush()  # ensure stdout table lands before subsequent stderr-bound logs
         # 'keep' actions don't enter the bounds_map -- current bounds are already correct.
