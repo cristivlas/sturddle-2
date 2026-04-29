@@ -871,26 +871,35 @@
                     var scale = range ? (range[1] - range[0]) : ir;
                     return labels.map(function(k) {{ return {{x: k, y: Math.max(_spsaC / Math.pow(k + 1, _spsaGamma) * scale, 1.0)}}; }});
                 }}
-                // Conv ratio at iter k: σ_detrended(last 25% of [0..k]) / σ_detrended(first 25% of [0..k]).
-                // Same definition as the inset Conv line, but evaluated incrementally so the user can see
-                // how the ratio evolves. Skips iters where the quartile width drops below CONV_MIN.
+                // Conv ratio at iter k: σ_detrended(last 25% of [0..k]) / σ_detrended(first 25% of [0..k]),
+                // plus a secondary "diff" series = (σ_raw ratio) / (σ_detrended ratio) that
+                // visualizes how much drift is inflating σ across the windows.
                 // Cached per param -- history is immutable, so each series is computed once per page load.
                 var _convCache = {{}};
                 function _convDataForParam(name) {{
                     if (_convCache[name] !== undefined) return _convCache[name];
                     var d = _origData[name];
                     if (!d || !d.length) {{ _convCache[name] = null; return null; }}
-                    var pts = [];
+                    var detrended = [], diff = [];
                     for (var k = 0; k < d.length; k++) {{
                         var q = Math.floor((k + 1) / 4);
                         if (q < CONV_MIN) continue;
                         var early = _windowStats(name, 0, q - 1);
                         var late = _windowStats(name, k - q + 1, k);
-                        if (!early || !late || !(early.sigmaDetrended > 0)) continue;
-                        pts.push({{x: d[k].x, y: late.sigmaDetrended / early.sigmaDetrended}});
+                        if (!early || !late) continue;
+                        var detRatio = (early.sigmaDetrended > 0) ? late.sigmaDetrended / early.sigmaDetrended : null;
+                        var rawRatio = (early.sigma > 0) ? late.sigma / early.sigma : null;
+                        if (detRatio != null) detrended.push({{x: d[k].x, y: detRatio}});
+                        // diff = raw / detrended; values >1 mean drift contributes
+                        // more in the late window than the early window. <1 means
+                        // drift was relatively bigger early.
+                        if (detRatio != null && rawRatio != null && detRatio > 0) {{
+                            diff.push({{x: d[k].x, y: rawRatio / detRatio}});
+                        }}
                     }}
-                    _convCache[name] = pts;
-                    return pts;
+                    var result = {{ detrended: detrended, diff: diff }};
+                    _convCache[name] = result;
+                    return result;
                 }}
                 function _updatePertToggle() {{
                     var tog = document.getElementById('pertToggle');
@@ -916,6 +925,7 @@
                     // Conv mode flips y-axis to logarithmic; reset on every toggle
                     // so other modes always start from linear.
                     ch.options.scales.y.type = 'linear';
+                    ch._convLegend = null;
                     if (mode === 'pert') {{
                         var data = _pertDataForParam(_soloParam);
                         if (!data) return;
@@ -947,17 +957,28 @@
                         ch._sub1 = null; ch._sub2 = null; ch._sub3 = null; ch._sub4 = null;
                     }} else if (mode === 'conv') {{
                         var convData = _convDataForParam(_soloParam);
-                        if (!convData || !convData.length) {{
+                        if (!convData || !convData.detrended.length) {{
                             // Not enough history for any Conv point; fall back silently to Value.
                             _pertView = 'value';
                             _updatePertToggle();
                             try {{ localStorage.setItem('chartSolo', JSON.stringify({{p:_soloParam, m:'value'}})); }} catch(e) {{}}
                             mode = 'value';
                         }} else {{
-                            soloDs.data = convData;
+                            soloDs.data = convData.detrended;
+                            // Drift-contribution overlay: ratio raw/detrended on the
+                            // same log axis. =1 means no drift contribution to σ.
+                            // <1 means early window had relatively more drift; >1
+                            // means late window has more drift (param re-destabilizing).
+                            var convDiffColor = '#a256d8';
+                            ch.data.datasets.push({{ label: 'diff', data: convData.diff, borderColor: convDiffColor, borderWidth: 2, borderDash: [10, 5], pointRadius: 0, fill: false, _isThreshold: true }});
                             // Threshold lines at 0.7 (tighter boundary) and 1.0 (wider boundary)
                             ch.data.datasets.push({{ label: 'tighter', data: labels.map(function(k) {{ return {{x: k, y: 0.7}}; }}), borderColor: '#1B8A2A', borderDash: [3, 3], borderWidth: 1.5, pointRadius: 0, fill: false, _isThreshold: true }});
                             ch.data.datasets.push({{ label: 'wider',   data: labels.map(function(k) {{ return {{x: k, y: 1.0}}; }}), borderColor: '#C62828', borderDash: [5, 3], borderWidth: 1.5, pointRadius: 0, fill: false, _isThreshold: true }});
+                            // Stash colors on chart for the inline legend plugin.
+                            ch._convLegend = [
+                                {{ color: soloDs.borderColor, label: 'detrended Conv', dash: null }},
+                                {{ color: convDiffColor,      label: 'raw / detrended', dash: [6, 3] }}
+                            ];
                             // Log scale: Conv is multiplicative (a ratio), so 0.5
                             // and 2.0 are symmetric around 1.0. Log scale also tames
                             // the early-iter spikes naturally instead of clipping.
@@ -1316,9 +1337,48 @@
                             ctx.restore();
                         }},
                         afterDatasetsDraw: function(chart) {{
-                            if (!_soloParam || _pertView !== 'value') return;
+                            if (!_soloParam) return;
                             var ca = chart.chartArea;
                             var ctx = chart.ctx;
+                            // Conv mode: inline mini-legend (chart.js's built-in legend
+                            // would conflict with the click-to-unsolo handler).
+                            if (_pertView === 'conv' && chart._convLegend) {{
+                                var entries = chart._convLegend;
+                                var darkLeg = document.documentElement.getAttribute('data-theme') === 'dark';
+                                ctx.save();
+                                ctx.font = '12px ' + (Chart.defaults.font.family || 'sans-serif');
+                                var swatchW = 14, swatchH = 3, gap = 6, pad = 8, lh = 18;
+                                var maxTextW = 0;
+                                entries.forEach(function(e) {{ maxTextW = Math.max(maxTextW, ctx.measureText(e.label).width); }});
+                                var w = pad * 2 + swatchW + gap + maxTextW;
+                                var h = pad * 2 + entries.length * lh - (lh - 12);
+                                var lx = ca.left + 8, ly = ca.top + 8;
+                                ctx.fillStyle = darkLeg ? (_cssColor('--surface', '#1e1f26') + 'e0') : '#ffffffd0';
+                                ctx.strokeStyle = darkLeg ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)';
+                                ctx.lineWidth = 1;
+                                ctx.beginPath();
+                                ctx.roundRect(lx, ly, w, h, 4);
+                                ctx.fill(); ctx.stroke();
+                                ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+                                entries.forEach(function(e, i) {{
+                                    var rowY = ly + pad + i * lh + 6;
+                                    // Stroke a short line so the swatch matches the
+                                    // dataset's actual style (solid vs dashed).
+                                    ctx.strokeStyle = e.color;
+                                    ctx.lineWidth = 2;
+                                    ctx.setLineDash(e.dash || []);
+                                    ctx.beginPath();
+                                    ctx.moveTo(lx + pad, rowY);
+                                    ctx.lineTo(lx + pad + swatchW, rowY);
+                                    ctx.stroke();
+                                    ctx.setLineDash([]);
+                                    ctx.fillStyle = _cssColor('--text', darkLeg ? '#e8e8ec' : '#333');
+                                    ctx.fillText(e.label, lx + pad + swatchW + gap, rowY);
+                                }});
+                                ctx.restore();
+                                return;
+                            }}
+                            if (_pertView !== 'value') return;
                             ctx.save();
                             ctx.beginPath();
                             ctx.rect(ca.left, ca.top, ca.right - ca.left, ca.bottom - ca.top);
@@ -1336,13 +1396,13 @@
                                 ctx.fillStyle = darkHalo ? 'rgba(200,200,205,1.0)' : 'rgba(80,80,80,1.0)';
                                 ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
                                 var lbl = '±cₖ';
-                                var lx = clp.px - clp.tick - 8;
-                                if (lx - ctx.measureText(lbl).width < ca.left + 2) {{
+                                var lx2 = clp.px - clp.tick - 8;
+                                if (lx2 - ctx.measureText(lbl).width < ca.left + 2) {{
                                     ctx.textAlign = 'left';
-                                    lx = clp.px + clp.tick + 8;
+                                    lx2 = clp.px + clp.tick + 8;
                                 }}
-                                ctx.strokeText(lbl, lx, clp.py);
-                                ctx.fillText(lbl, lx, clp.py);
+                                ctx.strokeText(lbl, lx2, clp.py);
+                                ctx.fillText(lbl, lx2, clp.py);
                             }}
                             // θ₀ label on top of line
                             if (chart._theta0LabelY != null) {{
