@@ -282,8 +282,8 @@ def _write_tuning(out_path, tuning, rec, theta, suggested_iters):
             # so the next run starts at the same engine value.
             engine_val = (t_val + 1) * (p.original_upper - p.original_lower) / 2 + p.original_lower
             engine_val = max(new_lo, min(new_hi, engine_val))
-            p.original_lower = float(new_lo)
-            p.original_upper = float(new_hi)
+            p.original_lower = new_lo
+            p.original_upper = new_hi
             if new_hi - new_lo > 0:
                 p.init = 2 * (engine_val - new_lo) / (new_hi - new_lo) - 1
             else:

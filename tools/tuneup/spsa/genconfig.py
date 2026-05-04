@@ -32,7 +32,7 @@ import warnings
 from config import (
     EngineConfig, SPSAConfig, TuningConfig, Parameter, WorkerConfig,
 )
-from recommend import ParamSpec, recommend, format_recommendation, constrain_for
+from recommend import ParamSpec, recommend, format_recommendation, constrain_for, compute_c_a
 
 
 # Knob choices for --check-ranges. The shared recommend module no longer
@@ -319,17 +319,27 @@ def main():
     if not args.worker_only:
         tune_params = _build_tune_params(args.tune)
 
-        # Auto-calculate c so the tightest param hits the min-perturbation clamp
-        # at ~100% of the budget: c = N^gamma / min_engine_range
+        # c/a via the same compute_c_a() that recommend.py uses on its post-action
+        # specs. After apply.py rebalances bounds + rebuild, the engine-reported
+        # widths == recommend's new widths, so c here matches the run-2.json c.
         if args.spsa_c is not None:
             spsa_c = args.spsa_c
+            spsa_a = args.spsa_a if args.spsa_a is not None else round(spsa_c * (_spsa.a / _spsa.c), 4)
         else:
-            min_engine_range = min((p.get('original_upper', p['upper']) - p.get('original_lower', p['lower'])) for p in tune_params.values()) if tune_params else 1.0
-            spsa_c = round(args.iterations ** _spsa.gamma / min_engine_range, 4)
-            print(f'  Auto c={spsa_c} (min engine range={min_engine_range:.0f}, clamp target={args.iterations} iters)')
-        spsa_a = args.spsa_a if args.spsa_a is not None else round(spsa_c * (_spsa.a / _spsa.c), 4)
-        if args.spsa_a is None:
-            print(f'  Auto a={spsa_a} (c={spsa_c} * ratio {_spsa.a / _spsa.c:.0f})')
+            specs = []
+            for name, p in tune_params.items():
+                lo = p.get('original_lower', p['lower'])
+                hi = p.get('original_upper', p['upper'])
+                center = (p['init'] + 1) * (hi - lo) / 2 + lo if 'original_lower' in p else p['init']
+                specs.append(ParamSpec(name=name, center=center, current_lo=lo, current_hi=hi,
+                                       is_int=False))
+            spsa_c, spsa_a = compute_c_a(specs, args.iterations, _spsa.gamma,
+                                         _spsa.a / _spsa.c, target_c=None,
+                                         min_pert_pct=CHECK_MIN_PERT_PCT,
+                                         outlier_ratio=CHECK_OUTLIER_RATIO)
+            print(f'  Auto c={spsa_c}, a={spsa_a} (compute_c_a, min_pert_pct={CHECK_MIN_PERT_PCT}%)')
+            if args.spsa_a is not None:
+                spsa_a = args.spsa_a
 
         # SSE heartbeat interval (real updates push immediately)
         dashboard_refresh = 60

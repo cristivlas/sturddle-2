@@ -71,6 +71,53 @@ def constrain_for(current_lo, current_hi):
     )
 
 
+def _detect_outliers(specs: List[ParamSpec], outlier_ratio: Optional[float]):
+    """Return (outlier_names, median_inlier_w). Needs >=3 specs to be robust."""
+    if not outlier_ratio or len(specs) < 3:
+        return set(), None
+    all_widths = sorted([s.current_hi - s.current_lo for s in specs if s.current_hi > s.current_lo])
+    if not all_widths:
+        return set(), None
+    median_w = all_widths[len(all_widths) // 2]
+    outlier_names = {
+        s.name for s in specs
+        if (s.current_hi - s.current_lo) > outlier_ratio * median_w
+    }
+    inlier_widths = [w for w in all_widths if w <= outlier_ratio * median_w]
+    median_inlier_w = inlier_widths[len(inlier_widths) // 2] if inlier_widths else None
+    return outlier_names, median_inlier_w
+
+
+def compute_c_a(specs: List[ParamSpec], iterations: int, gamma: float,
+                a_to_c_ratio: float, target_c: Optional[float],
+                min_pert_pct: float, outlier_ratio: Optional[float]):
+    """Spall convention: c = initial perturbation as a fraction of each param's
+    range (typical 0.05 = 5%). At iter k pert_engine = c_k * R = (c/(k+1)^gamma) * R.
+
+    Bumped above min_pert_pct/100 only if the narrowest param's range is small
+    enough that end-of-run pert would drop below 1 engine unit (R_min < N^gamma/c).
+    Otherwise stays at the textbook Spall floor.
+
+    Bound-invariant + idempotent across rebalances. Used both by recommend()
+    (post-action specs) and by genconfig (engine-reported post-apply specs);
+    same input -> same c.
+    """
+    if target_c is not None:
+        return round(target_c, 4), round(target_c * a_to_c_ratio, 4)
+    outlier_names, _ = _detect_outliers(specs, outlier_ratio)
+    widths = [s.current_hi - s.current_lo for s in specs
+              if s.current_hi > s.current_lo and s.name not in outlier_names]
+    if not widths:
+        raise ValueError('all params have zero/negative width; cannot derive c')
+    R_min = min(widths)
+    pct_floor = (min_pert_pct / 100.0) if min_pert_pct else 0.0
+    # Min c needed so end-of-run pert = c/N^gamma * R_min >= 1 engine unit.
+    unit_pert_floor = (iterations ** gamma) / R_min
+    c = round(max(pct_floor, unit_pert_floor), 4)
+    a = round(c * a_to_c_ratio, 4)
+    return c, a
+
+
 def recommend(specs: List[ParamSpec], iterations: int, gamma: float,
               a_to_c_ratio: float, target_r: Optional[float],
               target_c: Optional[float],
@@ -79,50 +126,53 @@ def recommend(specs: List[ParamSpec], iterations: int, gamma: float,
               safety_pad: float) -> Recommendation:
     """Compute SPSA schedule recommendation.
 
+    Two-stage, coupled:
+      (A) size R_target + per-param new bounds, with a floor R_target >= N^gamma/c
+          so end-of-run pert stays >= 1 engine unit;
+      (B) size c via compute_c_a (Spall convention: c = min_pert_pct/100, bumped
+          up only if R_min is so small that end-pert would drop sub-unit).
+    Stage B is what genconfig calls directly on engine-reported post-apply specs
+    -- same formula on same input -> same c.
+
+    Order (A vs B first) flips with target type: --target-c => B fixed, A sized
+    to support; --target-r => A fixed, B derived; neither => B defaults to Spall
+    0.05, A sized accordingly.
+
     outlier_ratio: params whose current width exceeds outlier_ratio * median
     width are detected as scale outliers. Their R is rescaled on a log axis
-    (R_target * log(current_w) / log(median_inlier_w)) so a wide outlier
-    stays slightly wider than inliers without dwarfing them -- e.g. a
-    16k-wide param against 120-median inliers comes down to ~250, not 16k.
-    Outliers are also excluded from the auto-derived R_target geometric
-    mean. Pass None or 0 to disable. Typical: 5.0.
+    so a wide outlier stays slightly wider than inliers without dwarfing them.
+    Outliers are excluded from R_target geomean and from R_min in compute_c_a.
+    Typical: 5.0.
 
-    min_pert_pct: floor for the end-of-run perturbation as a percent of
-    R_min (the narrowest param's range). Without this, c is sized so c_k
-    hits the integer ±1 clamp at iter N, which drops below the noise floor
-    long before that. Higher = larger c. Pass 0 to recover the legacy
-    "1-unit clamp at end" behavior. Typical: 5.0.
+    min_pert_pct: Spall pert fraction (initial pert = pct% of each param's
+    range, decaying as 1/k^gamma). Default c floor in compute_c_a, and the
+    target-c assumed when sizing R_target if no target is given. Typical: 5.0.
 
-    safety_pad: multiplier applied to the auto-derived R_target. Premature
+    safety_pad: multiplier on the geomean for R_target (bound sizing). Premature
     narrow ranges are catastrophic (saturation -> mid-run rebuild); premature
-    wide ranges are merely slow. Bias above 1.0 to lean away from the cliff
-    case. Ignored when target_r or target_c is explicitly given. Pass 1.0
-    to disable. Typical: 1.2.
+    wide ranges are merely slow. Bias above 1.0 to lean away from the cliff.
+    Ignored when target_r or target_c is given. Typical: 1.2.
     """
     if not specs:
         raise ValueError('no params')
     if target_r is not None and target_c is not None:
         raise ValueError('target_r and target_c are mutually exclusive')
 
-    # Outlier detection (need >=3 specs for the median to be robust -- with
-    # 2 specs the median is whichever sits at index 1, so the smaller one
-    # would never be flagged).
-    outlier_names: Set[str] = set()
-    median_inlier_w: Optional[float] = None
-    if outlier_ratio and len(specs) >= 3:
-        all_widths = sorted([s.current_hi - s.current_lo for s in specs if s.current_hi > s.current_lo])
-        if all_widths:
-            median_w = all_widths[len(all_widths) // 2]
-            outlier_names = {
-                s.name for s in specs
-                if (s.current_hi - s.current_lo) > outlier_ratio * median_w
-            }
-            inlier_widths = [w for w in all_widths if w <= outlier_ratio * median_w]
-            if inlier_widths:
-                median_inlier_w = inlier_widths[len(inlier_widths) // 2]
+    outlier_names, median_inlier_w = _detect_outliers(specs, outlier_ratio)
+
+    # Floor for R_target so end-of-run pert >= 1 engine unit at the c we'll
+    # ultimately pick. Coupling A->B: bound sizing must support the perturbation
+    # schedule. target_r path skips the floor (user-specified R wins).
+    if target_c is not None:
+        c_for_floor = target_c
+    elif min_pert_pct:
+        c_for_floor = min_pert_pct / 100.0  # Spall default we'll land on in compute_c_a
+    else:
+        c_for_floor = None
+    R_unit_floor = max(1, math.ceil((iterations ** gamma) / c_for_floor)) if c_for_floor else 1
 
     if target_c is not None:
-        R_target = max(1, round((iterations ** gamma) / target_c))
+        R_target = max(R_unit_floor, round((iterations ** gamma) / target_c))
         target_src = f'derived from c={target_c}'
     elif target_r is not None:
         R_target = max(1, round(target_r))
@@ -133,23 +183,17 @@ def recommend(specs: List[ParamSpec], iterations: int, gamma: float,
         if not widths:
             raise ValueError('all params have zero/negative width; cannot derive R_target')
         geo_mean = math.exp(sum(math.log(w) for w in widths) / len(widths))
-        R_target = max(1, round(geo_mean * (safety_pad if safety_pad else 1.0)))
+        R_target = max(R_unit_floor, round(geo_mean * (safety_pad if safety_pad else 1.0)))
         pad_str = f' x {safety_pad} safety pad' if safety_pad and safety_pad != 1.0 else ''
-        if outlier_names:
+        if R_target == R_unit_floor and R_unit_floor > round(geo_mean * (safety_pad or 1.0)):
+            target_src = f'unit-pert floor (N^gamma / c={c_for_floor:g})'
+        elif outlier_names:
             target_src = (f'geometric mean of {len(widths)} inliers '
                           f'(excluded {len(outlier_names)} outlier'
                           f'{"s" if len(outlier_names) != 1 else ""})' + pad_str)
         else:
             target_src = f'geometric mean of {len(widths)} current ranges' + pad_str
 
-    if target_c is not None:
-        c = round(target_c, 4)
-    else:
-        inlier_widths_for_floor = [s.current_hi - s.current_lo for s in specs if s.current_hi > s.current_lo and s.name not in outlier_names]
-        R_min_current = min(inlier_widths_for_floor) if inlier_widths_for_floor else R_target
-        pert_floor = max(1.0, R_min_current * min_pert_pct / 100.0) if min_pert_pct else 1.0
-        c = round(pert_floor * (iterations ** gamma) / R_target, 4)
-    a = round(c * a_to_c_ratio, 4)
     actions = []
     for s in specs:
         if s.name in outlier_names and median_inlier_w and median_inlier_w > 1:
@@ -161,6 +205,19 @@ def recommend(specs: List[ParamSpec], iterations: int, gamma: float,
             actions.append(_recommend_one(s, R_outlier))
         else:
             actions.append(_recommend_one(s, R_target))
+
+    # c/a sized from post-action widths so the schedule matches what'll
+    # actually run after apply.py rewrites bounds. Re-running compute_c_a on
+    # the engine-reported (post-apply) specs from genconfig yields the same c.
+    post_specs = [
+        ParamSpec(name=act.name, center=act.center,
+                  current_lo=act.new_lo, current_hi=act.new_hi,
+                  is_int=act.is_int)
+        for act in actions
+    ]
+    c, a = compute_c_a(post_specs, iterations, gamma, a_to_c_ratio,
+                       target_c=target_c, min_pert_pct=min_pert_pct,
+                       outlier_ratio=outlier_ratio)
     return Recommendation(iterations, gamma, R_target, c, a, target_src, actions)
 
 
