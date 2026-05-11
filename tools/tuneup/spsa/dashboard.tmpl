@@ -1394,17 +1394,24 @@
                 try {{ handle.setPointerCapture(eDown.pointerId); }} catch(e) {{}}
                 handle.classList.add('dragging');
                 var h = onStart(eDown);
+                var done = false;
                 function onMove(e) {{ h.move(e); if (thetaChart) thetaChart.resize(); }}
                 function onUp() {{
+                    if (done) return;
+                    done = true;
                     handle.classList.remove('dragging');
                     h.save();
                     handle.removeEventListener('pointermove', onMove);
                     handle.removeEventListener('pointerup', onUp);
                     handle.removeEventListener('pointercancel', onUp);
+                    document.removeEventListener('pointerup', onUp);
+                    document.removeEventListener('pointercancel', onUp);
                 }}
                 handle.addEventListener('pointermove', onMove);
                 handle.addEventListener('pointerup', onUp);
                 handle.addEventListener('pointercancel', onUp);
+                document.addEventListener('pointerup', onUp);
+                document.addEventListener('pointercancel', onUp);
             }});
         }}
 
