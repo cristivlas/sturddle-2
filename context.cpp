@@ -614,6 +614,7 @@ namespace search
     std::vector<Context::StateStack> Context::_state_stacks(SMP_CORES);
     std::vector<MovesCache> _moves_cache(SMP_CORES);
     std::vector<PV> Context::_pvs(SMP_CORES);
+    std::vector<chess::BaseMove> Context::_root_filter;
 
 #if NATIVE_BUILD
     /* Default sinks so native builds work without Cython-installed callbacks. */

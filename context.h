@@ -20,6 +20,7 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -332,6 +333,19 @@ namespace search
         BaseMove    _prev;          /* best move from previous iteration */
         BaseMove    _excluded;      /* singular extension search */
 
+        /* Returns true if this move should be skipped at the current node:
+         * either it's the singular-extension excluded move, or (at root only,
+         * when "go searchmoves" is active) it's not in the user-supplied list.
+         */
+        INLINE bool is_excluded(const BaseMove& m) const
+        {
+            if (m == _excluded)
+                return true;
+            if (!_root_filter.empty() && is_root())
+                return std::find(_root_filter.begin(), _root_filter.end(), m) == _root_filter.end();
+            return false;
+        }
+
         State*      _state = nullptr;
 
         void        cache_scores(bool force_write /* bypass eviction strategy */ = false);
@@ -506,6 +520,11 @@ namespace search
         static size_t       (*_vmem_avail)();
 
         static HistoryPtr   _history;
+
+        /* "go searchmoves" filter — populated by the UCI front-end before each
+         * search starts and read-only thereafter. Empty means no restriction.
+         */
+        static std::vector<chess::BaseMove> _root_filter;
 
     private:
         const Move* get_next_move(score_t);
@@ -827,7 +846,7 @@ namespace search
     {
         auto move = _move_maker.get_next_move(*this, futility);
 
-        if (move && *move == _excluded)
+        while (move && is_excluded(*move))
         {
             move = _move_maker.get_next_move(*this, futility);
         }
