@@ -1039,6 +1039,9 @@ void UCI::go(const Arguments &args)
 {
     stop();
 
+    /* Clear any "searchmoves" filter from a previous "go" before parsing. */
+    search::Context::_root_filter.clear();
+
     /* Handle "go perft <depth> [pseudo]" */
     if (args.size() >= 3 && args[1] == "perft")
     {
@@ -1055,6 +1058,16 @@ void UCI::go(const Arguments &args)
     auto turn = _buf._state.turn;
 
     _depth = max_depth;
+
+    /* Shape of a UCI move: "<file><rank><file><rank>" with optional promo. */
+    auto looks_like_uci_move = [](std::string_view s) {
+        if (s.size() < 4 || s.size() > 5)
+            return false;
+        return s[0] >= 'a' && s[0] <= 'h'
+            && s[1] >= '1' && s[1] <= '8'
+            && s[2] >= 'a' && s[2] <= 'h'
+            && s[3] >= '1' && s[3] <= '8';
+    };
 
     for (size_t i = 1; i < args.size(); ++i)
     {
@@ -1097,6 +1110,28 @@ void UCI::go(const Arguments &args)
         {
             movetime = -1;
             do_analysis = true;
+        }
+        else if (a == "searchmoves")
+        {
+            /* Consume tokens that look like UCI moves; anything else (next
+             * "go" keyword or end of args) terminates the list.
+             */
+            while (i + 1 < args.size() && looks_like_uci_move(args[i + 1]))
+            {
+                ++i;
+                const auto &m = args[i];
+                chess::Square from, to;
+                if (   chess::parse_square(m, from)
+                    && chess::parse_square(std::string_view(&m[2], 2), to))
+                {
+                    const auto promo = m.size() > 4 ? chess::piece_type(m[4]) : chess::PieceType::NONE;
+                    search::Context::_root_filter.emplace_back(from, to, promo);
+                }
+                else
+                {
+                    log_warning(std::format("searchmoves: ignoring invalid move '{}'", m));
+                }
+            }
         }
     }
     /* initialize search context */
