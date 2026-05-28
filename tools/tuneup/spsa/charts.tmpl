@@ -103,7 +103,7 @@
         .status-badge {{
             background: rgba(0,0,0,0.25);
             padding: 6px 16px;
-            border-radius: 16px;
+            border-radius: 10px;
             font-weight: 600;
             font-size: 12px;
             text-transform: uppercase;
@@ -205,6 +205,7 @@
             transform: translateY(-50%);
             background: var(--zoom-track);
             border-radius: 2px;
+            pointer-events: none;
         }}
         .zoom-track .fill {{
             position: absolute;
@@ -212,6 +213,7 @@
             transform: translateY(-50%);
             background: var(--accent-start, #667eea);
             border-radius: 2px;
+            pointer-events: none;
         }}
         .zoom-track input[type="range"] {{
             position: absolute;
@@ -254,7 +256,7 @@
         .resize-handle {{
             flex-shrink: 0;
             height: 10px;
-            cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cpath d='M12 2L7 7h3v10h-3l5 5 5-5h-3V7h3z' fill='%23fff' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E") 12 12, row-resize;
+            cursor: row-resize;
             position: relative;
             z-index: 1;
             display: flex;
@@ -426,7 +428,7 @@
                 <span id="zoomLabel">All</span>
             </div>
             <div class="card" data-chart="params">
-                <div class="card-header" onclick="toggleChart('params')"><span class="caret">&#9660;</span><h2>Parameter Values</h2><div id="pertToggle" style="display:none; margin-left:auto; font-size:13px; gap:4px;" onclick="event.stopPropagation()"><span id="togValue" onclick="setPertView('value')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">Value</span><span id="togAbs" onclick="setPertView('pert')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">|Pert|</span></div></div>
+                <div class="card-header" onclick="toggleChart('params')"><span class="caret">&#9660;</span><h2>Parameter Values</h2><div id="pertToggle" style="display:none; margin-left:auto; font-size:13px; gap:4px;" onclick="event.stopPropagation()"><span id="togValue" onclick="setPertView('value')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">Value</span><span id="togConv" onclick="setPertView('conv')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">Conv</span><span id="togAbs" onclick="setPertView('pert')" style="cursor:pointer; padding:1px 8px; border-radius:3px;">|Pert|</span></div></div>
                 <div class="chart-wrap"><canvas id="thetaChart"></canvas></div>
             </div>
             <div class="resize-handle" id="paramsResize"></div>
@@ -704,7 +706,12 @@
             if (window.updateThetaSubtitle) window.updateThetaSubtitle();
             // Re-apply engine-space range now that paramRanges is populated
             if (window._reapplySoloRange) window._reapplySoloRange();
-        }}).catch(function() {{}});
+        }}).catch(function() {{
+            // If /config never arrives, undo the solo-restore hide so the user
+            // sees normalized data rather than a blank panel.
+            var c = document.getElementById('thetaChart');
+            if (c) c.style.visibility = '';
+        }});
     </script>
     <script>
         (function() {{
@@ -802,31 +809,61 @@
                 }});
                 var _soloParam = null;
                 var _pertView = 'value';
-                try {{ var _sv = JSON.parse(localStorage.getItem('chartSolo')); if (_sv && _sv.p && _origData[_sv.p]) {{ _soloParam = _sv.p; _pertView = (_sv.m === 'pert') ? 'pert' : 'value'; }} }} catch(e) {{}}
+                try {{ var _sv = JSON.parse(localStorage.getItem('chartSolo')); if (_sv && _sv.p && _origData[_sv.p]) {{ _soloParam = _sv.p; _pertView = (_sv.m === 'pert' || _sv.m === 'conv') ? _sv.m : 'value'; }} }} catch(e) {{}}
                 function denorm(v, lo, hi) {{ return (v + 1) * (hi - lo) / 2 + lo; }}
-                function _trendTStat(name, fromIdx, toIdx) {{
-                    var d = _origData[name];
-                    if (!d) return null;
-                    var range = paramRanges[name];
-                    var xs = [], ys = [];
-                    for (var i = fromIdx; i <= toIdx; i++) {{
-                        if (d[i] && d[i].y != null) {{
-                            xs.push(i);
-                            ys.push(range ? denorm(d[i].y, range[0], range[1]) : d[i].y);
+                // Window stats in engine-space (when range known) or normalized space.
+                // slope is in engine units per iteration (caller scales to per-1k).
+                // Cached by (name, fromIdx, toIdx) — zoom drag fires this on every
+                // pointermove, but identical integer indices map to identical stats.
+                var _wsCache = {{ k: null, v: null }};
+                function _windowStats(name, fromIdx, toIdx) {{
+                    var key = name + '|' + fromIdx + '|' + toIdx;
+                    if (_wsCache.k === key) return _wsCache.v;
+                    var result = (function() {{
+                        var d = _origData[name];
+                        if (!d) return null;
+                        var range = paramRanges[name];
+                        var xs = [], ys = [];
+                        for (var i = fromIdx; i <= toIdx; i++) {{
+                            if (d[i] && d[i].y != null) {{
+                                xs.push(d[i].x);
+                                ys.push(range ? denorm(d[i].y, range[0], range[1]) : d[i].y);
+                            }}
                         }}
-                    }}
-                    if (xs.length < CONV_MIN) return null;
-                    var n = xs.length, mx = 0, my = 0;
-                    for (var i = 0; i < n; i++) {{ mx += xs[i]; my += ys[i]; }}
-                    mx /= n; my /= n;
-                    var sxy = 0, sxx = 0;
-                    for (var i = 0; i < n; i++) {{ var dx = xs[i] - mx; sxy += dx * (ys[i] - my); sxx += dx * dx; }}
-                    if (sxx === 0) return null;
-                    var slope = sxy / sxx;
-                    var sse = 0;
-                    for (var i = 0; i < n; i++) {{ var r = ys[i] - (my + slope * (xs[i] - mx)); sse += r * r; }}
-                    var se = Math.sqrt(sse / ((n - 2) * sxx));
-                    return se > 0 ? slope / se : null;
+                        if (xs.length < CONV_MIN) return null;
+                        var n = xs.length, mx = 0, my = 0;
+                        for (var i = 0; i < n; i++) {{ mx += xs[i]; my += ys[i]; }}
+                        mx /= n; my /= n;
+                        var sxy = 0, sxx = 0, syy = 0;
+                        for (var i = 0; i < n; i++) {{
+                            var dx = xs[i] - mx, dy = ys[i] - my;
+                            sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
+                        }}
+                        var slope = sxx > 0 ? sxy / sxx : null;
+                        // sse = sum of squared residuals around the trend; falls
+                        // back to syy (no-trend total SS) when slope can't be fit.
+                        var sse = syy;
+                        if (slope != null) {{
+                            sse = 0;
+                            for (var i = 0; i < n; i++) {{ var r = ys[i] - (my + slope * (xs[i] - mx)); sse += r * r; }}
+                        }}
+                        var tstat = null;
+                        if (slope != null && n > 2) {{
+                            var se = Math.sqrt(sse / ((n - 2) * sxx));
+                            tstat = se > 0 ? slope / se : null;
+                        }}
+                        return {{
+                            iterFrom: xs[0], iterTo: xs[n - 1], n: n,
+                            yStart: ys[0], yEnd: ys[n - 1],
+                            mean: my,
+                            sigma: Math.sqrt(syy / n),
+                            sigmaDetrended: Math.sqrt(sse / n),
+                            slope: slope, tstat: tstat,
+                            rangeKnown: !!range, range: range
+                        }};
+                    }})();
+                    _wsCache.k = key; _wsCache.v = result;
+                    return result;
                 }}
                 function _pertDataForParam(name) {{
                     if (_spsaC == null || _spsaGamma == null) return null;
@@ -836,12 +873,42 @@
                     var scale = range ? (range[1] - range[0]) : ir;
                     return labels.map(function(k) {{ return {{x: k, y: Math.max(_spsaC / Math.pow(k + 1, _spsaGamma) * scale, 1.0)}}; }});
                 }}
+                // Conv ratio at iter k: σ_detrended(last 25% of [0..k]) / σ_detrended(first 25% of [0..k]),
+                // plus a secondary "diff" series = (σ_raw ratio) / (σ_detrended ratio) that
+                // visualizes how much drift is inflating σ across the windows.
+                // Cached per param -- history is immutable, so each series is computed once per page load.
+                var _convCache = {{}};
+                function _convDataForParam(name) {{
+                    if (_convCache[name] !== undefined) return _convCache[name];
+                    var d = _origData[name];
+                    if (!d || !d.length) {{ _convCache[name] = null; return null; }}
+                    var detrended = [], diff = [];
+                    for (var k = 0; k < d.length; k++) {{
+                        var q = Math.floor((k + 1) / 4);
+                        if (q < CONV_MIN) continue;
+                        var early = _windowStats(name, 0, q - 1);
+                        var late = _windowStats(name, k - q + 1, k);
+                        if (!early || !late) continue;
+                        var detRatio = (early.sigmaDetrended > 0) ? late.sigmaDetrended / early.sigmaDetrended : null;
+                        var rawRatio = (early.sigma > 0) ? late.sigma / early.sigma : null;
+                        if (detRatio != null) detrended.push({{x: d[k].x, y: detRatio}});
+                        // diff = raw / detrended; values >1 mean drift contributes
+                        // more in the late window than the early window. <1 means
+                        // drift was relatively bigger early.
+                        if (detRatio != null && rawRatio != null && detRatio > 0) {{
+                            diff.push({{x: d[k].x, y: rawRatio / detRatio}});
+                        }}
+                    }}
+                    var result = {{ detrended: detrended, diff: diff }};
+                    _convCache[name] = result;
+                    return result;
+                }}
                 function _updatePertToggle() {{
                     var tog = document.getElementById('pertToggle');
                     if (!tog) return;
                     tog.style.display = _soloParam ? 'flex' : 'none';
                     var accent = getComputedStyle(document.documentElement).getPropertyValue('--accent-start').trim() || '#667eea';
-                    [['togValue','value'],['togAbs','pert']].forEach(function(pair) {{
+                    [['togValue','value'],['togConv','conv'],['togAbs','pert']].forEach(function(pair) {{
                         var el = document.getElementById(pair[0]);
                         var on = _pertView === pair[1];
                         el.style.background = on ? accent : 'var(--border-subtle)';
@@ -857,17 +924,75 @@
                     ch.data.datasets = ch.data.datasets.filter(function(d) {{ return !d._isThreshold; }});
                     var soloDs = ch.data.datasets.find(function(d) {{ return d.label === _soloParam; }});
                     if (!soloDs) return;
+                    // Conv mode flips y-axis to logarithmic; reset on every toggle
+                    // so other modes always start from linear.
+                    ch.options.scales.y.type = 'linear';
+                    ch._convLegend = null;
                     if (mode === 'pert') {{
                         var data = _pertDataForParam(_soloParam);
                         if (!data) return;
                         soloDs.data = data;
                         ch.data.datasets.push({{ label: 'min pert', data: labels.map(function(k) {{ return {{x: k, y: 1.0}}; }}), borderColor: '#e53935', borderDash: [5,3], borderWidth: 1.5, pointRadius: 0, fill: false, _isThreshold: true }});
+                        // Recent-slice σ in engine units (or normalized if range
+                        // unknown -- skip in that case since |Pert| is engine-space).
+                        var lastIdx2 = labels.length - 1;
+                        var qSpan2 = Math.floor(labels.length / 4);
+                        if (qSpan2 >= CONV_MIN) {{
+                            var late2 = _windowStats(_soloParam, lastIdx2 - qSpan2 + 1, lastIdx2);
+                            if (late2 && late2.rangeKnown && late2.sigma > 0) {{
+                                ch.data.datasets.push({{
+                                    label: 'σ (recent)',
+                                    data: labels.map(function(k) {{ return {{x: k, y: late2.sigma}}; }}),
+                                    borderColor: '#1976d2',
+                                    borderDash: [3, 3],
+                                    borderWidth: 1.5,
+                                    pointRadius: 0,
+                                    fill: false,
+                                    _isThreshold: true
+                                }});
+                            }}
+                        }}
                         ch.options.scales.y.min = 0;
                         delete ch.options.scales.y.max;
                         ch.options.plugins.title.display = true;
                         ch.options.plugins.title.text = _soloParam + '  |Pert|';
-                        ch._sub1 = null; ch._sub2 = null;
-                    }} else {{
+                        ch._sub1 = null; ch._sub2 = null; ch._sub3 = null; ch._sub4 = null;
+                    }} else if (mode === 'conv') {{
+                        var convData = _convDataForParam(_soloParam);
+                        if (!convData || !convData.detrended.length) {{
+                            // Not enough history for any Conv point; fall back silently to Value.
+                            _pertView = 'value';
+                            _updatePertToggle();
+                            try {{ localStorage.setItem('chartSolo', JSON.stringify({{p:_soloParam, m:'value'}})); }} catch(e) {{}}
+                            mode = 'value';
+                        }} else {{
+                            soloDs.data = convData.detrended;
+                            // Drift-contribution overlay: ratio raw/detrended on the
+                            // same log axis. =1 means no drift contribution to σ.
+                            // <1 means early window had relatively more drift; >1
+                            // means late window has more drift (param re-destabilizing).
+                            var convDiffColor = '#a256d8';
+                            ch.data.datasets.push({{ label: 'diff', data: convData.diff, borderColor: convDiffColor, borderWidth: 2, borderDash: [10, 5], pointRadius: 0, fill: false, _isThreshold: true }});
+                            // Threshold lines at 0.7 (tighter boundary) and 1.0 (wider boundary)
+                            ch.data.datasets.push({{ label: 'tighter', data: labels.map(function(k) {{ return {{x: k, y: 0.7}}; }}), borderColor: '#1B8A2A', borderDash: [3, 3], borderWidth: 1.5, pointRadius: 0, fill: false, _isThreshold: true }});
+                            ch.data.datasets.push({{ label: 'wider',   data: labels.map(function(k) {{ return {{x: k, y: 1.0}}; }}), borderColor: '#C62828', borderDash: [5, 3], borderWidth: 1.5, pointRadius: 0, fill: false, _isThreshold: true }});
+                            // Stash colors on chart for the inline legend plugin.
+                            ch._convLegend = [
+                                {{ color: soloDs.borderColor, label: 'detrended Conv', dash: null }},
+                                {{ color: convDiffColor,      label: 'raw / detrended', dash: [6, 3] }}
+                            ];
+                            // Log scale: Conv is multiplicative (a ratio), so 0.5
+                            // and 2.0 are symmetric around 1.0. Log scale also tames
+                            // the early-iter spikes naturally instead of clipping.
+                            ch.options.scales.y.type = 'logarithmic';
+                            ch.options.scales.y.min = 0.1;
+                            ch.options.scales.y.max = 10.0;
+                            ch.options.plugins.title.display = true;
+                            ch.options.plugins.title.text = _soloParam + '  Conv';
+                            ch._sub1 = null; ch._sub2 = null; ch._sub3 = null; ch._sub4 = null;
+                        }}
+                    }}
+                    if (mode === 'value') {{
                         var range = paramRanges[_soloParam];
                         soloDs.data = range ? _origData[_soloParam].map(function(pt) {{ return {{x: pt.x, y: pt.y != null ? denorm(pt.y, range[0], range[1]) : null}}; }}) : _origData[_soloParam].slice();
                         if (range) {{ ch.options.scales.y.min = range[0]; ch.options.scales.y.max = range[1]; }}
@@ -878,52 +1003,142 @@
                     }}
                     ch.update();
                 }}
-                var CONV_MIN = 5;
-                function sliceConvergence(name, fromIdx, toIdx) {{
-                    var range = paramInternalRanges[name];
-                    if (!range || range === 0) return null;
-                    var d = _origData[name];
-                    if (!d) return null;
-                    var vals = [];
-                    for (var i = fromIdx; i <= toIdx; i++) {{
-                        if (d[i] && d[i].y != null) vals.push(d[i].y);
+                var CONV_MIN = 20;
+                // σ as % of param range. _windowStats.sigma is in engine units when
+                // rangeKnown (divide by engine-space width), otherwise in normalized
+                // [-1,+1] space (divide by paramInternalRanges, which is the
+                // normalized width — always 2 for symmetric SPSA). Both branches
+                // yield the same dimensionless percentage.
+                function _sigmaPct(name, st) {{
+                    if (!st) return null;
+                    if (st.rangeKnown) {{
+                        var w = st.range[1] - st.range[0];
+                        return w > 0 ? st.sigma / w * 100 : null;
                     }}
-                    if (vals.length < CONV_MIN) return null;
-                    var mean = vals.reduce(function(a, b) {{ return a + b; }}, 0) / vals.length;
-                    var variance = vals.reduce(function(a, v) {{ return a + (v - mean) * (v - mean); }}, 0) / vals.length;
-                    return Math.sqrt(variance) / range * 100;
+                    var ir = paramInternalRanges[name];
+                    return (ir && ir > 0) ? st.sigma / ir * 100 : null;
                 }}
                 window._reapplySoloRange = function() {{
-                    if (!_soloParam || _pertView !== 'value') return;
+                    if (!_soloParam) return;
                     var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
                     if (!ch) return;
+                    if (_pertView === 'pert') {{
+                        // The initial restore tried to enter pert mode before the
+                        // /config fetch had populated _spsaC/_spsaGamma, so the
+                        // swap silently bailed out and left the chart in a hybrid
+                        // value/pert state. Retry now that those are ready, then
+                        // unhide (the restore block hid the canvas to avoid the
+                        // value->pert flash in between).
+                        setPertView('pert');
+                        document.getElementById('thetaChart').style.visibility = '';
+                        return;
+                    }}
+                    if (_pertView === 'conv') {{
+                        // Conv ratio is dimensionless; data doesn't depend on
+                        // /config. Restore block already set it up correctly,
+                        // just unhide.
+                        document.getElementById('thetaChart').style.visibility = '';
+                        return;
+                    }}
                     var range = paramRanges[_soloParam];
-                    if (!range) return;
+                    if (!range) {{
+                        document.getElementById('thetaChart').style.visibility = '';
+                        return;
+                    }}
                     var soloDs = ch.data.datasets.find(function(d) {{ return d.label === _soloParam; }});
                     if (soloDs) soloDs.data = _origData[_soloParam].map(function(pt) {{ return {{x: pt.x, y: pt.y != null ? denorm(pt.y, range[0], range[1]) : null}}; }});
                     ch.options.scales.y.min = range[0];
                     ch.options.scales.y.max = range[1];
                     ch.update();
+                    document.getElementById('thetaChart').style.visibility = '';
                 }};
+                function _fmt(v) {{
+                    var a = Math.abs(v);
+                    if (a >= 100) return v.toFixed(0);
+                    if (a >= 10) return v.toFixed(1);
+                    return v.toFixed(2);
+                }}
+                function _signed(v) {{ return (v >= 0 ? '+' : '') + _fmt(v); }}
+                // Read CSS var (e.g. '--surface', '--text') with fallback. Note:
+                // values are color hex strings, not rgba — combine with alpha at
+                // the call site by using a hex8 suffix (e.g. + 'd0' for ~82% alpha).
+                function _cssColor(varName, fallback) {{
+                    var v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+                    return v || fallback;
+                }}
                 // Expose globally so applyZoomRange can call it
                 window.updateThetaSubtitle = function() {{
                     var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
                     if (!ch) return;
-                    if (_pertView === 'pert' || !_soloParam) {{
-                        ch._sub1 = null; ch._sub2 = null;
+                    if (_pertView === 'pert' || _pertView === 'conv' || !_soloParam) {{
+                        ch._sub1 = null; ch._sub2 = null; ch._sub3 = null; ch._sub4 = null;
+                        ch._stats = null;
                         ch.update('none');
                         return;
                     }}
                     var f = parseInt(document.getElementById('zoomFrom').value) || 0;
                     var t = parseInt(document.getElementById('zoomTo').value) || (_labels.length - 1);
-                    var pct = sliceConvergence(_soloParam, f, t);
-                    ch._sub1 = pct != null ? {{ text: 'StdDev/Range: ' + pct.toFixed(1) + '%', color: pct < 2 ? '#1B8A2A' : pct < 5 ? '#B86800' : '#C62828' }} : null;
-                    var tstat = _trendTStat(_soloParam, f, t);
-                    if (tstat != null) {{
-                        var at = Math.abs(tstat);
-                        var arrow = tstat > 0 ? '\u2197' : tstat < 0 ? '\u2198' : '\u2192';
-                        ch._sub2 = {{ text: 'Trend: ' + tstat.toFixed(1) + ' ' + arrow, color: at >= 2.0 ? '#1B8A2A' : at >= 1.0 ? '#B86800' : '#999' }};
+                    var st = _windowStats(_soloParam, f, t);
+                    ch._stats = st;
+                    if (!st) {{
+                        ch._sub1 = null; ch._sub2 = null; ch._sub3 = null; ch._sub4 = null;
+                        ch.update('none');
+                        return;
+                    }}
+                    // Line 1: Delta over window (engine units + % of range)
+                    var delta = st.yEnd - st.yStart;
+                    var deltaTxt = '\u0394: ' + _signed(delta);
+                    if (st.rangeKnown) {{
+                        var rspan = st.range[1] - st.range[0];
+                        if (rspan > 0) deltaTxt += '  (' + _signed(delta / rspan * 100) + '% of range)';
+                    }}
+                    // Color sentinel resolved at draw time so theme changes apply
+                    // without needing to rerun this function.
+                    ch._sub1 = {{ text: deltaTxt, color: 'theme:text' }};
+                    // Line 2: StdDev/Range %, with engine-unit \u00b11\u03c3 if known
+                    var pct = _sigmaPct(_soloParam, st);
+                    if (pct != null) {{
+                        var sigTxt = '\u03c3/Range: ' + pct.toFixed(1) + '%';
+                        if (st.rangeKnown) sigTxt += '  (\u00b1' + _fmt(st.sigma) + ')';
+                        ch._sub2 = {{ text: sigTxt, color: pct < 2 ? '#1B8A2A' : pct < 5 ? '#B86800' : '#C62828' }};
                     }} else {{ ch._sub2 = null; }}
+                    // Line 3: Slope per 1k iter + significance qualifier.
+                    // Qualifier uses |t| thresholds (not exact p-values) -- |t|>=2
+                    // ~ p<.05 only at large n (df->infty crit ~1.96); CONV_MIN=20
+                    // keeps that approximation honest. Suppress the directional
+                    // arrow when |t|<1 since the sign isn't trustworthy.
+                    if (st.slope != null) {{
+                        var per1k = st.slope * 1000;
+                        var at = st.tstat != null ? Math.abs(st.tstat) : 0;
+                        var trustDir = at >= 1.0;
+                        var arrow = !trustDir ? '\u2192' : per1k > 0 ? '\u2197' : per1k < 0 ? '\u2198' : '\u2192';
+                        var qual, color;
+                        if (st.tstat == null)   {{ qual = '';            color = '#999';    }}
+                        else if (at >= 2.0)     {{ qual = '  (|t|>2)';   color = '#1B8A2A'; }}
+                        else if (at >= 1.0)     {{ qual = '  (|t|>1)';   color = '#B86800'; }}
+                        else                    {{ qual = '  (noise)';   color = '#999';    }}
+                        ch._sub3 = {{ text: 'Slope: ' + _signed(per1k) + '/1k iter ' + arrow + qual, color: color }};
+                    }} else {{ ch._sub3 = null; }}
+                    // Line 4: Full-run convergence ratio = σ_detrended(last 25%)
+                    // / σ_detrended(first 25%). Detrended so a still-drifting param
+                    // doesn't appear "wider" just from the trend itself contributing
+                    // variance to the window. <0.7 tighter (good), 0.7–1.0 holding,
+                    // ≥1.0 wider. Always uses the full run regardless of zoom.
+                    var lastIdx = _labels.length - 1;
+                    var qSpan = Math.floor(_labels.length / 4);
+                    var late = null;
+                    if (qSpan >= CONV_MIN) {{
+                        var early = _windowStats(_soloParam, 0, qSpan - 1);
+                        late = _windowStats(_soloParam, lastIdx - qSpan + 1, lastIdx);
+                        if (early && late && early.sigmaDetrended > 0) {{
+                            var ratio = late.sigmaDetrended / early.sigmaDetrended;
+                            var rcolor, rlabel;
+                            if (ratio < 0.7)      {{ rcolor = '#1B8A2A'; rlabel = ' (tighter)'; }}
+                            else if (ratio < 1.0) {{ rcolor = '#B86800'; rlabel = ' (holding)'; }}
+                            else                  {{ rcolor = '#C62828'; rlabel = ' (wider)';   }}
+                            ch._sub4 = {{ text: 'Conv: ' + ratio.toFixed(2) + 'x' + rlabel, color: rcolor }};
+                        }} else {{ ch._sub4 = null; }}
+                    }} else {{ ch._sub4 = null; }}
                     ch.update('none');
                 }};
                 var thetaOpts = {{
@@ -951,13 +1166,15 @@
                                         d.hidden = false;
                                         d.data = _origData[d.label].slice();
                                     }});
+                                    // Conv mode flipped y-axis to log; reset.
+                                    ch.options.scales.y.type = 'linear';
                                     delete ch.options.scales.y.min;
                                     delete ch.options.scales.y.max;
                                     ch.options.plugins.title.display = false;
                                     _updatePertToggle();
                                 }} else {{
                                     // Solo this param (preserve current view mode)
-                                    var keepMode = (_soloParam && _pertView === 'pert') ? 'pert' : 'value';
+                                    var keepMode = (_soloParam && (_pertView === 'pert' || _pertView === 'conv')) ? _pertView : 'value';
                                     ch.data.datasets = ch.data.datasets.filter(function(d) {{ return !d._isThreshold; }});
                                     _soloParam = name;
                                     _pertView = 'value';
@@ -999,21 +1216,218 @@
                     }},
                     scales: {{ x: {{ type: 'linear' }}, y: {{}} }}
                 }};
+                // Initial value (iter 0, engine units if known) per param
+                function _initialValueEng(name) {{
+                    var d = _origData[name];
+                    if (!d || !d.length || d[0].y == null) return null;
+                    var range = paramRanges[name];
+                    return range ? denorm(d[0].y, range[0], range[1]) : d[0].y;
+                }}
                 initChart('thetaChart', {{
                     type: 'line',
                     data: {{ datasets: thetaDatasets }},
                     options: thetaOpts,
                     plugins: [{{
+                        id: 'soloRefs',
+                        beforeDatasetsDraw: function(chart) {{
+                            if (!_soloParam) return;
+                            var ca = chart.chartArea;
+                            var ys = chart.scales.y, xs = chart.scales.x;
+                            if (!ys || !xs) return;
+                            var ctx = chart.ctx;
+                            // Conv mode: draw vertical dashed lines at the boundaries
+                            // of the early/late slices used by the rightmost Conv point.
+                            // Helps users see *which* iter ranges the latest reading compares.
+                            if (_pertView === 'conv') {{
+                                var d = _origData[_soloParam];
+                                if (!d || d.length === 0) return;
+                                var q = Math.floor(d.length / 4);
+                                if (q < CONV_MIN) return;
+                                var earlyEnd = d[q - 1].x;
+                                var lateStart = d[d.length - q].x;
+                                ctx.save();
+                                ctx.beginPath();
+                                ctx.rect(ca.left, ca.top, ca.right - ca.left, ca.bottom - ca.top);
+                                ctx.clip();
+                                ctx.strokeStyle = 'rgba(120,120,120,0.55)';
+                                ctx.lineWidth = 1;
+                                ctx.setLineDash([4, 4]);
+                                [earlyEnd, lateStart].forEach(function(iter) {{
+                                    var px = xs.getPixelForValue(iter);
+                                    if (px < ca.left || px > ca.right) return;
+                                    ctx.beginPath();
+                                    ctx.moveTo(px, ca.top);
+                                    ctx.lineTo(px, ca.bottom);
+                                    ctx.stroke();
+                                }});
+                                ctx.restore();
+                                return;
+                            }}
+                            if (_pertView !== 'value') return;
+                            var st = chart._stats;
+                            ctx.save();
+                            ctx.beginPath();
+                            ctx.rect(ca.left, ca.top, ca.right - ca.left, ca.bottom - ca.top);
+                            ctx.clip();
+                            // ±1σ band around mean (sigma is from sqrt(sum of
+                            // squares / n), so always finite & non-negative)
+                            if (st && st.sigma > 0) {{
+                                var yLo = ys.getPixelForValue(st.mean - st.sigma);
+                                var yHi = ys.getPixelForValue(st.mean + st.sigma);
+                                var top = Math.min(yLo, yHi), bot = Math.max(yLo, yHi);
+                                ctx.fillStyle = 'rgba(102,126,234,0.10)';
+                                ctx.fillRect(ca.left, top, ca.right - ca.left, bot - top);
+                                // Mean line
+                                var ym = ys.getPixelForValue(st.mean);
+                                ctx.strokeStyle = 'rgba(102,126,234,0.55)';
+                                ctx.lineWidth = 1;
+                                ctx.setLineDash([]);
+                                ctx.beginPath();
+                                ctx.moveTo(ca.left, ym); ctx.lineTo(ca.right, ym);
+                                ctx.stroke();
+                            }}
+                            // Current cₖ half-band bracket at right edge of visible window
+                            if (_spsaC != null && _spsaGamma != null && st) {{
+                                var ir = paramInternalRanges[_soloParam];
+                                if (ir) {{
+                                    var scale = st.rangeKnown ? (st.range[1] - st.range[0]) : ir;
+                                    var ck = _spsaC / Math.pow(st.iterTo + 1, _spsaGamma) * scale;
+                                    if (isFinite(ck) && ck > 0) {{
+                                        var px = xs.getPixelForValue(st.iterTo);
+                                        // Clamp to chart area
+                                        px = Math.max(ca.left + 1, Math.min(ca.right - 1, px));
+                                        var pyTop = ys.getPixelForValue(st.yEnd + ck);
+                                        var pyBot = ys.getPixelForValue(st.yEnd - ck);
+                                        var brTop = Math.min(pyTop, pyBot), brBot = Math.max(pyTop, pyBot);
+                                        var darkBr = document.documentElement.getAttribute('data-theme') === 'dark';
+                                        ctx.strokeStyle = darkBr ? 'rgba(200,200,205,1.0)' : 'rgba(80,80,80,1.0)';
+                                        ctx.lineWidth = 3;
+                                        ctx.lineCap = 'round';
+                                        ctx.setLineDash([]);
+                                        ctx.beginPath();
+                                        ctx.moveTo(px, brTop); ctx.lineTo(px, brBot);
+                                        var tick = 7;
+                                        ctx.moveTo(px - tick, brTop); ctx.lineTo(px + tick, brTop);
+                                        ctx.moveTo(px - tick, brBot); ctx.lineTo(px + tick, brBot);
+                                        ctx.stroke();
+                                        ctx.lineCap = 'butt';
+                                        chart._ckLabelPos = {{ px: px, py: (brTop + brBot) / 2, tick: tick }};
+                                    }} else {{
+                                        chart._ckLabelPos = null;
+                                    }}
+                                }} else {{
+                                    chart._ckLabelPos = null;
+                                }}
+                            }} else {{
+                                chart._ckLabelPos = null;
+                            }}
+                            // Initial value (θ₀) dashed line
+                            var y0 = _initialValueEng(_soloParam);
+                            if (y0 != null && isFinite(y0)) {{
+                                var py0 = ys.getPixelForValue(y0);
+                                ctx.strokeStyle = 'rgba(120,120,120,0.7)';
+                                ctx.lineWidth = 1;
+                                ctx.setLineDash([4, 4]);
+                                ctx.beginPath();
+                                ctx.moveTo(ca.left, py0); ctx.lineTo(ca.right, py0);
+                                ctx.stroke();
+                                ctx.setLineDash([]);
+                                chart._theta0LabelY = py0;
+                            }} else {{
+                                chart._theta0LabelY = null;
+                            }}
+                            ctx.restore();
+                        }},
+                        afterDatasetsDraw: function(chart) {{
+                            if (!_soloParam) return;
+                            var ca = chart.chartArea;
+                            var ctx = chart.ctx;
+                            // Conv mode: inline mini-legend (chart.js's built-in legend
+                            // would conflict with the click-to-unsolo handler).
+                            if (_pertView === 'conv' && chart._convLegend) {{
+                                var entries = chart._convLegend;
+                                var darkLeg = document.documentElement.getAttribute('data-theme') === 'dark';
+                                ctx.save();
+                                ctx.font = '12px ' + (Chart.defaults.font.family || 'sans-serif');
+                                var swatchW = 14, swatchH = 3, gap = 6, pad = 8, lh = 18;
+                                var maxTextW = 0;
+                                entries.forEach(function(e) {{ maxTextW = Math.max(maxTextW, ctx.measureText(e.label).width); }});
+                                var w = pad * 2 + swatchW + gap + maxTextW;
+                                var h = pad * 2 + entries.length * lh - (lh - 12);
+                                var lx = ca.left + 8, ly = ca.top + 8;
+                                ctx.fillStyle = darkLeg ? (_cssColor('--surface', '#1e1f26') + 'e0') : '#ffffffd0';
+                                ctx.strokeStyle = darkLeg ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)';
+                                ctx.lineWidth = 1;
+                                ctx.beginPath();
+                                ctx.roundRect(lx, ly, w, h, 4);
+                                ctx.fill(); ctx.stroke();
+                                ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+                                entries.forEach(function(e, i) {{
+                                    var rowY = ly + pad + i * lh + 6;
+                                    // Stroke a short line so the swatch matches the
+                                    // dataset's actual style (solid vs dashed).
+                                    ctx.strokeStyle = e.color;
+                                    ctx.lineWidth = 2;
+                                    ctx.setLineDash(e.dash || []);
+                                    ctx.beginPath();
+                                    ctx.moveTo(lx + pad, rowY);
+                                    ctx.lineTo(lx + pad + swatchW, rowY);
+                                    ctx.stroke();
+                                    ctx.setLineDash([]);
+                                    ctx.fillStyle = _cssColor('--text', darkLeg ? '#e8e8ec' : '#333');
+                                    ctx.fillText(e.label, lx + pad + swatchW + gap, rowY);
+                                }});
+                                ctx.restore();
+                                return;
+                            }}
+                            if (_pertView !== 'value') return;
+                            ctx.save();
+                            ctx.beginPath();
+                            ctx.rect(ca.left, ca.top, ca.right - ca.left, ca.bottom - ca.top);
+                            ctx.clip();
+                            ctx.font = 'bold 20px ' + (Chart.defaults.font.family || 'sans-serif');
+                            // Halo for legibility against the data line (theme-aware)
+                            var darkHalo = document.documentElement.getAttribute('data-theme') === 'dark';
+                            ctx.lineWidth = 4;
+                            // 'd9' ~ 85% alpha
+                            ctx.strokeStyle = darkHalo ? (_cssColor('--surface', '#1e1f26') + 'd9') : '#ffffffd9';
+                            ctx.lineJoin = 'round';
+                            // ±cₖ label on top of line
+                            var clp = chart._ckLabelPos;
+                            if (clp) {{
+                                ctx.fillStyle = darkHalo ? 'rgba(200,200,205,1.0)' : 'rgba(80,80,80,1.0)';
+                                ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+                                var lbl = '±cₖ';
+                                var lx2 = clp.px - clp.tick - 8;
+                                if (lx2 - ctx.measureText(lbl).width < ca.left + 2) {{
+                                    ctx.textAlign = 'left';
+                                    lx2 = clp.px + clp.tick + 8;
+                                }}
+                                ctx.strokeText(lbl, lx2, clp.py);
+                                ctx.fillText(lbl, lx2, clp.py);
+                            }}
+                            // θ₀ label on top of line
+                            if (chart._theta0LabelY != null) {{
+                                ctx.fillStyle = darkHalo ? 'rgba(200,200,205,1.0)' : 'rgba(80,80,80,1.0)';
+                                ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+                                ctx.strokeText('θ₀', ca.left + 4, chart._theta0LabelY - 3);
+                                ctx.fillText('θ₀', ca.left + 4, chart._theta0LabelY - 3);
+                            }}
+                            ctx.restore();
+                        }}
+                    }}, {{
                         id: 'insetSub',
                         afterDraw: function(chart) {{
-                            var s1 = chart._sub1, s2 = chart._sub2;
-                            if (!s1 && !s2) {{ chart._insetBox = null; return; }}
+                            var s1 = chart._sub1, s2 = chart._sub2, s3 = chart._sub3, s4 = chart._sub4;
+                            if (!s1 && !s2 && !s3 && !s4) {{ chart._insetBox = null; return; }}
                             var ctx = chart.ctx, ca = chart.chartArea;
                             ctx.save();
                             ctx.font = 'bold 14px ' + (Chart.defaults.font.family || 'sans-serif');
                             var lines = [];
                             if (s1) lines.push(s1);
                             if (s2) lines.push(s2);
+                            if (s3) lines.push(s3);
+                            if (s4) lines.push(s4);
                             var pad = 6, lh = 20;
                             var w = Math.max.apply(null, lines.map(function(l) {{ return ctx.measureText(l.text).width; }})) + pad * 2;
                             var h = lines.length * lh + pad * 2 - 2;
@@ -1025,15 +1439,20 @@
                                 ix = ca.right - w - 8; iy = ca.top + 8;
                             }}
                             chart._insetBox = {{ x: ix, y: iy, w: w, h: h }};
-                            ctx.fillStyle = 'rgba(255,255,255,0.82)';
-                            ctx.strokeStyle = 'rgba(0,0,0,0.10)';
+                            var darkInset = document.documentElement.getAttribute('data-theme') === 'dark';
+                            // hex8: 'e0' ~ 88% alpha, 'd0' ~ 82%
+                            ctx.fillStyle = darkInset ? (_cssColor('--surface', '#1e1f26') + 'e0') : '#ffffffd0';
+                            ctx.strokeStyle = darkInset ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)';
                             ctx.lineWidth = 1;
                             ctx.beginPath();
                             ctx.roundRect(ix, iy, w, h, 4);
                             ctx.fill(); ctx.stroke();
                             ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+                            var textFallback = darkInset ? '#e8e8ec' : '#333';
                             lines.forEach(function(l, i) {{
-                                ctx.fillStyle = l.color;
+                                ctx.fillStyle = (l.color === 'theme:text')
+                                    ? _cssColor('--text', textFallback)
+                                    : l.color;
                                 ctx.fillText(l.text, ix + pad, iy + pad + i * lh);
                             }});
                             ctx.restore();
@@ -1090,7 +1509,7 @@
                     }} catch(e) {{}}
                 }})();
 
-                makeChart('eloChart', history.map(h => ({{x: h.iteration, y: h.elo_diff}})), 'ELO Diff', '#e91e63');
+                makeChart('eloChart', history.map(h => ({{x: h.iteration, y: h.elo_diff}})), 'ELO Diff', '#10b981');
                 makeChart('akChart', history.map(h => ({{x: h.iteration, y: h.a_k}})), 'a_k', '#2196F3');
                 makeChart('ckChart', history.map(h => ({{x: h.iteration, y: h.c_k}})), 'c_k', '#FF9800');
                 applyChartTheme();
@@ -1099,6 +1518,16 @@
                 if (_soloParam) {{
                     var _rch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
                     if (_rch) {{
+                        // Hide canvas through the restore: in pert mode we wait
+                        // for _spsaC/_spsaGamma (so _reapplySoloRange can swap to
+                        // pert data), in value mode we wait for paramRanges (so
+                        // engine-space y-axis denormalization can happen). Both
+                        // come from /config; if it's still in flight we'd otherwise
+                        // flash the multi-line normalized view first.
+                        var _haveCfg = (_spsaC != null && _spsaGamma != null);
+                        if (!_haveCfg) {{
+                            document.getElementById('thetaChart').style.visibility = 'hidden';
+                        }}
                         var _rds = _rch.data.datasets;
                         var _rRange = paramRanges[_soloParam];
                         _rch.data.datasets = _rds.filter(function(d) {{ return !d._isThreshold; }});

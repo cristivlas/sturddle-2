@@ -133,9 +133,6 @@ class TuningConfig:
     # condemned in-flight work at iteration boundary (late results are discarded
     # as stale). 1.0 = no overflow, 1.15 = up to 15% extra games may be dispatched.
     overflow_factor: float = 1.15
-    # EWMA smoothing factor for worker speed estimates: higher = more weight on recent samples.
-    # Lower values (0.1-0.15) give more stable estimates for large chunks at fast TC.
-    ewma_alpha: float = 0.2
     # Number of completed chunks before a worker is trusted with full speed-proportional work.
     # Until then the bootstrap cap applies to prevent a cold worker from grabbing too much work.
     ewma_warmup_chunks: int = 3
@@ -175,8 +172,6 @@ class TuningConfig:
             errors.append("chunk_timeout_factor must be >= 1")
         if self.overflow_factor < 1:
             errors.append("overflow_factor must be >= 1")
-        if not (0 < self.ewma_alpha <= 1):
-            errors.append("ewma_alpha must be in (0, 1]")
         if self.ewma_warmup_chunks < 0:
             errors.append("ewma_warmup_chunks must be >= 0")
         if self.min_chunk_timeout < self.min_chunk_expected_duration:
@@ -213,7 +208,6 @@ class TuningConfig:
             "min_chunk_timeout": self.min_chunk_timeout,
             "min_chunk_expected_duration": self.min_chunk_expected_duration,
             "overflow_factor": self.overflow_factor,
-            "ewma_alpha": self.ewma_alpha,
             "ewma_warmup_chunks": self.ewma_warmup_chunks,
             "static_dir": self.static_dir,
             "validate_interval": self.validate_interval,

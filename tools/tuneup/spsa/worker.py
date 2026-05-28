@@ -803,6 +803,7 @@ def worker_loop(worker_config: WorkerConfig):
                 "chunk_size": chunk_size_cap,
                 "worker": worker_name,
                 "server_start": server_start,
+                "concurrency": worker_config.concurrency,
             }
             if cc_overrides:
                 work_request["cutechess_overrides"] = cc_overrides

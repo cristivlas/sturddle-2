@@ -9,6 +9,14 @@ import re
 import sys
 
 from config import TuningConfig
+from recommend import ParamSpec, recommend, format_recommendation, constrain_for
+
+
+# Knob choices for --rebalance. The shared recommend module no longer
+# carries defaults; each caller picks its own (see feedback memory).
+REBALANCE_OUTLIER_RATIO = 5.0
+REBALANCE_MIN_PERT_PCT = 5.0
+REBALANCE_SAFETY_PAD = 1.2
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -48,11 +56,88 @@ def compute_range(value, range_pct):
     return round(value - half), round(value + half)
 
 
-def update_config(config_file, engine_values, finalize=False, range_pct=None):
+def _realign(new, old, prev):
+    """Preserve column alignment when a numeric token changes width.
+
+    If new is narrower than old, left-pad new with spaces.
+    If new is wider, eat the extra characters from prev (the separator/whitespace
+    preceding new). Returns (new, prev).
+    """
+    diff = len(new) - len(old)
+    if diff < 0:
+        return ' ' * -diff + new, prev
+    if diff > 0:
+        return new, prev[:-diff]
+    return new, prev
+
+
+# Global toggle. Set by main() from --dry-run; each file-writing site checks it.
+DRY_RUN = False
+
+
+def _to_engine(param, theta_val):
+    """Silent version of denormalize for bulk computations (no per-call logging)."""
+    if param is not None and getattr(param, 'is_normalized', False):
+        lo, hi = param.original_lower, param.original_upper
+        return int(round((theta_val + 1) * (hi - lo) / 2 + lo))
+    return int(round(theta_val))
+
+
+def compute_param_drifts(state, tuning):
+    """Per-param drift info from full exploration history (engine space).
+
+    Returns list of dicts {name, current, lo, hi, drift_pct} sorted by
+    drift_pct descending. Empty list if no history.
+    """
+    history = state.get('history', [])
+    current_theta = state.get('theta', {})
+    if not history or not current_theta:
+        return []
+
+    drifts = []
+    for name, t_current in current_theta.items():
+        param = tuning.parameters.get(name)
+        current = _to_engine(param, t_current)
+        if current == 0:
+            continue
+        vals = [current]
+        for h in history:
+            t = h.get('theta', {}).get(name)
+            if t is not None:
+                vals.append(_to_engine(param, t))
+        lo, hi = min(vals), max(vals)
+        swing = max(abs(current - lo), abs(current - hi))
+        drifts.append({
+            'name': name,
+            'current': current,
+            'lo': lo,
+            'hi': hi,
+            'drift_pct': 100.0 * swing / abs(current),
+        })
+    drifts.sort(key=lambda d: d['drift_pct'], reverse=True)
+    return drifts
+
+
+def compute_min_safe_range(state, tuning):
+    """Smallest --range %% that covers every explored value of every param.
+
+    Returns (pct, driving_param) or (None, None) if no history.
+    """
+    drifts = compute_param_drifts(state, tuning)
+    if not drifts:
+        return None, None
+    top = drifts[0]
+    return top['drift_pct'], top['name']
+
+
+def update_config(config_file, engine_values, finalize=False, range_pct=None, bounds_map=None):
     """Patch DECLARE_PARAM/DECLARE_VALUE/DECLARE_NORMAL lines in config.h.
 
     If finalize is True, also converts DECLARE_PARAM/DECLARE_NORMAL back to
     DECLARE_VALUE for the tuned parameters.
+
+    Bounds adjustment precedence: bounds_map[name] (per-param explicit) >
+    range_pct (uniform percentage) > leave unchanged.
 
     Returns (updated, found) where:
         updated: set of parameter names that were changed
@@ -78,33 +163,25 @@ def update_config(config_file, engine_values, finalize=False, range_pct=None):
                     found.add(name)
                     before, old_val, sep1, old_lo, sep2, old_hi, close = match.groups()
 
-                    # Finalize macro first so alignment accounts for name change
+                    # Finalize: rename the macro without padding compensation,
+                    # so the line looks the same as any pre-existing DECLARE_VALUE.
                     if finalize and macro != 'DECLARE_VALUE':
-                        pad = ' ' * (len(macro) - len('DECLARE_VALUE'))
-                        before = before.replace(macro + '(', 'DECLARE_VALUE(' + pad, 1)
+                        before = before.replace(macro + '(', 'DECLARE_VALUE(', 1)
                         finalized.add(name)
 
                     new_val = str(value)
+                    new_val, before = _realign(new_val, old_val, before)
 
-                    # Preserve column alignment for value
-                    if len(new_val) < len(old_val):
-                        new_val = ' ' * (len(old_val) - len(new_val)) + new_val
-                    elif len(new_val) > len(old_val):
-                        before = before[:-(len(new_val) - len(old_val))]
-
-                    # Adjust bounds if requested
+                    # Adjust bounds: per-param map takes precedence over uniform pct
                     new_lo, new_hi = old_lo, old_hi
-                    if range_pct is not None:
+                    if bounds_map and name in bounds_map:
+                        lo, hi = bounds_map[name]
+                        new_lo, sep1 = _realign(str(lo), old_lo, sep1)
+                        new_hi, sep2 = _realign(str(hi), old_hi, sep2)
+                    elif range_pct is not None:
                         lo, hi = compute_range(value, range_pct)
-                        new_lo, new_hi = str(lo), str(hi)
-                        if len(new_lo) < len(old_lo):
-                            new_lo = ' ' * (len(old_lo) - len(new_lo)) + new_lo
-                        elif len(new_lo) > len(old_lo):
-                            sep1 = sep1[:-(len(new_lo) - len(old_lo))]
-                        if len(new_hi) < len(old_hi):
-                            new_hi = ' ' * (len(old_hi) - len(new_hi)) + new_hi
-                        elif len(new_hi) > len(old_hi):
-                            sep2 = sep2[:-(len(new_hi) - len(old_hi))]
+                        new_lo, sep1 = _realign(str(lo), old_lo, sep1)
+                        new_hi, sep2 = _realign(str(hi), old_hi, sep2)
 
                     line = line[:match.start()] + before + new_val + sep1 + new_lo + sep2 + new_hi + close + line[match.end():]
                     if line != original_line:
@@ -114,7 +191,7 @@ def update_config(config_file, engine_values, finalize=False, range_pct=None):
                     break
         updated_lines.append(line)
 
-    if updated or finalized:
+    if (updated or finalized) and not DRY_RUN:
         with open(config_file, 'w') as f:
             f.writelines(updated_lines)
         if updated:
@@ -229,7 +306,7 @@ def update_piece_values(header_file, engine_values):
 
         result_lines.append(line)
 
-    if updated:
+    if updated and not DRY_RUN:
         with open(header_file, 'w', encoding='utf-8', newline='') as f:
             f.writelines(result_lines)
         logging.info(f"Patched {len(updated)} piece value(s) in {header_file}")
@@ -368,18 +445,21 @@ def update_tables(tables_file, pst_values):
 
         result.append(line)
 
-    if updated:
+    if updated and not DRY_RUN:
         with open(tables_file, 'w', encoding='utf-8', newline='') as f:
             f.writelines(result)
         logging.info(f"Patched {len(updated)} PST value(s) in {tables_file}")
-    else:
+    elif not updated:
         logging.info(f"No PST changes in {tables_file}")
 
     return updated, found
 
 
-def adjust_piece_param_bounds(config_file, engine_values, range_pct):
-    """Adjust Config::Param bounds for piece value parameters in config.h."""
+def adjust_piece_param_bounds(config_file, engine_values, range_pct=None, bounds_map=None):
+    """Adjust Config::Param bounds for piece value parameters in config.h.
+
+    Bounds source precedence: bounds_map[name] > range_pct > skip param.
+    """
     piece_names = [n for n in engine_values if n in PIECE_INDEX]
     if not piece_names:
         return set()
@@ -392,22 +472,20 @@ def adjust_piece_param_bounds(config_file, engine_values, range_pct):
     for line in lines:
         original_line = line
         for name in piece_names:
+            if bounds_map and name in bounds_map:
+                lo, hi = bounds_map[name]
+            elif range_pct is not None:
+                lo, hi = compute_range(engine_values[name], range_pct)
+            else:
+                continue
             pat = re.compile(
                 r'("' + re.escape(name) + r'"\s*,\s*Config::Param\{\s*[^,]+,\s*)(\d+)(\s*,\s*)(\d+)(\s*,)'
             )
             match = pat.search(line)
             if match:
                 prefix, old_lo, sep, old_hi, trailing = match.groups()
-                lo, hi = compute_range(engine_values[name], range_pct)
-                new_lo, new_hi = str(lo), str(hi)
-                if len(new_lo) < len(old_lo):
-                    new_lo = ' ' * (len(old_lo) - len(new_lo)) + new_lo
-                elif len(new_lo) > len(old_lo):
-                    prefix = prefix[:-(len(new_lo) - len(old_lo))]
-                if len(new_hi) < len(old_hi):
-                    new_hi = ' ' * (len(old_hi) - len(new_hi)) + new_hi
-                elif len(new_hi) > len(old_hi):
-                    sep = sep[:-(len(new_hi) - len(old_hi))]
+                new_lo, prefix = _realign(str(lo), old_lo, prefix)
+                new_hi, sep = _realign(str(hi), old_hi, sep)
                 line = line[:match.start()] + prefix + new_lo + sep + new_hi + trailing + line[match.end():]
                 if line != original_line:
                     adjusted.add(name)
@@ -415,12 +493,46 @@ def adjust_piece_param_bounds(config_file, engine_values, range_pct):
                 break
         result_lines.append(line)
 
-    if adjusted:
+    if adjusted and not DRY_RUN:
         with open(config_file, 'w') as f:
             f.writelines(result_lines)
         logging.info(f"Adjusted {len(adjusted)} piece param bound(s) in {config_file}")
 
     return adjusted
+
+
+_PST_RE = re.compile(r'PS_(\d+|KEG)_(\d+)$')
+
+
+def _build_rebalance_specs(theta, tuning):
+    """Build ParamSpec list from spsa_state theta + tuning.json metadata.
+
+    Returns (specs, skipped_pst). PST params are skipped because their bounds
+    live in a single shared PST_RANGE macro (config.h), not per-param.
+    """
+    specs = []
+    skipped_pst = []
+    for name, t_val in theta.items():
+        if _PST_RE.match(name):
+            skipped_pst.append(name)
+            continue
+        param = tuning.parameters.get(name)
+        if param is None:
+            continue
+        if param.is_normalized:
+            cur_lo, cur_hi = param.original_lower, param.original_upper
+            center = (t_val + 1) * (cur_hi - cur_lo) / 2 + cur_lo
+        else:
+            cur_lo, cur_hi = param.lower, param.upper
+            center = t_val
+        is_int = (param.type == 'int') if not param.is_normalized else (
+            float(cur_lo).is_integer() and float(cur_hi).is_integer()
+        )
+        fixed_lo, fixed_hi, floor = constrain_for(cur_lo, cur_hi)
+        specs.append(ParamSpec(name=name, center=center,
+                               current_lo=cur_lo, current_hi=cur_hi, is_int=is_int,
+                               fixed_lo=fixed_lo, fixed_hi=fixed_hi, floor=floor))
+    return specs, skipped_pst
 
 
 def main():
@@ -435,10 +547,32 @@ def main():
     parser.add_argument('--finalize', action='store_true', help='Convert DECLARE_PARAM/DECLARE_NORMAL to DECLARE_VALUE')
     parser.add_argument('--range', type=float, default=None, metavar='PCT', dest='range_pct',
                         help='Adjust parameter bounds to value +/- PCT%% of value (e.g. 20 to narrow, 150 to widen)')
+    parser.add_argument('--auto-range', action='store_true',
+                        help='Use the minimum safe --range computed from exploration history')
+    parser.add_argument('--rebalance', action='store_true',
+                        help='Compute per-param range recommendations from tuned theta and apply to config.h')
+    parser.add_argument('--iterations', type=int, default=None,
+                        help='Iterations for --rebalance schedule (default: tuning.json budget / games_per_iteration)')
+    target_grp = parser.add_mutually_exclusive_group()
+    target_grp.add_argument('--target-r', type=float, default=None,
+                            help='Override R_target for --rebalance')
+    target_grp.add_argument('--target-c', type=float, default=None,
+                            help='Override c for --rebalance; R_target derived as N^gamma / c')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Compute and report changes without writing any files')
     args = parser.parse_args()
 
     if args.range_pct is not None and args.range_pct <= 0:
         parser.error('--range must be > 0')
+    if args.auto_range and args.range_pct is not None:
+        parser.error('--range and --auto-range are mutually exclusive')
+    if args.rebalance and (args.range_pct is not None or args.auto_range):
+        parser.error('--rebalance is mutually exclusive with --range and --auto-range')
+    if (args.target_r is not None or args.target_c is not None) and not args.rebalance:
+        parser.error('--target-r / --target-c require --rebalance')
+
+    global DRY_RUN
+    DRY_RUN = args.dry_run
 
     # Accept either a project directory or a tuning.json file directly
     if os.path.isfile(args.project) and args.project.endswith('.json'):
@@ -477,6 +611,43 @@ def main():
     iteration = state.get('iteration', '?')
     logging.info(f"State at iteration {iteration}, {len(theta)} parameter(s)")
 
+    # Report the minimum safe --range based on full exploration history,
+    # along with per-param drift sorted by swing percentage.
+    drifts = compute_param_drifts(state, tuning)
+    if drifts:
+        logging.info("Per-param drift (sorted by swing %%):")
+        for d in drifts:
+            logging.info(f"  {d['name']}: current={d['current']}, range=[{d['lo']}, {d['hi']}], drift={d['drift_pct']:.1f}%")
+        top = drifts[0]
+        logging.info(f"Minimum safe --range: {top['drift_pct']:.1f}% (driven by {top['name']})")
+    if args.auto_range:
+        if not drifts:
+            parser.error('--auto-range requested but no exploration history available')
+        args.range_pct = drifts[0]['drift_pct']
+        logging.info(f"Using --auto-range = {args.range_pct:.1f}%")
+
+    # Compute --rebalance recommendations (per-param bounds)
+    bounds_map = None
+    if args.rebalance:
+        specs, skipped_pst = _build_rebalance_specs(theta, tuning)
+        if skipped_pst:
+            logging.warning(f"--rebalance skipped {len(skipped_pst)} PST param(s); "
+                            f"PST bounds use shared PST_RANGE macro -- adjust manually in config.h")
+        if not specs:
+            logging.error("No params eligible for --rebalance")
+            sys.exit(1)
+        iterations = args.iterations if args.iterations is not None else tuning.max_iterations()
+        rec = recommend(specs, iterations, tuning.spsa.gamma,
+                        tuning.spsa.a / tuning.spsa.c,
+                        target_r=args.target_r, target_c=args.target_c,
+                        outlier_ratio=REBALANCE_OUTLIER_RATIO,
+                        min_pert_pct=REBALANCE_MIN_PERT_PCT,
+                        safety_pad=REBALANCE_SAFETY_PAD)
+        format_recommendation(rec, center_label='value')
+        sys.stdout.flush()  # ensure stdout table lands before subsequent stderr-bound logs
+        # 'keep' actions don't enter the bounds_map -- current bounds are already correct.
+        bounds_map = {a.name: (a.new_lo, a.new_hi) for a in rec.actions if a.action != 'keep'}
+
     # Convert all theta values to engine-space integers
     logging.info(f"Denormalizing {len(theta)} parameter(s):")
     engine_values = {}
@@ -490,11 +661,10 @@ def main():
             engine_values[name] = engine_val
 
     # Separate PST params (PS_<piece>_<square>, PS_KEG_<square>) from config.h params
-    pst_re = re.compile(r'PS_(\d+|KEG)_(\d+)$')
     pst_values = {}   # name -> (piece_key, square, value)
     config_values = {}
     for name, val in engine_values.items():
-        m = pst_re.match(name)
+        m = _PST_RE.match(name)
         if m:
             pst_values[name] = (m.group(1), int(m.group(2)), val)
         else:
@@ -504,7 +674,8 @@ def main():
         logging.info(f"{len(pst_values)} PST parameter(s), {len(config_values)} config parameter(s)")
 
     # Patch config.h (DECLARE_PARAM / DECLARE_VALUE / DECLARE_NORMAL)
-    updated, found = update_config(args.config, config_values, finalize=args.finalize, range_pct=args.range_pct)
+    updated, found = update_config(args.config, config_values, finalize=args.finalize,
+                                    range_pct=args.range_pct, bounds_map=bounds_map)
 
     # Patch piece values in chess.h (PIECE_VALUES / ENDGAME_ADJUST macros)
     not_in_config = {n: v for n, v in engine_values.items() if n not in found}
@@ -521,8 +692,9 @@ def main():
             logging.warning(f"Header file not found for piece values: {header_path}")
 
     # Adjust Config::Param bounds for piece values in config.h
-    if args.range_pct is not None and piece_candidates:
-        adjust_piece_param_bounds(args.config, piece_candidates, args.range_pct)
+    if (args.range_pct is not None or bounds_map) and piece_candidates:
+        adjust_piece_param_bounds(args.config, piece_candidates,
+                                   range_pct=args.range_pct, bounds_map=bounds_map)
 
     # Patch piece-square tables in tables.h
     if pst_values:

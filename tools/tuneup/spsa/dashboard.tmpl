@@ -64,7 +64,36 @@
             overflow: hidden;
             display: flex;
             flex-direction: column;
+            position: relative;
         }}
+        .badge-slot {{
+            position: relative;
+            display: inline-flex;
+            min-width: 170px;
+            justify-content: center;
+        }}
+        .badge-slot .status-badge {{
+            width: 100%;
+            text-align: center;
+        }}
+        .toast {{
+            position: absolute;
+            inset: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            letter-spacing: 0.3px;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s;
+        }}
+        .toast.show {{
+            opacity: 1;
+        }}
+        #toastOverdue {{ z-index: 1; background: #b86800; }}
+        #toastTimedOut {{ z-index: 2; background: #c62828; }}
         .header {{
             background: linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%);
             color: white;
@@ -117,7 +146,7 @@
         .status-badge {{
             background: rgba(0,0,0,0.25);
             padding: 6px 16px;
-            border-radius: 16px;
+            border-radius: 10px;
             font-weight: 600;
             font-size: 12px;
             text-transform: uppercase;
@@ -219,12 +248,26 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }}
+        th:hover {{
+            background: var(--surface-hover);
+            box-shadow: inset 2px 0 0 var(--border), inset -2px 0 0 var(--border);
         }}
         td {{
             border-bottom: 1px solid var(--border);
             font-size: 14px;
             color: var(--text);
             white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .solo-link:hover {{
+            text-decoration: underline;
+            text-decoration-style: dotted;
+            text-underline-offset: 3px;
         }}
         th:first-child, td:first-child {{
             text-align: left;
@@ -283,6 +326,7 @@
             .params-tbl col:nth-child(2), .params-tbl col:nth-child(3) {{ width: 25% !important; }}
             .resize-handle {{ display: none !important; }}
             .col-resize-handle {{ display: none !important; }}
+            .th-grip {{ width: 24px; right: -12px; }}
             #legendToggle {{ display: none !important; }}
             .theme-toggle > span {{ font-size: 0; padding: 4px 6px; }}
             .theme-toggle > span::before {{ font-size: 14px; line-height: 1; }}
@@ -302,6 +346,7 @@
             min-height: 0;
             display: flex;
             gap: 0;
+            overflow: hidden;
         }}
         .bottom-panel > .section {{
             display: flex;
@@ -310,7 +355,7 @@
             min-width: 0;
             overflow: hidden;
         }}
-        .bottom-panel > .section > div:last-child {{
+        .bottom-panel > .section > .scroll-wrap {{
             flex: 1;
             min-height: 0;
             max-height: none !important;
@@ -347,6 +392,7 @@
             align-items: stretch;
             display: flex;
             gap: 0;
+            overflow: hidden;
         }}
         #chartSection > .card {{
             height: 100%;
@@ -357,7 +403,12 @@
             flex-direction: column;
         }}
         #chartSection > .section {{
+            height: 100%;
+            min-height: 0;
             min-width: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
             border: 1px solid var(--border);
             border-radius: 8px;
             background: var(--surface-alt);
@@ -369,16 +420,10 @@
             min-height: 80px;
             max-height: none;
         }}
-        #chartSection .section {{
-            overflow: hidden;
-        }}
-        #chartSection .section > div {{
-            max-height: none !important;
-        }}
         .resize-handle {{
             flex-shrink: 0;
             height: 10px;
-            cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cpath d='M12 2L7 7h3v10h-3l5 5 5-5h-3V7h3z' fill='%23fff' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E") 12 12, row-resize;
+            cursor: row-resize;
             position: relative;
             z-index: 1;
             display: flex;
@@ -420,7 +465,7 @@
         .col-resize-handle {{
             flex-shrink: 0;
             width: 10px;
-            cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cpath d='M2 12L7 7v3h10v-3l5 5-5 5v-3H7v3z' fill='%23fff' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E") 12 12, col-resize;
+            cursor: col-resize;
             position: relative;
             z-index: 1;
             display: flex;
@@ -459,6 +504,27 @@
         }}
         .col-resize-handle:hover::after, .col-resize-handle.dragging::after {{
             opacity: 1;
+        }}
+        .th-grip {{
+            position: absolute;
+            top: 0;
+            right: -4px;
+            bottom: 0;
+            width: 8px;
+            cursor: col-resize;
+            user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: none;
+            z-index: 2;
+        }}
+        .col-drag-line {{
+            position: absolute;
+            width: 2px;
+            margin-left: -1px;
+            background: var(--accent-start);
+            border-radius: 1px;
+            pointer-events: none;
+            z-index: 5;
         }}
     </style>
     <!-- Time-of-day theme (keep in sync across dashboard/charts/logs templates) -->
@@ -537,7 +603,11 @@
                 </span>
                 <a href="/charts" class="status-badge">Charts</a>
                 <a href="/logs" class="status-badge">Logs</a>
-                <span class="status-badge" id="statusBadge" style="background:{status_color}">{status_text}</span>
+                <span class="badge-slot">
+                    <span class="status-badge" id="statusBadge" style="background:{status_color}">{status_text}</span>
+                    <span id="toastOverdue" class="status-badge toast toast-warn"></span>
+                    <span id="toastTimedOut" class="status-badge toast toast-error"></span>
+                </span>
             </div>
         </div>
 
@@ -567,6 +637,9 @@
                 <div class="card">
                     <h2>Scheduled Games</h2>
                     <div class="card-value"><span id="pendingValue">{games_pending}</span> / <span id="remainingValue">--</span></div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="schedFill" style="width: 0%;"></div>
+                    </div>
                 </div>
             </div>
 
@@ -594,7 +667,7 @@
             <div class="two-col" id="chartSection" style="grid-template-columns: 3fr 2fr;">
                 <div class="card" style="position:relative;">
                     <span id="legendToggle" onclick="toggleLegend()"
-                        style="position:absolute;top:6px;right:8px;z-index:2;font-size:11px;padding:2px 8px;cursor:pointer;border:2px solid var(--text-subtle);border-radius:4px;font-weight:600;background:var(--surface);color:var(--text-muted);letter-spacing:0;text-transform:none;user-select:none;">Legend</span>
+                        style="position:absolute;top:6px;left:8px;z-index:2;font-size:11px;padding:2px 8px;cursor:pointer;border:2px solid var(--text-subtle);border-radius:4px;font-weight:600;background:var(--surface);color:var(--text-muted);letter-spacing:0;text-transform:none;user-select:none;">Legend</span>
                     <div class="chart-wrap"><canvas id="thetaChart"></canvas></div>
                 </div>
                 <div class="col-resize-handle" id="chartParamsHandle"></div>
@@ -619,7 +692,7 @@
                             </tr>
                         </thead>
                     </table>
-                    <div style="flex:1; min-height:0; max-height:280px; overflow-y:auto;">
+                    <div style="flex:1; min-height:0; overflow-y:auto;">
                     <table class="params-tbl">
                         <colgroup id="thetaBodyCols"><col style="width:60%"><col style="width:20%"><col style="width:20%"></colgroup>
                         <tbody id="thetaBody"></tbody>
@@ -635,12 +708,12 @@
                 <div class="section" style="margin-top: 0;">
                     <h3>Workers</h3>
                     <table style="table-layout:fixed; width:100%;">
-                        <colgroup><col style="width:18%"><col style="width:16%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:15%"></colgroup>
-                        <thead><tr><th>Name</th><th>Status</th><th>Seen</th><th>Assigned</th><th>Iter</th><th>Session</th></tr></thead>
+                        <colgroup id="workersHeadCols"><col style="width:22%"><col style="width:18%"><col style="width:10%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>
+                        <thead><tr id="workersHeadRow"><th>Name</th><th>Seen</th><th style="text-transform:none">vCPU</th><th>Assigned</th><th>Iter</th><th>Session</th></tr></thead>
                     </table>
-                    <div style="max-height: 340px; overflow-y: auto;">
+                    <div class="scroll-wrap" style="max-height: 340px; overflow-y: auto;">
                     <table style="table-layout:fixed; width:100%;">
-                        <colgroup><col style="width:18%"><col style="width:16%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:15%"></colgroup>
+                        <colgroup id="workersBodyCols"><col style="width:22%"><col style="width:18%"><col style="width:10%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>
                         <tbody id="workersBody"></tbody>
                     </table>
                     </div>
@@ -650,13 +723,13 @@
                     <h3 id="historyTitle">History (latest {dashboard_history})</h3>
                     <div style="flex-shrink: 0;">
                     <table style="table-layout:fixed; width:100%;">
-                        <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
-                        <thead><tr><th>Iter</th><th>Score Diff</th><th>ELO Diff</th><th>a_k</th><th>c_k</th></tr></thead>
+                        <colgroup id="historyHeadCols"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
+                        <thead><tr id="historyHeadRow"><th>Iter</th><th>Score Diff</th><th>ELO Diff</th><th>a_k</th><th>c_k</th></tr></thead>
                     </table>
                     </div>
-                    <div style="max-height: 340px; overflow-y: auto;">
+                    <div class="scroll-wrap" style="max-height: 340px; overflow-y: auto;">
                     <table style="table-layout:fixed; width:100%;">
-                        <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
+                        <colgroup id="historyBodyCols"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
                         <tbody id="historyBody"></tbody>
                     </table>
                     </div>
@@ -689,6 +762,7 @@
         var hiddenParams = new Set();
         var prevTheta = {{}};
         var paramRanges = {{}};
+        var thetaColResizer = null;
 
         function fmtVal(v, decimals) {{
             return (typeof v === 'number' && !Number.isInteger(v)) ? v.toFixed(decimals || 6) : v;
@@ -764,6 +838,7 @@
             }} else {{
                 hr.innerHTML = '<th>Parameter</th><th>Initial</th><th>Current</th>';
             }}
+            if (thetaColResizer) thetaColResizer.reattach();
             const tbody = document.getElementById('thetaBody');
             tbody.innerHTML = '';
             var dec = showInternal ? 5 : 6;
@@ -780,8 +855,7 @@
                     var pctColor = '';
                     if (conv) pctColor = 'color:' + convColor(conv.pct) + ';font-weight:600;';
                     var tip = name;
-                    if (conv) tip += '\nWindow: last ' + conv.window + ' iterations';
-                    tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + tip + '">' + name + '</td>'
+                    tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" title="' + tip + '"><span class="solo-link">' + name + '</span></td>'
                                  + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + sdTxt + '</td>'
                                  + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;' + pctColor + '">' + pctTxt + '</td>';
                 }} else {{
@@ -802,10 +876,19 @@
                         var dotStyle = pdiff === 0 ? 'color:var(--text-faint);' : conv ? 'color:' + convColor(conv.pct) + ';' : '';
                         dot = '<span style="font-size:9px;margin-right:4px;' + dotStyle + '">' + sym + '</span>';
                     }}
-                    tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;" title="' + name + '">' + dot + name + '</td>'
+                    tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" title="' + name + '">' + dot + '<span class="solo-link">' + name + '</span></td>'
                                  + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + initVal + '</td>'
                                  + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + fmtVal(value, dec) + arrow + '</td>';
                 }}
+                tr.querySelector('.solo-link').addEventListener('click', function() {{
+                    localStorage.setItem('chartSolo', JSON.stringify({{p: name, m: 'value'}}));
+                    try {{
+                        var vis = JSON.parse(localStorage.getItem('chartVis')) || {{}};
+                        vis.params = true;
+                        localStorage.setItem('chartVis', JSON.stringify(vis));
+                    }} catch(e) {{}}
+                    location.href = '/charts';
+                }});
                 tbody.appendChild(tr);
             }}
         }}
@@ -845,19 +928,21 @@
             workers.sort((a, b) => b.games_completed - a.games_completed);
             const tbody = document.getElementById('workersBody');
             tbody.innerHTML = '';
+            var overdueCount = 0, timedOutCount = 0;
             workers.forEach(w => {{
                 var style, status;
-                if (w.status === 1) {{ style = 'color:#FF9800;font-weight:bold'; status = 'overdue'; }}
-                else if (w.status === 2 || !w.alive) {{ style = 'color:#f44336;font-weight:bold'; status = 'timed out'; }}
+                if (w.status === 1) {{ style = 'color:#FF9800;font-weight:bold'; status = 'overdue'; overdueCount++; }}
+                else if (w.status === 2 || !w.alive) {{ style = 'color:#f44336;font-weight:bold'; status = 'timed out'; timedOutCount++; }}
                 else {{ style = 'color:#4CAF50'; status = 'online'; }}
-                var tip = w.name;
+                var tip = w.name + ' | ' + status;
                 if (w.sec_per_game != null) tip += ' | ' + w.sec_per_game.toFixed(1) + ' sec/game';
                 if (w.chunk_eta > 0) tip += ' | ETA ~' + formatDuration(w.chunk_eta * 1000);
                 const tr = document.createElement('tr');
                 tr.title = tip;
+                var conc = (w.concurrency && w.concurrency > 0) ? w.concurrency : '?';
                 tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + w.name + '</td>'
-                             + '<td style="overflow:hidden;text-overflow:ellipsis;' + style + '">' + status + '</td>'
-                             + '<td class="worker-seen">' + Math.round(w.last_seen_ago) + 's ago</td>'
+                             + '<td class="worker-seen" style="' + style + '">' + Math.round(w.last_seen_ago) + 's ago</td>'
+                             + '<td>' + conc + '</td>'
                              + '<td>' + w.games_assigned + '</td>'
                              + '<td>' + w.games_completed_iter + '</td>'
                              + '<td>' + w.games_completed + '</td>';
@@ -865,6 +950,20 @@
             }});
             latestWorkers = workers;
             lastWorkerUpdate = Date.now();
+            updateWorkerToasts(overdueCount, timedOutCount);
+        }}
+
+        function updateWorkerToasts(overdue, timedOut) {{
+            var t = document.getElementById('toastTimedOut');
+            var o = document.getElementById('toastOverdue');
+            if (t) {{
+                t.textContent = timedOut + ' worker' + (timedOut === 1 ? '' : 's') + ' timed out';
+                t.classList.toggle('show', timedOut > 0);
+            }}
+            if (o) {{
+                o.textContent = overdue + ' worker' + (overdue === 1 ? '' : 's') + ' overdue';
+                o.classList.toggle('show', overdue > 0);
+            }}
         }}
 
         // Tick last-seen counters client-side between SSE pushes
@@ -904,16 +1003,14 @@
         // --- Initial render from baked-in data ---
         const sessionStart = '{session_start}';
         var totalGamesAtStart = {total_games_at_start};
-        var currentThroughput = {throughput};
         var iterationStartEpoch = {iteration_start};
-        var lastETA = [{total_games}, {games_done}, {games_total}, {iteration}, {max_iters}];
-        // Measured iteration durations (seconds) — populated as iterations complete
-        // after page load. Used for session ETA instead of throughput extrapolation,
-        // which double-counts idle time between chunks.
-        var iterDurations = [];
-        var MAX_ITER_SAMPLES = 10;
-        var prevIterationSeen = {iteration};
-        var prevIterationStartEpoch = {iteration_start};
+        // ETAs computed server-side; client tracks local arrival time so the
+        // displayed countdown is independent of client/server clock skew.
+        var etaIterS = {iter_eta_s};
+        var etaSessionS = {session_eta_s};
+        var avgIterSec = {avg_iter_sec};
+        var etaReceivedAt = Date.now();
+        var lastETA = [{games_done}, {games_total}, {iteration}, {max_iters}];
         const initTheta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}');
         const initThetaInternal = JSON.parse(document.getElementById('theta-internal-data').textContent || '{{}}');
         const initWorkers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
@@ -925,16 +1022,16 @@
         renderTheta(hasNormalized ? currentThetaInternal : currentTheta, hasNormalized ? initialThetaInternal : initialTheta);
         renderWorkers(initWorkers);
         document.getElementById('remainingValue').textContent = {games_total} - {games_done};
+        updateSchedFill({games_pending}, {games_total} - {games_done});
         renderHistory(historyWindow);
         updateHistoryTitle({history_total});
         updateSinceRestart({total_games});
-        updateETA({total_games}, {games_done}, {games_total}, {iteration}, {max_iters});
+        updateETA({games_done}, {games_total}, {iteration}, {max_iters});
         setInterval(function() {{
             // Elapsed clock always ticks
             var e = (Date.now() - iterationStartEpoch * 1000) / 1000;
             document.getElementById('elapsedIter').textContent = '(' + formatDuration(e * 1000) + ')';
-            // Only refine ETA on timer after a full iteration has completed
-            if (lastETA[3] >= 1) updateETA.apply(null, lastETA);
+            updateETA.apply(null, lastETA);
         }}, 1000);
 
         // --- Fetch initial parameter values from config ---
@@ -1109,8 +1206,10 @@
         function formatDuration(ms) {{
             if (ms == null || !isFinite(ms) || ms < 0) return '--';
             var sec = Math.round(ms / 1000);
-            if (sec < 120) return sec + 's';
-            var min = Math.round(sec / 60);
+            if (sec < 60) return sec + 's';
+            var min = Math.floor(sec / 60);
+            var rem = sec % 60;
+            if (min < 10) return rem > 0 ? min + 'm ' + rem + 's' : min + 'm';
             if (min < 120) return min + 'm';
             var hrs = (min / 60).toFixed(1);
             if (hrs < 48) return hrs + 'h';
@@ -1121,45 +1220,40 @@
             var el = document.getElementById('totalGamesStat');
             if (el) el.title = since > 0 ? since + ' since restart' : '';
         }}
-        function updateETA(totalGames, gamesDone, gamesTotal, iteration, maxIters) {{
-            var iterElapsed = (Date.now() - iterationStartEpoch * 1000) / 1000;
-            var iterTp = (gamesDone > 0 && iterElapsed > 10) ? gamesDone / iterElapsed : 0;
-            var tp = Math.max(iterTp, currentThroughput);
-            var gamesLeftIter = Math.max(0, gamesTotal - gamesDone);
-            var etaIter = '';
-            if (tp > 0) {{
-                var fi = formatDuration(gamesLeftIter / tp * 1000);
-                if (fi !== '--') etaIter = fi;
+        function updateSchedFill(pending, remaining) {{
+            var fill = document.getElementById('schedFill');
+            var rawPct = remaining > 0 ? pending / remaining * 100 : (pending > 0 ? Infinity : 0);
+            fill.style.width = Math.min(100, rawPct) + '%';
+            fill.textContent = rawPct > 0 ? (isFinite(rawPct) ? Math.round(rawPct) + '%' : '∞') : '';
+            // In overschedule mode, drift the gradient's end color toward a
+            // forest green proportional to excess. Excess reaches 1 at 150%
+            // scheduled (rather than 200%) so the shift is more aggressive,
+            // and the green mix peaks at 80%. Target hex is hardcoded -- the
+            // mint --conv-good token is the wrong hue for "deep forest".
+            if (rawPct >= 100) {{
+                var greenPct = (Math.min(1, (rawPct / 100 - 1) * 2) * 80).toFixed(0);
+                fill.style.background = 'linear-gradient(90deg, var(--accent-start) 0%, color-mix(in srgb, var(--accent-end), #1F5C2A ' + greenPct + '%) 100%)';
+            }} else {{
+                fill.style.background = '';
             }}
+        }}
+        function updateETA(gamesDone, gamesTotal, iteration, maxIters) {{
+            // Interpolate the server's ETAs forward to "now" using the local
+            // arrival time, so the countdown ticks smoothly between SSE events
+            // without depending on server-vs-client clock alignment.
+            var sinceRx = (Date.now() - etaReceivedAt) / 1000;
+            function fmt(s) {{ var f = formatDuration(s * 1000); return f === '--' ? '' : f; }}
+            var etaIter = etaIterS > 0 ? fmt(Math.max(0, etaIterS - sinceRx)) : '';
+            var etaSession = etaSessionS > 0 ? fmt(Math.max(0, etaSessionS - sinceRx)) : '';
 
-            // Session ETA: use measured iteration duration when available; fall
-            // back to throughput extrapolation until the first iteration bump.
-            var avgIterSec = iterDurations.length > 0
-                ? iterDurations.reduce(function(a, b) {{ return a + b; }}, 0) / iterDurations.length
-                : 0;
-            var etaSession = '';
-            if (avgIterSec > 0) {{
-                var fullItersLeft = Math.max(0, maxIters - iteration - 1);
-                var currentIterRemaining = Math.max(0, avgIterSec - iterElapsed);
-                var sessionSec = fullItersLeft * avgIterSec + currentIterRemaining;
-                var fs = formatDuration(sessionSec * 1000);
-                if (fs !== '--') etaSession = fs;
-            }} else if (tp > 0) {{
-                var gamesLeftTotal = gamesLeftIter + Math.max(0, maxIters - iteration) * gamesTotal;
-                var fs = formatDuration(gamesLeftTotal / tp * 1000);
-                if (fs !== '--') etaSession = fs;
-            }}
-
-            var iterEl = document.getElementById('iterValue');
-            var gamesEl = document.getElementById('gamesValue');
-            iterEl.innerHTML = iteration + ' / ' + maxIters
+            document.getElementById('iterValue').innerHTML = iteration + ' / ' + maxIters
                 + (etaSession ? ' <span style="font-size:14px;color:var(--text-subtle);font-weight:normal">~' + etaSession + ' left</span>' : '');
-            gamesEl.innerHTML = gamesDone + ' / ' + gamesTotal
+            document.getElementById('gamesValue').innerHTML = gamesDone + ' / ' + gamesTotal
                 + (etaIter ? ' <span style="font-size:14px;color:var(--text-subtle);font-weight:normal">~' + etaIter + ' left</span>' : '');
-            document.getElementById('avgIterLabel').textContent = 'Est / Iteration';
+            document.getElementById('avgIterLabel').textContent = 'Avg / Iteration';
             document.getElementById('avgIterValue').textContent = avgIterSec > 0
                 ? formatDuration(avgIterSec * 1000)
-                : (tp > 0 ? formatDuration(gamesTotal / tp * 1000) : '--');
+                : '--';
         }}
 
         // --- SSE live updates ---
@@ -1178,12 +1272,12 @@
             document.getElementById('gamesFill').textContent = Math.round(d.iter_progress) + '%';
             document.getElementById('pendingValue').textContent = d.games_pending;
             document.getElementById('remainingValue').textContent = d.games_total - d.games_done;
+            updateSchedFill(d.games_pending, d.games_total - d.games_done);
 
             // Stats
             document.getElementById('akValue').textContent = d.a_k.toFixed(6);
             document.getElementById('ckValue').textContent = d.c_k.toFixed(6);
             document.getElementById('totalGamesValue').textContent = d.total_games;
-            currentThroughput = d.throughput;
             if (typeof d.total_games_at_start === 'number') totalGamesAtStart = d.total_games_at_start;
             updateSinceRestart(d.total_games);
 
@@ -1268,19 +1362,13 @@
             // Theme
             applyTimeTheme();
 
-            // ETA
-            // Record completed iteration duration when iteration number advances.
-            if (d.iteration > prevIterationSeen && prevIterationStartEpoch) {{
-                var dur = d.iteration_start - prevIterationStartEpoch;
-                if (dur > 0) {{
-                    iterDurations.push(dur);
-                    if (iterDurations.length > MAX_ITER_SAMPLES) iterDurations.shift();
-                }}
-            }}
-            prevIterationSeen = d.iteration;
-            prevIterationStartEpoch = d.iteration_start;
+            // ETA — server computes; client just interpolates from local arrival time.
             iterationStartEpoch = d.iteration_start;
-            lastETA = [d.total_games, d.games_done, d.games_total, d.iteration, d.max_iters];
+            etaIterS = d.iter_eta_s;
+            etaSessionS = d.session_eta_s;
+            avgIterSec = d.avg_iter_sec;
+            etaReceivedAt = Date.now();
+            lastETA = [d.games_done, d.games_total, d.iteration, d.max_iters];
             updateETA.apply(null, lastETA);
 
             // Footer
@@ -1298,22 +1386,32 @@
     // --- Resize handles (horizontal row split + vertical column splitters) ---
     (function() {{
         // Shared drag boilerplate: mobile guard, dragging class, move/up listeners, chart resize.
-        // onStart(e) is called on mousedown and must return {{ move(e), save() }}.
+        // onStart(e) is called on pointerdown and must return {{ move(e), save() }}.
         function makeDragResize(handle, onStart) {{
-            handle.addEventListener('mousedown', function(eDown) {{
-                if (window.innerWidth <= 700) return;
+            handle.addEventListener('pointerdown', function(eDown) {{
+                if (eDown.button !== undefined && eDown.button !== 0) return;
                 eDown.preventDefault();
+                try {{ handle.setPointerCapture(eDown.pointerId); }} catch(e) {{}}
                 handle.classList.add('dragging');
                 var h = onStart(eDown);
+                var done = false;
                 function onMove(e) {{ h.move(e); if (thetaChart) thetaChart.resize(); }}
                 function onUp() {{
+                    if (done) return;
+                    done = true;
                     handle.classList.remove('dragging');
                     h.save();
-                    window.removeEventListener('mousemove', onMove);
-                    window.removeEventListener('mouseup', onUp);
+                    handle.removeEventListener('pointermove', onMove);
+                    handle.removeEventListener('pointerup', onUp);
+                    handle.removeEventListener('pointercancel', onUp);
+                    document.removeEventListener('pointerup', onUp);
+                    document.removeEventListener('pointercancel', onUp);
                 }}
-                window.addEventListener('mousemove', onMove);
-                window.addEventListener('mouseup', onUp);
+                handle.addEventListener('pointermove', onMove);
+                handle.addEventListener('pointerup', onUp);
+                handle.addEventListener('pointercancel', onUp);
+                document.addEventListener('pointerup', onUp);
+                document.addEventListener('pointercancel', onUp);
             }});
         }}
 
@@ -1323,12 +1421,29 @@
                 curRatio = r;
                 leftEl.style.flex = 'none';
                 rightEl.style.flex = 'none';
-                leftEl.style.width = 'calc(' + (r * 100).toFixed(3) + '% - 5px)';
-                rightEl.style.width = 'calc(' + ((1 - r) * 100).toFixed(3) + '% - 5px)';
+                leftEl.style.display = '';
+                rightEl.style.display = '';
+                if (r <= 0) {{
+                    leftEl.style.display = 'none';
+                    leftEl.style.width = '0';
+                    rightEl.style.width = 'calc(100% - 10px)';
+                }} else if (r >= 1) {{
+                    leftEl.style.width = 'calc(100% - 10px)';
+                    rightEl.style.display = 'none';
+                    rightEl.style.width = '0';
+                }} else {{
+                    leftEl.style.width = 'calc(' + (r * 100).toFixed(3) + '% - 5px)';
+                    rightEl.style.width = 'calc(' + ((1 - r) * 100).toFixed(3) + '% - 5px)';
+                }}
             }}
             function clampRatio(r) {{
                 var w = handle.parentElement.getBoundingClientRect().width || 1000;
-                return Math.max(minLeft / w, Math.min((w - minRight) / w, r));
+                r = Math.max(minLeft / w, Math.min((w - minRight) / w, r));
+                // Snap to exact edges when near them, so the user can fully
+                // collapse without needing pixel-perfect cursor placement.
+                if (r < 0.02) r = 0;
+                else if (r > 0.98) r = 1;
+                return r;
             }}
             var saved = parseFloat(localStorage.getItem(storageKey));
             applyRatio(clampRatio(isNaN(saved) ? defaultRatio : saved));
@@ -1351,16 +1466,138 @@
             var bp = document.querySelector('.bottom-panel');
             var maxH = startH + bp.getBoundingClientRect().height;
             return {{
-                move: function(e) {{ cs.style.height = Math.max(120, Math.min(startH + e.clientY - startY, maxH)) + 'px'; }},
+                move: function(e) {{ cs.style.height = Math.max(0, Math.min(startH + e.clientY - startY, maxH)) + 'px'; }},
                 save: function() {{ localStorage.setItem('dashSplitH', Math.round(cs.getBoundingClientRect().height)); }}
             }};
         }});
 
         // Vertical column splits
-        makeColResizable(document.getElementById('chartParamsHandle'), cs.querySelector('.card'), cs.querySelector('.section'), 'dashChartParamsRatio', 0.6, 280, 200);
+        makeColResizable(document.getElementById('chartParamsHandle'), cs.querySelector('.card'), cs.querySelector('.section'), 'dashChartParamsRatio', 0.6, 0, 0);
         var bp = document.querySelector('.bottom-panel');
         var bpSections = bp.querySelectorAll('.section');
-        makeColResizable(document.getElementById('workersHistHandle'), bpSections[0], bpSections[1], 'dashWorkersHistRatio', 0.5, 360, 420);
+        makeColResizable(document.getElementById('workersHistHandle'), bpSections[0], bpSections[1], 'dashWorkersHistRatio', 0.5, 0, 0);
+
+        // Per-column resize: drag a grip on the right edge of any <th> to widen
+        // its column at the expense of the next; paired head/body colgroups stay
+        // in sync, widths persist in localStorage.
+        function makeTableColumnsResizable(headCg, bodyCg, headRow, storageKey) {{
+            var headCols = headCg.querySelectorAll('col');
+            var bodyCols = bodyCg.querySelectorAll('col');
+            var nCols = headCols.length;
+            var headTbl = headCg.parentElement;
+            var bodyTbl = bodyCg.parentElement;
+            var bodyWrapper = bodyTbl.parentElement;
+            var section = headTbl.closest('.section') || headTbl.parentElement;
+            // Anchor for the full-column drag-indicator overlay
+            var sStyle = getComputedStyle(section);
+            if (sStyle.position === 'static') section.style.position = 'relative';
+            // `left`/`top` for absolute children are measured from the padding-box,
+            // but getBoundingClientRect() returns the border-box; subtract the
+            // section's border to keep the indicator pixel-aligned to the column.
+            var sBorderLeft = parseFloat(sStyle.borderLeftWidth) || 0;
+            var sBorderTop = parseFloat(sStyle.borderTopWidth) || 0;
+            function applyWidths(pcts) {{
+                for (var i = 0; i < nCols; i++) {{
+                    headCols[i].style.width = pcts[i] + '%';
+                    if (bodyCols[i]) bodyCols[i].style.width = pcts[i] + '%';
+                }}
+            }}
+            function readPcts() {{
+                var out = [];
+                for (var i = 0; i < nCols; i++) out.push(parseFloat(headCols[i].style.width) || 0);
+                return out;
+            }}
+            try {{
+                var saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+                if (Array.isArray(saved) && saved.length === nCols) applyWidths(saved);
+            }} catch (e) {{}}
+            function attach() {{
+                var ths = headRow.querySelectorAll('th');
+                if (ths.length !== nCols) return;
+                for (var i = 0; i < ths.length - 1; i++) {{
+                    (function(idx, th) {{
+                        if (th.querySelector('.th-grip')) return;
+                        th.style.position = 'relative';
+                        var grip = document.createElement('div');
+                        grip.className = 'th-grip';
+                        th.appendChild(grip);
+                        makeDragResize(grip, function(eDown) {{
+                            var pcts = readPcts();
+                            var startX = eDown.clientX;
+                            var startA = pcts[idx], startB = pcts[idx + 1];
+                            var tableW = headTbl.getBoundingClientRect().width || 1;
+                            var minPct = 5;
+                            var moved = false;
+                            var overlay = document.createElement('div');
+                            var leftLine = document.createElement('div');
+                            overlay.className = leftLine.className = 'col-drag-line';
+                            section.appendChild(overlay);
+                            section.appendChild(leftLine);
+                            function placeOverlay() {{
+                                var sRect = section.getBoundingClientRect();
+                                var thRect = headRow.querySelectorAll('th')[idx].getBoundingClientRect();
+                                var headRect = headTbl.getBoundingClientRect();
+                                // End the line at the visible content edge, not the
+                                // section bottom: with flex:1 wrappers the section can
+                                // extend past the last row, otherwise the line draws
+                                // ghost rows below the data.
+                                var bottomY = Math.min(bodyTbl.getBoundingClientRect().bottom,
+                                                       bodyWrapper.getBoundingClientRect().bottom);
+                                var topPx = (headRect.top - sRect.top - sBorderTop) + 'px';
+                                var heightPx = (bottomY - headRect.top) + 'px';
+                                // The -3 px fudge nudges the indicator under the col-resize
+                                // cursor's *visual* center: on the OS theme this was tuned
+                                // against, the cursor's hotspot sits ~3 px right of the
+                                // double-arrow's visual midpoint, so the line at the true
+                                // boundary looked offset. Cosmetic only; safe to drop or
+                                // retune for a different cursor theme.
+                                overlay.style.left = (thRect.right - sRect.left - sBorderLeft - 3) + 'px';
+                                overlay.style.top = topPx;
+                                overlay.style.height = heightPx;
+                                leftLine.style.left = (thRect.left - sRect.left - sBorderLeft - 3) + 'px';
+                                leftLine.style.top = topPx;
+                                leftLine.style.height = heightPx;
+                            }}
+                            placeOverlay();
+                            return {{
+                                move: function(e) {{
+                                    moved = true;
+                                    var dPct = ((e.clientX - startX) / tableW) * 100;
+                                    var a = startA + dPct, b = startB - dPct;
+                                    if (a < minPct) {{ b -= (minPct - a); a = minPct; }}
+                                    if (b < minPct) {{ a -= (minPct - b); b = minPct; }}
+                                    pcts[idx] = a; pcts[idx + 1] = b;
+                                    applyWidths(pcts);
+                                    placeOverlay();
+                                }},
+                                save: function() {{
+                                    overlay.remove();
+                                    leftLine.remove();
+                                    if (moved) localStorage.setItem(storageKey, JSON.stringify(readPcts()));
+                                }}
+                            }};
+                        }});
+                    }})(i, ths[i]);
+                }}
+            }}
+            attach();
+            return {{ reattach: attach }};
+        }}
+        thetaColResizer = makeTableColumnsResizable(
+            document.getElementById('thetaHeadCols'),
+            document.getElementById('thetaBodyCols'),
+            document.getElementById('thetaHeadRow'),
+            'dashThetaColPcts');
+        makeTableColumnsResizable(
+            document.getElementById('workersHeadCols'),
+            document.getElementById('workersBodyCols'),
+            document.getElementById('workersHeadRow'),
+            'dashWorkersColPcts');
+        makeTableColumnsResizable(
+            document.getElementById('historyHeadCols'),
+            document.getElementById('historyBodyCols'),
+            document.getElementById('historyHeadRow'),
+            'dashHistoryColPcts');
     }})();
     </script>
 </body>

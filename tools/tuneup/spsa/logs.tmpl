@@ -124,7 +124,7 @@
         .status-badge {{
             background: rgba(0,0,0,0.25);
             padding: 6px 16px;
-            border-radius: 16px;
+            border-radius: 10px;
             font-weight: 600;
             font-size: 12px;
             text-transform: uppercase;
@@ -151,9 +151,15 @@
             gap: 12px;
             align-items: center;
         }}
+        .search-bar form {{
+            flex: 1;
+            display: flex;
+            margin: 0;
+            position: relative;
+        }}
         .search-input {{
             flex: 1;
-            padding: 10px 16px;
+            padding: 10px 110px 10px 16px;
             border: 2px solid var(--border);
             border-radius: 8px;
             font-size: 14px;
@@ -167,54 +173,56 @@
             border-color: var(--accent-start);
         }}
         .search-stats {{
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
             font-size: 12px;
             color: var(--text-muted);
             white-space: nowrap;
-            min-width: 100px;
+            pointer-events: none;
         }}
         .search-nav {{
             display: flex;
             gap: 4px;
         }}
-        .nav-button {{
+        .nav-button, .clear-button {{
             width: 32px;
             height: 32px;
             background: var(--surface-alt);
-            color: var(--text-muted);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            font-size: 16px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.2s;
-        }}
-        .nav-button:hover {{
-            background: var(--surface-hover);
             color: var(--text);
-        }}
-        .nav-button:disabled {{
-            opacity: 0.3;
-            cursor: not-allowed;
-        }}
-        .clear-button {{
-            width: 32px;
-            height: 32px;
-            background: var(--surface-alt);
-            color: var(--text-muted);
             border: 1px solid var(--border);
-            border-radius: 50%;
-            font-size: 18px;
-            font-weight: bold;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: all 0.2s;
+            padding: 0;
+            transition: all 0.15s;
         }}
-        .clear-button:hover {{
-            background: var(--surface-hover);
+        .nav-button svg, .clear-button svg {{
+            width: 14px;
+            height: 14px;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 2.5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            pointer-events: none;
+        }}
+        .nav-button {{ border-radius: 4px; }}
+        .clear-button {{ border-radius: 50%; }}
+        .nav-button:hover, .clear-button:hover {{
+            background: var(--accent-start);
+            border-color: var(--accent-start);
+            color: #fff;
+        }}
+        .nav-button:disabled, .clear-button:disabled {{
+            opacity: 0.3;
+            cursor: default;
+        }}
+        .nav-button:disabled:hover, .clear-button:disabled:hover {{
+            background: var(--surface-alt);
+            border-color: var(--border);
             color: var(--text);
         }}
         .log-container {{
@@ -387,13 +395,15 @@
 
         <div class="content">
             <div class="search-bar">
+                <form id="searchForm" onsubmit="return false;">
                 <input type="text" id="searchInput" class="search-input" placeholder="Search logs...">
                 <span class="search-stats" id="searchStats"></span>
+                </form>
                 <div class="search-nav">
-                    <button class="nav-button" id="prevButton" onclick="navigatePrev()" title="Previous match (Shift+Enter)">&#x2191;</button>
-                    <button class="nav-button" id="nextButton" onclick="navigateNext()" title="Next match (Enter)">&#x2193;</button>
+                    <button class="nav-button" id="prevButton" onclick="navigatePrev()" title="Previous match (Shift+Enter)" disabled><svg viewBox="0 0 16 16"><polyline points="3,11 8,5 13,11"/></svg></button>
+                    <button class="nav-button" id="nextButton" onclick="navigateNext()" title="Next match (Enter)" disabled><svg viewBox="0 0 16 16"><polyline points="3,5 8,11 13,5"/></svg></button>
                 </div>
-                <button class="clear-button" onclick="clearSearch()" title="Clear search">&#xd7;</button>
+                <button class="clear-button" id="clearButton" onclick="clearSearch()" title="Clear search" disabled><svg viewBox="0 0 16 16"><line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg></button>
             </div>
 
             <div class="log-container" id="logContainer"></div>
@@ -414,6 +424,7 @@
         var searchStats = document.getElementById('searchStats');
         var prevButton = document.getElementById('prevButton');
         var nextButton = document.getElementById('nextButton');
+        var clearButton = document.getElementById('clearButton');
 
         var matches = [];
         var currentMatchIndex = -1;
@@ -528,6 +539,7 @@
                 nextButton.disabled = true;
                 renderLines(true);
             }}
+            clearButton.disabled = query === '';
         }}
 
         function scrollToCurrentMatch() {{
@@ -588,11 +600,15 @@
 
         searchInput.addEventListener('input', performSearch);
 
+        document.getElementById('searchForm').addEventListener('submit', function(e) {{
+            e.preventDefault();
+            navigateNext();
+        }});
+
         searchInput.addEventListener('keydown', function(e) {{
-            if (e.key === 'Enter') {{
+            if (e.key === 'Enter' && e.shiftKey) {{
                 e.preventDefault();
-                if (e.shiftKey) navigatePrev();
-                else navigateNext();
+                navigatePrev();
             }}
         }});
 
@@ -600,6 +616,13 @@
             if ((e.ctrlKey || e.metaKey) && e.key === 'f') {{
                 e.preventDefault();
                 searchInput.focus();
+            }} else if (e.key === 'Enter') {{
+                var tag = document.activeElement && document.activeElement.tagName;
+                if (tag === 'BODY' || tag === 'DIV') {{
+                    e.preventDefault();
+                    if (e.shiftKey) navigatePrev();
+                    else navigateNext();
+                }}
             }} else if (e.key === 'Escape') {{
                 clearSearch();
             }}

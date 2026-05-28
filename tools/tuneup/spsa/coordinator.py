@@ -13,6 +13,7 @@ import argparse
 import json
 import logging
 import logging.handlers
+import math
 import mimetypes
 import os
 import sys
@@ -29,7 +30,10 @@ from pathlib import Path
 from config import TuningConfig, WorkItem, WorkResult
 from spsa import SPSAOptimizer, SPSAState
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
+
+# Per-iteration EWMA alpha for session-ETA smoothing (~3-iter half-life).
+ITER_DURATION_EWMA_ALPHA = 0.3
 
 logger = logging.getLogger("coordinator")
 
@@ -49,8 +53,8 @@ class WorkerInfo:
     games_completed: int = 0
     games_completed_iter: int = 0 # games completed in current iteration
     _spg_ewma: float = 0.0        # exponentially weighted moving average (sec/game)
-    _ewma_alpha: float = 0.2      # smoothing factor: higher = more weight on recent
     cutechess_overrides: dict = field(default_factory=dict)  # worker-local tc/depth
+    concurrency: int = 0          # cutechess parallel slots; 0 = unknown (pre-1.2.1 worker)
 
     @property
     def sec_per_game(self) -> float:
@@ -60,16 +64,21 @@ class WorkerInfo:
     def games_per_second(self) -> float:
         return 1.0 / self._spg_ewma if self._spg_ewma > 0 else 0.0
 
-    def update_speed(self, games: int, elapsed: float):
-        """Update EWMA speed estimate from a completed chunk."""
-        if elapsed <= 0 or games <= 0:
+    def update_speed(self, games: int, elapsed: float, tau_seconds: float):
+        """Update EWMA speed estimate from a completed chunk.
+
+        Time-weighted: alpha = elapsed / (elapsed + tau_seconds).  Long chunks
+        weight more (more samples); tau_seconds sets the "trust horizon".
+        """
+        if elapsed <= 0 or games <= 0 or tau_seconds <= 0:
             return
         sample = elapsed / games
         old = self._spg_ewma
         if self._spg_ewma <= 0:
             self._spg_ewma = sample  # first observation
         else:
-            self._spg_ewma = self._ewma_alpha * sample + (1 - self._ewma_alpha) * self._spg_ewma
+            alpha = elapsed / (elapsed + tau_seconds)
+            self._spg_ewma = alpha * sample + (1 - alpha) * self._spg_ewma
         logger.debug("Speed update %s: %d games in %.1fs (%.2f s/g), ewma %.2f -> %.2f", self.name, games, elapsed, sample, old, self._spg_ewma)
 
 
@@ -137,6 +146,16 @@ class CoordinatorState:
         self.iteration_reference_mode = None  # None until first result, then True/False
         self.iteration_start_time = time.time()
         self.pending_chunks = {}  # chunk_id -> ChunkInfo
+
+        # Per-iteration counters for wall-clock breakdown logging
+        self._iter_overflow_retries = 0
+        self._iter_boundary_retries = 0
+        self._iter_stale_submissions = 0
+
+        # Smoothed iteration wall-clock (seconds), updated on each completion.
+        # In-memory only; resets across restarts -- ETA falls back to throughput
+        # extrapolation until the first iteration lands.
+        self._iter_duration_ewma: float = 0.0
 
         # Worker registry: keyed by self-reported name (hostname or worker config
         # "name" field).  Fine for trusted homelab / LAN setups; a public-facing
@@ -214,7 +233,7 @@ class CoordinatorState:
         if name not in self.workers:
             if self.optimizer.is_done():
                 return  # don't accept new workers after job is done
-            w = WorkerInfo(name=name, last_seen=now, _ewma_alpha=self.config.ewma_alpha)
+            w = WorkerInfo(name=name, last_seen=now)
             saved = self._worker_stats.pop(name, None)
             if saved:
                 w.games_completed, w.chunks_completed, w.games_completed_iter = saved
@@ -274,6 +293,48 @@ class CoordinatorState:
             eta[chunk.worker_name] = eta.get(chunk.worker_name, 0) + remaining
         return eta
 
+    def _worker_throughput(self) -> float:
+        """Sum of EWMA games/sec across active workers.  Reflects per-chunk
+        runtime only -- blind to intra-iter idle, retries, and boundary overhead."""
+        return sum(w.games_per_second for w in self._active_workers())
+
+    def _iter_eta_seconds(self) -> float:
+        """Seconds remaining for current iteration (0 = unknown).
+        Uses worker EWMA throughput -- stable across chunk landings, slightly
+        optimistic (ignores intra-iter idle) but smoothness wins for both
+        dashboard and scheduler."""
+        tp = self._worker_throughput()
+        if tp <= 0:
+            return 0.0
+        games_left = max(0, self.config.games_per_iteration - self.games_completed)
+        return games_left / tp
+
+    def _compute_etas(self, now: float) -> dict:
+        """Iter / session ETAs for the dashboard.  Clients interpolate against
+        arrival time -- no server clock on the wire."""
+        if self.optimizer.is_done():
+            return {"iter_eta_s": 0, "session_eta_s": 0, "avg_iter_sec": 0}
+
+        iter_eta_s = self._iter_eta_seconds()
+        avg_iter = self._iter_duration_ewma
+        iter_elapsed = max(0.0, now - self.iteration_start_time)
+        full_iters_left = max(0, self.optimizer.max_iterations - self.optimizer.iteration - 1)
+
+        if avg_iter > 0:
+            current_iter_remaining = max(0.0, avg_iter - iter_elapsed)
+            session_eta_s = full_iters_left * avg_iter + current_iter_remaining
+        else:
+            # No completed iters this run -- throughput extrapolation ignores
+            # per-iter overhead (mode-switch, theta update, drain) and is
+            # systematically optimistic.  Show nothing until the EWMA seeds.
+            session_eta_s = 0.0
+
+        return {
+            "iter_eta_s": round(iter_eta_s, 1),
+            "session_eta_s": round(session_eta_s, 1),
+            "avg_iter_sec": round(avg_iter, 1),
+        }
+
     def _chunk_timeout_for(self, worker_name: str, num_games: int) -> float:
         """Timeout for a chunk based on expected duration."""
         expected = num_games * self._worker_sec_per_game(worker_name)
@@ -304,15 +365,11 @@ class CoordinatorState:
 
         # Cap unproven workers until EWMA has warmed up
         if warming_up:
-            cap = max(12, int(self.config.min_chunk_timeout / self._base_sec_per_game))
+            if w and w.concurrency > 0:
+                cap = w.concurrency
+            else:
+                cap = max(12, int(self.config.min_chunk_timeout / self._base_sec_per_game))
             chunk = min(chunk, cap)
-        else:
-            # Floor: don't hand out chunks so small that startup overhead
-            # dominates.  Naturally inactive for long TC (spg >= threshold).
-            spg = self._worker_sec_per_game(worker_name)
-            if spg > 0:
-                min_games = int(self.config.min_chunk_expected_duration / spg)
-                chunk = max(chunk, min(remaining, min_games))
 
         # If remainder is too small to split, take it all
         if remaining - chunk < num_workers:
@@ -367,6 +424,10 @@ class CoordinatorState:
             num_games=0,  # filled per chunk
         )
         self.pending_chunks = {}
+
+        self._iter_overflow_retries = 0
+        self._iter_boundary_retries = 0
+        self._iter_stale_submissions = 0
 
         # Reset per-iteration worker counters (including disconnected workers saved in _worker_stats)
         for w in self.workers.values():
@@ -424,7 +485,7 @@ class CoordinatorState:
             self.dashboard_version += 1
             self.dashboard_changed.notify_all()
 
-    def get_work(self, chunk_size: int, worker_name: str, cutechess_overrides: dict, worker_server_start: float) -> dict:
+    def get_work(self, chunk_size: int, worker_name: str, cutechess_overrides: dict, worker_server_start: float, worker_concurrency: int = 0) -> dict:
         """
         Assign a chunk of games to a worker.
 
@@ -434,6 +495,7 @@ class CoordinatorState:
         Args:
             chunk_size: requested games (0 = let coordinator decide)
             worker_name: worker hostname for tracking
+            worker_concurrency: cutechess parallel slots on the worker (0 = unknown, pre-1.2.1)
 
         Returns:
             WorkItem dict, or {"status": "done"/"retry"/"config_changed"}.
@@ -450,6 +512,8 @@ class CoordinatorState:
                 return {"status": "config_changed"}
             if cutechess_overrides and worker_name in self.workers:
                 self.workers[worker_name].cutechess_overrides = cutechess_overrides
+            if worker_concurrency > 0 and worker_name in self.workers:
+                self.workers[worker_name].concurrency = worker_concurrency
 
             if self.optimizer.is_done():
                 return {"status": "done"}
@@ -487,17 +551,7 @@ class CoordinatorState:
                 if not self.pending_chunks:
                     if self.draining and not self._restart:
                         return {"status": "done"}
-                    return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
-                # Asker-agnostic cap: gate on in-flight vs games still needed
-                # BEFORE computing chunk size, so fast workers can speculatively
-                # grab a full-size chunk that actually races the straggler.  A
-                # post-check on (in_flight + num_games) would deny fast workers
-                # whose proportional share is large, letting a slower worker in
-                # instead -- the opposite of what overflow is meant to do.
-                # One dispatch may overshoot the nominal ratio; subsequent
-                # requests are denied until submissions reopen room.
-                needed = gpi - self.games_completed
-                if self._games_in_flight() >= needed * self.config.overflow_factor:
+                    self._iter_boundary_retries += 1
                     return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
                 overflow = True
                 # Budget: one straggler's worth of games per overflow request.
@@ -511,14 +565,47 @@ class CoordinatorState:
                 adaptive = min(adaptive, chunk_size)
             num_games = min(remaining, adaptive)
 
-            if num_games == 0:
-                return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
+            mode_unit = 4 if self.iteration_reference_mode else 2
+            wc = self.workers[worker_name].concurrency if worker_name in self.workers else 0
+            unit = wc * mode_unit // math.gcd(wc, mode_unit) if wc > 0 else mode_unit
 
-            # Must be even; reference mode needs multiple of 4 so each half is even
-            if self.iteration_reference_mode:
-                num_games = ((num_games + 3) // 4) * 4
+            if wc > 0 and self.config.validate_interval > 0:
+                # Round up if the bigger chunk lands within iter ETA; else round
+                # to nearest so the chunk doesn't extend iter wall-clock.  Use
+                # realized iter throughput (includes idle) so the round-up bias
+                # reflects true remaining wall-clock -- fewer chunks dispatched
+                # amortizes per-chunk worker startup cost.
+                chunk_up = ((num_games + unit - 1) // unit) * unit
+                spg = self.workers[worker_name].sec_per_game
+                use_round_up = True
+                if spg > 0:
+                    iter_eta = self._iter_eta_seconds()
+                    if iter_eta > 0:
+                        use_round_up = chunk_up * spg <= iter_eta
+                if use_round_up:
+                    rounded = chunk_up
+                else:
+                    rounded = ((num_games + unit // 2) // unit) * unit
+                if rounded > remaining:
+                    rounded = (num_games // unit) * unit
+                num_games = max(unit, rounded)
             else:
-                num_games += num_games % 2
+                if num_games == 0:
+                    return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
+                num_games = ((num_games + mode_unit - 1) // mode_unit) * mode_unit
+
+            # Overflow cap: post-rounding so the configured factor is the real
+            # ceiling on (in_flight + this dispatch).  Pre-check would let one
+            # rounded chunk overshoot by up to max_chunk_size.
+            if overflow:
+                needed = gpi - self.games_completed
+                if self._games_in_flight() + num_games > needed * self.config.overflow_factor:
+                    # Tail-end bypass: chunks no bigger than the largest in-flight
+                    # chunk are not the new worst-case straggler -- let them race.
+                    largest_pending = max(c.num_games for c in self.pending_chunks.values())
+                    if num_games > largest_pending:
+                        self._iter_overflow_retries += 1
+                        return {"status": "retry", "retry_after": self.config.retry_after, "server_start": self.server_start_time}
 
             # Generate unique chunk ID and compute timeout
             chunk_id = uuid.uuid4().hex[:12]
@@ -546,10 +633,11 @@ class CoordinatorState:
             )
 
             logger.info(
-                "Assigned %d games to %s [%s] (iter %d, %d/%d%s, timeout=%ds)",
+                "Assigned %d games to %s [%s] (iter %d, %d/%d%s, conc=%s, timeout=%ds)",
                 num_games, worker_name or "?", chunk_id,
                 work.iteration, self._games_assigned(), gpi,
                 " overflow" if overflow else "",
+                wc if wc > 0 else "?",
                 int(timeout),
             )
             self._notify_dashboard()
@@ -574,6 +662,7 @@ class CoordinatorState:
                 return {"status": "ignored", "reason": "malformed result"}
 
             if result.iteration != self.optimizer.iteration:
+                self._iter_stale_submissions += 1
                 logger.warning(
                     "Ignoring stale result (%d games) for iteration %d from %s (current: %d)",
                     result.num_games, result.iteration, result.worker, self.optimizer.iteration,
@@ -639,7 +728,7 @@ class CoordinatorState:
                     # progressively smaller allocations (death spiral).
                     spg = w.sec_per_game or self._base_sec_per_game
                     if w.sec_per_game <= 0 or result.num_games * spg >= self.config.min_chunk_expected_duration:
-                        w.update_speed(result.num_games, time.time() - chunk.assign_time)
+                        w.update_speed(result.num_games, time.time() - chunk.assign_time, self.config.min_chunk_expected_duration)
                 if result.shutting_down:
                     self._graceful_disconnect(result.worker)
 
@@ -689,6 +778,20 @@ class CoordinatorState:
 
     def _complete_iteration(self):
         """Finalize current iteration: update theta, save state, log."""
+        # Wall-clock breakdown (active games-running phase only; non-game time
+        # = (next iter_start) - (this completion) per consecutive log timestamps)
+        iter_wall_clock = time.time() - self.iteration_start_time
+        chunks_killed = len(self.pending_chunks)
+
+        # Feed iteration-duration EWMA (drives session ETA on the dashboard).
+        if self._iter_duration_ewma <= 0:
+            self._iter_duration_ewma = iter_wall_clock
+        else:
+            self._iter_duration_ewma = (
+                ITER_DURATION_EWMA_ALPHA * iter_wall_clock
+                + (1 - ITER_DURATION_EWMA_ALPHA) * self._iter_duration_ewma
+            )
+
         total = self.total_wins + self.total_draws + self.total_losses
         dw = self.config.spsa.draw_weight
 
@@ -726,6 +829,11 @@ class CoordinatorState:
         logger.info("=" * 60)
         logger.info("Iteration %d complete (%d games, W=%d D=%d L=%d)",
                      k, total, self.total_wins, self.total_draws, self.total_losses)
+        logger.info(
+            "Timing: games_phase=%.1fs, killed_chunks=%d, overflow_retries=%d, boundary_retries=%d, stale_submissions=%d",
+            iter_wall_clock, chunks_killed,
+            self._iter_overflow_retries, self._iter_boundary_retries, self._iter_stale_submissions,
+        )
         if total_plus > 0 and total_minus > 0:
             logger.info(
                 "Reference mode: theta+ %dW/%dD/%dL (%d games), theta- %dW/%dD/%dL (%d games)",
@@ -915,6 +1023,7 @@ class CoordinatorState:
                     "games_completed": w.games_completed,
                     "sec_per_game": round(self._worker_sec_per_game(name), 1),
                     "chunk_eta": round(eta_per_worker.get(name, 0), 0),
+                    "concurrency": w.concurrency,
                 })
 
             has_normalized = self._has_normalized_params()
@@ -949,6 +1058,7 @@ class CoordinatorState:
                 "server_start": self.server_start_time,
                 "iteration_start": self.iteration_start_time,
                 "has_normalized": has_normalized,
+                **self._compute_etas(now),
             }
             if has_normalized:
                 result["theta_internal"] = dict(self.optimizer.theta)
@@ -1064,6 +1174,9 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             session_start=session_start,
             server_start=server_start,
             iteration_start=data["iteration_start"],
+            iter_eta_s=data["iter_eta_s"],
+            session_eta_s=data["session_eta_s"],
+            avg_iter_sec=data["avg_iter_sec"],
         )
 
     def _render_charts_page(self) -> str:
@@ -1169,7 +1282,9 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                     "c_k": data["c_k"],
                     "total_games": data["total_games"],
                     "total_games_at_start": data["total_games_at_start"],
-                    "throughput": data["throughput"],
+                    "iter_eta_s": data["iter_eta_s"],
+                    "session_eta_s": data["session_eta_s"],
+                    "avg_iter_sec": data["avg_iter_sec"],
                     "theta": data.get("theta", {}),
                     "workers": data.get("workers", []),
                     "last_history": history[-1] if history else None,
@@ -1228,7 +1343,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
                 return
             cc_overrides = data.get("cutechess_overrides")
             worker_server_start = data.get("server_start", 0)
-            result = self.coordinator.get_work(chunk_size, worker_name, cc_overrides, worker_server_start)
+            worker_concurrency = data.get("concurrency", 0)
+            result = self.coordinator.get_work(chunk_size, worker_name, cc_overrides, worker_server_start, worker_concurrency)
             if result is False:
                 self.send_error(403)
                 return
