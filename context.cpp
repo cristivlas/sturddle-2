@@ -1355,6 +1355,11 @@ namespace search
             _alpha = SCORE_MIN;
             _beta = _tt->_w_beta;
         }
+        else if (std::abs(score) >= MATE_HIGH)
+        {
+            _alpha = SCORE_MIN;
+            _beta = SCORE_MAX;
+        }
         else if (score <= _tt->_w_alpha)
         {
             _alpha = std::max<score_t>(SCORE_MIN, score - window_delta(iteration(), _tt->_eval_depth, score));
