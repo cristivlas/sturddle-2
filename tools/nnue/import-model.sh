@@ -55,7 +55,7 @@ fi
 
 # --- quantize model and re-export ---
 echo "Re-exporting with imported weights..."
-./tools/nnue/train.py export -m "${target_path}" --import "${weights}" --bin -o weights.bin --save-model \
+CUDA_VISIBLE_DEVICES=-1 ./tools/nnue/train.py export -m "${target_path}" --import "${weights}" --bin -o weights.bin --save-model \
     || { echo "Error: quantized re-export failed." >&2; exit 1; }
 
 # --- verify weights match ---
