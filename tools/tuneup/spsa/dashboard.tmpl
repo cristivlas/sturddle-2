@@ -1431,7 +1431,7 @@
                     if (!cell) return;
                     var v = theta[name];
                     if (typeof v === 'number') {{
-                        cell.textContent = (Math.abs(v) >= 10) ? v.toFixed(0) : v.toFixed(1);
+                        cell.textContent = Math.round(v);
                         cell.style.cssText = pstCellColor(v, maxAbs);
                         cell.title = name + ' = ' + v;
                     }} else {{
