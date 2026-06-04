@@ -338,6 +338,13 @@
             color: var(--text-faint);
             background: var(--surface-alt);
         }}
+        .pst-cell.pst-cell-clickable {{
+            cursor: pointer;
+        }}
+        .pst-cell.pst-cell-clickable:hover {{
+            outline: 2px solid var(--accent-start);
+            outline-offset: -2px;
+        }}
         .section {{
             margin-top: 10px;
         }}
@@ -1408,13 +1415,27 @@
                         if (name === undefined) {{
                             html += '<div class="pst-cell pst-na" title="sq ' + sq + ' (not tuned)">–</div>';
                         }} else {{
-                            html += '<div class="pst-cell" data-cell="' + p + ':' + sq + '" title="' + name + '"></div>';
+                            html += '<div class="pst-cell pst-cell-clickable" data-cell="' + p + ':' + sq + '" data-pname="' + name + '" title="' + name + '"></div>';
                         }}
                     }}
                 }}
                 html += '</div></div>';
             }});
             root.innerHTML = html;
+            // Wire click -> charts page solo, same as the params table rows.
+            root.querySelectorAll('.pst-cell-clickable').forEach(function(cell) {{
+                cell.addEventListener('click', function() {{
+                    var pname = cell.getAttribute('data-pname');
+                    if (!pname) return;
+                    localStorage.setItem('chartSolo', JSON.stringify({{p: pname, m: 'value'}}));
+                    try {{
+                        var vis = JSON.parse(localStorage.getItem('chartVis')) || {{}};
+                        vis.params = true;
+                        localStorage.setItem('chartVis', JSON.stringify(vis));
+                    }} catch(e) {{}}
+                    location.href = '/charts';
+                }});
+            }});
         }}
 
         function updatePstCells(pieceKeys, pieces, theta) {{
