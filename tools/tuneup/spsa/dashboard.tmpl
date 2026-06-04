@@ -220,6 +220,131 @@
             font-weight: 600;
             min-width: 40px;
         }}
+        .pst-row {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 10px;
+        }}
+        .pst-board {{
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px;
+            background: var(--surface-alt);
+        }}
+        .pst-board h4 {{
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+        }}
+        .pst-board h4 .pst-range {{
+            font-weight: 400;
+            color: var(--text-subtle);
+            text-transform: none;
+            letter-spacing: 0;
+            font-family: monospace;
+        }}
+        .pst-grid {{
+            display: grid;
+            grid-template-columns: repeat(8, 46px);
+            grid-template-rows: repeat(8, 36px);
+            gap: 1px;
+            background: var(--border);
+            border: 1px solid var(--border);
+        }}
+        .pst-cell {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-family: monospace;
+            font-weight: 600;
+            color: var(--text);
+            background: var(--surface);
+            user-select: none;
+        }}
+        .pst-slider-row {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px 4px 8px;
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: monospace;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+        }}
+        .pst-slider-row input[type="range"] {{
+            flex: 1;
+            min-width: 80px;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            outline: none;
+            margin: 0 4px;
+        }}
+        .pst-slider-row input[type="range"]::-webkit-slider-thumb {{
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--accent-start);
+            cursor: pointer;
+            border: 2px solid var(--surface);
+            box-shadow: 0 1px 3px var(--shadow);
+        }}
+        .pst-slider-row input[type="range"]::-moz-range-thumb {{
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--accent-start);
+            cursor: pointer;
+            border: 2px solid var(--surface);
+            box-shadow: 0 1px 3px var(--shadow);
+        }}
+        .pst-slider-row input[type="range"]::-moz-range-track {{
+            background: var(--border);
+            height: 4px;
+            border-radius: 2px;
+        }}
+        .pst-slider-row .pst-slider-iter {{
+            color: var(--text);
+            font-weight: 600;
+            min-width: 70px;
+        }}
+        .pst-slider-row .pst-slider-btn {{
+            cursor: pointer;
+            user-select: none;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            padding: 1px 6px;
+            background: var(--surface-alt);
+            color: var(--text-muted);
+        }}
+        .pst-slider-row .pst-slider-btn:hover {{
+            color: var(--text);
+            border-color: var(--text-subtle);
+        }}
+        .pst-cell.pst-na {{
+            color: var(--text-faint);
+            background: var(--surface-alt);
+        }}
+        .pst-cell.pst-cell-clickable {{
+            cursor: pointer;
+        }}
+        .pst-cell.pst-cell-clickable:hover {{
+            outline: 2px solid var(--accent-start);
+            outline-offset: -2px;
+        }}
         .section {{
             margin-top: 10px;
         }}
@@ -665,10 +790,19 @@
 
             <!-- Chart + Current Parameters side by side -->
             <div class="two-col" id="chartSection" style="grid-template-columns: 3fr 2fr;">
-                <div class="card" style="position:relative;">
+                <div class="card" id="thetaChartCard" style="position:relative;">
                     <span id="legendToggle" onclick="toggleLegend()"
                         style="position:absolute;top:6px;left:8px;z-index:2;font-size:11px;padding:2px 8px;cursor:pointer;border:2px solid var(--text-subtle);border-radius:4px;font-weight:600;background:var(--surface);color:var(--text-muted);letter-spacing:0;text-transform:none;user-select:none;">Legend</span>
                     <div class="chart-wrap"><canvas id="thetaChart"></canvas></div>
+                    <div id="pstHeatmapsWrap" style="display:none; flex-direction:column; height:100%;">
+                        <div class="pst-slider-row" id="pstSliderRow" style="display:none;">
+                            <span class="pst-slider-btn" id="pstSliderPrev" title="Prev">◀</span>
+                            <input type="range" id="pstSlider" min="0" max="0" value="0" step="1">
+                            <span class="pst-slider-btn" id="pstSliderNext" title="Next">▶</span>
+                            <span class="pst-slider-iter" id="pstSliderIter">iter --</span>
+                        </div>
+                        <div id="pstHeatmapsInline" class="pst-row" style="padding: 6px 4px; overflow-y: auto; flex: 1; min-height: 0;"></div>
+                    </div>
                 </div>
                 <div class="col-resize-handle" id="chartParamsHandle"></div>
                 <div class="section" style="margin-top: 0; display:flex; flex-direction:column; min-height:0;">
@@ -762,6 +896,20 @@
         var hiddenParams = new Set();
         var prevTheta = {{}};
         var paramRanges = {{}};
+        var paramConfig = {{}};  // name -> param record from /config (has original_lower/upper, type, init, etc.)
+
+        // Shared engine-space denormalizer. Mirrors Python ParamSpec.denormalize().
+        // Returns val unchanged if param record not yet loaded.
+        function denormalizeToEngine(name, val) {{
+            if (typeof val !== 'number') return val;
+            var p = paramConfig[name];
+            if (!p) return val;
+            if (p.original_lower != null && p.original_upper != null) {{
+                return Math.round((val + 1) * (p.original_upper - p.original_lower) / 2 + p.original_lower);
+            }}
+            if (p.type === 'int') return Math.round(val);
+            return val;
+        }}
         var thetaColResizer = null;
 
         function fmtVal(v, decimals) {{
@@ -1020,6 +1168,7 @@
         currentThetaInternal = Object.keys(initThetaInternal).length ? initThetaInternal : initTheta;
         initToggle();
         renderTheta(hasNormalized ? currentThetaInternal : currentTheta, hasNormalized ? initialThetaInternal : initialTheta);
+        renderPstHeatmaps(currentTheta);
         renderWorkers(initWorkers);
         document.getElementById('remainingValue').textContent = {games_total} - {games_done};
         updateSchedFill({games_pending}, {games_total} - {games_done});
@@ -1039,19 +1188,14 @@
             var params = cfg.parameters || {{}};
             for (var name in params) {{
                 var p = params[name];
-                initialThetaInternal[name] = p.init;
-                if (p.original_lower != null && p.original_upper != null) {{
-                    initialTheta[name] = Math.round((p.init + 1) * (p.original_upper - p.original_lower) / 2 + p.original_lower);
-                }} else if (p.type === 'int') {{
-                    initialTheta[name] = Math.round(p.init);
-                }} else {{
-                    initialTheta[name] = p.init;
-                }}
-            }}
-            for (var name in params) {{
-                var p = params[name];
+                paramConfig[name] = p;
                 paramRanges[name] = p.upper - p.lower;
+                initialThetaInternal[name] = p.init;
+                initialTheta[name] = denormalizeToEngine(name, p.init);
             }}
+            // Heatmap may have rendered before /config arrived; refresh it now
+            // so PST cells use denormalized engine values.
+            if (typeof renderPstHeatmaps === 'function') renderPstHeatmaps(currentTheta);
             renderTheta(
                 showInternal ? currentThetaInternal : currentTheta,
                 showInternal ? initialThetaInternal : initialTheta
@@ -1162,7 +1306,221 @@
             );
         }}
 
-        let thetaChart = null;
+        // --- PST heatmaps (8x8 per piece, auto-detected from PS_<n>_<sq> names) ---
+        function detectPstPieces(theta) {{
+            // Returns map: pieceKey -> (sq -> paramName)
+            var re = /^PS_(\d+|KEG)_(\d+)$/;
+            var pieces = {{}};
+            Object.keys(theta || {{}}).forEach(function(name) {{
+                var m = re.exec(name);
+                if (!m) return;
+                var p = m[1], sq = +m[2];
+                (pieces[p] = pieces[p] || {{}})[sq] = name;
+            }});
+            return pieces;
+        }}
+        var PST_PIECE_NAMES = {{
+            '1': 'Pawn', '2': 'Knight', '3': 'Bishop',
+            '4': 'Rook', '5': 'Queen', '6': 'King', 'KEG': 'King EG'
+        }};
+        function pstCellColor(v, maxAbs) {{
+            // Tableau 10 categorical: orange (#f28e2c) for positive, blue (#4e79a7) for negative.
+            // Alpha encodes |v|/maxAbs. Deeper alt (Orange-Blue Diverging): 200,82,0 / 17,112,170.
+            if (maxAbs <= 0 || v === 0) return '';
+            var t = Math.min(1, Math.abs(v) / maxAbs);
+            var alpha = (0.15 + 0.65 * t).toFixed(3);
+            return v > 0
+                ? 'background: rgba(242, 142, 44, ' + alpha + ');'
+                : 'background: rgba(78, 121, 167, ' + alpha + ');';
+        }}
+        // Slider state: pinned-iteration number (null = follow latest-recorded).
+        // Tracking the iteration (not array index) keeps the pin stable when
+        // historyWindow shifts old entries out. Note: we always render from
+        // historyWindow[].theta (the snapshot at that recorded iter), never from
+        // currentTheta which is the live in-progress state and can differ.
+        var pstPinnedIter = null;
+        var pstSkeletonKey = '';  // detects when DOM skeleton needs rebuild
+
+        function pstHistoryEntries() {{
+            return (typeof historyWindow !== 'undefined' && historyWindow) ? historyWindow : [];
+        }}
+        function pstGetPinnedTheta() {{
+            var hw = pstHistoryEntries();
+            if (!hw.length) return null;
+            if (pstPinnedIter == null) {{
+                // Default: show the latest *recorded* snapshot (not live currentTheta).
+                // This keeps the heatmap consistent with the slider position and
+                // avoids a discontinuity when scrubbing between last and previous.
+                var last = hw[hw.length - 1];
+                return (last && last.theta) ? last.theta : null;
+            }}
+            for (var i = 0; i < hw.length; ++i) {{
+                if (hw[i] && hw[i].iteration === pstPinnedIter) return hw[i].theta || null;
+            }}
+            return null;  // pin scrolled out of window; caller falls back to live
+        }}
+        function updatePstSliderUI() {{
+            var row = document.getElementById('pstSliderRow');
+            if (!row) return;
+            var slider = document.getElementById('pstSlider');
+            var iterLbl = document.getElementById('pstSliderIter');
+            var hw = pstHistoryEntries();
+            var n = hw.length;
+            if (n <= 1) {{ row.style.display = 'none'; return; }}
+            row.style.display = 'flex';
+            slider.max = String(n - 1);
+            var shownIdx = n - 1;  // default: live
+            if (pstPinnedIter != null) {{
+                for (var i = 0; i < n; ++i) {{
+                    if (hw[i] && hw[i].iteration === pstPinnedIter) {{ shownIdx = i; break; }}
+                }}
+            }}
+            slider.value = String(shownIdx);
+            var iter = (hw[shownIdx] && hw[shownIdx].iteration != null) ? hw[shownIdx].iteration : '--';
+            iterLbl.textContent = (pstPinnedIter == null) ? 'iter ' + iter + ' (live)' : 'iter ' + iter;
+        }}
+        function renderPstHeatmaps(liveTheta) {{
+            var wrap = document.getElementById('pstHeatmapsWrap');
+            var root = document.getElementById('pstHeatmapsInline');
+            if (!root || !wrap) return;
+            // Show the recorded snapshot at the pinned iter (or the latest recorded
+            // iter when unpinned). Falls back to live theta only when history is empty.
+            var pinnedTheta = pstGetPinnedTheta();
+            var theta = pinnedTheta || liveTheta;
+            var pieces = detectPstPieces(theta);
+            var pieceKeys = Object.keys(pieces).sort(function(a, b) {{
+                if (a === 'KEG') return 1;
+                if (b === 'KEG') return -1;
+                return (+a) - (+b);
+            }});
+            var canvasWrap = document.querySelector('#thetaChartCard .chart-wrap');
+            var legendBtn = document.getElementById('legendToggle');
+            if (!pieceKeys.length) {{
+                wrap.style.display = 'none';
+                if (canvasWrap) canvasWrap.style.display = '';
+                if (legendBtn) legendBtn.style.display = '';
+                return;
+            }}
+            wrap.style.display = 'flex';
+            if (canvasWrap) canvasWrap.style.display = 'none';
+            if (legendBtn) legendBtn.style.display = 'none';
+            updatePstSliderUI();
+
+            // Rebuild skeleton only when piece set changes; on later ticks just
+            // patch cell text + style. Avoids regenerating 400+ DOM nodes per tick.
+            var skeletonKey = pieceKeys.map(function(p) {{
+                return p + ':' + Object.keys(pieces[p]).sort().join(',');
+            }}).join('|');
+            if (skeletonKey !== pstSkeletonKey) {{
+                pstSkeletonKey = skeletonKey;
+                buildPstSkeleton(root, pieceKeys, pieces);
+            }}
+            updatePstCells(pieceKeys, pieces, theta);
+        }}
+
+        function buildPstSkeleton(root, pieceKeys, pieces) {{
+            var html = '';
+            pieceKeys.forEach(function(p) {{
+                var squares = pieces[p];
+                var pieceName = (typeof PST_PIECE_NAMES !== 'undefined' && PST_PIECE_NAMES[p]) || p;
+                var label = 'PS_' + p + ' (' + pieceName + ')';
+                html += '<div class="pst-board" data-piece="' + p + '">'
+                    + '<h4><span>' + label + '</span>'
+                    + '<span class="pst-range" data-range="' + p + '">±0</span></h4>'
+                    + '<div class="pst-grid">';
+                // Rank 8 (top) -> rank 1 (bottom); square index = rank*8 + file, A1=0, H8=63
+                for (var r = 7; r >= 0; --r) {{
+                    for (var f = 0; f < 8; ++f) {{
+                        var sq = r * 8 + f;
+                        var name = squares[sq];
+                        if (name === undefined) {{
+                            html += '<div class="pst-cell pst-na" title="sq ' + sq + ' (not tuned)">–</div>';
+                        }} else {{
+                            html += '<div class="pst-cell pst-cell-clickable" data-cell="' + p + ':' + sq + '" data-pname="' + name + '" title="' + name + '"></div>';
+                        }}
+                    }}
+                }}
+                html += '</div></div>';
+            }});
+            root.innerHTML = html;
+            // Wire click -> charts page solo, same as the params table rows.
+            root.querySelectorAll('.pst-cell-clickable').forEach(function(cell) {{
+                cell.addEventListener('click', function() {{
+                    var pname = cell.getAttribute('data-pname');
+                    if (!pname) return;
+                    localStorage.setItem('chartSolo', JSON.stringify({{p: pname, m: 'value'}}));
+                    try {{
+                        var vis = JSON.parse(localStorage.getItem('chartVis')) || {{}};
+                        vis.params = true;
+                        localStorage.setItem('chartVis', JSON.stringify(vis));
+                    }} catch(e) {{}}
+                    location.href = '/charts';
+                }});
+            }});
+        }}
+
+        function updatePstCells(pieceKeys, pieces, theta) {{
+            pieceKeys.forEach(function(p) {{
+                var squares = pieces[p];
+                // Denormalize to engine cp before computing range and rendering.
+                var engineVals = {{}};
+                Object.keys(squares).forEach(function(sq) {{
+                    var name = squares[sq];
+                    engineVals[sq] = denormalizeToEngine(name, theta[name]);
+                }});
+                var vals = Object.values(engineVals).filter(function(v) {{ return typeof v === 'number'; }});
+                var maxAbs = vals.reduce(function(m, v) {{ return Math.max(m, Math.abs(v)); }}, 0);
+                var rangeEl = document.querySelector('[data-range="' + p + '"]');
+                if (rangeEl) rangeEl.textContent = maxAbs > 0 ? '±' + maxAbs.toFixed(1) : '0';
+                Object.keys(squares).forEach(function(sq) {{
+                    var name = squares[sq];
+                    var cell = document.querySelector('[data-cell="' + p + ':' + sq + '"]');
+                    if (!cell) return;
+                    var v = engineVals[sq];
+                    if (typeof v === 'number') {{
+                        cell.textContent = (Math.abs(v) >= 1 || v === 0) ? Math.round(v) : v.toFixed(1);
+                        cell.style.cssText = pstCellColor(v, maxAbs);
+                        cell.title = name + ' = ' + v;
+                    }} else {{
+                        cell.textContent = '?';
+                        cell.style.cssText = '';
+                        cell.title = name + ' = ?';
+                    }}
+                }});
+            }});
+        }}
+
+        // Wire slider controls once.
+        (function setupPstSlider() {{
+            var slider = document.getElementById('pstSlider');
+            if (!slider) return;
+            function pinByIdx(idx) {{
+                var hw = pstHistoryEntries();
+                if (!hw.length) return;
+                idx = Math.max(0, Math.min(hw.length - 1, idx));
+                pstPinnedIter = (idx === hw.length - 1) ? null : (hw[idx] && hw[idx].iteration);
+                renderPstHeatmaps(currentTheta);
+            }}
+            slider.addEventListener('input', function() {{
+                pinByIdx(parseInt(slider.value, 10));
+            }});
+            document.getElementById('pstSliderPrev').addEventListener('click', function() {{
+                var hw = pstHistoryEntries();
+                if (!hw.length) return;
+                var cur = parseInt(slider.value, 10);
+                if (isNaN(cur)) cur = hw.length - 1;
+                pinByIdx(cur - 1);
+            }});
+            document.getElementById('pstSliderNext').addEventListener('click', function() {{
+                var hw = pstHistoryEntries();
+                if (!hw.length) return;
+                var cur = parseInt(slider.value, 10);
+                if (isNaN(cur)) cur = hw.length - 1;
+                pinByIdx(cur + 1);
+            }});
+        }})();
+
+        var thetaChart = null;
         (function() {{
             try {{
                 const history = historyWindow.slice().sort((a,b) => (a.iteration||0) - (b.iteration||0));
@@ -1290,6 +1648,7 @@
             currentTheta = d.theta;
             if (d.theta_internal) currentThetaInternal = d.theta_internal;
             renderTheta(showInternal ? currentThetaInternal : currentTheta, showInternal ? initialThetaInternal : initialTheta);
+            renderPstHeatmaps(currentTheta);
             renderWorkers(d.workers);
 
             // History: detect reset (--clean) or missed entries, append new
