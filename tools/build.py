@@ -10,11 +10,17 @@ import glob
 import os
 import platform
 import shutil
+import subprocess
 import sys
+from pathlib import Path
 
 BOOK = 'book.bin'
 OUT_DIR = 'dist'
 WEIGHTS = 'weights.bin'
+
+ROOT = Path(__file__).resolve().parent.parent
+VENV_DIR = ROOT / 'build_venv'
+REQUIREMENTS = ROOT / 'requirements.txt'
 
 def find_editbin():
     """Find editbin using distutils MSVC detection"""
@@ -59,14 +65,67 @@ def is_windows():
     return os.name == 'nt' or sys.platform in ['win32', 'cygwin']
 
 def run_cmd(command):
+    '''Run a shell command (string) via os.system. Use run_args() for path-safe argv invocation.'''
     print(command)
     return os.system(command)
+
+
+def run_args(argv):
+    '''Run a subprocess with explicit argv list. Returns exit code (0 == success).'''
+    print(' '.join(str(a) for a in argv))
+    return subprocess.call([str(a) for a in argv])
+
+
+def _venv_python(venv_dir):
+    if is_windows():
+        return venv_dir / 'Scripts' / 'python.exe'
+    return venv_dir / 'bin' / 'python'
+
+
+def _pip(python, *args):
+    env = {**os.environ, 'PYTHONUNBUFFERED': '1'}
+    subprocess.run([str(python), '-m', 'pip', 'install', *args], check=True, env=env)
+
+
+def _ensure_venv(clean):
+    '''Create build_venv/ if missing (or if clean); install requirements + pyinstaller. Returns venv python path.'''
+    if clean and VENV_DIR.exists():
+        print(f'Removing {VENV_DIR} ...')
+        shutil.rmtree(VENV_DIR)
+
+    fresh = not VENV_DIR.exists()
+    if fresh:
+        print(f'Creating venv at {VENV_DIR} ...')
+        sys.stdout.flush()
+        subprocess.run(
+            [sys.executable, '-m', 'venv', str(VENV_DIR)],
+            check=True,
+            env={**os.environ, 'PYTHONUNBUFFERED': '1'},
+        )
+
+    python = _venv_python(VENV_DIR)
+    if not python.exists():
+        raise RuntimeError(f'venv python not found at {python}')
+
+    if fresh:
+        print('--- upgrading pip ---')
+        _pip(python, '--upgrade', 'pip')
+
+    print('--- installing requirements ---')
+    _pip(python, '-r', str(REQUIREMENTS))
+
+    print('--- installing pyinstaller ---')
+    _pip(python, 'pyinstaller')
+
+    return python
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='build all-in-one executable')
     parser.add_argument('-a', '--arch', help='Build only the specified architecture')  # and the generic module
     parser.add_argument('-n', '--name', default='sturddle', help='Executable base name (default: "sturddle")')
-    parser.add_argument('-v', '--venv')
+    parser.add_argument('-v', '--venv', help='Path to a pre-existing venv to use (skips build_venv/)')
+    parser.add_argument('--clean-venv', action='store_true', help='Delete and recreate build_venv/ before building')
     parser.add_argument('--native-uci', dest='native_uci', action='store_true', default=True)
     parser.add_argument('--no-native-uci', dest='native_uci', action='store_false')
 
@@ -74,13 +133,19 @@ if __name__ == '__main__':
 
     os.environ['NATIVE_UCI'] = '1' if args.native_uci else '0'
 
+    if args.venv:
+        venv_python = _venv_python(Path(args.venv))
+        if not venv_python.exists():
+            print(f'venv python not found at {venv_python}')
+            sys.exit(-1)
+    else:
+        venv_python = _ensure_venv(clean=args.clean_venv)
+
     mods = '*.pyd' if is_windows() else '*.so'
     editbin = find_editbin() if is_windows() else None
     cl_exe = os.environ.get('CL_EXE', '')
 
     delete(['*.spec', 'build', mods]) # cleanup
-
-    exe = f'"{sys.executable}"' # the Python interpreter
 
     ARCHS = [''] # default
 
@@ -124,15 +189,13 @@ if __name__ == '__main__':
         arch = arch.lower()
         os.environ['TARGET'] = f'chess_engine_{arch}' if arch else 'chess_engine'
 
-        if run_cmd(f'{exe} setup.py clean --all') or run_cmd(f'{exe} setup.py build_ext --inplace'):
+        if run_args([venv_python, 'setup.py', 'clean', '--all']) \
+           or run_args([venv_python, 'setup.py', 'build_ext', '--inplace']):
             print('Build failed.')
             sys.exit(-1)
 
-    if args.venv:
-        scripts_dir = 'Scripts' if is_windows() else 'bin'
-        installer = os.path.join(args.venv, scripts_dir, 'pyinstaller')
-    else:
-        installer = 'pyinstaller'
+    # Use the venv's pyinstaller (also works when --venv was supplied).
+    installer = str(venv_python.parent / 'pyinstaller')
 
     # PyInstaller arguments:
     script = 'main.py' if args.native_uci else 'sturddle.py'
@@ -149,7 +212,10 @@ if __name__ == '__main__':
             if os.path.exists(libcxx):
                 libs.append(f'--add-binary={libcxx}{os.path.pathsep}.')
 
-    data = f'--add-data={BOOK}{os.path.pathsep}. --add-data={WEIGHTS}{os.path.pathsep}.'
+    data_args = [
+        f'--add-data={BOOK}{os.path.pathsep}.',
+        f'--add-data={WEIGHTS}{os.path.pathsep}.',
+    ]
 
     exclude_modules = [
         'setuptools', 'setuptools._vendor', 'setuptools._distutils', 'jaraco',
@@ -167,32 +233,43 @@ if __name__ == '__main__':
         '_hashlib', 'hashlib',
     ]
 
-    exclude_args = ' '.join([f'--exclude-module {mod}' for mod in exclude_modules])
+    exclude_args = [f'--exclude-module={mod}' for mod in exclude_modules]
 
     # run PyInstaller
-    py_installer_cmd = f'{installer} {script} -p . --onefile --distpath {OUT_DIR} {" ".join(libs)} {data} {exclude_args} --icon chess.ico'
+    py_installer_argv = [
+        installer, script,
+        '-p', '.',
+        '--onefile',
+        '--distpath', OUT_DIR,
+        *libs,
+        *data_args,
+        *exclude_args,
+        '--icon', 'chess.ico',
+    ]
     if is_windows():
         # --hide-console appears to be problematic on Windows 10.
-        # py_installer_cmd += ' --hide-console hide-early --manifest manifest.xml'
         # https://learn.microsoft.com/en-us/windows/console/console-allocation-policy
-        py_installer_cmd += ' --manifest manifest.xml'
+        py_installer_argv += ['--manifest', 'manifest.xml']
 
-    if run_cmd(py_installer_cmd):
+    if run_args(py_installer_argv):
         print('pyinstaller failed')
         sys.exit(-2)
 
-    # import the engine we just built, to determine its version
-    sys.path.append('.')
-    import chess_engine
+    # Query the engine we just built (via venv python) for its version.
+    version_str = subprocess.check_output(
+        [str(venv_python), '-c',
+         "import sys; sys.path.insert(0, '.'); import chess_engine; print('.'.join(chess_engine.__build__[:3]))"],
+        cwd=str(ROOT),
+    ).decode().strip()
 
     MAIN = os.path.join(OUT_DIR, 'main' if args.native_uci else 'sturddle')
-    NAME = f'{args.name}-{".".join(chess_engine.__build__[:3])}'
+    NAME = f'{args.name}-{version_str}'
     NAME = os.path.join(OUT_DIR, NAME)
     if is_windows():
         MAIN += '.exe'
         NAME += '.exe'
         # Configure 32M stack
-        if run_cmd(f'"{editbin}" /STACK:33554432 {MAIN}'):
+        if run_args([editbin, '/STACK:33554432', MAIN]):
             print('failed to set stack size')
             sys.exit(-2)
     else:
