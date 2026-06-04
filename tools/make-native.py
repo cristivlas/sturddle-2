@@ -15,6 +15,7 @@ import argparse
 import hashlib
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -81,7 +82,7 @@ def build_windows(arch, version, build_stamp, embed):
         '-Wno-deprecated-declarations', '-Wno-unused-command-line-argument',
         '-Wno-unused-label', '-Wno-unused-variable', '-Wno-nan-infinity-disabled',
         '/D_FORTIFY_SOURCE=0', '/GS-',
-    ]
+    ] + shlex.split(os.environ.get('CXXFLAGS', ''))
     defines = DEFINES if embed else DEFINES + ['SHARED_WEIGHTS']
     define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}']
     include_args = [f'-I{d}' for d in INCLUDES]
@@ -146,6 +147,7 @@ def build_linux(arch, version, build_stamp, embed):
             '-Wno-nan-infinity-disabled',
             '-stdlib=libc++', '-fexperimental-library',
         ]
+    cxxflags += shlex.split(os.environ.get('CXXFLAGS', ''))
 
     defines = DEFINES if embed else DEFINES + ['SHARED_WEIGHTS']
     define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}']
