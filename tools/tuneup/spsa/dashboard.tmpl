@@ -896,6 +896,20 @@
         var hiddenParams = new Set();
         var prevTheta = {{}};
         var paramRanges = {{}};
+        var paramConfig = {{}};  // name -> param record from /config (has original_lower/upper, type, init, etc.)
+
+        // Shared engine-space denormalizer. Mirrors Python ParamSpec.denormalize().
+        // Returns val unchanged if param record not yet loaded.
+        function denormalizeToEngine(name, val) {{
+            if (typeof val !== 'number') return val;
+            var p = paramConfig[name];
+            if (!p) return val;
+            if (p.original_lower != null && p.original_upper != null) {{
+                return Math.round((val + 1) * (p.original_upper - p.original_lower) / 2 + p.original_lower);
+            }}
+            if (p.type === 'int') return Math.round(val);
+            return val;
+        }}
         var thetaColResizer = null;
 
         function fmtVal(v, decimals) {{
@@ -1174,19 +1188,14 @@
             var params = cfg.parameters || {{}};
             for (var name in params) {{
                 var p = params[name];
-                initialThetaInternal[name] = p.init;
-                if (p.original_lower != null && p.original_upper != null) {{
-                    initialTheta[name] = Math.round((p.init + 1) * (p.original_upper - p.original_lower) / 2 + p.original_lower);
-                }} else if (p.type === 'int') {{
-                    initialTheta[name] = Math.round(p.init);
-                }} else {{
-                    initialTheta[name] = p.init;
-                }}
-            }}
-            for (var name in params) {{
-                var p = params[name];
+                paramConfig[name] = p;
                 paramRanges[name] = p.upper - p.lower;
+                initialThetaInternal[name] = p.init;
+                initialTheta[name] = denormalizeToEngine(name, p.init);
             }}
+            // Heatmap may have rendered before /config arrived; refresh it now
+            // so PST cells use denormalized engine values.
+            if (typeof renderPstHeatmaps === 'function') renderPstHeatmaps(currentTheta);
             renderTheta(
                 showInternal ? currentThetaInternal : currentTheta,
                 showInternal ? initialThetaInternal : initialTheta
@@ -1322,9 +1331,11 @@
                 ? 'background: rgba(46, 160, 67, ' + alpha + ');'
                 : 'background: rgba(207, 34, 46, ' + alpha + ');';
         }}
-        // Slider state: pinned-iteration number (null = follow live).
+        // Slider state: pinned-iteration number (null = follow latest-recorded).
         // Tracking the iteration (not array index) keeps the pin stable when
-        // historyWindow shifts old entries out.
+        // historyWindow shifts old entries out. Note: we always render from
+        // historyWindow[].theta (the snapshot at that recorded iter), never from
+        // currentTheta which is the live in-progress state and can differ.
         var pstPinnedIter = null;
         var pstSkeletonKey = '';  // detects when DOM skeleton needs rebuild
 
@@ -1332,8 +1343,15 @@
             return (typeof historyWindow !== 'undefined' && historyWindow) ? historyWindow : [];
         }}
         function pstGetPinnedTheta() {{
-            if (pstPinnedIter == null) return null;
             var hw = pstHistoryEntries();
+            if (!hw.length) return null;
+            if (pstPinnedIter == null) {{
+                // Default: show the latest *recorded* snapshot (not live currentTheta).
+                // This keeps the heatmap consistent with the slider position and
+                // avoids a discontinuity when scrubbing between last and previous.
+                var last = hw[hw.length - 1];
+                return (last && last.theta) ? last.theta : null;
+            }}
             for (var i = 0; i < hw.length; ++i) {{
                 if (hw[i] && hw[i].iteration === pstPinnedIter) return hw[i].theta || null;
             }}
@@ -1363,7 +1381,8 @@
             var wrap = document.getElementById('pstHeatmapsWrap');
             var root = document.getElementById('pstHeatmapsInline');
             if (!root || !wrap) return;
-            // If user pinned an iteration, show that theta; otherwise show live.
+            // Show the recorded snapshot at the pinned iter (or the latest recorded
+            // iter when unpinned). Falls back to live theta only when history is empty.
             var pinnedTheta = pstGetPinnedTheta();
             var theta = pinnedTheta || liveTheta;
             var pieces = detectPstPieces(theta);
@@ -1441,8 +1460,13 @@
         function updatePstCells(pieceKeys, pieces, theta) {{
             pieceKeys.forEach(function(p) {{
                 var squares = pieces[p];
-                var vals = Object.keys(squares).map(function(sq) {{ return theta[squares[sq]]; }})
-                    .filter(function(v) {{ return typeof v === 'number'; }});
+                // Denormalize to engine cp before computing range and rendering.
+                var engineVals = {{}};
+                Object.keys(squares).forEach(function(sq) {{
+                    var name = squares[sq];
+                    engineVals[sq] = denormalizeToEngine(name, theta[name]);
+                }});
+                var vals = Object.values(engineVals).filter(function(v) {{ return typeof v === 'number'; }});
                 var maxAbs = vals.reduce(function(m, v) {{ return Math.max(m, Math.abs(v)); }}, 0);
                 var rangeEl = document.querySelector('[data-range="' + p + '"]');
                 if (rangeEl) rangeEl.textContent = maxAbs > 0 ? '±' + maxAbs.toFixed(1) : '0';
@@ -1450,7 +1474,7 @@
                     var name = squares[sq];
                     var cell = document.querySelector('[data-cell="' + p + ':' + sq + '"]');
                     if (!cell) return;
-                    var v = theta[name];
+                    var v = engineVals[sq];
                     if (typeof v === 'number') {{
                         cell.textContent = (Math.abs(v) >= 1 || v === 0) ? Math.round(v) : v.toFixed(1);
                         cell.style.cssText = pstCellColor(v, maxAbs);
