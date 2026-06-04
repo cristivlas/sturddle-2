@@ -1324,12 +1324,14 @@
             '4': 'Rook', '5': 'Queen', '6': 'King', 'KEG': 'King EG'
         }};
         function pstCellColor(v, maxAbs) {{
+            // Tableau 10 categorical: orange (#f28e2c) for positive, blue (#4e79a7) for negative.
+            // Alpha encodes |v|/maxAbs. Deeper alt (Orange-Blue Diverging): 200,82,0 / 17,112,170.
             if (maxAbs <= 0 || v === 0) return '';
             var t = Math.min(1, Math.abs(v) / maxAbs);
             var alpha = (0.15 + 0.65 * t).toFixed(3);
             return v > 0
-                ? 'background: rgba(46, 160, 67, ' + alpha + ');'
-                : 'background: rgba(207, 34, 46, ' + alpha + ');';
+                ? 'background: rgba(242, 142, 44, ' + alpha + ');'
+                : 'background: rgba(78, 121, 167, ' + alpha + ');';
         }}
         // Slider state: pinned-iteration number (null = follow latest-recorded).
         // Tracking the iteration (not array index) keeps the pin stable when
