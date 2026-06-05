@@ -372,11 +372,6 @@ def _patch_table_row(line, base_square, updates, found, updated):
     return ','.join(parts) if modified else line
 
 
-_PST_NUM_RE = re.compile(r'-?\d+')
-# A "PST row" line: indent, comma-separated ints, optional trailing comma, EOL.
-_PST_ROW_RE = re.compile(r'^(\s*)(-?\d+(?:\s*,\s*-?\d+)*)(,?)\s*$')
-
-
 def update_tables(tables_file, pst_values):
     """Patch SQUARE_TABLE and ENDGAME_KING_SQUARE_TABLE arrays in tables.h.
 
@@ -450,9 +445,6 @@ def update_tables(tables_file, pst_values):
 
         result.append(line)
 
-    if updated:
-        result = _reformat_pst_tables(result)
-
     if updated and not DRY_RUN:
         with open(tables_file, 'w', encoding='utf-8', newline='') as f:
             f.writelines(result)
@@ -461,21 +453,6 @@ def update_tables(tables_file, pst_values):
         logging.info(f"No PST changes in {tables_file}")
 
     return updated, found
-
-
-def _reformat_pst_tables(lines):
-    """Right-align values in each maximal run of numeric-only rows."""
-    from itertools import groupby
-    out = []
-    for is_row, grp in groupby(lines, key=lambda l: bool(_PST_ROW_RE.match(l))):
-        rows = list(grp)
-        if not is_row:
-            out.extend(rows); continue
-        ms = [_PST_ROW_RE.match(r) for r in rows]
-        w = max(len(t) for m in ms for t in _PST_NUM_RE.findall(m.group(2)))
-        indent = min((m.group(1) for m in ms), key=len)
-        out.extend(f"{indent}{', '.join(t.rjust(w) for t in _PST_NUM_RE.findall(m.group(2)))}{m.group(3)}\n" for m in ms)
-    return out
 
 
 def adjust_piece_param_bounds(config_file, engine_values, range_pct=None, bounds_map=None):
