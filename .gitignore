@@ -1,9 +1,16 @@
 .vscode
-build
+build*
 __pycache__
 __init__.cpp
 *.bin
 *.json
 *.log
+*.pdb
+*.pyd
 *.so
 dist/
+test/old-runs/
+models/*/
+!models/Raptor-III/
+tuneup/*/
+!tuneup/books/
