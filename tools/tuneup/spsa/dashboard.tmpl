@@ -1378,7 +1378,7 @@
             }}
             slider.value = String(shownIdx);
             var iter = (hw[shownIdx] && hw[shownIdx].iteration != null) ? hw[shownIdx].iteration : '--';
-            iterLbl.textContent = (pstPinnedIter == null) ? 'iter ' + iter + ' (live)' : 'iter ' + iter;
+            iterLbl.textContent = 'iter ' + iter;
         }}
         function renderPstHeatmaps(liveTheta) {{
             var wrap = document.getElementById('pstHeatmapsWrap');
