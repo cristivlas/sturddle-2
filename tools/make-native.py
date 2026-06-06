@@ -15,6 +15,7 @@ import argparse
 import hashlib
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -22,9 +23,6 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import fetch_weights
 
 ARCH_FLAGS = {
     'native':      ['-march=native'],
@@ -43,6 +41,8 @@ ARCH_SUFFIX = {
 SOURCES = ['chess.cpp', 'context.cpp', 'search.cpp', 'uci_native.cpp', 'tbprobe.cpp', 'main_native.cpp']
 INCLUDES = ['.', 'libpopcnt', 'magic-bits/include', 'version2', 'Fathom/src']
 DEFINES = ['NATIVE_BUILD=1', 'NATIVE_UCI=1', 'NATIVE_BOOK=1', 'WITH_NNUE', 'CALLBACK_PERIOD=8192', 'NO_ASSERT']
+
+DEFAULT_MODEL = 'models/Raptor-III'
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = REPO_ROOT / 'dist' / 'native'
@@ -81,9 +81,8 @@ def build_windows(arch, version, build_stamp, embed):
         '-O3', '-Ofast', '-Werror', '-Wmissing-field-initializers',
         '-Wno-deprecated-declarations', '-Wno-unused-command-line-argument',
         '-Wno-unused-label', '-Wno-unused-variable', '-Wno-nan-infinity-disabled',
-        '-Wno-c23-extensions',  # #embed in C++ mode
         '/D_FORTIFY_SOURCE=0', '/GS-',
-    ]
+    ] + shlex.split(os.environ.get('CXXFLAGS', ''))
     defines = DEFINES if embed else DEFINES + ['SHARED_WEIGHTS']
     define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}']
     include_args = [f'-I{d}' for d in INCLUDES]
@@ -146,9 +145,9 @@ def build_linux(arch, version, build_stamp, embed):
         cxxflags += [
             '-Wno-macro-redefined', '-Wno-deprecated-declarations',
             '-Wno-nan-infinity-disabled',
-            '-Wno-c23-extensions',  # #embed in C++ mode
             '-stdlib=libc++', '-fexperimental-library',
         ]
+    cxxflags += shlex.split(os.environ.get('CXXFLAGS', ''))
 
     defines = DEFINES if embed else DEFINES + ['SHARED_WEIGHTS']
     define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}']
@@ -186,6 +185,35 @@ def build_linux(arch, version, build_stamp, embed):
     return exe
 
 
+def ensure_weights_h(model_path):
+    weights_h = REPO_ROOT / 'weights.h'
+    marker = f'// Generated from {model_path}'
+
+    if weights_h.exists():
+        with open(weights_h, 'r') as f:
+            head = [next(f, '') for _ in range(2)]
+        if any(marker in line for line in head):
+            print(f'weights.h is up-to-date for {model_path}')
+            return
+
+    print(f'Regenerating weights.h from {model_path} ...')
+    cmd = [sys.executable, str(REPO_ROOT / 'tools' / 'nnue' / 'train.py'),
+           '-m', model_path, '-o', 'weights.h', '--predict-moves', 'export']
+    env = os.environ.copy()
+    if _tf_version() >= (2, 16):
+        env['TF_USE_LEGACY_KERAS'] = '1'
+    subprocess.check_call(cmd, cwd=REPO_ROOT, env=env)
+
+
+def _tf_version():
+    out = subprocess.check_output(
+        [sys.executable, '-c', 'import tensorflow; print(tensorflow.__version__)'],
+        text=True,
+    ).strip()
+    major, minor = out.split('.')[:2]
+    return (int(major), int(minor))
+
+
 def write_sha256(exe_path):
     h = hashlib.sha256()
     with open(exe_path, 'rb') as f:
@@ -199,17 +227,18 @@ def write_sha256(exe_path):
 def main():
     parser = argparse.ArgumentParser(description='Build native Sturddle binary')
     parser.add_argument('arch', nargs='?', default='native', choices=list(ARCH_FLAGS.keys()), help='Target SIMD architecture')
-    parser.add_argument('--embed', action='store_true',
-                        help='Embed NNUE weights in the binary via C23/C++26 #embed (requires GCC 15+, Clang 19+, or MSVC 17.15+)')
+    parser.add_argument('--embed', nargs='?', const=DEFAULT_MODEL, default=None, metavar='MODEL',
+                        help=f'Embed NNUE weights in the binary. Bare --embed uses {DEFAULT_MODEL}; pass a path to override.')
     args = parser.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     version = parse_version()
     build_stamp = datetime.now().strftime('%m%d%y')
 
-    fetch_weights.ensure()
+    if args.embed:
+        ensure_weights_h(args.embed)
 
-    embed = args.embed
+    embed = args.embed is not None
     if sys.platform.startswith('win'):
         exe = build_windows(args.arch, version, build_stamp, embed)
     elif sys.platform.startswith('linux'):

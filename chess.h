@@ -733,7 +733,7 @@ namespace chess
     }
 #else
 
-    #define init_piece_square_tables()
+    void INLINE init_piece_square_tables() {}
 
 #endif /* USE_PIECE_SQUARE_TABLES */
 

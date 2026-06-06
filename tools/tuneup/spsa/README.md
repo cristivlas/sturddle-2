@@ -17,6 +17,13 @@ heterogeneous LANs, mixed Linux/Windows.
 - [cutechess-cli](https://github.com/cutechess/cutechess) or [fastchess](https://github.com/Disservin/fastchess) installed on each worker machine (fastchess recommended for high concurrency)
 - Engine build prepped for tuning (see [Tuning the Engine](../../../README.md#tuning-the-engine) in the main README)
 
+**Windows stack size caveat**: Using `main.py` directly (via the `engine.bat`
+wrapper) is convenient because it avoids a full packaged build, but `python.exe`
+has a limited default stack. At higher search depths this can cause stack
+overflows in the C extension. On Linux, thread stacks grow on demand so this
+is not an issue. If you see crashes on Windows, use a full build instead (see
+`tools/build.py`) — it configures a sufficiently large stack for the executable.
+
 ## Quick Start (single machine)
 
 ### 1. Generate a tuning project
@@ -30,16 +37,14 @@ python tools/tuneup/spsa/genconfig.py my-test -D 8 -i 50 -g 100
 This creates `tuneup/my-test/` with:
 - `tuning.json` — session config (parameters, SPSA settings, search control)
 - `worker.json` — local worker config (engine path, book, concurrency)
-
-By default the worker is wired to the native build at `dist/native/sturddle-<version>`
-(build with `python tools/make-native.py`). Pass `-e` to pick a different binary.
+- `engine.bat` — engine wrapper (Windows only)
 
 Options:
 - First argument is the project name
 - `all` (default) — tune all parameters, or list specific names
 - `-w` — generate worker.json only (no engine needed)
 - `-s` — generate tuning.json (coordinator) only, skip worker.json
-- `-e VERSION_OR_PATH` — override the engine: dist/ version (e.g., `-e 2.5.1-pieces`) or a full path (script/bat/binary)
+- `-e VERSION` — use a dist/ engine binary (e.g., `-e 2.5.1-pieces`)
 - `--ref VERSION` — reference engine from dist/ for reference mode (e.g., `--ref 2.5.0`)
 - `-D` — fixed search depth (mutually exclusive with `-t`)
 - `-t` — time control, e.g. `1+0.1` (default)
@@ -210,7 +215,7 @@ interval set by `dashboard_refresh` in tuning.json.
 | `log_rotation` | Enable daily log rotation (keeps 30 days of rotated files) | `true` |
 | `name` | Worker identity reported to coordinator; defaults to hostname if empty | `""` |
 | `reference_engine` | Path to a fixed reference engine for reference mode (see below); empty = standard mode | `""` |
-| `ramdisk` | Auto-create a RAM disk for PyInstaller temp extraction (see below); genconfig enables this automatically when the engine is a PyInstaller `--onefile` binary | `false` |
+| `ramdisk` | Auto-create a RAM disk for PyInstaller temp extraction (see below); set `false` to disable | `true` |
 | `ramdisk_drive` | Override drive letter for RAM disk (e.g. `"R:"`); empty = auto-select | `""` |
 | `auto_install_imdisk` | Auto-download and install ImDisk on Windows if not found; set `false` to manage manually | `true` |
 | `ramdisk_size` | Override RAM disk size in MB (0 = auto-estimate from engine sizes and concurrency) | `0` |
@@ -234,10 +239,8 @@ next startup via a marker file.
 **Linux**: Uses `/dev/shm` (tmpfs, already RAM-backed on most systems). No drivers or
 elevation needed. If `/dev/shm` is not available, the worker raises an error.
 
-Disabled by default. `genconfig.py` scans the engine and reference-engine binaries for
-the PyInstaller CArchive magic and sets `"ramdisk": true` only when a `--onefile` bundle
-is detected; `.py` scripts and native builds leave it off. Override in `worker.json` if
-needed.
+Skipped entirely when all engines are `.py` scripts (no PyInstaller extraction).
+Set `"ramdisk": false` in `worker.json` to disable.
 
 ### Reference Mode
 
