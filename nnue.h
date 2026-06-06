@@ -86,8 +86,6 @@ namespace nnue
     using weight_t = float;
 
     constexpr int ACTIVE_INPUTS = 897;
-    constexpr int ATTN_BUCKETS = 8;
-    constexpr int HIDDEN2_BUCKETS = 8;
     constexpr int EVAL_SCALE = 100;
     constexpr int MAX_ACTIVE_INPUTS = 65; // 32 pieces + 32 occupancy mask + turn
     constexpr auto POOL_STRIDE = Vec8s::size();
@@ -1008,28 +1006,24 @@ namespace nnue
     };
 
 
-    template <typename A, typename ATTN, typename L2, typename L3, typename OUT>
-    INLINE int eval(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out)
+    template <typename A, typename ATTN, typename L2, typename OUT>
+    INLINE int eval(const A& a, const ATTN& attn, const L2& l2, const OUT& out)
     {
         constexpr int POOL_OUT = A::OUTPUTS_A / POOL_STRIDE;
-        static_assert(POOL_OUT * HIDDEN2_BUCKETS == L2::INPUTS);
-        static_assert(A::OUTPUTS_B * ATTN_BUCKETS == ATTN::INPUTS);
+        static_assert(POOL_OUT == L2::INPUTS);
+        static_assert(A::OUTPUTS_B == ATTN::INPUTS);
 
-        constexpr int ATTN_IN_PER_BUCKET = A::OUTPUTS_B;
-
-        ALIGN float attn_in[ATTN_IN_PER_BUCKET];
+        ALIGN float attn_in[A::OUTPUTS_B];
         ALIGN float attn_out[ATTN::OUTPUTS];
         ALIGN float l2_in[POOL_OUT];
         ALIGN float l2_out[L2::OUTPUTS];
-        ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
 
         pool(a._bucket[a._current_bucket].output, l2_in);
 
         /* The "spatial attention" layer modulates L2 input. */
-        /* Use bucket offset to select the right weights slice */
         activate(a._output_b, attn_in);
-        attn.dot(attn_in, attn_out, static_cast<size_t>(a._current_bucket * ATTN_IN_PER_BUCKET));
+        attn.dot(attn_in, attn_out);
 
         static_assert(POOL_OUT % Vector::size() == 0);
 
@@ -1043,11 +1037,8 @@ namespace nnue
         }
         /* end of modulation */
 
-        /* hidden_2: use bucket offset to select the right weights slice */
-        l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); }, static_cast<size_t>(a._current_bucket * POOL_OUT));
-        l3.dot(l2_out, l3_out, [](const Vector& v) { return relu(v); });
-
-        out.dot(l3_out, output);
+        l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); });
+        out.dot(l2_out, output);
         return EVAL_SCALE * output[0];
     }
 

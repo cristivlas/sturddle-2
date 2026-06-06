@@ -54,6 +54,7 @@ if [[ ! -f "${weights}" ]]; then
 fi
 
 # --- quantize model and re-export ---
+echo
 echo "Re-exporting with imported weights..."
 CUDA_VISIBLE_DEVICES=-1 ./tools/nnue/train.py export -m "${target_path}" --import "${weights}" --bin -o weights.bin --save-model \
     || { echo "Error: quantized re-export failed." >&2; exit 1; }

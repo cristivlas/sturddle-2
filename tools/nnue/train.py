@@ -25,8 +25,6 @@ ACCUMULATOR_SIZE = 1280
 ATTN_FAN_OUT = 32
 POOL_SIZE = 8
 MAIN_BUCKETS = 8  # Number of buckets for hidden_1a / BucketShift
-ATTN_BUCKETS = 8  # Number of buckets for spatial attention layer
-HIDDEN2_BUCKETS = 8  # Number of buckets for hidden_2 layer
 
 Q_SCALE = 1024
 
@@ -176,68 +174,6 @@ def make_model(args, strategy):
             return tf.reshape(sparse, [-1, self.num_buckets * num_features])
 
 
-    class AttnBucketShift(tf.keras.layers.Layer):
-        """Shift attention inputs into buckets based on pawn count (input-side bucketing)."""
-        def __init__(self, num_buckets, **kwargs):
-            super(AttnBucketShift, self).__init__(**kwargs)
-            self.num_buckets = num_buckets
-
-        def call(self, inputs):
-            # inputs[0]: hidden_1b output, shape (batch, 64)
-            # inputs[1]: unpacked features (to extract pawn count)
-            hidden_1b, features = inputs
-
-            # Extract pawn bits from features (same logic as BucketShift)
-            pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
-            pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
-            bucket_width = tf.constant(max(1, 16 // self.num_buckets), dtype=tf.float32)
-            bucket_id = tf.cast(
-                tf.minimum(pawn_count // bucket_width, self.num_buckets - 1),
-                tf.int32
-            )
-
-            # Shift features into buckets (same approach as BucketShift)
-            num_features = tf.shape(hidden_1b)[1]
-            bucket_mask = tf.one_hot(bucket_id, self.num_buckets, dtype=hidden_1b.dtype)
-            bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
-
-            features_tiled = tf.tile(tf.expand_dims(hidden_1b, 1), [1, self.num_buckets, 1])
-            sparse = features_tiled * bucket_mask
-
-            return tf.reshape(sparse, [-1, self.num_buckets * num_features])
-
-
-    class Hidden2BucketShift(tf.keras.layers.Layer):
-        """Shift pooled hidden_1a output into buckets based on pawn count."""
-        def __init__(self, num_buckets, **kwargs):
-            super(Hidden2BucketShift, self).__init__(**kwargs)
-            self.num_buckets = num_buckets
-
-        def call(self, inputs):
-            # inputs[0]: pooled output (after residual), shape (batch, 160)
-            # inputs[1]: unpacked features (to extract pawn count)
-            pooled, features = inputs
-
-            # Extract pawn bits from features
-            pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
-            pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
-            bucket_width = tf.constant(max(1, 16 // self.num_buckets), dtype=tf.float32)
-            bucket_id = tf.cast(
-                tf.minimum(pawn_count // bucket_width, self.num_buckets - 1),
-                tf.int32
-            )
-
-            # Shift features into buckets
-            num_features = tf.shape(pooled)[1]
-            bucket_mask = tf.one_hot(bucket_id, self.num_buckets, dtype=pooled.dtype)
-            bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
-
-            features_tiled = tf.tile(tf.expand_dims(pooled, 1), [1, self.num_buckets, 1])
-            sparse = features_tiled * bucket_mask
-
-            return tf.reshape(sparse, [-1, self.num_buckets * num_features])
-
-
     with strategy.scope():
         ACTIVATION = tf.keras.activations.relu
         K_INIT = tf.keras.initializers.HeNormal
@@ -294,14 +230,12 @@ def make_model(args, strategy):
             trainable=not args.freeze_eval,
         )(input_1b)
 
-        # Bucketed spatial attention: shift hidden_1b into buckets based on pawn count, then apply Dense
-        hidden_1b_bucketed = AttnBucketShift(ATTN_BUCKETS, name='attn_bucket_shift')([hidden_1b, unpack_layer])
         spatial_attn = Dense(
             ATTN_FAN_OUT,
             activation=None,
             name='spatial_attn',
             trainable=not args.freeze_eval
-        )(hidden_1b_bucketed)
+        )(hidden_1b)
 
         def custom_pooling(x):
             reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
@@ -319,27 +253,15 @@ def make_model(args, strategy):
         # Add residual connection: pooled + pooled * attention_weights
         residual = Add(name='residual')([pooled, modulation])
 
-        # Bucket the residual output before hidden_2
-        residual_bucketed = Hidden2BucketShift(HIDDEN2_BUCKETS, name='hidden2_bucket_shift')([residual, unpack_layer])
-
         hidden_2 = Dense(
             16,
             activation=ACTIVATION,
             kernel_initializer=K_INIT,
             name='hidden_2',
             trainable=not args.freeze_eval,
-        )(residual_bucketed)
+        )(residual)
 
-        hidden_3 = Dense(
-            16,
-            activation=ACTIVATION,
-            kernel_initializer=K_INIT,
-            name='hidden_3',
-            trainable=not args.freeze_eval,
-        )(hidden_2)
-
-        # Define the position evaluation output
-        eval_output = Dense(1, name='out', dtype='float32', trainable=not args.freeze_eval)(hidden_3)
+        eval_output = Dense(1, name='out', dtype='float32', trainable=not args.freeze_eval)(hidden_2)
 
         # Add move prediction heads if enabled
         outputs = [eval_output]

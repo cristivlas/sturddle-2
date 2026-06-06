@@ -22,8 +22,6 @@ ACTIVE_INPUTS = 897
 ACCUMULATOR_SIZE = 1280
 POOL_SIZE = 8
 MAIN_BUCKETS = 8
-ATTN_BUCKETS = 8
-HIDDEN2_BUCKETS = 8
 
 # Layer definitions: (name, kernel_shape, bias_shape, constraint_type)
 # constraint_type: 'A', 'B', or None
@@ -32,9 +30,8 @@ HIDDEN2_BUCKETS = 8
 LAYERS = [
     ('hidden_1b', (256, 64), (64,), 'B'),
     ('hidden_1a', (ACTIVE_INPUTS * MAIN_BUCKETS, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), 'A'),
-    ('spatial_attn', (64 * ATTN_BUCKETS, 32), (32,), None),
-    ('hidden_2', (ACCUMULATOR_SIZE // POOL_SIZE * HIDDEN2_BUCKETS, 16), (16,), None),
-    ('hidden_3', (16, 16), (16,), None),
+    ('spatial_attn', (64, 32), (32,), None),
+    ('hidden_2', (ACCUMULATOR_SIZE // POOL_SIZE, 16), (16,), None),
     ('out', (16, 1), (1,), None),
 ]
 
