@@ -267,7 +267,7 @@
             font-family: monospace;
             font-weight: 600;
             color: var(--text);
-            background: var(--surface);
+            background: var(--surface-alt);
             user-select: none;
         }}
         .pst-slider-row {{
@@ -1169,7 +1169,7 @@
         currentThetaInternal = Object.keys(initThetaInternal).length ? initThetaInternal : initTheta;
         initToggle();
         renderTheta(hasNormalized ? currentThetaInternal : currentTheta, hasNormalized ? initialThetaInternal : initialTheta);
-        renderPstHeatmaps(currentTheta);
+        renderPstHeatmaps();
         renderWorkers(initWorkers);
         document.getElementById('remainingValue').textContent = {games_total} - {games_done};
         updateSchedFill({games_pending}, {games_total} - {games_done});
@@ -1196,7 +1196,7 @@
             }}
             // Heatmap may have rendered before /config arrived; refresh it now
             // so PST cells use denormalized engine values.
-            if (typeof renderPstHeatmaps === 'function') renderPstHeatmaps(currentTheta);
+            if (typeof renderPstHeatmaps === 'function') renderPstHeatmaps();
             renderTheta(
                 showInternal ? currentThetaInternal : currentTheta,
                 showInternal ? initialThetaInternal : initialTheta
@@ -1380,14 +1380,15 @@
             var iter = (hw[shownIdx] && hw[shownIdx].iteration != null) ? hw[shownIdx].iteration : '--';
             iterLbl.textContent = 'iter ' + iter;
         }}
-        function renderPstHeatmaps(liveTheta) {{
+        function renderPstHeatmaps() {{
             var wrap = document.getElementById('pstHeatmapsWrap');
             var root = document.getElementById('pstHeatmapsInline');
             if (!root || !wrap) return;
             // Show the recorded snapshot at the pinned iter (or the latest recorded
-            // iter when unpinned). Falls back to live theta only when history is empty.
+            // iter when unpinned). Falls back to live normalized theta when history
+            // is empty. Both paths must feed denormalizeToEngine normalized values.
             var pinnedTheta = pstGetPinnedTheta();
-            var theta = pinnedTheta || liveTheta;
+            var theta = pinnedTheta || currentThetaInternal;
             var pieces = detectPstPieces(theta);
             var pieceKeys = Object.keys(pieces).sort(function(a, b) {{
                 if (a === 'KEG') return 1;
@@ -1500,7 +1501,7 @@
                 if (!hw.length) return;
                 idx = Math.max(0, Math.min(hw.length - 1, idx));
                 pstPinnedIter = (idx === hw.length - 1) ? null : (hw[idx] && hw[idx].iteration);
-                renderPstHeatmaps(currentTheta);
+                renderPstHeatmaps();
             }}
             slider.addEventListener('input', function() {{
                 pinByIdx(parseInt(slider.value, 10));
@@ -1649,7 +1650,7 @@
             currentTheta = d.theta;
             if (d.theta_internal) currentThetaInternal = d.theta_internal;
             renderTheta(showInternal ? currentThetaInternal : currentTheta, showInternal ? initialThetaInternal : initialTheta);
-            renderPstHeatmaps(currentTheta);
+            renderPstHeatmaps();
             renderWorkers(d.workers);
 
             // History: detect reset (--clean) or missed entries, append new
