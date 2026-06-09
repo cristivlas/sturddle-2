@@ -650,6 +650,19 @@
                     }}
                     function onMove(e) {{
                         var target = startH + e.clientY - startY;
+                        // Shrink below natural min -> auto-collapse params (mirror of
+                        // the drag-down branch below). Without this the card body
+                        // keeps rendering past its clamped height and overlaps the
+                        // charts beneath.
+                        if (target < collapsedH && chartVis.params) {{
+                            chartVis.params = false;
+                            card.classList.add('collapsed');
+                            card.style.flex = '';
+                            card.style.height = '';
+                            resizeAllCharts();
+                            onUp();  // end drag; handle hides via applyVis()
+                            return;
+                        }}
                         // Grow past current max -> auto-collapse bottommost expanded below-card.
                         while (target > dynMax() && (chartVis.elo || chartVis.rates)) {{
                             var key = chartVis.rates ? 'rates' : 'elo';
