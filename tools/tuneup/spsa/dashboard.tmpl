@@ -346,6 +346,9 @@
             outline: 2px solid var(--accent-start);
             outline-offset: -2px;
         }}
+        .pst-cell.pst-converged {{
+            box-shadow: inset 0 0 0 2px var(--conv-good);
+        }}
         .section {{
             margin-top: 10px;
         }}
@@ -1479,15 +1482,18 @@
                     var cell = document.querySelector('[data-cell="' + p + ':' + sq + '"]');
                     if (!cell) return;
                     var v = engineVals[sq];
+                    var conv = paramConvergence(name);
+                    var isConv = conv && conv.pct < 1.0;
                     if (typeof v === 'number') {{
                         cell.textContent = (Math.abs(v) >= 1 || v === 0) ? Math.round(v) : v.toFixed(1);
                         cell.style.cssText = pstCellColor(v, maxAbs);
-                        cell.title = name + ' = ' + v;
+                        cell.title = name + ' = ' + v + (conv ? ' (stddev/range=' + conv.pct.toFixed(2) + '%)' : '');
                     }} else {{
                         cell.textContent = '?';
                         cell.style.cssText = '';
                         cell.title = name + ' = ?';
                     }}
+                    cell.classList.toggle('pst-converged', !!isConv);
                 }});
             }});
         }}
