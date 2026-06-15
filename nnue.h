@@ -85,9 +85,10 @@ namespace nnue
     using input_t = int16_t;
     using weight_t = float;
 
-    constexpr int ACTIVE_INPUTS = 897;
+    constexpr int ACTIVE_INPUTS = 769;
     constexpr int EVAL_SCALE = 100;
-    constexpr int MAX_ACTIVE_INPUTS = 65; // 32 pieces + 32 occupancy mask + turn
+    constexpr int MAX_ACTIVE_INPUTS = 33; // 32 pieces + turn
+    constexpr int NUM_BUCKETS = 8;
     constexpr auto POOL_STRIDE = Vec8s::size();
     constexpr int QSCALE = 1024;
 
@@ -293,9 +294,6 @@ namespace nnue
             }
         }
         encoding[TURN_INDEX] = board.turn;
-
-        for_each_square_r(color_masks[0], [&](Square j) { encoding[832 - j] = 1; });
-        for_each_square_r(color_masks[1], [&](Square j) { encoding[896 - j] = 1; });
     }
 
     template <typename F>
@@ -315,10 +313,6 @@ namespace nnue
 
         if (state.turn)
             func(TURN_INDEX);
-
-        // Occupancy masks
-        for_each_square_r(color_masks[0], [&](Square sq) { func(832 - sq); });
-        for_each_square_r(color_masks[1], [&](Square sq) { func(896 - sq); });
     }
 
     template <typename F>
@@ -341,12 +335,6 @@ namespace nnue
     INLINE constexpr int piece_square_index(PieceType piece_type, Color color, Square square)
     {
         return (piece_type % 6) * 128 + (64 * color) + 63 - square;
-    }
-
-    /** Calculate index into occupancy mask for given color */
-    INLINE constexpr int mask_index(Color color, Square square) noexcept
-    {
-        return (color ? 833 : 769) + 63 - square;
     }
 
 
@@ -685,7 +673,6 @@ namespace nnue
 
     template <int M, int N, int O> struct Accumulator
     {
-        static constexpr int NUM_BUCKETS = 8;
         static_assert(ACTIVE_INPUTS * NUM_BUCKETS == M);
 
         static constexpr int INPUTS = round_up<INPUT_STRIDE>(M);
@@ -747,7 +734,6 @@ namespace nnue
         static INLINE void delta(int (&d)[MAX_ACTIVE_INPUTS], int& idx, PieceType pt, Color col, Square sq)
         {
             d[idx++] = piece_square_index(pt, col, sq);
-            d[idx++] = mask_index(col, sq);
         }
 
         /** Update 1st layer output incrementally, based on a previous state */

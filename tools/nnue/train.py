@@ -29,8 +29,8 @@ MAIN_BUCKETS = 8  # Number of buckets for hidden_1a / BucketShift
 Q_SCALE = 1024
 
 # Quantization range: use int16_t with Q_SCALE, prevent overflow
-# 32 pieces + (16 + 16) occupancy + 1 side-to-move + 1 bias == 66
-Q_MAX_A = 32767 / Q_SCALE / 66
+# 32 pieces + 1 side-to-move + 1 bias == 34
+Q_MAX_A = 32767 / Q_SCALE / 34
 Q_MIN_A = -Q_MAX_A
 
 # (8 pawns + 1 king) x 2 + 1 bias == 19
@@ -105,6 +105,17 @@ def make_model(args, strategy):
             loss_outcome = tf.abs(wdl_eval_pred - outcome_target)
         elif args.loss_bce:
             loss_eval = tf.keras.losses.binary_crossentropy(wdl_eval_target, wdl_eval_pred)[:, tf.newaxis]
+            loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)[:, tf.newaxis]
+        elif args.loss_blend:
+            # Huber on raw eval domain; BCE on outcome in probability domain
+            huber_delta = tf.constant(args.huber_delta, dtype=tf.float32)
+            err = y_pred - eval_target
+            abs_err = tf.abs(err)
+            loss_eval = tf.where(
+                abs_err <= huber_delta,
+                0.5 * tf.square(err),
+                huber_delta * (abs_err - 0.5 * huber_delta)
+            )
             loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)[:, tf.newaxis]
         else:
             # default: mean square error
@@ -182,27 +193,8 @@ def make_model(args, strategy):
         input_layer = Input(shape=(13,), dtype=tf.uint64, name='input')
         unpack_layer = Unpack(args.hot_encoding, name='unpack')(input_layer)
 
-        def black_occupied_mask(x):
-            mask = tf.zeros_like(x[:, :64])
-            for i in range(0, 12, 2):
-                mask = tf.math.add(mask, x[:, i*64:(i+1)*64])
-            return mask
-
-        def white_occupied_mask(x):
-            mask = tf.zeros_like(x[:, :64])
-            for i in range(1, 12, 2):
-                mask = tf.math.add(mask, x[:, i*64:(i+1)*64])
-            return mask
-
-        # Extract black occupation mask (summing black pieces' bitboards)
-        black_occupied = Lambda(black_occupied_mask, name='black')(unpack_layer)
-        # Extract white occupation mask (summing white pieces' bitboards)
-        white_occupied = Lambda(white_occupied_mask, name='white')(unpack_layer)
-
-        concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
-
         # Apply bucketing
-        bucketed = BucketShift(MAIN_BUCKETS, name='bucket_shift')(concat)
+        bucketed = BucketShift(MAIN_BUCKETS, name='bucket_shift')(unpack_layer)
 
         constr_a = QConstraint(Q_MIN_A, Q_MAX_A)
         hidden_1a = Dense(
@@ -267,7 +259,7 @@ def make_model(args, strategy):
         outputs = [eval_output]
 
         if args.predict_moves:
-            stop_grad = tf.stop_gradient(concat)
+            stop_grad = tf.stop_gradient(unpack_layer)
 
             # Output layer: 4096 logits for all possible moves (64x64)
             move_logits = Dense(
@@ -1107,7 +1099,9 @@ if __name__ == '__main__':
         parser.add_argument('--save-model', action='store_true', help='save model immediately, use with --import and/or --alt-model')
 
         parser.add_argument('--loss-bce', action='store_true', help='use binary cross-entropy loss (default is MSE)')
+        parser.add_argument('--loss-blend', action='store_true', help='use Huber on raw eval domain + BCE on outcome')
         parser.add_argument('--loss-mae', action='store_true', help='use mean absolute error loss (defaule is MSE)')
+        parser.add_argument('--huber-delta', type=float, default=1.5, help='delta for Huber loss when using --loss-blend (eval domain units)')
 
         parser.add_argument('--no-capture', action='store_true', help='exclude captures from training')
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')

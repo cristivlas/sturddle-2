@@ -13,12 +13,12 @@ import fetch_weights
 Q_SCALE = 1024
 
 # Constraint A: for hidden_1a and move layers
-Q_MAX_A = 32767 / Q_SCALE / 66
+Q_MAX_A = 32767 / Q_SCALE / 34
 
 # Constraint B: for hidden_1b layer
 Q_MAX_B = 32767 / Q_SCALE / 19
 
-ACTIVE_INPUTS = 897
+ACTIVE_INPUTS = 769
 ACCUMULATOR_SIZE = 1280
 POOL_SIZE = 8
 MAIN_BUCKETS = 8

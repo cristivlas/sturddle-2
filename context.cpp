@@ -290,7 +290,7 @@ std::map<std::string, int> _get_params()
 
 #if WITH_NNUE
 /* Define the network architecture */
-constexpr int INPUTS_A = 7176;
+constexpr int INPUTS_A = nnue::ACTIVE_INPUTS * nnue::NUM_BUCKETS;
 constexpr int INPUTS_B = 256;
 constexpr int HIDDEN_1A = 1280;
 constexpr int HIDDEN_1A_POOLED = HIDDEN_1A / nnue::POOL_STRIDE;
@@ -316,7 +316,7 @@ using EVALType = nnue::Layer<HIDDEN_2, 1>;
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
 using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
 
-using LMOVEType = nnue::Layer<INPUTS_A / Accumulator::NUM_BUCKETS, 4096, int16_t, nnue::QSCALE>;
+using LMOVEType = nnue::Layer<INPUTS_A / nnue::NUM_BUCKETS, 4096, int16_t, nnue::QSCALE>;
 
 /* Each thread uses its own stack */
 static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
@@ -1841,7 +1841,7 @@ namespace search
         const double hist_high = (Phase == 3) ? hist_thresholds[ctxt.iteration()] : 0;
 
     #if USE_MOVE_PREDICTION
-        int active[65];  // 32 pieces + 1 stm + 16 + 16 occupancy
+        int active[nnue::MAX_ACTIVE_INPUTS];
         int active_count = 0;
     #endif /* USE_MOVE_PREDICTION */
 
@@ -1949,7 +1949,7 @@ namespace search
                     {
                         if (active_count == 0)
                             nnue::for_each_active_input(ctxt.state(), [&](int idx) {
-                                ASSERT(active_count < 65);
+                                ASSERT(active_count < nnue::MAX_ACTIVE_INPUTS);
                                 active[active_count++] = idx;
                             });
 
