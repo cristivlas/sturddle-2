@@ -806,9 +806,15 @@ namespace nnue
 
             const size_t base = bucket * ACTIVE_INPUTS;
 
+            /* Where the delta loops read the prior values from: the ancestor
+             * directly on the same-bucket path (no memcpy), or this object
+             * after the cross-bucket pass below fills it.
+             */
+            const int16_t* src_a = ancestor._bucket[bucket].output;
+
             if (incremental_a)
             {
-                memcpy(_bucket[bucket].output, ancestor._bucket[bucket].output, sizeof(_bucket[bucket].output));
+                /* fused: incremental_update reads src_a, writes _bucket[bucket].output */
             }
             else if (_bucket[bucket].hash != state.hash())
             {
@@ -844,11 +850,11 @@ namespace nnue
                 // Now _bucket[bucket].output has correct output for prev position with bucket weights
                 // Set flag so move deltas get applied
                 incremental_a = true;
+                src_a = _bucket[bucket].output;
             }
 
-            /* layer B: update incrementally from ancestor state */
-            memcpy(_output_b, ancestor._output_b, sizeof(_output_b));
-            incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, incremental_a);
+            /* layer B: updated incrementally from the ancestor inside incremental_update */
+            incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, incremental_a, src_a, ancestor._output_b);
 
             _bucket[bucket].hash = state.hash();
             _current_bucket = bucket;
@@ -869,7 +875,11 @@ namespace nnue
         #endif /* DEBUG_INCREMENTAL */
         }
 
-        /** Recompute incrementally */
+        /** Recompute incrementally.
+         * src_a / src_b: where to read the prior accumulator values from. Reading
+         * the ancestor directly in the delta loops (instead of memcpy-ing it into
+         * this object first) saves a full write+read pass over the outputs.
+         */
         template <typename LA, typename LB>
         INLINE void incremental_update(
             const LA& layer_a,
@@ -880,7 +890,9 @@ namespace nnue
             const int a_idx,
             size_t base,
             int bucket,
-            bool update_layer_a)
+            bool update_layer_a,
+            const int16_t* src_a,
+            const int16_t* src_b)
         {
         #if __ARM__
             using VecShort = Vec16s;
@@ -906,7 +918,7 @@ namespace nnue
             {
                 for (int j = 0; j != OUTPUTS_A; j += VecShort::size())
                 {
-                    vo.load_a(&_bucket[bucket].output[j]);
+                    vo.load_a(&src_a[j]);
 
                     for (int i = 0; i < r_idx; ++i)
                     {
@@ -932,7 +944,7 @@ namespace nnue
                 /* Layer B */
                 for (int j = 0; j != OUTPUTS_B; j += VecShort::size())
                 {
-                    vo.load_a(&_output_b[j]);
+                    vo.load_a(&src_b[j]);
 
                     for (int i = 0; i < r_idx; ++i)
                     {
@@ -953,6 +965,10 @@ namespace nnue
                     }
                     vo.store_a(&_output_b[j]);
                 }
+            }
+            else if (src_b != _output_b)
+            {
+                memcpy(_output_b, src_b, sizeof(_output_b));
             }
         }
 
