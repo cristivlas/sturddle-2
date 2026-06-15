@@ -1464,7 +1464,7 @@ namespace search
             reduction += !_parent->has_improved<THEM>();
             reduction -= 2 * _parent->is_counter_move(_move);
 
-        #if CONTINUATION_HISTORY
+        #if 0 && CONTINUATION_HISTORY
             {
                 const auto cont_score = _tt->continuation_history_score(*_parent, _parent->turn(), _move);
                 if (cont_score > 0)
@@ -1482,7 +1482,7 @@ namespace search
         #if CAPTURE_HISTORY
             const auto cap_hist = _tt->capture_history_score(_parent->state(), _parent->turn(), _move);
             if (cap_hist > CAPTURE_HISTORY_LMR_HIGH)
-                --reduction;
+                /* --reduction */;
             else if (cap_hist > 0 && cap_hist < CAPTURE_HISTORY_LMR_LOW)
                 ++reduction;
         #endif /* CAPTURE_HISTORY */
