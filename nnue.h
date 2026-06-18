@@ -808,9 +808,11 @@ namespace nnue
 
             const size_t base = bucket * ACTIVE_INPUTS;
 
-            /* Where the delta loops read the prior values from: the ancestor
+            /*
+             * Where the delta loops read the prior values from: the ancestor
              * directly on the same-bucket path (no memcpy), or this object
-             * after the cross-bucket pass below fills it. */
+             * after the cross-bucket pass below fills it.
+             */
             const int16_t* src_a = ancestor._bucket[bucket].output;
 
             if (incremental_a)
