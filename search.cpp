@@ -218,6 +218,8 @@ void TranspositionTable::clear()
     _history_counters = 0;
     _history_counters_hit = 0;
     _hits = 0;
+    _probes = 0;
+    _l1_hits = 0;
     _late_move_prune_count = 0;
     _nodes = 0;
     _nps = 0; /* nodes per second */
@@ -252,6 +254,9 @@ void TranspositionTable::init(bool new_game)
     {
         search::Context::log_message(LogLevel::DEBUG, "init: game");
         _table.clear(true);
+    #if TT_L1
+        _l1.fill(TT_Entry()); /* reset L1 with the shared TT, on new game only */
+    #endif /* TT_L1 */
 
         Context::clear_caches_and_stacks();
 
@@ -306,6 +311,9 @@ bool TranspositionTable::update_and_store(Context& ctxt, TT_Type tt_type)
     {
         update_entry(ctxt, ctxt.tt_entry(), tt_type, ctxt.depth());
         _table.store(ctxt.tt_result());
+    #if TT_L1
+        _l1[ctxt.tt_entry()._hash & L1_MASK] = ctxt.tt_entry(); /* write-through */
+    #endif /* TT_L1 */
         return true;
     }
 

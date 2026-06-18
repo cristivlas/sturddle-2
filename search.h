@@ -301,6 +301,13 @@ namespace search
     #endif /* CONTINUATION_HISTORY */
         static HashTable    _table;        /* shared hashtable */
 
+    #if TT_L1
+        /* Per-thread, cache-resident L1 in front of the shared TT. */
+        static constexpr size_t L1_BITS = 14;             /* 16K entries ~ 288KB */
+        static constexpr uint64_t L1_MASK = (uint64_t(1) << L1_BITS) - 1;
+        std::array<TT_Entry, size_t(1) << L1_BITS> _l1{};
+    #endif /* TT_L1 */
+
         void clear(); /* clear search stats, bump up generation */
 
     public:
@@ -340,6 +347,8 @@ namespace search
         size_t _history_counters = 0;
         size_t _history_counters_hit = 0;
         size_t _hits = 0;
+        size_t _probes = 0;
+        size_t _l1_hits = 0;
         size_t _killers = 0;
         size_t _late_move_prune_count = 0;
         size_t _nodes = 0;
@@ -630,6 +639,27 @@ namespace search
         /* expect repetitions to be dealt with before calling into this function */
         ASSERT(!ctxt.is_repeated());
 
+    #if TT_L1
+        /* L1 fast path: retains TT-evicted entries, so it yields extra cutoffs. */
+        if (!ctxt.is_pv_node() && !ctxt.is_retry())
+        {
+            auto& e = _l1[ctxt.state().hash() & L1_MASK];
+            if (e._hash == ctxt.state().hash())
+            {
+                if (auto value = e.lookup_score(ctxt))
+                {
+                    if constexpr(EXTRA_STATS)
+                        ++_l1_hits;
+                    ctxt._score = *value;
+                    return value;
+                }
+            }
+        }
+    #endif /* TT_L1 */
+
+        if constexpr(EXTRA_STATS)
+            ++_probes;
+
         if (!ctxt.tt_entry().is_valid() || ctxt.tt_entry()._depth < ctxt.depth())
             StorageView<HashTable::Result>::store(ctxt._state->tt_result, ctxt._state->has_tt_result, _table.probe(ctxt.state(), ctxt.depth()));
         else
@@ -686,6 +716,9 @@ namespace search
 
             update_entry(ctxt, ctxt.tt_entry(), type, depth);
             _table.store(ctxt.tt_result());
+        #if TT_L1
+            _l1[ctxt.tt_entry()._hash & L1_MASK] = ctxt.tt_entry(); /* write-through */
+        #endif /* TT_L1 */
         }
     }
 

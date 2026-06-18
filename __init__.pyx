@@ -816,6 +816,8 @@ cdef extern from 'search.h' namespace 'search':
         const   size_t _history_counters
         const   size_t _history_counters_hit
         const   size_t _hits
+        const   size_t _probes
+        const   size_t _l1_hits
         const   size_t _killers
         const   size_t _late_move_prune_count
         const   size_t _null_move_not_ok
@@ -866,6 +868,10 @@ cdef task_stats(const TranspositionTable& table):
         'reductions': table._reductions,
         'retry-reductions': table._retry_reductions,
         'tt-hits': table._hits,
+        'tt-probes': table._probes,
+        'tt-hit-rate': (100.0 * table._hits / table._probes) if table._probes else 0.0,
+        'tt-l1-hits': table._l1_hits,
+        'tt-l1-rate': (100.0 * table._l1_hits / (table._l1_hits + table._probes)) if (table._l1_hits + table._probes) else 0.0,
         'tt-usage': table.usage(),
     }
 

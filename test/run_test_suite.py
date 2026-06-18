@@ -52,9 +52,9 @@ class Timer:
 
 
 def print_header():
-    print (f'Algorithm | {"Test":34s} | Time  | Result |    Depth    |  Evals   |   Nodes   |  Hash  |\
+    print (f'Algorithm | {"Test":34s} | Time  | Result |    Depth    |  Evals   |   Nodes   |  Hash  |  TT hit   |\
      Speed     |   Solved')
-    print (f"{'-'*10}+{'-'*36}+{'-'*7}+{'-'*8}+{'-'*13}+{'-'*10}+{'-'*11}+{'-'*8}+{'-'*15}+{'-'*15}")
+    print (f"{'-'*10}+{'-'*36}+{'-'*7}+{'-'*8}+{'-'*13}+{'-'*10}+{'-'*11}+{'-'*8}+{'-'*11}+{'-'*15}+{'-'*15}")
 
 
 """
@@ -80,7 +80,7 @@ def write_stats(filename, name, result, algo, stats):
 
     agg = {}
     for k in stats[0]:
-        if k in ['nps', 'tt-usage']:
+        if k in ['nps', 'tt-usage', 'tt-hit-rate', 'tt-l1-rate']:
             agg[k] = stats[0][k]  # Do not aggregate.
         else:
             agg[k] = sum([s[k] for s in stats.values()])
@@ -129,13 +129,23 @@ def search(algo_class, name, board, expected, depths, **kwargs):
     try:
         e = sum([stat['eval-count'] for stat in task_stats.values()])
         n = sum([stat['nodes'] for stat in task_stats.values()])
+        h = sum([stat['tt-hits'] for stat in task_stats.values()])
+        pr = sum([stat['tt-probes'] for stat in task_stats.values()])
+        l1 = sum([stat['tt-l1-hits'] for stat in task_stats.values()])
     except:
-        e = n = 0
+        e = n = h = pr = l1 = 0
+
+    tt_total[0] += h
+    tt_total[1] += pr
+    node_total[0] += n
+    l1_total[0] += l1
+    hr = 100.0 * h / pr if pr else 0.0
 
     secs = timer.seconds_elapsed()
+    time_total[0] += secs
     nps = n / secs if secs else n
     u = algo.tt_usage
-    stats = f'|{d:3d} {t:2d} ({a:4.1f})| {e:8d} | {n:9d} |{u:6.2f}% | {nps/1000:8.1f} knps |'
+    stats = f'|{d:3d} {t:2d} ({a:4.1f})| {e:8d} | {n:9d} |{u:6.2f}% |{hr:6.2f}% hit| {nps/1000:8.1f} knps |'
     if uci in expected or san in expected:
         print (f' \u001b[32mOK.\u001b[0m   {stats}', end='')
         result = True
@@ -152,6 +162,10 @@ def search(algo_class, name, board, expected, depths, **kwargs):
 
 
 perft_total = [0, 0]
+tt_total = [0, 0]  # [hits, probes] accumulated over the suite
+node_total = [0]   # total nodes accumulated over the suite
+time_total = [0.0] # total search seconds accumulated over the suite
+l1_total = [0]     # total L1 hits accumulated over the suite
 
 """
 Run search over a collection of position (puzzles) read from an epd file
@@ -159,6 +173,10 @@ Run search over a collection of position (puzzles) read from an epd file
 def test_epd(args, filename, tests, algo_class, **kwargs):
     succeeded, total = 0, 0
     depths = [0, 0]
+    tt_total[0] = tt_total[1] = 0
+    node_total[0] = 0
+    time_total[0] = 0.0
+    l1_total[0] = 0
     i = 0
     tests = [line for line in tests.split('\n') if line]
     count = len(tests)
@@ -217,6 +235,13 @@ def test_epd(args, filename, tests, algo_class, **kwargs):
 
     print(f'Succeeded: {succeeded} / {total}')
     print(f'Average depth: {depths[0] / total:.2f}')
+    if tt_total[1]:
+        print(f'TT hit rate: {100.0 * tt_total[0] / tt_total[1]:.2f}% ({tt_total[0]} / {tt_total[1]})')
+    print(f'Total nodes: {node_total[0]}')
+    if time_total[0]:
+        print(f'Aggregate NPS: {node_total[0] / time_total[0] / 1000:.1f} knps ({time_total[0]:.1f}s search)')
+    if l1_total[0]:
+        print(f'L1 hit rate: {100.0 * l1_total[0] / (l1_total[0] + tt_total[1]):.2f}% ({l1_total[0]} L1 / {tt_total[1]} big-TT probes)')
 
 
 def configure_logger(args):
@@ -235,6 +260,8 @@ def main():
     parser.add_argument('-c', '--config', default='sturddle.cfg')
     parser.add_argument('-l', '--logfile', default='test_suite.log')
     parser.add_argument('-p', '--perft', action='store_true')
+    parser.add_argument('-d', '--depth', type=int, help='fixed search depth (deterministic; overrides --time)')
+    parser.add_argument('--hash', type=int, help='hash size in MB (override config; small forces eviction)')
     parser.add_argument('-s', '--stats', help='stats output filename')
     parser.add_argument('-t', '--time', type=int, default=5000)
     parser.add_argument('-v', '--verbose', action='store_true')
@@ -244,14 +271,24 @@ def main():
     configure_logger(args)
     read_config(args.config, echo=True)
 
+    if args.hash:
+        set_hash_size(args.hash)
+        print(f'Hash size set to {get_hash_size()} MB')
+
     if args.stats:
         with open(args.stats, 'w'):
             pass
 
+    # Fixed depth (deterministic) gives clean A/B numbers; a huge time limit lets depth bind.
+    if args.depth:
+        run_kwargs = dict(depth=args.depth, time_limit_ms=10**9, stats=args.stats)
+    else:
+        run_kwargs = dict(time_limit_ms=args.time, stats=args.stats)
+
     for suite in args.test_suites:
         with open(suite) as f:
             epd = f.read()
-            test_epd(args, suite, epd, ALGORITHM[args.algo], time_limit_ms=args.time, stats=args.stats)
+            test_epd(args, suite, epd, ALGORITHM[args.algo], **run_kwargs)
 
     if args.perft:
         rate = perft_total[0] / (perft_total[1] * 1000000)

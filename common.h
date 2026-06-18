@@ -83,6 +83,11 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 /* Collect extra stats for troubleshooting */
 #define EXTRA_STATS                         false
 
+/* Per-thread L1 hot cache in front of the shared TT */
+#ifndef TT_L1
+  #define TT_L1                             true
+#endif /* TT_L1 */
+
 #define FRACTIONAL_EXTENSIONS               true
 
 /* Filter out quiet moves if extended at leaf (depth < 0) */
