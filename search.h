@@ -302,10 +302,49 @@ namespace search
         static HashTable    _table;        /* shared hashtable */
 
     #if TT_L1
-        /* Per-thread, cache-resident L1 in front of the shared TT. */
-        static constexpr size_t L1_BITS = 14;             /* 16K entries ~ 288KB */
-        static constexpr uint64_t L1_MASK = (uint64_t(1) << L1_BITS) - 1;
-        std::array<TT_Entry, size_t(1) << L1_BITS> _l1{};
+        /* Per-thread set-associative L1; second-chance eviction keeps entries re-hit across MTD(f) passes. */
+        static constexpr size_t L1_WAYS = 4;
+        static constexpr size_t L1_SET_BITS = 12;          /* 4096 sets x 4 ways ~ 288KB */
+        static constexpr uint64_t L1_SET_MASK = (uint64_t(1) << L1_SET_BITS) - 1;
+        static constexpr size_t L1_SIZE = (size_t(1) << L1_SET_BITS) * L1_WAYS;
+        std::array<TT_Entry, L1_SIZE> _l1{};
+
+        /* Replacement priority mirroring the shared TT: depth, aged by generation, +1 if exact. */
+        INLINE int l1_priority(const TT_Entry& e) const
+        {
+            const int age = (32 + _table.generation() - e._generation) & 31;
+            return e._depth - 2 * age + e.is_exact();
+        }
+
+        INLINE TT_Entry* l1_get(uint64_t h)
+        {
+            const auto base = (h & L1_SET_MASK) * L1_WAYS;
+            for (size_t i = 0; i < L1_WAYS; ++i)
+                if (_l1[base + i]._hash == h)
+                    return &_l1[base + i];
+            return nullptr;
+        }
+
+        /* Depth-preferred, mirroring the shared TT: never displace a deeper entry. */
+        INLINE void l1_put(const TT_Entry& entry)
+        {
+            const auto base = (entry._hash & L1_SET_MASK) * L1_WAYS;
+            size_t victim = base;
+            int worst = 1 << 30;
+            for (size_t i = 0; i < L1_WAYS; ++i)
+            {
+                auto& e = _l1[base + i];
+                if (!e.is_valid() || e._hash == entry._hash)
+                {
+                    e = entry;
+                    return;
+                }
+                const int v = l1_priority(e);
+                if (v < worst) { worst = v; victim = base + i; }
+            }
+            if (worst < l1_priority(entry))
+                _l1[victim] = entry;
+        }
     #endif /* TT_L1 */
 
         void clear(); /* clear search stats, bump up generation */
@@ -643,10 +682,9 @@ namespace search
         /* L1 fast path: retains TT-evicted entries, so it yields extra cutoffs. */
         if (!ctxt.is_pv_node() && !ctxt.is_retry())
         {
-            auto& e = _l1[ctxt.state().hash() & L1_MASK];
-            if (e._hash == ctxt.state().hash())
+            if (auto* e = l1_get(ctxt.state().hash()))
             {
-                if (auto value = e.lookup_score(ctxt))
+                if (auto value = e->lookup_score(ctxt))
                 {
                     if constexpr(EXTRA_STATS)
                         ++_l1_hits;
@@ -717,7 +755,7 @@ namespace search
             update_entry(ctxt, ctxt.tt_entry(), type, depth);
             _table.store(ctxt.tt_result());
         #if TT_L1
-            _l1[ctxt.tt_entry()._hash & L1_MASK] = ctxt.tt_entry(); /* write-through */
+            l1_put(ctxt.tt_entry()); /* write-through */
         #endif /* TT_L1 */
         }
     }

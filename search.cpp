@@ -312,7 +312,7 @@ bool TranspositionTable::update_and_store(Context& ctxt, TT_Type tt_type)
         update_entry(ctxt, ctxt.tt_entry(), tt_type, ctxt.depth());
         _table.store(ctxt.tt_result());
     #if TT_L1
-        _l1[ctxt.tt_entry()._hash & L1_MASK] = ctxt.tt_entry(); /* write-through */
+        l1_put(ctxt.tt_entry()); /* write-through */
     #endif /* TT_L1 */
         return true;
     }
