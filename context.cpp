@@ -107,10 +107,10 @@ namespace
         std::vector<Entry> _data;
 
     public:
-        explicit MovesCache(size_t size = 4000) : _data(size)
+        explicit MovesCache(size_t size = 1024) : _data(size)
         {
             ASSERT_ALWAYS(size);
-            ASSERT_ALWAYS(size % 2 == 0);
+            ASSERT_ALWAYS((size & (size - 1)) == 0); /* power of two for the & mask */
         }
 
         INLINE void clear()
