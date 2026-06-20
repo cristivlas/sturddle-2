@@ -300,6 +300,117 @@ def test_searchmoves_no_leak(test):
 
 
 '''
+Half-move (fifty-move) clock tests.
+
+The clock is read via the "debug" command, which prints a "halfmove clock: N"
+line. If the engine does not report it, the probe returns None and the affected
+tests are skipped.
+'''
+class HalfmoveProbe(chess.engine.BaseCommand[chess.engine.UciProtocol, int]):
+    def __init__(self, engine, *, setup_lines):
+        super().__init__(engine)
+        self.setup_lines = setup_lines
+        self.halfmove = None
+
+    def start(self, engine):
+        if 'stockfish' not in args.engine:
+            engine.send_line('setoption name OwnBook value false')
+        for line in self.setup_lines:
+            engine.send_line(line)
+        engine.send_line('debug')
+        engine.send_line('isready')  # readyok is the last line; it ends the probe
+
+    def line_received(self, engine, line):
+        s = line.strip()
+        low = s.lower()
+        if low.startswith('halfmove clock:'):
+            try:
+                self.halfmove = int(s.split(':', 1)[1])
+            except ValueError:
+                pass
+        elif low == 'readyok':
+            self.result.set_result(self.halfmove)
+            self.set_finished()
+
+
+def probe_halfmove(test, setup_lines):
+    def _cmd(engine):
+        return HalfmoveProbe(engine, setup_lines=setup_lines)
+    return test.engine.communicate(_cmd)
+
+
+def test_halfmove_startpos_zero(test):
+    hm = probe_halfmove(test, ['position startpos'])
+    if hm is None:
+        print('halfmove startpos ............. skipped (no debug clock on this build)')
+        return
+    assert hm == 0, f'expected halfmove 0 at startpos, got {hm}'
+    print('halfmove startpos ............. clock 0 (ok)')
+
+
+def test_fen_halfmove_parsed(test):
+    fen = 'r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 49 13'
+    hm = probe_halfmove(test, [f'position fen {fen}'])
+    if hm is None:
+        print('fen halfmove parsed ........... skipped')
+        return
+    assert hm == 49, f'FEN half-move field ignored: expected 49, got {hm}'
+    print('fen halfmove parsed ........... clock 49 (ok)')
+
+
+def test_fen_halfmove_plus_moves(test):
+    fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 10 6'
+    hm = probe_halfmove(test, [f'position fen {fen} moves g1f3 g8f6'])
+    if hm is None:
+        print('fen halfmove + moves .......... skipped')
+        return
+    assert hm == 12, f'expected 10 + 2 = 12, got {hm}'
+    print('fen halfmove + moves .......... clock 12 (ok)')
+
+
+def test_halfmove_resets_on_new_position(test):
+    hm1 = probe_halfmove(test, ['position startpos moves g1f3 g8f6 f3g1 f6g8'])
+    if hm1 is None:
+        print('halfmove reset (position) ..... skipped')
+        return
+    assert hm1 == 4, f'expected clock 4 after knight shuffle, got {hm1}'
+    hm2 = probe_halfmove(test, ['position startpos'])
+    assert hm2 == 0, f'clock leaked across position commands: expected 0, got {hm2}'
+    print('halfmove reset (position) ..... clock 0 (ok)')
+
+
+def test_halfmove_resets_on_ucinewgame(test):
+    hm1 = probe_halfmove(test, ['position startpos moves g1f3 g8f6 f3g1 f6g8'])
+    if hm1 is None:
+        print('halfmove reset (ucinewgame) ... skipped')
+        return
+    assert hm1 == 4, f'expected clock 4 after knight shuffle, got {hm1}'
+    hm2 = probe_halfmove(test, ['ucinewgame', 'position startpos'])
+    assert hm2 == 0, f'clock leaked across ucinewgame: expected 0, got {hm2}'
+    print('halfmove reset (ucinewgame) ... clock 0 (ok)')
+
+
+def test_halfmove_fen_overrides_leftover(test):
+    hm1 = probe_halfmove(test, ['position startpos moves g1f3 g8f6 f3g1 f6g8'])
+    if hm1 is None:
+        print('halfmove fen overrides ........ skipped')
+        return
+    assert hm1 == 4, f'expected clock 4 after knight shuffle, got {hm1}'
+
+    # FEN with a half-move field: its value must win over the leftover clock.
+    fen5 = 'r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 49 13'
+    hm2 = probe_halfmove(test, [f'position fen {fen5}'])
+    assert hm2 == 49, f'FEN clock did not override leftover: expected 49, got {hm2}'
+
+    # Re-dirty, then a FEN without a half-move field must reset to 0.
+    probe_halfmove(test, ['position startpos moves g1f3 g8f6 f3g1 f6g8'])
+    fen4 = 'r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -'
+    hm3 = probe_halfmove(test, [f'position fen {fen4}'])
+    assert hm3 == 0, f'FEN path leaked leftover: expected 0, got {hm3}'
+    print('halfmove fen overrides ........ clock 49 then 0 (ok)')
+
+
+'''
 Run the engine on the Kiwipete position — a tactically dense test board
 widely used in engine development. Verifies the engine completes a search
 without crashing and returns a legal move; exercises move ordering and
@@ -333,6 +444,12 @@ def test_tricky(test):
 def run_tests(args):
     for test in [
         test_position,
+        test_halfmove_startpos_zero,
+        test_fen_halfmove_parsed,
+        test_fen_halfmove_plus_moves,
+        test_halfmove_resets_on_new_position,
+        test_halfmove_resets_on_ucinewgame,
+        test_halfmove_fen_overrides_leftover,
         test_tricky,
         test_go,
         test_searchmoves,

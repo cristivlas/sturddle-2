@@ -11,6 +11,7 @@ namespace fs = std::filesystem;
 using Params = std::unordered_map<std::string, std::string>;
 
 #if NATIVE_UCI /* requires compiler with C++20 support */
+#include <charconv>
 #include <cmath>
 #include <format>
 #include <fstream>
@@ -607,10 +608,11 @@ private:
     }
 
     /** position() helper */
-    template <typename T> INLINE void apply_moves(const T &moves)
+    template <typename T> INLINE void apply_moves(const T &moves, int initial_fifty = 0)
     {
         _last_move = chess::BaseMove();
         _ply_count = 0;
+        search::Context::_history->_fifty = initial_fifty;
 
         search::Context::_history->emplace(_buf._state);
 
@@ -1364,7 +1366,18 @@ void UCI::position(const Arguments &args)
         raise_value_error("invalid token count {}, expected 4", fen.size());
     }
     _buf._state.rehash();
-    apply_moves(moves);
+
+    /* FEN field 5 is the half-move (fifty-move) clock; default to 0. */
+    int initial_fifty = 0;
+    if (fen.size() >= 5)
+    {
+        const auto &hm = fen[4];
+        int v = 0;
+        if (std::from_chars(hm.data(), hm.data() + hm.size(), v).ec == std::errc{} && v >= 0)
+            initial_fifty = v;
+    }
+
+    apply_moves(moves, initial_fifty);
     LOG_DEBUG(search::Context::epd(_buf._state));
 }
 
