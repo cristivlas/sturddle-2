@@ -77,6 +77,10 @@
     #define DEBUG_INCREMENTAL false
 #endif
 
+#ifndef NNUE_SINGLE_BUCKET
+    #define NNUE_SINGLE_BUCKET false
+#endif
+
 namespace nnue
 {
     static const std::string instrset = ARCH ARCH_FMA ARCH_VNNI ARCH_BF16;
@@ -685,19 +689,30 @@ namespace nnue
             uint64_t hash = 0;
         };
 
-        Bucket _bucket[NUM_BUCKETS];
+        /* Single slot trades the per-bucket output cache for a smaller footprint. */
+        static constexpr int SLOTS = NNUE_SINGLE_BUCKET ? 1 : NUM_BUCKETS;
+
+        Bucket _bucket[SLOTS];
         int _current_bucket = 0;
         ALIGN int16_t _output_b[OUTPUTS_B] = { };
+
+        INLINE Bucket& slot(int bucket) { return _bucket[NNUE_SINGLE_BUCKET ? 0 : bucket]; }
+        INLINE const Bucket& slot(int bucket) const { return _bucket[NNUE_SINGLE_BUCKET ? 0 : bucket]; }
 
     #if DEBUG_INCREMENTAL
         /* remember previous inputs, for debugging */
         ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { }; /* one-hot encoding */
+
+        /* full-width shadow of the per-bucket hashes, so the bucket-vs-hash
+         * equivalence can be checked even when SLOTS == 1 (single-bucket mode)
+         */
+        uint64_t _ref_hash[NUM_BUCKETS] = { };
     #endif
 
 
         INLINE bool needs_update(const State& state) const
         {
-            return state.hash() != _bucket[_current_bucket].hash;
+            return state.hash() != slot(_current_bucket).hash;
         }
 
 
@@ -714,11 +729,14 @@ namespace nnue
         #endif
             one_hot_encode(state, _input);
 
-            layer_1a.dot(_input, _bucket[bucket].output, base);
+            layer_1a.dot(_input, slot(bucket).output, base);
             layer_1b.dot(_input, _output_b);
 
-            _bucket[bucket].hash = state.hash();
+            slot(bucket).hash = state.hash();
             _current_bucket = bucket;
+        #if DEBUG_INCREMENTAL
+            _ref_hash[bucket] = state.hash();
+        #endif
         }
 
         template <typename LA, typename LB>
@@ -747,10 +765,27 @@ namespace nnue
             Accumulator& ancestor)
         {
             ASSERT(needs_update(state));
-            ASSERT(ancestor._bucket[ancestor._current_bucket].hash == prev.hash());
+            ASSERT(ancestor.slot(ancestor._current_bucket).hash == prev.hash());
 
             const int bucket = get_bucket(state);
-            bool incremental_a = (ancestor._bucket[bucket].hash == prev.hash());
+            const int prev_bucket = ancestor._current_bucket;
+            bool incremental_a = (bucket == prev_bucket);
+
+        #if DEBUG_INCREMENTAL
+            /* bucket==prev_bucket must match the per-bucket-hash predicate; _ref_hash shadows it for SLOTS==1 */
+            ASSERT_ALWAYS(incremental_a == (ancestor._ref_hash[bucket] == prev.hash()));
+          #if !NNUE_SINGLE_BUCKET
+            ASSERT_ALWAYS(ancestor._ref_hash[bucket] == ancestor._bucket[bucket].hash);
+          #endif /* !NNUE_SINGLE_BUCKET */
+        #endif /* DEBUG_INCREMENTAL */
+
+        #if DEBUG_INCREMENTAL
+            {
+                static std::atomic<bool> seen[NUM_BUCKETS][NUM_BUCKETS];
+                if (!seen[prev_bucket][bucket].exchange(true))
+                    std::cerr << "[nnue] bucket " << prev_bucket << " -> " << bucket << (bucket == prev_bucket ? " same" : " cross") << std::endl;
+            }
+        #endif /* DEBUG_INCREMENTAL */
 
             /* compute delta based on ancestor state */
             ASSERT(prev.turn != state.turn);
@@ -796,20 +831,26 @@ namespace nnue
              * directly on the same-bucket path (no memcpy), or this object
              * after the cross-bucket pass below fills it.
              */
-            const int16_t* src_a = ancestor._bucket[bucket].output;
+            const int16_t* src_a = ancestor.slot(bucket).output;
 
             if (incremental_a)
             {
-                /* fused: incremental_update reads src_a, writes _bucket[bucket].output */
+                /* fused: incremental_update reads src_a, writes slot(bucket).output */
             }
-            else if (_bucket[bucket].hash != state.hash())
+            else if (slot(bucket).hash != state.hash())
             {
-                const int prev_bucket = ancestor._current_bucket;
+            #if DEBUG_INCREMENTAL
+                {
+                    static std::atomic<bool> seen[NUM_BUCKETS][NUM_BUCKETS];
+                    if (!seen[prev_bucket][bucket].exchange(true))
+                        std::cerr << "[nnue] cross-bucket convert " << prev_bucket << " -> " << bucket << std::endl;
+                }
+            #endif /* DEBUG_INCREMENTAL */
                 const size_t base_old = prev_bucket * ACTIVE_INPUTS;
                 const size_t base_new = bucket * ACTIVE_INPUTS;
 
                 // Start from ancestor's output (computed with prev_bucket weights for prev position)
-                memcpy(_bucket[bucket].output, ancestor._bucket[prev_bucket].output, sizeof(_bucket[bucket].output));
+                memcpy(slot(bucket).output, ancestor.slot(prev_bucket).output, sizeof(slot(bucket).output));
 
             #if __ARM__
                 using VecShort = Vec16s;
@@ -824,34 +865,36 @@ namespace nnue
 
                     for (int j = 0; j < OUTPUTS_A; j += VecShort::size())
                     {
-                        vo.load_a(&_bucket[bucket].output[j]);
+                        vo.load_a(&slot(bucket).output[j]);
                         vw_old.load_a(&layer_a._w[base_old + idx][j]);
                         vw_new.load_a(&layer_a._w[base_new + idx][j]);
                         vo = vo - vw_old + vw_new;
-                        vo.store_a(&_bucket[bucket].output[j]);
+                        vo.store_a(&slot(bucket).output[j]);
                     }
                 };
                 for_each_active_input(prev, apply_delta);
 
-                // Now _bucket[bucket].output has correct output for prev position with bucket weights
+                // Now slot(bucket).output has correct output for prev position with bucket weights
                 // Set flag so move deltas get applied
                 incremental_a = true;
-                src_a = _bucket[bucket].output;
+                src_a = slot(bucket).output;
             }
 
             /* layer B: updated incrementally from the ancestor inside incremental_update */
             incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, incremental_a, src_a, ancestor._output_b);
 
-            _bucket[bucket].hash = state.hash();
+            slot(bucket).hash = state.hash();
             _current_bucket = bucket;
 
         #if DEBUG_INCREMENTAL
+            _ref_hash[bucket] = state.hash();
+
             // Validate that incremental_update produces same result as full dot products
             // layer A
             ALIGN int16_t output_a[OUTPUTS_A] = { };
             layer_a.dot(temp, output_a, base);
             for (int i = 0; i != OUTPUTS_A; ++i)
-                ASSERT_ALWAYS(abs(output_a[i] - _bucket[bucket].output[i]) < 0.0001);
+                ASSERT_ALWAYS(abs(output_a[i] - slot(bucket).output[i]) < 0.0001);
 
             // layer B
             ALIGN int16_t output_b[OUTPUTS_B] = { };
@@ -921,7 +964,7 @@ namespace nnue
                         vw.load_a(&layer_a._w[index][j]);
                         vo += vw;
                     }
-                    vo.store_a(&_bucket[bucket].output[j]);
+                    vo.store_a(&slot(bucket).output[j]);
                 }
             }
 
@@ -1021,7 +1064,7 @@ namespace nnue
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float output[1]; // eval
 
-        pool(a._bucket[a._current_bucket].output, l2_in);
+        pool(a.slot(a._current_bucket).output, l2_in);
 
         /* The "spatial attention" layer modulates L2 input. */
         activate(a._output_b, attn_in);
