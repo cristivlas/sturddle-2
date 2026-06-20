@@ -76,11 +76,12 @@ def extract_depth(info_line):
 '''
 Send a "go" command to the engine, optionally setting up the position.
 '''
-class GoCommand(chess.engine.BaseCommand[chess.engine.UciProtocol, str]):
+class GoCommand(chess.engine.BaseCommand[str]):
     depth = 0
 
     def __init__(self, engine, **kwargs):
         super().__init__(engine)
+        self.engine = engine
         self.pos = kwargs.pop('fen', None)
         self.time = kwargs.pop('movetime', 0)
         self.go_depth = kwargs.pop('depth', 0)
@@ -93,7 +94,8 @@ class GoCommand(chess.engine.BaseCommand[chess.engine.UciProtocol, str]):
         # tests to send specific token orderings.
         self.raw_go = kwargs.pop('raw_go', None)
 
-    def start(self, engine):
+    def start(self):
+        engine = self.engine
         for line in self.pre_commands:
             engine.send_line(line)
         if self.pos:
@@ -117,7 +119,7 @@ class GoCommand(chess.engine.BaseCommand[chess.engine.UciProtocol, str]):
             cmd += f' searchmoves {" ".join(self.searchmoves)}'
         engine.send_line(cmd)
 
-    def line_received(self, engine, line):
+    def line_received(self, line):
         if line.startswith('info '):
             if args.verbose:
                 print(line)
@@ -306,13 +308,15 @@ The clock is read via the "debug" command, which prints a "halfmove clock: N"
 line. If the engine does not report it, the probe returns None and the affected
 tests are skipped.
 '''
-class HalfmoveProbe(chess.engine.BaseCommand[chess.engine.UciProtocol, int]):
+class HalfmoveProbe(chess.engine.BaseCommand[int]):
     def __init__(self, engine, *, setup_lines):
         super().__init__(engine)
+        self.engine = engine
         self.setup_lines = setup_lines
         self.halfmove = None
 
-    def start(self, engine):
+    def start(self):
+        engine = self.engine
         if 'stockfish' not in args.engine:
             engine.send_line('setoption name OwnBook value false')
         for line in self.setup_lines:
@@ -320,7 +324,7 @@ class HalfmoveProbe(chess.engine.BaseCommand[chess.engine.UciProtocol, int]):
         engine.send_line('debug')
         engine.send_line('isready')  # readyok is the last line; it ends the probe
 
-    def line_received(self, engine, line):
+    def line_received(self, line):
         s = line.strip()
         low = s.lower()
         if low.startswith('halfmove clock:'):
