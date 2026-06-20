@@ -22,7 +22,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
 ACCUMULATOR_SIZE = 1280
-ATTN_FAN_OUT = 32
+ATTN_FAN_OUT = 16
 POOL_SIZE = 8
 MAIN_BUCKETS = 8  # Number of buckets for hidden_1a / BucketShift
 
@@ -165,10 +165,13 @@ def make_model(args, strategy):
             pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
 
             # Assign bucket based on pawn count.
-            # With N buckets and 16 pawns max, each bucket spans (16 / N) pawns.
-            bucket_width = tf.constant(max(1, 16 // self.num_buckets), dtype=tf.float32)
+            # Fat bucket 0 spans {0,1,2} pawns; every bucket above spans 2 pawns.
             bucket_id = tf.cast(
-                tf.minimum(pawn_count // bucket_width, self.num_buckets - 1),
+                tf.where(
+                    pawn_count <= 2.0,
+                    tf.zeros_like(pawn_count),
+                    tf.minimum((pawn_count - 1.0) // 2.0, self.num_buckets - 1),
+                ),
                 tf.int32
             )
 
@@ -246,7 +249,7 @@ def make_model(args, strategy):
         residual = Add(name='residual')([pooled, modulation])
 
         hidden_2 = Dense(
-            16,
+            32,
             activation=ACTIVATION,
             kernel_initializer=K_INIT,
             name='hidden_2',

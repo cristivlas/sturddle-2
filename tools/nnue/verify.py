@@ -30,9 +30,9 @@ MAIN_BUCKETS = 8
 LAYERS = [
     ('hidden_1b', (256, 64), (64,), 'B'),
     ('hidden_1a', (ACTIVE_INPUTS * MAIN_BUCKETS, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), 'A'),
-    ('spatial_attn', (64, 32), (32,), None),
-    ('hidden_2', (ACCUMULATOR_SIZE // POOL_SIZE, 16), (16,), None),
-    ('out', (16, 1), (1,), None),
+    ('spatial_attn', (64, 16), (16,), None),
+    ('hidden_2', (ACCUMULATOR_SIZE // POOL_SIZE, 32), (32,), None),
+    ('out', (32, 1), (1,), None),
 ]
 
 # Optional move prediction layer

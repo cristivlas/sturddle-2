@@ -101,7 +101,8 @@ namespace nnue
 
     INLINE int get_bucket(const State& state)
     {
-        return std::min<int>(chess::popcount(state.pawns) / 2, 7);
+        const int p = chess::popcount(state.pawns);
+        return p <= 2 ? 0 : std::min<int>((p - 1) / 2, 7);
     }
 
     #if INSTRSET >= 9
