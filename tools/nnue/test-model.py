@@ -56,7 +56,7 @@ def load_model(args):
     path = args.input[0]
     return tf.keras.models.load_model(path, custom_objects = {
             'ACCUMULATOR_SIZE': 1280,
-            'ATTN_FAN_OUT': 32,
+            'ATTN_FAN_OUT': 16,
             'POOL_SIZE': 8,
             'combined_loss': None,
             'scaled_sparse_categorical_crossentropy': None,
@@ -73,7 +73,7 @@ def run_tests(args, model):
         assert board.is_valid(), f"Invalid position: {fen}"
 
         pawn_count = chess.popcount(board.pawns)
-        bucket = min(pawn_count // 4, 3)
+        bucket = 0 if pawn_count <= 2 else min((pawn_count - 1) // 2, 7)
         print(f"[Bucket {bucket}, {pawn_count:2d} pawns]")
 
         encoding = encode(board)
