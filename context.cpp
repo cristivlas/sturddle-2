@@ -107,10 +107,12 @@ namespace
         std::vector<Entry> _data;
 
     public:
-        explicit MovesCache(size_t size = 1024) : _data(size)
+        /* Non-power-of-2 on purpose: mask gaps scatter the 2nd probe for better
+           eviction spread. Do NOT make this a power of two -- regresses strength. */
+        explicit MovesCache(size_t size = 4000) : _data(size)
         {
             ASSERT_ALWAYS(size);
-            ASSERT_ALWAYS((size & (size - 1)) == 0); /* power of two for the & mask */
+            ASSERT_ALWAYS(size % 2 == 0);
         }
 
         INLINE void clear()
