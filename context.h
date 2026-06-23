@@ -319,7 +319,10 @@ namespace search
 
         score_t     _eval = SCORE_MIN; /* static eval */
         score_t     _eval_raw = SCORE_MIN; /* unscaled _eval */
+    #if TT_L1
         score_t     _capt_eval = SCORE_MIN; /* cached eval_captures term, SCORE_MIN if not computed */
+        int         _capt_standpat = 0;     /* standpat threshold _capt_eval was computed at */
+    #endif /* TT_L1 */
 
         int         _extension = 0; /* count pending fractional extensions */
         int         _fifty = 0;

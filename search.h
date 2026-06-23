@@ -304,15 +304,15 @@ namespace search
     #if TT_L1
         /* Per-thread set-associative L1; second-chance eviction keeps entries re-hit across MTD(f) passes. */
         static constexpr size_t L1_WAYS = 4;
-        static constexpr size_t L1_SET_BITS = 12;          /* 4096 sets x 4 ways ~ 320KB */
+        static constexpr size_t L1_SET_BITS = 12;          /* 4096 sets x 4 ways ~ 288KB */
         static constexpr uint64_t L1_SET_MASK = (uint64_t(1) << L1_SET_BITS) - 1;
         static constexpr size_t L1_SIZE = (size_t(1) << L1_SET_BITS) * L1_WAYS;
 
         /* L1 caches the TT entry plus the position's eval_captures term (shared TT unchanged). */
-        struct L1_Entry
+        struct L1_Entry : TT_Entry
         {
-            TT_Entry e;
             score_t  capt_eval = SCORE_MIN; /* SCORE_MIN if not computed for this position */
+            int      capt_standpat = 0;     /* standpat threshold capt_eval was computed at */
         };
         std::array<L1_Entry, L1_SIZE> _l1{};
 
@@ -327,7 +327,7 @@ namespace search
         {
             const auto base = (h & L1_SET_MASK) * L1_WAYS;
             for (size_t i = 0; i < L1_WAYS; ++i)
-                if (_l1[base + i].e._hash == h)
+                if (_l1[base + i]._hash == h)
                     return &_l1[base + i];
             return nullptr;
         }
@@ -341,16 +341,20 @@ namespace search
             for (size_t i = 0; i < L1_WAYS; ++i)
             {
                 auto& slot = _l1[base + i];
-                if (!slot.e.is_valid() || slot.e._hash == entry._hash)
+                if (!slot.is_valid() || slot._hash == entry._hash)
                 {
-                    slot.e = entry; /* keep any cached capt_eval for this position */
+                    static_cast<TT_Entry&>(slot) = entry; /* keep any cached capt_eval for this position */
                     return;
                 }
-                const int v = l1_priority(slot.e);
+                const int v = l1_priority(slot);
                 if (v < worst) { worst = v; victim = base + i; }
             }
             if (worst < l1_priority(entry))
-                _l1[victim] = L1_Entry{entry, SCORE_MIN};
+            {
+                static_cast<TT_Entry&>(_l1[victim]) = entry;
+                _l1[victim].capt_eval = SCORE_MIN;
+                _l1[victim].capt_standpat = 0;
+            }
         }
     #endif /* TT_L1 */
 
@@ -431,7 +435,10 @@ namespace search
         {
             if (is_valid(ctxt._capt_eval))
                 if (auto* e = l1_get(ctxt.state().hash()))
+                {
                     e->capt_eval = ctxt._capt_eval;
+                    e->capt_standpat = ctxt._capt_standpat;
+                }
         }
     #endif /* TT_L1 */
 
@@ -703,9 +710,12 @@ namespace search
             if (auto* e = l1_get(ctxt.state().hash()))
             {
                 if (is_valid(e->capt_eval))
+                {
                     ctxt._capt_eval = e->capt_eval; /* reuse cached eval_captures term */
+                    ctxt._capt_standpat = e->capt_standpat;
+                }
 
-                if (auto value = e->e.lookup_score(ctxt))
+                if (auto value = e->lookup_score(ctxt))
                 {
                     if constexpr(EXTRA_STATS)
                         ++_l1_hits;

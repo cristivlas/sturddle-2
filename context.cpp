@@ -1131,9 +1131,6 @@ namespace search
 
     score_t eval_captures(Context& ctxt, score_t score)
     {
-        if (is_valid(ctxt._capt_eval))
-            return ctxt._capt_eval; /* reuse term cached from L1 */
-
         if constexpr(DEBUG_CAPTURES)
             ctxt.log_message(LogLevel::DEBUG, "eval_captures");
 
@@ -1148,7 +1145,18 @@ namespace search
         else
         {
             const int standpat_threshold = ctxt._ply > 1 ? ctxt._alpha - score : SCORE_MIN;
+
+        #if TT_L1
+            /* do_captures prunes by standpat_threshold; only reuse on an exact match */
+            if (is_valid(ctxt._capt_eval) && ctxt._capt_standpat == standpat_threshold)
+                return ctxt._capt_eval;
+        #endif /* TT_L1 */
+
             result = do_captures(ctxt.tid(), *state, standpat_threshold);
+
+        #if TT_L1
+            ctxt._capt_standpat = standpat_threshold;
+        #endif /* TT_L1 */
         }
 
         ASSERT(result >= 0);
@@ -1156,7 +1164,9 @@ namespace search
         if constexpr(DEBUG_CAPTURES)
             ctxt.log_message(LogLevel::DEBUG, "captures: " + std::to_string(result));
 
+    #if TT_L1
         ctxt._capt_eval = result;
+    #endif /* TT_L1 */
         return result;
     }
 
