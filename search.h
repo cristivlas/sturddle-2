@@ -304,10 +304,17 @@ namespace search
     #if TT_L1
         /* Per-thread set-associative L1; second-chance eviction keeps entries re-hit across MTD(f) passes. */
         static constexpr size_t L1_WAYS = 4;
-        static constexpr size_t L1_SET_BITS = 12;          /* 4096 sets x 4 ways ~ 288KB */
+        static constexpr size_t L1_SET_BITS = 12;          /* 4096 sets x 4 ways ~ 320KB */
         static constexpr uint64_t L1_SET_MASK = (uint64_t(1) << L1_SET_BITS) - 1;
         static constexpr size_t L1_SIZE = (size_t(1) << L1_SET_BITS) * L1_WAYS;
-        std::array<TT_Entry, L1_SIZE> _l1{};
+
+        /* L1 caches the TT entry plus the position's eval_captures term (shared TT unchanged). */
+        struct L1_Entry
+        {
+            TT_Entry e;
+            score_t  capt_eval = SCORE_MIN; /* SCORE_MIN if not computed for this position */
+        };
+        std::array<L1_Entry, L1_SIZE> _l1{};
 
         /* Replacement priority mirroring the shared TT: depth, aged by generation, +1 if exact. */
         INLINE int l1_priority(const TT_Entry& e) const
@@ -316,11 +323,11 @@ namespace search
             return e._depth - 2 * age + e.is_exact();
         }
 
-        INLINE TT_Entry* l1_get(uint64_t h)
+        INLINE L1_Entry* l1_get(uint64_t h)
         {
             const auto base = (h & L1_SET_MASK) * L1_WAYS;
             for (size_t i = 0; i < L1_WAYS; ++i)
-                if (_l1[base + i]._hash == h)
+                if (_l1[base + i].e._hash == h)
                     return &_l1[base + i];
             return nullptr;
         }
@@ -333,17 +340,17 @@ namespace search
             int worst = 1 << 30;
             for (size_t i = 0; i < L1_WAYS; ++i)
             {
-                auto& e = _l1[base + i];
-                if (!e.is_valid() || e._hash == entry._hash)
+                auto& slot = _l1[base + i];
+                if (!slot.e.is_valid() || slot.e._hash == entry._hash)
                 {
-                    e = entry;
+                    slot.e = entry; /* keep any cached capt_eval for this position */
                     return;
                 }
-                const int v = l1_priority(e);
+                const int v = l1_priority(slot.e);
                 if (v < worst) { worst = v; victim = base + i; }
             }
             if (worst < l1_priority(entry))
-                _l1[victim] = entry;
+                _l1[victim] = L1_Entry{entry, SCORE_MIN};
         }
     #endif /* TT_L1 */
 
@@ -416,6 +423,17 @@ namespace search
         }
 
         template<typename C> const int16_t* lookup(C& ctxt);
+
+    #if TT_L1
+        /* Deposit a leaf's computed capture term into an existing L1 slot. */
+        template<typename C>
+        INLINE void l1_cache_capt_eval(const C& ctxt)
+        {
+            if (is_valid(ctxt._capt_eval))
+                if (auto* e = l1_get(ctxt.state().hash()))
+                    e->capt_eval = ctxt._capt_eval;
+        }
+    #endif /* TT_L1 */
 
         template<TT_Type=TT_Type::NONE, typename C=struct Context>
         void store(C& ctxt, int depth);
@@ -684,7 +702,10 @@ namespace search
         {
             if (auto* e = l1_get(ctxt.state().hash()))
             {
-                if (auto value = e->lookup_score(ctxt))
+                if (is_valid(e->capt_eval))
+                    ctxt._capt_eval = e->capt_eval; /* reuse cached eval_captures term */
+
+                if (auto value = e->e.lookup_score(ctxt))
                 {
                     if constexpr(EXTRA_STATS)
                         ++_l1_hits;

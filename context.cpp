@@ -1131,6 +1131,9 @@ namespace search
 
     score_t eval_captures(Context& ctxt, score_t score)
     {
+        if (is_valid(ctxt._capt_eval))
+            return ctxt._capt_eval; /* reuse term cached from L1 */
+
         if constexpr(DEBUG_CAPTURES)
             ctxt.log_message(LogLevel::DEBUG, "eval_captures");
 
@@ -1153,6 +1156,7 @@ namespace search
         if constexpr(DEBUG_CAPTURES)
             ctxt.log_message(LogLevel::DEBUG, "captures: " + std::to_string(result));
 
+        ctxt._capt_eval = result;
         return result;
     }
 

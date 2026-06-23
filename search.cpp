@@ -255,7 +255,7 @@ void TranspositionTable::init(bool new_game)
         search::Context::log_message(LogLevel::DEBUG, "init: game");
         _table.clear(true);
     #if TT_L1
-        _l1.fill(TT_Entry()); /* reset L1 with the shared TT, on new game only */
+        _l1.fill(L1_Entry{}); /* reset L1 with the shared TT, on new game only */
     #endif /* TT_L1 */
 
         Context::clear_caches_and_stacks();
@@ -748,6 +748,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
+
+    #if TT_L1
+        table.l1_cache_capt_eval(ctxt); /* leaves don't store to TT (depth 0) */
+    #endif /* TT_L1 */
     }
     else if (probe_endtables(ctxt, table))
     {
