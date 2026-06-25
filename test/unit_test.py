@@ -388,37 +388,16 @@ def test_repetition():
 
 
 def test_nnue_eval():
-    tests = [
-        chess.STARTING_FEN,
-        'r2r2k1/1pp2ppp/p2q1b2/3pN3/2PP4/PP1Q3P/5PP1/R3R1K1 b - - 0 22',
-        'r4rk1/1ppnbppp/p2q4/3pNb2/3P4/PP5P/2PNBPP1/R2QK2R w KQ - 5 14',
-        'r4rk1/ppp2ppp/5n2/2bPn3/4K3/2NP4/PPPBB1PP/R6R w - - 3 3',
-        '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - - 0 2',
-        'rqr3k1/p4p1p/5Qp1/2b5/2N5/2Pn2NP/P2B1PP1/2R2RK1 w - - 0 24',
-        '2r3k1/p5p1/4p3/1p1bP3/2pb2Q1/5N2/1q3P1P/3R1RK1 b - - 3 32',
-        '1r1q1rk1/p3bBpp/2Q5/8/3Pb3/2n1BN2/P4PPP/R4RK1 b - - 0 18',
-        '8/pp2k3/8/8/8/8/3K1PP1/8 w - - 0 1',
-        '3r2k1/pp3p2/8/8/8/5P2/PP4K1/3R4 w - - 0 1',
-        'r3k3/pp6/8/3p4/3P4/8/PP2K3/R7 w q - 0 1',
-        '2r2rk1/pp3p2/8/8/8/8/PP3PP1/2R2RK1 w - - 0 1',
-        '8/8/4k3/4p3/4P3/4K3/8/8 w - - 0 1',
-        '8/5k2/8/3p4/3P4/2K1P3/8/8 w - - 0 1',
-        '4k3/8/8/8/8/8/4K3/4R3 w - - 0 1',
-        '1k6/3p4/8/8/8/8/3P4/2K5 w - - 0 1',  # king bucket 0: both left (WK c1, BK b8)
-        '6k1/3p4/8/8/8/8/3P4/2K5 w - - 0 1',  # king bucket 1: W left, B right (WK c1, BK g8)
-        '1k6/3p4/8/8/8/8/3P4/6K1 w - - 0 1',  # king bucket 2: W right, B left (WK g1, BK b8)
-        '6k1/3p4/8/8/8/8/3P4/6K1 w - - 0 1',  # king bucket 3: both right (WK g1, BK g8)
-    ]
+    sys.path.append(os.path.join(root_path(), 'tools', 'nnue'))
+    import golds as nnue_golds
 
-    evals = [
-        30.687177181243896, 17.37358272075653, 19.37311887741089, 21.796663105487823, 6.466574966907501,
-        15.306562185287476, 4.069555178284645, 6.848530471324921, 3.0496470630168915, 4.495754092931747,
-        4.752107709646225, 1.7170634120702744, 1.8802601844072342, 2.442501299083233, 2.202880382537842,
-        2.2634807974100113, 3.1365156173706055, 1.204489078372717, 2.0024793222546577
-    ]
-    for i, fen in enumerate(tests):
+    gold = nnue_golds.load_golds()
+    assert gold is not None, 'tools/nnue/golds.json missing; run: python tools/nnue/golds.py <model_dir>'
+
+    for fen in nnue_golds.TESTS:
+        assert fen in gold, f'no gold for {fen}; regenerate golds.json'
         eval = engine.nnue_eval_fen(fen)
-        expect = int(evals[i])
+        expect = int(gold[fen])
         err = abs(eval - expect)
         print(f'{fen}: eval={eval}, expected={expect}, error={err}')
         assert err <= 5

@@ -4,6 +4,7 @@ __pycache__
 __init__.cpp
 *.bin
 *.json
+!tools/nnue/golds.json
 *.log
 *.pdb
 *.pyd

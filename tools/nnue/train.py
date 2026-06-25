@@ -152,13 +152,12 @@ def make_model(args, strategy):
             self.num_buckets = num_buckets
 
         def call(self, features):
-            # Extract already-unpacked pawn bits from features
-            # Pawns are pieces index 2 (white) and 3 (black) in the 12 bitboards
+            # Bitboards are encoded [black, white] per piece (black first).
             # Each bitboard unpacks to 64 bits, so:
-            # - Piece 0 (black king): features[:, 0:64]
-            # - Piece 1 (white king): features[:, 64:128]
-            # - Piece 2 (white pawns): features[:, 128:192]
-            # - Piece 3 (black pawns): features[:, 192:256]
+            # - Piece 0 (black king):  features[:, 0:64]
+            # - Piece 1 (white king):  features[:, 64:128]
+            # - Piece 2 (black pawns): features[:, 128:192]
+            # - Piece 3 (white pawns): features[:, 192:256]
             pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
 
             # Count total pawns on the board

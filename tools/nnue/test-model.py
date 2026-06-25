@@ -8,38 +8,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import numpy as np
 import tensorflow as tf
 
-# Pawn dimension: 0 -> 0-4, 1 -> 5-8, 2 -> 9-12, 3 -> 13-16 pawns.
-# King-file dimension (composed x4): both-left, W-left/B-right, W-right/B-left, both-right.
-tests = [
-    # Pawn bucket 3 (13-16 pawns): opening/early middlegame
-    chess.STARTING_FEN,  # 16 pawns
-    'r2r2k1/1pp2ppp/p2q1b2/3pN3/2PP4/PP1Q3P/5PP1/R3R1K1 b - - 0 22',  # 14 pawns
-    'r4rk1/1ppnbppp/p2q4/3pNb2/3P4/PP5P/2PNBPP1/R2QK2R w KQ - 5 14',  # 14 pawns
-    'r4rk1/ppp2ppp/5n2/2bPn3/4K3/2NP4/PPPBB1PP/R6R w - - 3 3',  # 13 pawns
-
-    # Pawn bucket 2 (9-12 pawns): middlegame
-    '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - - 0 2',  # 11 pawns
-    'rqr3k1/p4p1p/5Qp1/2b5/2N5/2Pn2NP/P2B1PP1/2R2RK1 w - - 0 24',  # 9 pawns
-
-    # Pawn bucket 1 (5-8 pawns): late middlegame/early endgame
-    '2r3k1/p5p1/4p3/1p1bP3/2pb2Q1/5N2/1q3P1P/3R1RK1 b - - 3 32',  # 8 pawns
-    '1r1q1rk1/p3bBpp/2Q5/8/3Pb3/2n1BN2/P4PPP/R4RK1 b - - 0 18',  # 8 pawns
-    '3r2k1/pp3p2/8/8/8/5P2/PP4K1/3R4 w - - 0 1',  # 5 pawns
-    'r3k3/pp6/8/3p4/3P4/8/PP2K3/R7 w q - 0 1',  # 6 pawns
-    '2r2rk1/pp3p2/8/8/8/8/PP3PP1/2R2RK1 w - - 0 1',  # 7 pawns
-
-    # Pawn bucket 0 (0-4 pawns): endgame
-    '8/pp2k3/8/8/8/8/3K1PP1/8 w - - 0 1',  # 4 pawns
-    '8/8/4k3/4p3/4P3/4K3/8/8 w - - 0 1',  # 2 pawns
-    '8/5k2/8/3p4/3P4/2K1P3/8/8 w - - 0 1',  # 3 pawns
-    '4k3/8/8/8/8/8/4K3/4R3 w - - 0 1',  # 0 pawns - K+R vs K
-
-    # King-file coverage (all in pawn bucket 0, so composed bucket == king bucket):
-    '1k6/3p4/8/8/8/8/3P4/2K5 w - - 0 1',  # king bucket 0: both left (WK c1, BK b8)
-    '6k1/3p4/8/8/8/8/3P4/2K5 w - - 0 1',  # king bucket 1: W left, B right (WK c1, BK g8)
-    '1k6/3p4/8/8/8/8/3P4/6K1 w - - 0 1',  # king bucket 2: W right, B left (WK g1, BK b8)
-    '6k1/3p4/8/8/8/8/3P4/6K1 w - - 0 1',  # king bucket 3: both right (WK g1, BK g8)
-]
+from golds import TESTS as tests
 
 
 def encode(board):
