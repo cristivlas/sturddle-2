@@ -78,7 +78,7 @@
 #endif
 
 #ifndef NNUE_SINGLE_BUCKET
-    #define NNUE_SINGLE_BUCKET false
+    #define NNUE_SINGLE_BUCKET true
 #endif
 
 namespace nnue
