@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Verify NNUE binary weights for proper clipping and rounding.
-Architecture: 1280-accumulator with attention modulation, 8-way bucketing.
+Architecture: 1280-accumulator with attention modulation, 16-way bucketing (4 pawn x 4 king-file).
 """
 import sys
 from pathlib import Path
@@ -21,7 +21,7 @@ Q_MAX_B = 32767 / Q_SCALE / 19
 ACTIVE_INPUTS = 769
 ACCUMULATOR_SIZE = 1280
 POOL_SIZE = 8
-MAIN_BUCKETS = 8
+MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
 
 # Layer definitions: (name, kernel_shape, bias_shape, constraint_type)
 # constraint_type: 'A', 'B', or None

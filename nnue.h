@@ -92,17 +92,31 @@ namespace nnue
     constexpr int ACTIVE_INPUTS = 769;
     constexpr int EVAL_SCALE = 100;
     constexpr int MAX_ACTIVE_INPUTS = 33; // 32 pieces + turn
-    constexpr int NUM_BUCKETS = 8;
+    constexpr int NUM_BUCKETS = 16;
+    constexpr int PAWN_BUCKETS = 4;
+    constexpr int KING_BUCKETS = 4;
     constexpr auto POOL_STRIDE = Vec8s::size();
     constexpr int QSCALE = 1024;
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
 
-    INLINE int get_bucket(const State& state)
+    INLINE int pawn_bucket(const State& state)
     {
         const int p = chess::popcount(state.pawns);
-        return p <= 2 ? 0 : std::min<int>((p - 1) / 2, 7);
+        return p <= 4 ? 0 : std::min<int>((p - 1) / 4, 3);
+    }
+
+    INLINE int king_bucket(const State& state)
+    {
+        const int wk_right = square_file(state.king(WHITE)) >= 4;
+        const int bk_right = square_file(state.king(BLACK)) >= 4;
+        return wk_right * 2 + bk_right;
+    }
+
+    INLINE int get_bucket(const State& state)
+    {
+        return pawn_bucket(state) * KING_BUCKETS + king_bucket(state);
     }
 
     #if INSTRSET >= 9

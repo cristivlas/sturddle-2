@@ -24,7 +24,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 ACCUMULATOR_SIZE = 1280
 ATTN_FAN_OUT = 16
 POOL_SIZE = 8
-MAIN_BUCKETS = 8  # Number of buckets for hidden_1a / BucketShift
+MAIN_BUCKETS = 16  # Number of buckets for hidden_1a / BucketShift (4 pawn x 4 king-file)
 
 Q_SCALE = 1024
 
@@ -164,16 +164,27 @@ def make_model(args, strategy):
             # Count total pawns on the board
             pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
 
-            # Assign bucket based on pawn count.
-            # Fat bucket 0 spans {0,1,2} pawns; every bucket above spans 2 pawns.
-            bucket_id = tf.cast(
+            # Pawn dimension: fat bucket 0 spans {0,1,2,3,4} pawns; every bucket above spans 4 pawns.
+            pawn_id = tf.cast(
                 tf.where(
-                    pawn_count <= 2.0,
+                    pawn_count <= 4.0,
                     tf.zeros_like(pawn_count),
-                    tf.minimum((pawn_count - 1.0) // 2.0, self.num_buckets - 1),
+                    tf.minimum((pawn_count - 1.0) // 4.0, 3.0),
                 ),
                 tf.int32
             )
+
+            # King-file dimension: board split into left (files a-d) / right (files e-h).
+            # Feature index idx within a 64-block holds bitboard bit (63 - idx); file = bit % 8.
+            right_mask = tf.constant([1.0 if ((63 - idx) % 8) >= 4 else 0.0 for idx in range(64)], dtype=tf.float32)
+            black_king = tf.cast(features[:, 0:64], tf.float32)
+            white_king = tf.cast(features[:, 64:128], tf.float32)
+            wk_right = tf.cast(tf.reduce_sum(white_king * right_mask, axis=1), tf.int32)
+            bk_right = tf.cast(tf.reduce_sum(black_king * right_mask, axis=1), tf.int32)
+            king_id = wk_right * 2 + bk_right
+
+            # Compose: pawn dimension (4) x king-file dimension (4) = 16 buckets.
+            bucket_id = pawn_id * 4 + king_id
 
             # tf.print("\nPawn count:", pawn_count, "\nBucket id:", bucket_id)
 
