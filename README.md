@@ -25,9 +25,8 @@ or:
 <code>CC=clang++ CFLAGS=-march=native python3 setup.py build_ext --inplace</code>
 
 # Neural Net Architecture
-This version of the engine uses an original model nicknamed **Raptor-III**, which expands on the bucketing idea introduced
-in 2.4.0 with the **Bluejay** architecture, by adding bucket-shifting in the "spatial attention" modulation path, and to the
-second hidden layer.
+This version of the engine uses an original model nicknamed **KP44**, which expands on the bucketing idea introduced
+in 2.4.0 with the **Bluejay** architecture.
 
 *NOTE*: Some internal details omitted for simplicity.
 
@@ -68,7 +67,7 @@ to `DECLARE_VALUE`.
 
 ### Distributed SPSA Tuner (Experimental)
 
-Starting with version 2.5.1, a distributed SPSA tuner is available. It uses a
+Starting with version 2.6.0, a distributed SPSA tuner is available. It uses a
 coordinator/worker architecture designed for small heterogeneous LANs and provides
 a live web dashboard for monitoring progress.
 
