@@ -294,12 +294,11 @@ std::map<std::string, int> _get_params()
 /* Define the network architecture */
 constexpr int INPUTS_A = nnue::ACTIVE_INPUTS * nnue::NUM_BUCKETS;
 constexpr int INPUTS_B = 256;
-constexpr int HIDDEN_1A = 1280;
+constexpr int HIDDEN_1A = 2048;
 constexpr int HIDDEN_1A_POOLED = HIDDEN_1A / nnue::POOL_STRIDE;
-constexpr int HIDDEN_1B = 64;
+constexpr int HIDDEN_1B = HIDDEN_1A_POOLED; /* 1b modulates pooled 1:1 */
 constexpr int HIDDEN_2 = 32;
 
-using LAttnType = nnue::Layer<HIDDEN_1B, 16>;
 using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
 using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
 #if USE_BF16
@@ -312,8 +311,8 @@ using EVALType = nnue::Layer<HIDDEN_2, 1>;
 /*
  * The accumulator takes the inputs and processes them into two outputs,
  * using layers L1A and L1B. L1B processes the 1st 256 inputs, which
- * correspond to kings and pawns. The output of L1B is processed by the
- * spatial attention layer, which moodulates the outputs of the L1A layer.
+ * correspond to kings and pawns. The (linear) output of L1B modulates the
+ * pooled output of L1A 1:1.
  */
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
 using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
@@ -332,7 +331,6 @@ static struct Model
         constexpr auto param_count =
             L1AType::param_count()
             + L1BType::param_count()
-            + LAttnType::param_count()
             + L2Type::param_count()
             + EVALType::param_count()
         #if USE_MOVE_PREDICTION
@@ -360,7 +358,6 @@ static struct Model
             /* Load layers in the same order that the trainer exports them. */
             L1B.load_weights(file);
             L1A.load_weights(file);
-            LATTN.load_weights(file);
             L2.load_weights(file);
             EVAL.load_weights(file);
 
@@ -377,7 +374,6 @@ static struct Model
 
     std::string default_weights_path;
 
-    LAttnType LATTN;
     L1AType L1A;
     L1BType L1B;
     L2Type L2;
@@ -397,7 +393,6 @@ static struct Model
 
 void Model::init()
 {
-    INIT_LAYER(LATTN, spatial_attn);
     INIT_LAYER(L1A, hidden_1a);
     INIT_LAYER(L1B, hidden_1b);
     INIT_LAYER(L2, hidden_2);
@@ -436,7 +431,6 @@ void Model::init()
     /* Same order as Model::load_weights file-based path */
     L1B.load_weights(file);
     L1A.load_weights(file);
-    LATTN.load_weights(file);
     L2.load_weights(file);
     EVAL.load_weights(file);
 #if USE_MOVE_PREDICTION
@@ -535,7 +529,7 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     auto& acc = NNUE_data[tid()][_ply];
     ASSERT(!acc.needs_update(state()));
 
-    _eval_raw = nnue::eval(acc, model.LATTN, model.L2, model.EVAL);
+    _eval_raw = nnue::eval(acc, model.L2, model.EVAL);
 
     if (stm_perspective)
     {

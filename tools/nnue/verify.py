@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Verify NNUE binary weights for proper clipping and rounding.
-Architecture: 1280-accumulator with attention modulation, 16-way bucketing (4 pawn x 4 king-file).
+Architecture: 2048-accumulator, hidden_1b (linear) modulates pooled 1:1, 16-way bucketing (4 pawn x 4 king-file).
 """
 import sys
 from pathlib import Path
@@ -19,8 +19,9 @@ Q_MAX_A = 32767 / Q_SCALE / 34
 Q_MAX_B = 32767 / Q_SCALE / 19
 
 ACTIVE_INPUTS = 769
-ACCUMULATOR_SIZE = 1280
+ACCUMULATOR_SIZE = 2048
 POOL_SIZE = 8
+POOLED = ACCUMULATOR_SIZE // POOL_SIZE  # hidden_1b output width (modulates pooled 1:1)
 MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
 
 # Layer definitions: (name, kernel_shape, bias_shape, constraint_type)
@@ -28,10 +29,9 @@ MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
 # ORDER MATTERS - must match export order from trainer
 
 LAYERS = [
-    ('hidden_1b', (256, 64), (64,), 'B'),
+    ('hidden_1b', (256, POOLED), (POOLED,), 'B'),
     ('hidden_1a', (ACTIVE_INPUTS * MAIN_BUCKETS, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), 'A'),
-    ('spatial_attn', (64, 16), (16,), None),
-    ('hidden_2', (ACCUMULATOR_SIZE // POOL_SIZE, 32), (32,), None),
+    ('hidden_2', (POOLED, 32), (32,), None),
     ('out', (32, 1), (1,), None),
 ]
 

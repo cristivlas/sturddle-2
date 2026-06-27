@@ -74,8 +74,7 @@ def _generate(model_path):
         return np.append(array, np.uint64(board.turn))
 
     model = tf.keras.models.load_model(model_path, custom_objects={
-        'ACCUMULATOR_SIZE': 1280,
-        'ATTN_FAN_OUT': 16,
+        'ACCUMULATOR_SIZE': 2048,
         'POOL_SIZE': 8,
         'combined_loss': None,
         'scaled_sparse_categorical_crossentropy': None,

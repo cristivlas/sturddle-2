@@ -21,8 +21,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # uncomment (or set in environment) for newer TF versions (> 2.15.1 ?) that use Keras 3
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
-ACCUMULATOR_SIZE = 1280
-ATTN_FAN_OUT = 16
+ACCUMULATOR_SIZE = 2048
 POOL_SIZE = 8
 MAIN_BUCKETS = 16  # Number of buckets for hidden_1a / BucketedDense (4 pawn x 4 king-file)
 
@@ -263,25 +262,18 @@ def make_model(args, strategy):
 
         constr_b = QConstraint(Q_MIN_B, Q_MAX_B)
 
-        # Define hidden layer 1b (use kings and pawns to modulate "main" network path)
-        # hidden_1b_layer: selects the pawns and kings features.
+        # Hidden layer 1b (kings and pawns) directly modulates the pooled main path.
+        # Output width matches pooled (ACCUMULATOR_SIZE / POOL_SIZE) for 1:1 modulation.
         input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
         hidden_1b = Dense(
-            64,
-            activation=ACTIVATION,
+            ACCUMULATOR_SIZE // POOL_SIZE,
+            activation=None,
             name='hidden_1b',
             kernel_initializer=K_INIT,
             kernel_constraint=constr_b,
             bias_constraint=constr_b,
             trainable=not args.freeze_eval,
         )(input_1b)
-
-        spatial_attn = Dense(
-            ATTN_FAN_OUT,
-            activation=None,
-            name='spatial_attn',
-            trainable=not args.freeze_eval
-        )(hidden_1b)
 
         def custom_pooling(x):
             reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
@@ -290,13 +282,8 @@ def make_model(args, strategy):
 
         pooled = Lambda(custom_pooling, name='pool')(hidden_1a)
 
-        # The "reshaping" layer repeats or tiles the dynamic weights to match the output shape of pooled
-        attn_reshape_layer = Lambda(lambda x: tf.tile(x, tf.constant([1, ACCUMULATOR_SIZE // POOL_SIZE // ATTN_FAN_OUT])))
-
-        # Compute spatial attention modulation
-        modulation = Multiply(name='modulation')([pooled, attn_reshape_layer(spatial_attn)])
-
-        # Add residual connection: pooled + pooled * attention_weights
+        # Modulate pooled by 1b: pooled * (1 + h1b)
+        modulation = Multiply(name='modulation')([pooled, hidden_1b])
         residual = Add(name='residual')([pooled, modulation])
 
         hidden_2 = Dense(

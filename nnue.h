@@ -367,6 +367,7 @@ namespace nnue
     INLINE Vec8s relu<Vec8s>(Vec8s v) { return max(v, v8_zero); }
 
 
+#if 0
     template <int N>
     INLINE void activate(const int16_t (&input)[N], float (&output)[N])
     {
@@ -393,6 +394,39 @@ namespace nnue
         for (size_t i = 0; i < N; i += VF::size())
         {
             VF v = to_float(extend(relu(VS().load_a(&input[i]))));
+            (v * v_scale).store_a(&output[i]);
+        }
+#endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
+    }
+#endif /* 0 */
+
+
+    /** Dequantize int16/QSCALE to float, no activation (linear layer). */
+    template <int N>
+    INLINE void dequantize(const int16_t (&input)[N], float (&output)[N])
+    {
+        constexpr float QSCALE_RECIP = 1.0f / QSCALE;
+
+#if __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+        #pragma clang loop vectorize(enable)
+        for (int i = 0; i != N; ++i)
+            output[i] = float(input[i]) * QSCALE_RECIP;
+#else
+    #if INSTRSET < 9
+        using VF = Vec8f;
+        using VS = Vec8s;
+    #else
+        using VF = Vec16f;
+        using VS = Vec16s;
+    #endif /* AVX512 */
+
+        static_assert(N % VF::size() == 0);
+
+        const VF v_scale(QSCALE_RECIP);
+
+        for (size_t i = 0; i < N; i += VF::size())
+        {
+            VF v = to_float(extend(VS().load_a(&input[i])));
             (v * v_scale).store_a(&output[i]);
         }
 #endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
@@ -1066,36 +1100,54 @@ namespace nnue
     };
 
 
-    template <typename A, typename ATTN, typename L2, typename OUT>
-    INLINE int eval(const A& a, const ATTN& attn, const L2& l2, const OUT& out)
+    template <typename A, typename L2, typename OUT>
+    INLINE int eval(const A& a, const L2& l2, const OUT& out)
     {
         constexpr int POOL_OUT = A::OUTPUTS_A / POOL_STRIDE;
         static_assert(POOL_OUT == L2::INPUTS);
-        static_assert(A::OUTPUTS_B == ATTN::INPUTS);
+        static_assert(A::OUTPUTS_B == POOL_OUT); /* 1b modulates pooled 1:1 */
 
-        ALIGN float attn_in[A::OUTPUTS_B];
-        ALIGN float attn_out[ATTN::OUTPUTS];
         ALIGN float l2_in[POOL_OUT];
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float output[1]; // eval
 
         pool(a.slot(a._current_bucket).output, l2_in);
 
-        /* The "spatial attention" layer modulates L2 input. */
-        activate(a._output_b, attn_in);
-        attn.dot(attn_in, attn_out);
-
         static_assert(POOL_OUT % Vector::size() == 0);
 
-        Vector v1, v2;
+        /* hidden_1b (linear) modulates pooled: l2_in *= (1 + dequant(_output_b)) */
+        const Vector v_one(1.0f);
+
+#if INSTRSET >= 7
+        /* AVX/AVX2/AVX512: short-vector width matches Vector; fuse load+widen+modulate. */
+    #if INSTRSET >= 9
+        using VS = Vec16s;
+    #else
+        using VS = Vec8s;
+    #endif
+        static_assert(VS::size() == Vector::size());
+
+        const Vector v_scale(1.0f / QSCALE);
         for (int i = 0; i != POOL_OUT; i += Vector::size())
         {
+            Vector v1;
             v1.load_a(&l2_in[i]);
-            v2.load_a(&attn_out[i % ATTN::OUTPUTS]);
-
-            mul_add(v1, v2, v1).store_a(&l2_in[i]);
+            const Vector m = to_float(extend(VS().load_a(&a._output_b[i]))) * v_scale + v_one;
+            (v1 * m).store_a(&l2_in[i]);
         }
-        /* end of modulation */
+#else
+        /* SSE2: short width (8) != Vector width (4); dequantize to scratch first. */
+        ALIGN float mod[POOL_OUT];
+        dequantize(a._output_b, mod);
+
+        for (int i = 0; i != POOL_OUT; i += Vector::size())
+        {
+            Vector v1, m;
+            v1.load_a(&l2_in[i]);
+            m.load_a(&mod[i]);
+            (v1 * (m + v_one)).store_a(&l2_in[i]);
+        }
+#endif
 
         l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); });
         out.dot(l2_out, output);
