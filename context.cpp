@@ -356,8 +356,8 @@ static struct Model
         try
         {
             /* Load layers in the same order that the trainer exports them. */
-            L1B.load_weights(file);
             L1A.load_weights(file);
+            L1B.load_weights(file);
             L2.load_weights(file);
             EVAL.load_weights(file);
 
@@ -429,8 +429,8 @@ void Model::init()
     file.exceptions(std::ios::failbit | std::ios::badbit);
 
     /* Same order as Model::load_weights file-based path */
-    L1B.load_weights(file);
     L1A.load_weights(file);
+    L1B.load_weights(file);
     L2.load_weights(file);
     EVAL.load_weights(file);
 #if USE_MOVE_PREDICTION

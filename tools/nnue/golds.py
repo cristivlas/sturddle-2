@@ -83,6 +83,8 @@ def _generate(model_path):
         'top_5': None,
     })
 
+    print('EXPORT ORDER:', [(l.name, [w.shape for w in l.get_weights()]) for l in model.layers if l.get_weights()])
+
     golds = {}
     for fen in TESTS:
         board = chess.Board(fen=fen)

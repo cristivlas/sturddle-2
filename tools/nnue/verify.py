@@ -29,8 +29,8 @@ MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
 # ORDER MATTERS - must match export order from trainer
 
 LAYERS = [
-    ('hidden_1b', (256, POOLED), (POOLED,), 'B'),
     ('hidden_1a', (ACTIVE_INPUTS * MAIN_BUCKETS, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), 'A'),
+    ('hidden_1b', (256, POOLED), (POOLED,), 'B'),
     ('hidden_2', (POOLED, 32), (32,), None),
     ('out', (32, 1), (1,), None),
 ]
