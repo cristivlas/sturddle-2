@@ -22,7 +22,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
 ACCUMULATOR_SIZE = 2048
-POOL_SIZE = 8
+POOL_SIZE = 16
 MAIN_BUCKETS = 16  # Number of buckets for hidden_1a / BucketedDense (4 pawn x 4 king-file)
 
 Q_SCALE = 1024

@@ -20,7 +20,7 @@ Q_MAX_B = 32767 / Q_SCALE / 19
 
 ACTIVE_INPUTS = 769
 ACCUMULATOR_SIZE = 2048
-POOL_SIZE = 8
+POOL_SIZE = 16
 POOLED = ACCUMULATOR_SIZE // POOL_SIZE  # hidden_1b output width (modulates pooled 1:1)
 MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
 

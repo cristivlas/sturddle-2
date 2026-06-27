@@ -95,7 +95,7 @@ namespace nnue
     constexpr int NUM_BUCKETS = 16;
     constexpr int PAWN_BUCKETS = 4;
     constexpr int KING_BUCKETS = 4;
-    constexpr auto POOL_STRIDE = Vec8s::size();
+    constexpr int POOL_STRIDE = 16;
     constexpr int QSCALE = 1024;
 
     /* bit index of the side-to-move feature within one-hot encoding */
@@ -694,31 +694,33 @@ namespace nnue
     {
         static_assert(INPUTS % OUTPUTS == 0);
         static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
+        static_assert(POOL_STRIDE == 16);
+
+        constexpr float SCALE_RECIP = 1.0f / POOL_STRIDE / QSCALE;
 
     #if INSTRSET < 8
-        Vec8s v;
+        Vec8s lo, hi;
+
+        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
+        {
+            lo.load_a(&in[i]);
+            hi.load_a(&in[i + 8]);
+            /* sum the two extended halves as vectors, then one horizontal reduction */
+            const int s = ::horizontal_add(extend(max(lo, v8_zero)) + extend(max(hi, v8_zero)));
+            out[j] = float(s) * SCALE_RECIP;
+        }
+    #else
+        /* AVX2 (or better): one 16-wide load per pooled output. */
+        Vec16s v;
 
         for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
         {
             v.load_a(&in[i]);
-            v = max(v, v8_zero);
-
-            out[j] = float(::horizontal_add(extend(v))) / POOL_STRIDE / QSCALE;
-        }
-    #else
-        /* AVX2 (or better) */
-        static_assert(INPUTS % (2 * POOL_STRIDE) == 0);
-        Vec16s v;
-
-        for (size_t i = 0, j = 0; i + 2 * POOL_STRIDE <= INPUTS; i += 2 * POOL_STRIDE, j += 2)
-        {
-            v.load_a(&in[i]);
-
             ASSERT(j < OUTPUTS);
-            ASSERT(j + 1< OUTPUTS);
 
-            out[j] = float(::horizontal_add(extend(max(v.get_low(), v8_zero)))) / POOL_STRIDE / QSCALE;
-            out[j + 1] = float(::horizontal_add(extend(max(v.get_high(), v8_zero)))) / POOL_STRIDE / QSCALE;
+            /* sum the two extended halves as vectors, then one horizontal reduction */
+            const int s = ::horizontal_add(extend(max(v.get_low(), v8_zero)) + extend(max(v.get_high(), v8_zero)));
+            out[j] = float(s) * SCALE_RECIP;
         }
     #endif /* INSTRSET < 8 */
     }

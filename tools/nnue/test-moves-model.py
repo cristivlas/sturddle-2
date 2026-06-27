@@ -58,7 +58,7 @@ def load_model(args):
     path = args.input[0]
     return tf.keras.models.load_model(path, custom_objects = {
             'ACCUMULATOR_SIZE': 2048,
-            'POOL_SIZE': 8,
+            'POOL_SIZE': 16,
             'combined_loss': None,
             'scaled_sparse_categorical_crossentropy': None,
             'top': None,
