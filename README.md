@@ -25,9 +25,6 @@ or:
 <code>CC=clang++ CFLAGS=-march=native python3 setup.py build_ext --inplace</code>
 
 # Neural Net Architecture
-This version of the engine uses an original model nicknamed **KP44**, which expands on the bucketing idea introduced
-in 2.4.0 with the **Bluejay** architecture.
-
 *NOTE*: Some internal details omitted for simplicity.
 
 ![plot](./model.png)
