@@ -95,7 +95,7 @@ namespace nnue
     constexpr int NUM_BUCKETS = 16;
     constexpr int PAWN_BUCKETS = 4;
     constexpr int KING_BUCKETS = 4;
-    constexpr int POOL_STRIDE = 16;
+    constexpr int POOL_STRIDE = 8;
     constexpr int QSCALE = 1024;
 
     /* bit index of the side-to-move feature within one-hot encoding */
@@ -694,35 +694,17 @@ namespace nnue
     {
         static_assert(INPUTS % OUTPUTS == 0);
         static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
-        static_assert(POOL_STRIDE == 16);
+        static_assert(POOL_STRIDE == 8);
 
         constexpr float SCALE_RECIP = 1.0f / POOL_STRIDE / QSCALE;
 
-    #if INSTRSET < 8
-        Vec8s lo, hi;
-
-        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
-        {
-            lo.load_a(&in[i]);
-            hi.load_a(&in[i + 8]);
-            /* sum the two extended halves as vectors, then one horizontal reduction */
-            const int s = ::horizontal_add(extend(max(lo, v8_zero)) + extend(max(hi, v8_zero)));
-            out[j] = float(s) * SCALE_RECIP;
-        }
-    #else
-        /* AVX2 (or better): one 16-wide load per pooled output. */
-        Vec16s v;
-
+        Vec8s v;
         for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
         {
             v.load_a(&in[i]);
             ASSERT(j < OUTPUTS);
-
-            /* sum the two extended halves as vectors, then one horizontal reduction */
-            const int s = ::horizontal_add(extend(max(v.get_low(), v8_zero)) + extend(max(v.get_high(), v8_zero)));
-            out[j] = float(s) * SCALE_RECIP;
+            out[j] = float(::horizontal_add(extend(max(v, v8_zero)))) * SCALE_RECIP;
         }
-    #endif /* INSTRSET < 8 */
     }
 
 
@@ -1102,15 +1084,18 @@ namespace nnue
     };
 
 
-    template <typename A, typename L2, typename OUT>
-    INLINE int eval(const A& a, const L2& l2, const OUT& out)
+    template <typename A, typename L2, typename L3, typename OUT>
+    INLINE int eval(const A& a, const L2& l2, const L3& l3, const OUT& out)
     {
         constexpr int POOL_OUT = A::OUTPUTS_A / POOL_STRIDE;
         static_assert(POOL_OUT == L2::INPUTS);
         static_assert(A::OUTPUTS_B == POOL_OUT); /* 1b modulates pooled 1:1 */
+        static_assert(L2::OUTPUTS == L3::INPUTS);
+        static_assert(L3::OUTPUTS == OUT::INPUTS);
 
         ALIGN float l2_in[POOL_OUT];
         ALIGN float l2_out[L2::OUTPUTS];
+        ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
 
         pool(a.slot(a._current_bucket).output, l2_in);
@@ -1152,7 +1137,8 @@ namespace nnue
 #endif
 
         l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); });
-        out.dot(l2_out, output);
+        l3.dot(l2_out, l3_out, [](const Vector& v) { return relu(v); });
+        out.dot(l3_out, output);
         return EVAL_SCALE * output[0];
     }
 

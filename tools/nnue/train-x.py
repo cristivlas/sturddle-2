@@ -22,7 +22,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
 ACCUMULATOR_SIZE = 2048
-POOL_SIZE = 16
+POOL_SIZE = 8
 MAIN_BUCKETS = 16  # Number of buckets for hidden_1a / BucketedDense (4 pawn x 4 king-file)
 
 Q_SCALE = 1024
@@ -287,14 +287,22 @@ def make_model(args, strategy):
         residual = Add(name='residual')([pooled, modulation])
 
         hidden_2 = Dense(
-            32,
+            16,
             activation=ACTIVATION,
             kernel_initializer=K_INIT,
             name='hidden_2',
             trainable=not args.freeze_eval,
         )(residual)
 
-        eval_output = Dense(1, name='out', dtype='float32', trainable=not args.freeze_eval)(hidden_2)
+        hidden_3 = Dense(
+            16,
+            activation=ACTIVATION,
+            kernel_initializer=K_INIT,
+            name='hidden_3',
+            trainable=not args.freeze_eval,
+        )(hidden_2)
+
+        eval_output = Dense(1, name='out', dtype='float32', trainable=not args.freeze_eval)(hidden_3)
 
         # Add move prediction heads if enabled
         outputs = [eval_output]

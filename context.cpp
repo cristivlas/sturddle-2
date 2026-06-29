@@ -297,7 +297,8 @@ constexpr int INPUTS_B = 256;
 constexpr int HIDDEN_1A = 2048;
 constexpr int HIDDEN_1A_POOLED = HIDDEN_1A / nnue::POOL_STRIDE;
 constexpr int HIDDEN_1B = HIDDEN_1A_POOLED; /* 1b modulates pooled 1:1 */
-constexpr int HIDDEN_2 = 32;
+constexpr int HIDDEN_2 = 16;
+constexpr int HIDDEN_3 = 16;
 
 using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
 using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
@@ -306,7 +307,8 @@ using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* 
 #else
   using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, float>;
 #endif
-using EVALType = nnue::Layer<HIDDEN_2, 1>;
+using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
+using EVALType = nnue::Layer<HIDDEN_3, 1>;
 
 /*
  * The accumulator takes the inputs and processes them into two outputs,
@@ -332,6 +334,7 @@ static struct Model
             L1AType::param_count()
             + L1BType::param_count()
             + L2Type::param_count()
+            + L3Type::param_count()
             + EVALType::param_count()
         #if USE_MOVE_PREDICTION
             + LMOVEType::param_count()
@@ -359,6 +362,7 @@ static struct Model
             L1A.load_weights(file);
             L1B.load_weights(file);
             L2.load_weights(file);
+            L3.load_weights(file);
             EVAL.load_weights(file);
 
         #if USE_MOVE_PREDICTION
@@ -377,6 +381,7 @@ static struct Model
     L1AType L1A;
     L1BType L1B;
     L2Type L2;
+    L3Type L3;
     EVALType EVAL;
 
 #if USE_MOVE_PREDICTION
@@ -396,6 +401,7 @@ void Model::init()
     INIT_LAYER(L1A, hidden_1a);
     INIT_LAYER(L1B, hidden_1b);
     INIT_LAYER(L2, hidden_2);
+    INIT_LAYER(L3, hidden_3);
     INIT_LAYER(EVAL, out);
 
 #if USE_MOVE_PREDICTION
@@ -432,6 +438,7 @@ void Model::init()
     L1A.load_weights(file);
     L1B.load_weights(file);
     L2.load_weights(file);
+    L3.load_weights(file);
     EVAL.load_weights(file);
 #if USE_MOVE_PREDICTION
     LMOVES.load_weights(file);
@@ -529,7 +536,7 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     auto& acc = NNUE_data[tid()][_ply];
     ASSERT(!acc.needs_update(state()));
 
-    _eval_raw = nnue::eval(acc, model.L2, model.EVAL);
+    _eval_raw = nnue::eval(acc, model.L2, model.L3, model.EVAL);
 
     if (stm_perspective)
     {

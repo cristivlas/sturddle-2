@@ -22,7 +22,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
 ACCUMULATOR_SIZE = 2048
-POOL_SIZE = 16
+POOL_SIZE = 8
 MAIN_BUCKETS = 16  # Number of buckets for hidden_1a / BucketShift (4 pawn x 4 king-file)
 
 Q_SCALE = 1024
@@ -246,14 +246,22 @@ def make_model(args, strategy):
         residual = Add(name='residual')([pooled, modulation])
 
         hidden_2 = Dense(
-            32,
+            16,
             activation=ACTIVATION,
             kernel_initializer=K_INIT,
             name='hidden_2',
             trainable=not args.freeze_eval,
         )(residual)
 
-        eval_output = Dense(1, name='out', dtype='float32', trainable=not args.freeze_eval)(hidden_2)
+        hidden_3 = Dense(
+            16,
+            activation=ACTIVATION,
+            kernel_initializer=K_INIT,
+            name='hidden_3',
+            trainable=not args.freeze_eval,
+        )(hidden_2)
+
+        eval_output = Dense(1, name='out', dtype='float32', trainable=not args.freeze_eval)(hidden_3)
 
         # Add move prediction heads if enabled
         outputs = [eval_output]
@@ -926,7 +934,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
     return make_dataset(), len(generator)
 
 
-def load_model(path):
+def load_model(path, pool_size=None):
     custom_objects = {
         'combined_loss': None,
         'scaled_sparse_categorical_crossentropy': None,
@@ -935,7 +943,17 @@ def load_model(path):
         'top_5': None,
     }
 
-    return tf.keras.models.load_model(path, custom_objects=custom_objects)
+    # The 'pool' Lambda binds the module-global POOL_SIZE at load time. When the
+    # source model was trained with a different POOL_SIZE, temporarily restore it
+    # so the saved graph reconstructs with the correct pooled width.
+    global POOL_SIZE
+    saved = POOL_SIZE
+    if pool_size is not None:
+        POOL_SIZE = pool_size
+    try:
+        return tf.keras.models.load_model(path, custom_objects=custom_objects)
+    finally:
+        POOL_SIZE = saved
 
 
 def set_weights(from_model, to_model):
@@ -951,7 +969,11 @@ def set_weights(from_model, to_model):
             logging.warning(f"Layer {name} not found in target model, skipping")
             continue
 
-        if len(to_layer.get_weights()):  # Trainable?
+        dst = to_layer.get_weights()
+        if dst:  # Trainable?
+            if [w.shape for w in dst] != [w.shape for w in params]:
+                logging.warning(f"Layer {name}: shape mismatch {[w.shape for w in params]} -> {[w.shape for w in dst]}, skipping")
+                continue
             try:
                 to_layer.set_weights(params)
             except Exception:
@@ -966,7 +988,7 @@ def main(args):
 
     alt_model = None
     if args.alt_model and os.path.exists(args.alt_model):
-        alt_model = load_model(args.alt_model)
+        alt_model = load_model(args.alt_model, pool_size=args.alt_pool_size)
 
     if args.model and os.path.exists(args.model):
         saved_model = load_model(args.model)
@@ -1124,6 +1146,7 @@ if __name__ == '__main__':
         parser.add_argument('--clip-norm', type=float, default=1.0, help='gradient clipping norm')
 
         parser.add_argument('--alt-model', help='Path to another model to load/merge weights from')
+        parser.add_argument('--alt-pool-size', type=int, default=POOL_SIZE, help='POOL_SIZE the --alt-model was trained with (for loading its pool Lambda)')
 
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')

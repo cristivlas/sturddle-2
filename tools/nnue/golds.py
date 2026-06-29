@@ -75,7 +75,7 @@ def _generate(model_path):
 
     model = tf.keras.models.load_model(model_path, custom_objects={
         'ACCUMULATOR_SIZE': 2048,
-        'POOL_SIZE': 16,
+        'POOL_SIZE': 8,
         'combined_loss': None,
         'scaled_sparse_categorical_crossentropy': None,
         'top': None,
