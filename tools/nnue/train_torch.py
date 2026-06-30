@@ -500,10 +500,17 @@ def main(args):
                     post["scale"] = f"{scaler.get_scale():.0f}"
                 bar.set_postfix(**post)
         avg = total / max(count, 1)
+        avg_acc = acc_sum / max(count, 1)
+        avg_mae = mae_sum / max(count, 1)
         if sched:
             sched.step(avg)
-        print(f'epoch {epoch} loss {avg:.6f} lr {opt.param_groups[0]["lr"]:.2e}')
-        logging.info(f"epoch={epoch} loss={avg:.6f}")
+        lr = opt.param_groups[0]["lr"]
+        print(f"epoch {epoch} loss {avg:.6f} acc {avg_acc:.4f} mae {avg_mae:.4f} lr {lr:.2e}")
+        # format compatible with tools/nnue/plot.py
+        hyperparam = {"learn rate": f"{lr:.2e}", "batch size": args.batch_size, "sampling ratio": args.sample}
+        logging.info(f"epoch={epoch} loss={avg:.6f} hyperparam={hyperparam}")
+        logging.info(f"epoch={epoch} accuracy={avg_acc:.6f}")
+        logging.info(f"epoch={epoch} mae={avg_mae:.6f}")
         if args.model and (args.sample or avg < best):  # sampling: loss not comparable across epochs
             best = avg
             save_bin(model, args.model)
