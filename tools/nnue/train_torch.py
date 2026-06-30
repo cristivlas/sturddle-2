@@ -259,12 +259,14 @@ def combined_loss(y_pred, y_true, args):
 # H5 dataset: yields whole batches (contiguous slices), shuffled / sampled.
 # ---------------------------------------------------------------------------
 class H5Batches(torch.utils.data.Dataset):
-    def __init__(self, path, batch_size, sample=None, smoothing=0.025, filter=None):
+    def __init__(self, path, batch_size, sample=None, smoothing=0.025, filter=None, no_capture=False, discard_mismatch=0):
         self.path = path
         self.batch_size = batch_size
         self.sample = sample
         self.smoothing = smoothing
         self.filter = filter
+        self.no_capture = no_capture
+        self.discard_mismatch = discard_mismatch
         with h5py.File(path, 'r') as hf:
             n = hf['data'].shape[0]
             self.cols = hf['data'].shape[1]
@@ -303,10 +305,25 @@ class H5Batches(torch.utils.data.Dataset):
         s_ = self.smoothing
         y_out = y_out * (1 - s_) + 0.5 * s_
 
+        keep = None
         if self.filter:
             keep = np.abs(y_eval) < (self.filter / SCALE)
-            x, y_eval, y_out = x[keep], y_eval[keep], y_out[keep]
-            rows = rows[keep]
+
+        if self.discard_mismatch:
+            t = self.discard_mismatch / SCALE
+            mismatch = ((y_eval > t) & (y_out < 0.25)) | ((y_eval < -t) & (y_out > 0.75))
+            keep = ~mismatch if keep is None else (keep & ~mismatch)
+
+        if self.no_capture and rows.shape[1] > self.feature_count + 3:
+            to_square = rows[:, self.feature_count + 3]
+            black_occ = np.bitwise_or.reduce(rows[:, 0:12:2], axis=1)
+            white_occ = np.bitwise_or.reduce(rows[:, 1:12:2], axis=1)
+            opp_occ = np.where(rows[:, 12] == 1, black_occ, white_occ)
+            is_capture = (opp_occ & np.left_shift(np.uint64(1), to_square)) != 0
+            keep = ~is_capture if keep is None else (keep & ~is_capture)
+
+        if keep is not None:
+            x, y_eval, y_out, rows = x[keep], y_eval[keep], y_out[keep], rows[keep]
 
         pc = np.zeros(x.shape[0], dtype=np.float32)
         for c in range(12):
@@ -354,6 +371,10 @@ def main(args):
     device = torch.device('cuda' if (args.gpu and torch.cuda.is_available()) else 'cpu')
     print(f'device: {device}')
 
+    if args.mem_limit and device.type == 'cuda':
+        total = torch.cuda.get_device_properties(0).total_memory
+        torch.cuda.set_per_process_memory_fraction(min(1.0, args.mem_limit * 1024 * 1024 / total))
+
     model = NNUE().to(device)
     src = args.import_file or (args.model if args.model and os.path.exists(args.model) else None)
     if src:
@@ -382,7 +403,8 @@ def main(args):
         print('mixed precision enabled')
 
     ds = H5Batches(args.input, args.batch_size, sample=args.sample,
-                   smoothing=args.outcome_smoothing, filter=args.filter)
+                   smoothing=args.outcome_smoothing, filter=args.filter, no_capture=args.no_capture,
+                   discard_mismatch=args.discard_mismatch)
     loader = torch.utils.data.DataLoader(ds, batch_size=None, num_workers=args.workers,
                                          shuffle=False)
 
@@ -458,6 +480,9 @@ if __name__ == '__main__':
     p.add_argument('--huber-delta', type=float, default=1.5)
     p.add_argument('--sample', type=float)
     p.add_argument('-F', '--filter', type=int, help='drop positions with |eval| >= this (centipawns)')
+    p.add_argument('--no-capture', action='store_true', help='exclude positions whose move is a capture')
+    p.add_argument('--discard-mismatch', type=float, default=0, help='drop positions where |eval| > threshold (cp) and outcome disagrees')
+    p.add_argument('--mem-limit', type=int, default=0, help='GPU memory limit in MB (0 = unlimited)')
     p.add_argument('--schedule', action='store_true')
     p.add_argument('--patience', type=int, default=3)
     p.add_argument('--workers', type=int, default=0)
