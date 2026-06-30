@@ -1037,7 +1037,9 @@ def main(args):
         if args.model is not None:
             assert os.path.exists(os.path.dirname(args.model))
 
-            save_best_only = not bool(args.save_freq)
+            # When sampling, per-epoch loss is not comparable (different subset each
+            # epoch), so best-only would save erratically: force every-epoch saves.
+            save_best_only = not bool(args.save_freq) and not args.sample
 
             # https://keras.io/api/callbacks/model_checkpoint/
             model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
