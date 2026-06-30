@@ -504,7 +504,7 @@ def main(args):
             sched.step(avg)
         print(f'epoch {epoch} loss {avg:.6f} lr {opt.param_groups[0]["lr"]:.2e}')
         logging.info(f"epoch={epoch} loss={avg:.6f}")
-        if args.model and avg < best:
+        if args.model and (args.sample or avg < best):  # sampling: loss not comparable across epochs
             best = avg
             save_bin(model, args.model)
 
