@@ -398,7 +398,12 @@ def main(args):
         sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, factor=0.5, patience=args.patience)
 
     use_amp = args.mixed_precision and device.type == 'cuda'
-    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+    try:
+        scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+        autocast = lambda: torch.amp.autocast('cuda', enabled=use_amp)
+    except (AttributeError, TypeError):                        # older torch
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        autocast = lambda: torch.cuda.amp.autocast(enabled=use_amp)
     if use_amp:
         print('mixed precision enabled')
 
@@ -424,7 +429,7 @@ def main(args):
         for x, y in bar:
             x, y = x.to(device), y.to(device)
             opt.zero_grad()
-            with torch.amp.autocast('cuda', enabled=use_amp):
+            with autocast():
                 pred = model(x)
                 loss = combined_loss(pred, y, args)
             scaler.scale(loss).backward()
