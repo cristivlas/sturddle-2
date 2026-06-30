@@ -97,12 +97,17 @@ class BucketedDense(nn.Module):
     def forward(self, features):
         bucket_id = compute_bucket_id(features)                  # (B,)
         blocks = self.weight.view(self.num_buckets, self.in_features, self.units)
-        out = features.new_empty(features.shape[0], self.units)
+        out = None
         for b in range(self.num_buckets):
             rows = (bucket_id == b).nonzero(as_tuple=True)[0]
             if rows.numel():
-                out[rows] = features[rows] @ blocks[b]
-        out += self.bias
+                r = features[rows] @ blocks[b]
+                if out is None:                                  # match matmul dtype (AMP -> Half)
+                    out = features.new_empty(features.shape[0], self.units, dtype=r.dtype)
+                out[rows] = r
+        if out is None:
+            out = features.new_zeros(features.shape[0], self.units)
+        out = out + self.bias
         return F.relu(out)
 
 
