@@ -491,10 +491,10 @@ def main(args):
             apply_constraints(model, args.quant_round)
             total += loss.item()
             count += 1
+            acc, mae = metrics(pred, y, args)
+            acc_sum += acc
+            mae_sum += mae
             if tqdm:
-                acc, mae = metrics(pred, y, args)
-                acc_sum += acc
-                mae_sum += mae
                 post = dict(loss=f"{total/count:.4f}", acc=f"{acc_sum/count:.4f}", mae=f"{mae_sum/count:.4f}")
                 if use_amp and args.show_scale:
                     post["scale"] = f"{scaler.get_scale():.0f}"
