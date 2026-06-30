@@ -99,9 +99,42 @@ def _generate(model_path):
     print(f'Wrote {len(golds)} golds to {GOLDS_JSON}')
 
 
+def _generate_bin(bin_path):
+    """Run a flat weights.bin through the torch NNUE over TESTS, write golds.json."""
+    import numpy as np
+    import torch
+    import train_torch as tt
+
+    def encode(board):
+        mask_black = board.occupied_co[chess.BLACK]
+        mask_white = board.occupied_co[chess.WHITE]
+        bitboards = [[pcs & mask_black, pcs & mask_white] for pcs in (
+            board.kings, board.pawns, board.knights, board.bishops, board.rooks, board.queens)]
+        array = np.asarray([bitboards], dtype=np.uint64).ravel()
+        return np.append(array, np.uint64(board.turn))
+
+    model = tt.NNUE()
+    tt.load_bin(model, bin_path)
+    model.eval()
+
+    golds = {}
+    with torch.no_grad():
+        for fen in TESTS:
+            board = chess.Board(fen=fen)
+            assert board.is_valid(), f'Invalid position: {fen}'
+            x = torch.from_numpy(encode(board).astype(np.int64)).reshape(1, 13)
+            res = model(x)[0, 0].item()
+            golds[fen] = res * 100
+
+    with open(GOLDS_JSON, 'w') as f:
+        json.dump(golds, f, indent=2)
+    print(f'Wrote {len(golds)} golds to {GOLDS_JSON}')
+
+
 if __name__ == '__main__':
-    import sys
-    if len(sys.argv) != 2:
-        print(f'Usage: {sys.argv[0]} <model_dir>')
-        sys.exit(1)
-    _generate(sys.argv[1])
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument('model', help='Keras model dir, or a weights.bin with --bin')
+    p.add_argument('--bin', action='store_true', help='treat model as a flat weights.bin (torch)')
+    a = p.parse_args()
+    (_generate_bin if a.bin else _generate)(a.model)
