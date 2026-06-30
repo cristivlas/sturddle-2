@@ -464,6 +464,7 @@ def main(args):
     for epoch in range(args.epochs):
         model.train()
         total, count = 0.0, 0
+        acc_sum, mae_sum = 0.0, 0.0
         ds.reshuffle()
         bar = (
             tqdm(
@@ -492,7 +493,9 @@ def main(args):
             count += 1
             if tqdm:
                 acc, mae = metrics(pred, y, args)
-                post = dict(loss=f"{total/count:.4f}", acc=f"{acc:.4f}", mae=f"{mae:.4f}")
+                acc_sum += acc
+                mae_sum += mae
+                post = dict(loss=f"{total/count:.4f}", acc=f"{acc_sum/count:.4f}", mae=f"{mae_sum/count:.4f}")
                 if use_amp and args.show_scale:
                     post["scale"] = f"{scaler.get_scale():.0f}"
                 bar.set_postfix(**post)
