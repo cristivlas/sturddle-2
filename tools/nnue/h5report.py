@@ -7,7 +7,9 @@ import os
 from tqdm import tqdm
 
 
-def analyze_chess_data(h5_file_path, threshold, batch_size, generate_histogram=False, hist_bins=100, hist_range=None):
+def analyze_chess_data(
+    h5_file_path, threshold, batch_size, generate_histogram=False, hist_bins=100, hist_range=None, mismatch=0
+):
     """
     Analyze chess data in H5 file with detailed evaluation and outcome statistics
 
@@ -18,6 +20,7 @@ def analyze_chess_data(h5_file_path, threshold, batch_size, generate_histogram=F
         generate_histogram: Whether to generate a histogram of eval scores
         hist_bins: Number of bins for the histogram
         hist_range: Tuple of (min, max) for histogram range, or None for auto
+        mismatch: eval/outcome disagreement threshold in centipawns (--discard-mismatch), 0 to skip
     """
     try:
         with h5py.File(h5_file_path, 'r') as f:
@@ -51,6 +54,9 @@ def analyze_chess_data(h5_file_path, threshold, batch_size, generate_histogram=F
             count_black_draws = 0
             count_white_losses = 0
             count_black_losses = 0
+
+            # Eval/outcome mismatch counter (--discard-mismatch equivalent)
+            count_mismatch = 0
 
             # For histogram generation
             all_scores = [] if generate_histogram else None
@@ -108,6 +114,13 @@ def analyze_chess_data(h5_file_path, threshold, batch_size, generate_histogram=F
                     count_black_wins += np.sum(black_mask & (batch_outcomes == 2))
                     count_black_draws += np.sum(black_mask & (batch_outcomes == 1))
                     count_black_losses += np.sum(black_mask & (batch_outcomes == 0))
+
+                    # Count eval/outcome mismatches (predicate is sign-invariant, so raw STM-POV is fine)
+                    if mismatch:
+                        batch_mismatch = ((batch_scores > mismatch) & (batch_outcomes == 0)) | (
+                            (batch_scores < -mismatch) & (batch_outcomes == 2)
+                        )
+                        count_mismatch += np.sum(batch_mismatch)
 
                     # Update progress
                     processed = end_idx
@@ -216,6 +229,13 @@ def analyze_chess_data(h5_file_path, threshold, batch_size, generate_histogram=F
             print()
             print(f"White to move: wins {safe_percentage(count_white_wins, count_white_to_move):.2f}%")
             print(f"Black to move: wins {safe_percentage(count_black_wins, count_black_to_move):.2f}%")
+
+            if mismatch:
+                print("\n" + "=" * 64)
+                print("EVAL/OUTCOME MISMATCH (--discard-mismatch)")
+                print("=" * 64)
+                print(f"Threshold: |eval| > {mismatch:,} and outcome disagrees")
+                print(f"Mismatches: {count_mismatch:,} ({safe_percentage(count_mismatch, total_count):.2f}% dropped)")
 
             # Generate histogram if requested
             if generate_histogram:
@@ -409,6 +429,12 @@ Note: Column 12 = side-to-move (1=white, 0=black)
         metavar=('MIN', 'MAX'),
         help='Score range for histogram (default: auto)'
     )
+    parser.add_argument(
+        '--mismatch',
+        type=int,
+        default=0,
+        help='Count eval/outcome disagreements above this cp threshold (--discard-mismatch equiv)'
+    )
 
     args = parser.parse_args()
 
@@ -445,7 +471,7 @@ Note: Column 12 = side-to-move (1=white, 0=black)
 
     hist_range = tuple(args.range) if args.range else None
     analyze_chess_data(args.input_file, args.threshold, args.batch_size,
-                      args.histogram, args.bins, hist_range)
+                      args.histogram, args.bins, hist_range, args.mismatch)
 
 
 if __name__ == '__main__':
