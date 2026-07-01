@@ -56,7 +56,8 @@ def analyze_chess_data(
             count_black_losses = 0
 
             # Eval/outcome mismatch counter (--discard-mismatch equivalent)
-            count_mismatch = 0
+            count_mismatch = 0  # all mismatches
+            count_mismatch_kept = 0  # mismatches that survive the |eval| <= threshold filter
 
             # For histogram generation
             all_scores = [] if generate_histogram else None
@@ -121,6 +122,7 @@ def analyze_chess_data(
                             (batch_scores < -mismatch) & (batch_outcomes == 2)
                         )
                         count_mismatch += np.sum(batch_mismatch)
+                        count_mismatch_kept += np.sum(batch_mismatch & (np.abs(batch_scores) <= threshold))
 
                     # Update progress
                     processed = end_idx
@@ -231,11 +233,14 @@ def analyze_chess_data(
             print(f"Black to move: wins {safe_percentage(count_black_wins, count_black_to_move):.2f}%")
 
             if mismatch:
+                survivors = total_count - count_above_threshold
                 print("\n" + "=" * 64)
                 print("EVAL/OUTCOME MISMATCH (--discard-mismatch)")
                 print("=" * 64)
-                print(f"Threshold: |eval| > {mismatch:,} and outcome disagrees")
-                print(f"Mismatches: {count_mismatch:,} ({safe_percentage(count_mismatch, total_count):.2f}% dropped)")
+                print(f"Predicate: |eval| > {mismatch:,} and outcome disagrees")
+                print(f"All mismatches: {count_mismatch:,} ({safe_percentage(count_mismatch, total_count):.2f}% of total)")
+                print(f"After |eval| <= {threshold:,} filter: {count_mismatch_kept:,} "
+                      f"({safe_percentage(count_mismatch_kept, survivors):.2f}% of {survivors:,} survivors)")
 
             # Generate histogram if requested
             if generate_histogram:
