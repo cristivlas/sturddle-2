@@ -280,6 +280,7 @@ class H5Batches(torch.utils.data.Dataset):
         filter=None,
         no_capture=False,
         discard_mismatch=0,
+        balance=False,
     ):
         self.path = path
         self.batch_size = batch_size
@@ -288,6 +289,7 @@ class H5Batches(torch.utils.data.Dataset):
         self.filter = filter
         self.no_capture = no_capture
         self.discard_mismatch = discard_mismatch
+        self.balance = balance
         with h5py.File(path, "r") as hf:
             n = hf["data"].shape[0]
             self.cols = hf["data"].shape[1]
@@ -344,15 +346,46 @@ class H5Batches(torch.utils.data.Dataset):
             keep = ~is_capture if keep is None else (keep & ~is_capture)
 
         if keep is not None:
-            x, y_eval, y_out, rows = x[keep], y_eval[keep], y_out[keep], rows[keep]
+            x, y_eval, y_out = x[keep], y_eval[keep], y_out[keep]
+
+        if self.balance:
+            # Synthesize color-mirrored positions: swap colors + vertical mirror + flip STM.
+            x = np.concatenate([x, flip_position(x)], axis=0)
+            y_eval = np.concatenate([y_eval, -y_eval], axis=0)  # negate eval
+            y_out = np.concatenate([y_out, 1.0 - y_out], axis=0)  # swap win/loss, keep draws
 
         pc = np.zeros(x.shape[0], dtype=np.float32)
-        for c in range(12):
-            pc += popcount(rows[:, c])
+        for c in range(12):  # first 12 columns of x are the piece bitboards
+            pc += popcount(x[:, c])
         piece_ratio = pc / 32.0
 
         y = np.stack([y_eval, y_out, piece_ratio], axis=1).astype(np.float32)
         return torch.from_numpy(x), torch.from_numpy(y)
+
+
+def vertical_mirror(bb):
+    """Mirror bitboards vertically (rank 1 <-> rank 8). uint64 array in/out."""
+    b = bb.astype(np.uint64)
+    return (
+        ((b >> np.uint64(56)) & np.uint64(0x00000000000000FF))
+        | ((b >> np.uint64(40)) & np.uint64(0x000000000000FF00))
+        | ((b >> np.uint64(24)) & np.uint64(0x0000000000FF0000))
+        | ((b >> np.uint64(8)) & np.uint64(0x00000000FF000000))
+        | ((b << np.uint64(8)) & np.uint64(0x000000FF00000000))
+        | ((b << np.uint64(24)) & np.uint64(0x0000FF0000000000))
+        | ((b << np.uint64(40)) & np.uint64(0x00FF000000000000))
+        | ((b << np.uint64(56)) & np.uint64(0xFF00000000000000))
+    )
+
+
+def flip_position(x):
+    """Color-flip: swap piece colors, vertical mirror, flip STM. x: (B, 13) [12 bitboards + turn]."""
+    flipped = np.empty_like(x)
+    for i in range(6):  # bitboards are [black, white] per piece
+        flipped[:, i * 2] = vertical_mirror(x[:, i * 2 + 1]).astype(x.dtype)
+        flipped[:, i * 2 + 1] = vertical_mirror(x[:, i * 2]).astype(x.dtype)
+    flipped[:, 12] = x[:, 12] ^ 1
+    return flipped
 
 
 if hasattr(np, "bitwise_count"):
@@ -450,6 +483,7 @@ def main(args):
         filter=args.filter,
         no_capture=args.no_capture,
         discard_mismatch=args.discard_mismatch,
+        balance=args.balance,
     )
     loader = torch.utils.data.DataLoader(ds, batch_size=None, num_workers=args.workers, shuffle=False)
 
@@ -550,6 +584,7 @@ if __name__ == "__main__":
     p.add_argument("--huber-delta", type=float, default=1.5)
     p.add_argument("--sample", type=float)
     p.add_argument("-F", "--filter", type=int, help="drop positions with |eval| >= this (centipawns)")
+    p.add_argument("--balance", action="store_true", help="augment each batch with color-mirrored positions")
     p.add_argument("--no-capture", action="store_true", help="exclude positions whose move is a capture")
     p.add_argument(
         "--discard-mismatch",
