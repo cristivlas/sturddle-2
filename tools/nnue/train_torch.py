@@ -17,6 +17,7 @@ import logging
 import math
 import os
 import sys
+import time
 
 import h5py
 import numpy as np
@@ -143,8 +144,15 @@ class NNUE(nn.Module):
 # Quantization constraint: round to 1/Q_SCALE and clamp. Applied in-place after
 # each optimizer step (PyTorch has no kernel/bias constraint hook).
 # ---------------------------------------------------------------------------
+def _core(model):
+    """Unwrap nn.DataParallel to reach the real NNUE layers."""
+    return model.module if isinstance(model, nn.DataParallel) else model
+
+
 @torch.no_grad()
 def apply_constraints(model, quantize_round):
+    model = _core(model)
+
     def clamp(p, qmax):
         if quantize_round:
             p.copy_(torch.round(p * Q_SCALE) / Q_SCALE)
@@ -172,6 +180,7 @@ _EXPORT = [
 
 def _layer_kernel_bias(model, name):
     """Return (kernel (in,out) np.float32, bias (out,) np.float32) for export."""
+    model = _core(model)
     if name == "hidden_1a":
         k = model.hidden_1a.weight.detach().cpu().numpy()  # already (in, out)
         b = model.hidden_1a.bias.detach().cpu().numpy()
@@ -208,6 +217,7 @@ def save_bin(model, path, quantize_round=False):
 
 @torch.no_grad()
 def load_bin(model, path):
+    model = _core(model)
     data = np.fromfile(path, dtype=np.float32)
     expected = sum(i * o + o for _, i, o in _EXPORT)
     if data.size != expected:
@@ -431,9 +441,14 @@ def main(args):
     device = torch.device("cuda" if (args.gpu and torch.cuda.is_available()) else "cpu")
     print(f"device: {device}")
 
-    if args.mem_limit and device.type == "cuda":
-        total = torch.cuda.get_device_properties(0).total_memory
-        torch.cuda.set_per_process_memory_fraction(min(1.0, args.mem_limit * 1024 * 1024 / total))
+    # Devices actually used: all visible under DataParallel, else just device 0.
+    use_dp = device.type == "cuda" and not args.no_data_parallel and torch.cuda.device_count() > 1
+    used_devices = list(range(torch.cuda.device_count())) if use_dp else ([0] if device.type == "cuda" else [])
+
+    if args.mem_limit and used_devices:
+        for i in used_devices:
+            total = torch.cuda.get_device_properties(i).total_memory
+            torch.cuda.set_per_process_memory_fraction(min(1.0, args.mem_limit * 1024 * 1024 / total), device=i)
 
     model = NNUE().to(device)
     src = args.import_file or (args.model if args.model and os.path.exists(args.model) else None)
@@ -443,6 +458,11 @@ def main(args):
     if args.export:
         save_bin(model, args.export, quantize_round=args.quant_round)
         return
+
+    # Multi-GPU: split each global batch across all visible GPUs (like TF MirroredStrategy).
+    if use_dp:
+        model = nn.DataParallel(model)
+        print(f"DataParallel over {torch.cuda.device_count()} GPUs")
 
     if args.optimizer == "sgd":
         opt = torch.optim.SGD(
@@ -466,6 +486,13 @@ def main(args):
         sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, factor=0.5, patience=args.patience)
 
     use_amp = args.mixed_precision and device.type == "cuda"
+    if use_amp:
+        # fp16 is only accelerated on Tensor Cores (compute capability >= 7.0). Every GPU that runs
+        # the forward must qualify, so gate on the devices actually in use (all under DP, else just 0).
+        caps = [torch.cuda.get_device_capability(i) for i in used_devices]
+        if min(c[0] for c in caps) < 7:
+            use_amp = False
+            print(f"mixed precision disabled (no Tensor Cores; compute capabilities {caps})")
     try:
         scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
         autocast = lambda: torch.amp.autocast("cuda", enabled=use_amp)
@@ -493,61 +520,81 @@ def main(args):
         from tqdm import tqdm
     except ImportError:
         tqdm = None
+        print("*" * 64, file=sys.stderr)
+        print("*  WARNING: tqdm is not installed -- no live progress bar.", file=sys.stderr)
+        print(f"*  Falling back to a status line every {args.log_every}s.", file=sys.stderr)
+        print("*  Install it for a proper bar:  pip install tqdm", file=sys.stderr)
+        print("*" * 64, file=sys.stderr)
 
     best = math.inf
-    for epoch in range(args.epochs):
-        model.train()
-        total, count = 0.0, 0
-        acc_sum, mae_sum = 0.0, 0.0
-        ds.reshuffle()
-        bar = (
-            tqdm(
-                loader,
-                desc=f"epoch {epoch+1}/{args.epochs}",
-                total=len(ds),
-                ncols=(args.ncols or None),
+    bar = None
+    try:
+        for epoch in range(args.epochs):
+            model.train()
+            total, count = 0.0, 0
+            acc_sum, mae_sum = 0.0, 0.0
+            ds.reshuffle()
+            bar = (
+                tqdm(
+                    loader,
+                    desc=f"epoch {epoch+1}/{args.epochs}",
+                    total=len(ds),
+                    ncols=(args.ncols or None),
+                )
+                if tqdm
+                else loader
             )
-            if tqdm
-            else loader
-        )
-        for x, y in bar:
-            x, y = x.to(device), y.to(device)
-            opt.zero_grad()
-            with autocast():
-                pred = model(x)
-                loss = combined_loss(pred, y, args)
-            scaler.scale(loss).backward()
-            if args.clip_norm:
-                scaler.unscale_(opt)
-                nn.utils.clip_grad_norm_(model.parameters(), args.clip_norm)
-            scaler.step(opt)
-            scaler.update()
-            apply_constraints(model, args.quant_round)
-            total += loss.item()
-            count += 1
-            acc, mae = metrics(pred, y, args)
-            acc_sum += acc
-            mae_sum += mae
-            if tqdm:
-                post = dict(loss=f"{total/count:.4f}", acc=f"{acc_sum/count:.4f}", mae=f"{mae_sum/count:.4f}")
-                if use_amp and args.show_scale:
-                    post["scale"] = f"{scaler.get_scale():.0f}"
-                bar.set_postfix(**post)
-        avg = total / max(count, 1)
-        avg_acc = acc_sum / max(count, 1)
-        avg_mae = mae_sum / max(count, 1)
-        if sched:
-            sched.step(avg)
-        lr = opt.param_groups[0]["lr"]
-        print(f"epoch {epoch} loss {avg:.6f} acc {avg_acc:.4f} mae {avg_mae:.4f} lr {lr:.2e}")
-        # format compatible with tools/nnue/plot.py
-        hyperparam = {"learn rate": f"{lr:.2e}", "batch size": args.batch_size, "sampling ratio": args.sample}
-        logging.info(f"epoch={epoch} loss={avg:.6f} hyperparam={hyperparam}")
-        logging.info(f"epoch={epoch} accuracy={avg_acc:.6f}")
-        logging.info(f"epoch={epoch} mae={avg_mae:.6f}")
-        if args.model and (args.sample or avg < best):  # sampling: loss not comparable across epochs
-            best = avg
-            save_bin(model, args.model)
+            t0 = t_last = time.time()
+            for i, (x, y) in enumerate(bar):
+                x, y = x.to(device), y.to(device)
+                opt.zero_grad()
+                with autocast():
+                    pred = model(x)
+                    loss = combined_loss(pred, y, args)
+                scaler.scale(loss).backward()
+                if args.clip_norm:
+                    scaler.unscale_(opt)
+                    nn.utils.clip_grad_norm_(model.parameters(), args.clip_norm)
+                scaler.step(opt)
+                scaler.update()
+                apply_constraints(model, args.quant_round)
+                total += loss.item()
+                count += 1
+                acc, mae = metrics(pred, y, args)
+                acc_sum += acc
+                mae_sum += mae
+                if tqdm:
+                    post = dict(loss=f"{total/count:.4f}", acc=f"{acc_sum/count:.4f}", mae=f"{mae_sum/count:.4f}")
+                    if use_amp and args.show_scale:
+                        post["scale"] = f"{scaler.get_scale():.0f}"
+                    bar.set_postfix(**post)
+                elif time.time() - t_last >= args.log_every:
+                    t_last = time.time()
+                    rate = count / max(t_last - t0, 1e-9)
+                    print(
+                        f"epoch {epoch+1}/{args.epochs} step {i+1}/{len(ds)} "
+                        f"loss {total/count:.4f} acc {acc_sum/count:.4f} mae {mae_sum/count:.4f} {rate:.2f} it/s"
+                    )
+            avg = total / max(count, 1)
+            avg_acc = acc_sum / max(count, 1)
+            avg_mae = mae_sum / max(count, 1)
+            if sched:
+                sched.step(avg)
+            lr = opt.param_groups[0]["lr"]
+            print(f"epoch {epoch} loss {avg:.6f} acc {avg_acc:.4f} mae {avg_mae:.4f} lr {lr:.2e}")
+            # format compatible with tools/nnue/plot.py
+            hyperparam = {"learn rate": f"{lr:.2e}", "batch size": args.batch_size, "sampling ratio": args.sample}
+            logging.info(f"epoch={epoch} loss={avg:.6f} hyperparam={hyperparam}")
+            logging.info(f"epoch={epoch} accuracy={avg_acc:.6f}")
+            logging.info(f"epoch={epoch} mae={avg_mae:.6f}")
+            if args.model and (args.sample or avg < best):  # sampling: loss not comparable across epochs
+                best = avg
+                save_bin(model, args.model)
+    except KeyboardInterrupt:
+        if tqdm and bar is not None:
+            bar.close()
+        print("\nStopping")
+        sys.exit(130 if os.name != "nt" else 1)  # non-zero so scripts see interruption (130 = 128 + SIGINT)
 
 
 if __name__ == "__main__":
@@ -597,8 +644,10 @@ if __name__ == "__main__":
     p.add_argument("--patience", type=int, default=3)
     p.add_argument("--workers", type=int, default=0)
     p.add_argument("--ncols", type=int, default=120, help="progress bar width (0 = auto/full terminal)")
+    p.add_argument("--log-every", type=float, default=30, help="seconds between status lines when tqdm is missing")
     p.add_argument("--gpu", dest="gpu", action="store_true", default=True)
     p.add_argument("--no-gpu", dest="gpu", action="store_false")
+    p.add_argument("--no-data-parallel", action="store_true", help="use a single GPU even if several are visible")
     p.add_argument("--mixed-precision", dest="mixed_precision", action="store_true", default=True)
     p.add_argument("--no-mixed-precision", dest="mixed_precision", action="store_false")
     p.add_argument("--show-scale", action="store_true", help="show AMP GradScaler scale in progress bar")
