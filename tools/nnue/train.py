@@ -6,6 +6,7 @@ Copyright (c) 2023 - 2026 Cristian Vlasceanu.
 **********************************************************************
 '''
 import argparse
+import json
 import logging
 import math
 import os
@@ -41,6 +42,72 @@ SCALE = 100.0
 # Square color masks for OCB detection
 LIGHT_SQUARES = np.uint64(0x55AA55AA55AA55AA)
 DARK_SQUARES = np.uint64(0xAA55AA55AA55AA55)
+
+# Squares on files e-h, for king-file bucketing
+FILES_EFGH = np.uint64(0xF0F0F0F0F0F0F0F0)
+
+
+def scale_buckets(x):
+    """Per-sample pawn x king-file bucket ids, same scheme as BucketShift / nnue.h get_bucket."""
+    pawns = popcount(x[:, 2]) + popcount(x[:, 3])
+    pawn_id = np.where(pawns <= 4, 0, np.minimum((pawns - 1) // 4, 3))
+    wk_right = (x[:, 1] & FILES_EFGH) != 0
+    bk_right = (x[:, 0] & FILES_EFGH) != 0
+    return (pawn_id * 4 + wk_right * 2 + bk_right).astype(np.int64)
+
+
+def load_profile(path):
+    """Load per-bucket label scale ratios (dataset profile); eval labels are divided by these."""
+    with open(path) as f:
+        profile = json.load(f)
+    ratios = profile['ratios'] if isinstance(profile, dict) else profile
+    if not isinstance(ratios, list) or len(ratios) != MAIN_BUCKETS:
+        raise ValueError(f'{path}: expected a list of {MAIN_BUCKETS} bucket ratios')
+    ratios = np.array(ratios, dtype=np.float32)
+    if not np.all(np.isfinite(ratios)) or np.any(ratios <= 0):
+        raise ValueError(f'{path}: ratios must be positive and finite')
+    logging.info('profile %s: %s', path, ' '.join(f'{r:.3f}' for r in ratios))
+    return ratios
+
+
+def member_profile_table(data, filepath, args):
+    """Per-member label-scale profiles: (member start rows, (members x buckets) ratio matrix).
+
+    --profile overrides everything. Otherwise each member of a virtual dataset
+    (or the file itself if not virtual) uses the <member>.profile.json sidecar
+    when present, falling back to the container's sidecar, then to all-ones.
+    Resolves one level, not recursively.
+    """
+    if args.profile_ratios is not None:
+        return np.zeros(1, dtype=np.int64), args.profile_ratios[np.newaxis, :]
+
+    if data.is_virtual:
+        members = sorted((vs.vspace.get_select_bounds()[0][0], vs.file_name) for vs in data.virtual_sources())
+        members = [(start, filepath if path == '.' else path) for start, path in members]
+    else:
+        members = [(0, filepath)]
+
+    # members without their own sidecar fall back to the container's, then to all-ones
+    default = np.ones(MAIN_BUCKETS, dtype=np.float32)
+    own_sidecar = filepath + '.profile.json'
+    if os.path.exists(own_sidecar):
+        default = load_profile(own_sidecar)
+        print(f'{filepath}: default profile {own_sidecar}')
+
+    cache = {}
+    profiles = []
+    for start, path in members:
+        sidecar = path + '.profile.json'
+        if sidecar not in cache:
+            if path != filepath and os.path.exists(sidecar):
+                cache[sidecar] = load_profile(sidecar)
+                print(f'{path}: using profile {sidecar}')
+            else:
+                cache[sidecar] = default
+        profiles.append(cache[sidecar])
+
+    print(f'{len(members)} member(s), {sum(os.path.exists(p) for p in cache)} profile(s)')
+    return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles)
 
 
 def configure_logging(args):
@@ -82,7 +149,7 @@ def make_model(args, strategy):
         y_true = tf.cast(y_true, tf.float32)
         y_pred = tf.cast(y_pred, tf.float32)
 
-        eval_target = y_true[:, 0:1]
+        eval_target = y_true[:, 0:1] / y_true[:, 3:4]  # normalize label scale per bucket
 
         if args.clip_eval:
             clipped = soft_clip(eval_target, args.clip_eval / SCALE);
@@ -327,7 +394,7 @@ def make_model(args, strategy):
 
         @tf.function
         def mae(y_true, y_pred):
-            eval_target = y_true[:, 0:1]  # Extract eval component
+            eval_target = y_true[:, 0:1] / y_true[:, 3:4]  # eval component, scale-normalized
             return tf.keras.metrics.mean_absolute_error(eval_target, y_pred) * SCALE / 100
 
         losses = {'out': combined_loss}
@@ -648,6 +715,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
 
             self.feature_count = feature_count
             self.batch_size = batch_size
+            self.member_starts, self.member_profiles = member_profile_table(self.data, filepath, args)
             self._num_batches = int(np.floor(len(self.data) / self.batch_size))  # drop incomplete batch
             if args.sample:
                 self.sample_batches()
@@ -673,6 +741,9 @@ def dataset_from_file(args, filepath, strategy, callbacks):
 
             # Get input features (bitboards)
             x = self.data[start:end, :self.feature_count]
+
+            # Member (source file) of each row, for per-member label-scale profiles
+            member_ids = np.searchsorted(self.member_starts, np.arange(start, end), side='right') - 1
 
             white_to_move = tf.equal(x[:,-1:], 1)  # Training data is from side-to-move POV
 
@@ -718,6 +789,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 y_eval = y_eval[mask]
                 y_outcome = y_outcome[mask]
                 is_draw = is_draw[mask]
+                member_ids = member_ids[mask]
 
             # OCB draw adjustment (must be before balance)
             if args.ocb_draw_margin > 0:
@@ -750,6 +822,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 # Flip positions
                 x_flipped = flip_position(x)
                 x = np.concatenate([x, x_flipped], axis=0)
+                member_ids = np.concatenate([member_ids, member_ids])
 
                 # Flip evals (negate)
                 y_eval_flipped = -y_eval
@@ -765,8 +838,13 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 piece_count += popcount(x[:, i])
             piece_ratio = (piece_count / 32.0)[:, np.newaxis]
 
-            # Combine both targets into a single tensor
-            y_combined = tf.concat([y_eval, y_outcome, tf.constant(piece_ratio)], axis=1)  # Shape: (batch_size, 3)
+            # Per-member, per-bucket label scale (all ones without --profile or sidecars)
+            label_scale = self.member_profiles[member_ids, scale_buckets(x)][:, np.newaxis]
+
+            # Combine targets into a single tensor
+            y_combined = tf.concat(
+                [y_eval, y_outcome, tf.constant(piece_ratio), tf.constant(label_scale)], axis=1
+            )  # Shape: (batch_size, 4)
 
             # Prepare outputs based on whether move prediction is enabled
             if args.predict_moves and self.data.shape[1] > self.feature_count + 1:
@@ -826,6 +904,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                         'outcome_weight': args.outcome_weight,
                         'model': self.model.name,
                         'outcome_scale': args.outcome_scale,
+                        'profile': args.profile,
                         'sampling ratio': args.sample,
                     }
 
@@ -858,11 +937,11 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             )
             output_shapes = (
                 (None, packed_feature_count),
-                ((None, 3), (None, 1))
+                ((None, 4), (None, 1))
             )
         else:
             output_types = (np.uint64, np.float32)
-            output_shapes = ((None, packed_feature_count), (None, 3))
+            output_shapes = ((None, packed_feature_count), (None, 4))
 
         dataset = tf.data.Dataset.from_generator(
             generator,
@@ -1150,6 +1229,8 @@ if __name__ == '__main__':
         parser.add_argument('--alt-model', help='Path to another model to load/merge weights from')
         parser.add_argument('--alt-pool-size', type=int, default=POOL_SIZE, help='POOL_SIZE the --alt-model was trained with (for loading its pool Lambda)')
 
+        parser.add_argument('--profile', help='JSON dataset profile with per-bucket label scale ratios')
+
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
 
@@ -1208,6 +1289,12 @@ if __name__ == '__main__':
             print(f'Sampling ratio={args.sample}')
 
         log_level = configure_logging(args)
+
+        if args.profile:
+            args.profile_ratios = load_profile(args.profile)
+            print(f'Loaded profile {args.profile}')
+        else:
+            args.profile_ratios = None  # per-member sidecar profiles, see member_profile_table
 
         # delay tensorflow import so that --help does not have to wait
         print('Importing TensorFlow')

@@ -13,6 +13,7 @@ Each layer: kernel (in, out) float32 row-major, then bias (out,) float32.
 """
 
 import argparse
+import json
 import logging
 import math
 import os
@@ -242,7 +243,7 @@ def load_bin(model, path):
 # Loss: combine eval (Huber on raw domain) with WDL outcome (BCE on prob domain)
 # ---------------------------------------------------------------------------
 def combined_loss(y_pred, y_true, args):
-    eval_target = y_true[:, 0:1]
+    eval_target = y_true[:, 0:1] / y_true[:, 3:4]  # normalize label scale per bucket
     outcome_target = y_true[:, 1:2]
     piece_ratio = y_true[:, 2:3]
 
@@ -291,6 +292,7 @@ class H5Batches(torch.utils.data.Dataset):
         no_capture=False,
         discard_mismatch=0,
         balance=False,
+        profile_ratios=None,
     ):
         self.path = path
         self.batch_size = batch_size
@@ -303,6 +305,7 @@ class H5Batches(torch.utils.data.Dataset):
         with h5py.File(path, "r") as hf:
             n = hf["data"].shape[0]
             self.cols = hf["data"].shape[1]
+            self.member_starts, self.member_profiles = member_profile_table(hf["data"], path, profile_ratios)
         self.feature_count = 13
         self.num_batches = n // batch_size
         self.hf = None  # lazy per-worker
@@ -328,6 +331,9 @@ class H5Batches(torch.utils.data.Dataset):
 
         x = rows[:, : self.feature_count].astype(np.int64)
         wtm = x[:, 12] == 1
+
+        # Member (source file) of each row, for per-member label-scale profiles
+        member_ids = np.searchsorted(self.member_starts, np.arange(s, e), side="right") - 1
 
         y_eval = rows[:, self.feature_count].astype(np.int64).astype(np.float32) / SCALE
         y_eval = np.where(wtm, y_eval, -y_eval)
@@ -357,19 +363,24 @@ class H5Batches(torch.utils.data.Dataset):
 
         if keep is not None:
             x, y_eval, y_out = x[keep], y_eval[keep], y_out[keep]
+            member_ids = member_ids[keep]
 
         if self.balance:
             # Synthesize color-mirrored positions: swap colors + vertical mirror + flip STM.
             x = np.concatenate([x, flip_position(x)], axis=0)
             y_eval = np.concatenate([y_eval, -y_eval], axis=0)  # negate eval
             y_out = np.concatenate([y_out, 1.0 - y_out], axis=0)  # swap win/loss, keep draws
+            member_ids = np.concatenate([member_ids, member_ids])
 
         pc = np.zeros(x.shape[0], dtype=np.float32)
         for c in range(12):  # first 12 columns of x are the piece bitboards
             pc += popcount(x[:, c])
         piece_ratio = pc / 32.0
 
-        y = np.stack([y_eval, y_out, piece_ratio], axis=1).astype(np.float32)
+        # Per-member, per-bucket label scale (all ones without --profile or sidecars)
+        label_scale = self.member_profiles[member_ids, scale_buckets(x)]
+
+        y = np.stack([y_eval, y_out, piece_ratio, label_scale], axis=1).astype(np.float32)
         return torch.from_numpy(x), torch.from_numpy(y)
 
 
@@ -413,6 +424,73 @@ else:
         return ((bb * np.uint64(0x0101010101010101)) >> np.uint64(56)).astype(np.float32)
 
 
+# Squares on files e-h, for king-file bucketing
+FILES_EFGH = np.uint64(0xF0F0F0F0F0F0F0F0)
+
+
+def scale_buckets(x):
+    """Per-sample pawn x king-file bucket ids from raw bitboards, same scheme as compute_bucket_id."""
+    xu = x.astype(np.uint64)
+    pawns = popcount(xu[:, 2]) + popcount(xu[:, 3])
+    pawn_id = np.where(pawns <= 4, 0, np.minimum((pawns - 1) // 4, 3))
+    wk_right = (xu[:, 1] & FILES_EFGH) != 0
+    bk_right = (xu[:, 0] & FILES_EFGH) != 0
+    return (pawn_id * 4 + wk_right * 2 + bk_right).astype(np.int64)
+
+
+def load_profile(path):
+    """Load per-bucket label scale ratios (dataset profile); eval labels are divided by these."""
+    with open(path) as f:
+        profile = json.load(f)
+    ratios = profile["ratios"] if isinstance(profile, dict) else profile
+    if not isinstance(ratios, list) or len(ratios) != MAIN_BUCKETS:
+        raise ValueError(f"{path}: expected a list of {MAIN_BUCKETS} bucket ratios")
+    ratios = np.array(ratios, dtype=np.float32)
+    if not np.all(np.isfinite(ratios)) or np.any(ratios <= 0):
+        raise ValueError(f"{path}: ratios must be positive and finite")
+    logging.info("profile %s: %s", path, " ".join(f"{r:.3f}" for r in ratios))
+    return ratios
+
+
+def member_profile_table(data, filepath, profile_ratios):
+    """Per-member label-scale profiles: (member start rows, (members x buckets) ratio matrix).
+
+    An explicit profile overrides everything. Otherwise each member of a virtual
+    dataset (or the file itself if not virtual) uses the <member>.profile.json
+    sidecar when present, falling back to the container's sidecar, then to
+    all-ones. Resolves one level, not recursively.
+    """
+    if profile_ratios is not None:
+        return np.zeros(1, dtype=np.int64), profile_ratios[np.newaxis, :]
+
+    if data.is_virtual:
+        members = sorted((vs.vspace.get_select_bounds()[0][0], vs.file_name) for vs in data.virtual_sources())
+        members = [(start, filepath if path == "." else path) for start, path in members]
+    else:
+        members = [(0, filepath)]
+
+    default = np.ones(MAIN_BUCKETS, dtype=np.float32)
+    own_sidecar = filepath + ".profile.json"
+    if os.path.exists(own_sidecar):
+        default = load_profile(own_sidecar)
+        print(f"{filepath}: default profile {own_sidecar}")
+
+    cache = {}
+    profiles = []
+    for start, path in members:
+        sidecar = path + ".profile.json"
+        if sidecar not in cache:
+            if path != filepath and os.path.exists(sidecar):
+                cache[sidecar] = load_profile(sidecar)
+                print(f"{path}: using profile {sidecar}")
+            else:
+                cache[sidecar] = default
+        profiles.append(cache[sidecar])
+
+    print(f"{len(members)} member(s), {sum(os.path.exists(p) for p in cache)} profile(s)")
+    return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles)
+
+
 def summary(model):
     print(f'{"layer":<12}{"shape (in, out)":<22}{"params":>12}')
     print("-" * 46)
@@ -429,7 +507,7 @@ def summary(model):
 @torch.no_grad()
 def metrics(pred, y, args):
     """Match TF: accuracy = 1 - MAE(sigmoid(cp/scale), outcome); mae = MAE(eval) * SCALE/100."""
-    eval_t, out_t = y[:, 0:1], y[:, 1:2]
+    eval_t, out_t = y[:, 0:1] / y[:, 3:4], y[:, 1:2]
     probs = torch.sigmoid(pred * SCALE / args.outcome_scale)
     acc = 1.0 - (probs - out_t).abs().mean().item()
     mae = (pred - eval_t).abs().mean().item() * SCALE / 100
@@ -502,6 +580,11 @@ def main(args):
     if use_amp:
         print("mixed precision enabled")
 
+    profile_ratios = None
+    if args.profile:
+        profile_ratios = load_profile(args.profile)
+        print(f"Loaded profile {args.profile}")
+
     ds = H5Batches(
         args.input,
         args.batch_size,
@@ -511,6 +594,7 @@ def main(args):
         no_capture=args.no_capture,
         discard_mismatch=args.discard_mismatch,
         balance=args.balance,
+        profile_ratios=profile_ratios,
     )
     loader = torch.utils.data.DataLoader(ds, batch_size=None, num_workers=args.workers, shuffle=False)
 
@@ -629,6 +713,7 @@ if __name__ == "__main__":
     p.add_argument("--loss-bce", action="store_true")
     p.add_argument("--loss-blend", action="store_true")
     p.add_argument("--huber-delta", type=float, default=1.5)
+    p.add_argument("--profile", help="JSON dataset profile with per-bucket label scale ratios")
     p.add_argument("--sample", type=float)
     p.add_argument("-F", "--filter", type=int, help="drop positions with |eval| >= this (centipawns)")
     p.add_argument("--balance", action="store_true", help="augment each batch with color-mirrored positions")
