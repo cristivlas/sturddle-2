@@ -252,21 +252,23 @@ def combined_loss(y_pred, y_true, args):
         clipped = torch.clamp(eval_target, -cv, cv)
         eval_target = clipped + 0.1 * (eval_target - clipped)  # soft clip
 
-    wdl_pred = torch.sigmoid(y_pred * SCALE / args.outcome_scale)
+    # BCE via logits: F.binary_cross_entropy is banned under autocast and inf-prone at sigmoid saturation
+    logits = y_pred * SCALE / args.outcome_scale
+    wdl_pred = torch.sigmoid(logits)
     wdl_target = torch.sigmoid(eval_target * SCALE / args.outcome_scale)
 
     if args.loss_mae:
         loss_eval = (wdl_pred - wdl_target).abs()
         loss_outcome = (wdl_pred - outcome_target).abs()
     elif args.loss_bce:
-        loss_eval = F.binary_cross_entropy(wdl_pred, wdl_target, reduction="none")
-        loss_outcome = F.binary_cross_entropy(wdl_pred, outcome_target, reduction="none")
+        loss_eval = F.binary_cross_entropy_with_logits(logits, wdl_target, reduction="none")
+        loss_outcome = F.binary_cross_entropy_with_logits(logits, outcome_target, reduction="none")
     elif args.loss_blend:
         d = args.huber_delta
         err = y_pred - eval_target
         a = err.abs()
         loss_eval = torch.where(a <= d, 0.5 * err * err, d * (a - 0.5 * d))
-        loss_outcome = F.binary_cross_entropy(wdl_pred, outcome_target, reduction="none")
+        loss_outcome = F.binary_cross_entropy_with_logits(logits, outcome_target, reduction="none")
     else:
         loss_eval = (wdl_pred - wdl_target) ** 2
         loss_outcome = (wdl_pred - outcome_target) ** 2
