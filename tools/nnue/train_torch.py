@@ -302,10 +302,14 @@ class H5Batches(torch.utils.data.Dataset):
         self.no_capture = no_capture
         self.discard_mismatch = discard_mismatch
         self.balance = balance
+        print(f"Loading dataset {path}")
         with h5py.File(path, "r") as hf:
             n = hf["data"].shape[0]
             self.cols = hf["data"].shape[1]
             self.member_starts, self.member_profiles = member_profile_table(hf["data"], path, profile_ratios)
+        self.trivial_profiles = bool(np.all(self.member_profiles == 1.0))
+        print(f"{n:,} rows.")
+        logging.info("dataset %s: %s rows", path, f"{n:,}")
         self.feature_count = 13
         self.num_batches = n // batch_size
         self.hf = None  # lazy per-worker
@@ -333,7 +337,9 @@ class H5Batches(torch.utils.data.Dataset):
         wtm = x[:, 12] == 1
 
         # Member (source file) of each row, for per-member label-scale profiles
-        member_ids = np.searchsorted(self.member_starts, np.arange(s, e), side="right") - 1
+        member_ids = None
+        if not self.trivial_profiles:
+            member_ids = np.searchsorted(self.member_starts, np.arange(s, e), side="right") - 1
 
         y_eval = rows[:, self.feature_count].astype(np.int64).astype(np.float32) / SCALE
         y_eval = np.where(wtm, y_eval, -y_eval)
@@ -363,22 +369,27 @@ class H5Batches(torch.utils.data.Dataset):
 
         if keep is not None:
             x, y_eval, y_out = x[keep], y_eval[keep], y_out[keep]
-            member_ids = member_ids[keep]
+            if member_ids is not None:
+                member_ids = member_ids[keep]
+
+        # Label scale reflects how the source labeled the original position, so
+        # compute before balance mirroring (which QK<->KQ swaps the bucket)
+        if self.trivial_profiles:
+            label_scale = np.ones(x.shape[0], dtype=np.float32)
+        else:
+            label_scale = self.member_profiles[member_ids, scale_buckets(x)]
 
         if self.balance:
             # Synthesize color-mirrored positions: swap colors + vertical mirror + flip STM.
             x = np.concatenate([x, flip_position(x)], axis=0)
             y_eval = np.concatenate([y_eval, -y_eval], axis=0)  # negate eval
             y_out = np.concatenate([y_out, 1.0 - y_out], axis=0)  # swap win/loss, keep draws
-            member_ids = np.concatenate([member_ids, member_ids])
+            label_scale = np.concatenate([label_scale, label_scale])
 
         pc = np.zeros(x.shape[0], dtype=np.float32)
         for c in range(12):  # first 12 columns of x are the piece bitboards
             pc += popcount(x[:, c])
         piece_ratio = pc / 32.0
-
-        # Per-member, per-bucket label scale (all ones without --profile or sidecars)
-        label_scale = self.member_profiles[member_ids, scale_buckets(x)]
 
         y = np.stack([y_eval, y_out, piece_ratio, label_scale], axis=1).astype(np.float32)
         return torch.from_numpy(x), torch.from_numpy(y)
@@ -464,10 +475,16 @@ def member_profile_table(data, filepath, profile_ratios):
         return np.zeros(1, dtype=np.int64), profile_ratios[np.newaxis, :]
 
     if data.is_virtual:
+        # HDF5 resolves relative member paths against the container's directory
+        base = os.path.dirname(os.path.abspath(filepath))
         members = sorted((vs.vspace.get_select_bounds()[0][0], vs.file_name) for vs in data.virtual_sources())
-        members = [(start, filepath if path == "." else path) for start, path in members]
+        members = [
+            (start, filepath if path == "." else (path if os.path.isabs(path) else os.path.join(base, path)))
+            for start, path in members
+        ]
     else:
         members = [(0, filepath)]
+    assert members[0][0] == 0, "first member must start at row 0"
 
     default = np.ones(MAIN_BUCKETS, dtype=np.float32)
     own_sidecar = filepath + ".profile.json"
@@ -476,6 +493,7 @@ def member_profile_table(data, filepath, profile_ratios):
         print(f"{filepath}: default profile {own_sidecar}")
 
     cache = {}
+    matched = 0
     profiles = []
     for start, path in members:
         sidecar = path + ".profile.json"
@@ -483,11 +501,12 @@ def member_profile_table(data, filepath, profile_ratios):
             if path != filepath and os.path.exists(sidecar):
                 cache[sidecar] = load_profile(sidecar)
                 print(f"{path}: using profile {sidecar}")
+                matched += 1
             else:
                 cache[sidecar] = default
         profiles.append(cache[sidecar])
 
-    print(f"{len(members)} member(s), {sum(os.path.exists(p) for p in cache)} profile(s)")
+    print(f"{len(members)} member(s), {matched} with own profile")
     return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles)
 
 
@@ -667,7 +686,12 @@ def main(args):
             lr = opt.param_groups[0]["lr"]
             print(f"epoch {epoch} loss {avg:.6f} acc {avg_acc:.4f} mae {avg_mae:.4f} lr {lr:.2e}")
             # format compatible with tools/nnue/plot.py
-            hyperparam = {"learn rate": f"{lr:.2e}", "batch size": args.batch_size, "sampling ratio": args.sample}
+            hyperparam = {
+                "learn rate": f"{lr:.2e}",
+                "batch size": args.batch_size,
+                "profile": args.profile,
+                "sampling ratio": args.sample,
+            }
             logging.info(f"epoch={epoch} loss={avg:.6f} hyperparam={hyperparam}")
             logging.info(f"epoch={epoch} accuracy={avg_acc:.6f}")
             logging.info(f"epoch={epoch} mae={avg_mae:.6f}")

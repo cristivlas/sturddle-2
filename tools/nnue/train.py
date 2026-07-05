@@ -82,10 +82,16 @@ def member_profile_table(data, filepath, args):
         return np.zeros(1, dtype=np.int64), args.profile_ratios[np.newaxis, :]
 
     if data.is_virtual:
+        # HDF5 resolves relative member paths against the container's directory
+        base = os.path.dirname(os.path.abspath(filepath))
         members = sorted((vs.vspace.get_select_bounds()[0][0], vs.file_name) for vs in data.virtual_sources())
-        members = [(start, filepath if path == '.' else path) for start, path in members]
+        members = [
+            (start, filepath if path == '.' else (path if os.path.isabs(path) else os.path.join(base, path)))
+            for start, path in members
+        ]
     else:
         members = [(0, filepath)]
+    assert members[0][0] == 0, 'first member must start at row 0'
 
     # members without their own sidecar fall back to the container's, then to all-ones
     default = np.ones(MAIN_BUCKETS, dtype=np.float32)
@@ -95,6 +101,7 @@ def member_profile_table(data, filepath, args):
         print(f'{filepath}: default profile {own_sidecar}')
 
     cache = {}
+    matched = 0
     profiles = []
     for start, path in members:
         sidecar = path + '.profile.json'
@@ -102,11 +109,12 @@ def member_profile_table(data, filepath, args):
             if path != filepath and os.path.exists(sidecar):
                 cache[sidecar] = load_profile(sidecar)
                 print(f'{path}: using profile {sidecar}')
+                matched += 1
             else:
                 cache[sidecar] = default
         profiles.append(cache[sidecar])
 
-    print(f'{len(members)} member(s), {sum(os.path.exists(p) for p in cache)} profile(s)')
+    print(f'{len(members)} member(s), {matched} with own profile')
     return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles)
 
 
@@ -716,6 +724,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             self.feature_count = feature_count
             self.batch_size = batch_size
             self.member_starts, self.member_profiles = member_profile_table(self.data, filepath, args)
+            self.trivial_profiles = bool(np.all(self.member_profiles == 1.0))
             self._num_batches = int(np.floor(len(self.data) / self.batch_size))  # drop incomplete batch
             if args.sample:
                 self.sample_batches()
@@ -743,7 +752,9 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             x = self.data[start:end, :self.feature_count]
 
             # Member (source file) of each row, for per-member label-scale profiles
-            member_ids = np.searchsorted(self.member_starts, np.arange(start, end), side='right') - 1
+            member_ids = None
+            if not self.trivial_profiles:
+                member_ids = np.searchsorted(self.member_starts, np.arange(start, end), side='right') - 1
 
             white_to_move = tf.equal(x[:,-1:], 1)  # Training data is from side-to-move POV
 
@@ -789,7 +800,8 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 y_eval = y_eval[mask]
                 y_outcome = y_outcome[mask]
                 is_draw = is_draw[mask]
-                member_ids = member_ids[mask]
+                if member_ids is not None:
+                    member_ids = member_ids[mask]
 
             # OCB draw adjustment (must be before balance)
             if args.ocb_draw_margin > 0:
@@ -816,13 +828,20 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 if np.any(ocb_mask):
                     y_eval = np.where(ocb_mask[:, np.newaxis], 0.0, y_eval)
 
+            # Label scale reflects how the source labeled the original position, so
+            # compute before --balance mirroring (which QK<->KQ swaps the bucket)
+            if self.trivial_profiles:
+                label_scale = np.ones((x.shape[0], 1), dtype=np.float32)
+            else:
+                label_scale = self.member_profiles[member_ids, scale_buckets(x)][:, np.newaxis]
+
             if args.balance:
                 # Create balanced white/black batches by synthesizing symmetrical possitions
                 assert not args.predict_moves, "balance and predict_moves cannot be used at the same time"
                 # Flip positions
                 x_flipped = flip_position(x)
                 x = np.concatenate([x, x_flipped], axis=0)
-                member_ids = np.concatenate([member_ids, member_ids])
+                label_scale = np.concatenate([label_scale, label_scale])
 
                 # Flip evals (negate)
                 y_eval_flipped = -y_eval
@@ -837,9 +856,6 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             for i in range(12):
                 piece_count += popcount(x[:, i])
             piece_ratio = (piece_count / 32.0)[:, np.newaxis]
-
-            # Per-member, per-bucket label scale (all ones without --profile or sidecars)
-            label_scale = self.member_profiles[member_ids, scale_buckets(x)][:, np.newaxis]
 
             # Combine targets into a single tensor
             y_combined = tf.concat(
