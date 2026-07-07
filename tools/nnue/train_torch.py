@@ -617,7 +617,10 @@ def main(args):
         balance=args.balance,
         profile_ratios=profile_ratios,
     )
-    loader = torch.utils.data.DataLoader(ds, batch_size=None, num_workers=args.workers, shuffle=False)
+    pin = device.type == "cuda"
+    loader = torch.utils.data.DataLoader(
+        ds, batch_size=None, num_workers=args.workers, shuffle=False, pin_memory=pin
+    )
 
     summary(model)
 
@@ -651,7 +654,7 @@ def main(args):
             )
             t0 = t_last = time.time()
             for i, (x, y) in enumerate(bar):
-                x, y = x.to(device), y.to(device)
+                x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
                 opt.zero_grad()
                 with autocast():
                     pred = model(x)
