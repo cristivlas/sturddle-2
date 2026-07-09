@@ -324,6 +324,9 @@ using LMOVEType = nnue::Layer<INPUTS_A / nnue::NUM_BUCKETS, 4096, int16_t, nnue:
 /* Each thread uses its own stack */
 static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
 
+/* Per-thread bucket-refresh caches */
+static std::vector<Accumulator::RefreshTable> NNUE_refresh(SMP_CORES);
+
 static struct Model
 {
     void init();
@@ -463,6 +466,10 @@ static void _load_weights(const std::string& file_path)
         model.init();
     else
         model.load_weights(file_path);
+
+    /* cached outputs are only valid for the weights they were computed with */
+    for (auto& table : NNUE_refresh)
+        table = {};
 }
 
 
@@ -481,7 +488,7 @@ static INLINE void update(Accumulator& accumulator, const Context* ctxt)
 /* incremental version */
 static INLINE void update(Accumulator& accumulator, const Context* ctxt, Accumulator& prev_acc)
 {
-    accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
+    accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc, NNUE_refresh[ctxt->tid()]);
 }
 
 

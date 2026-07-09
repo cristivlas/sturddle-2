@@ -78,7 +78,7 @@
 #endif
 
 #ifndef NNUE_SINGLE_BUCKET
-    #define NNUE_SINGLE_BUCKET false
+    #define NNUE_SINGLE_BUCKET true
 #endif
 
 namespace nnue
@@ -722,6 +722,23 @@ namespace nnue
             uint64_t hash = 0;
         };
 
+        /* Per-thread cache: last accumulator computed in each bucket, plus its
+         * piece bitboards, so bucket changes refresh by diffing pieces against
+         * a same-bucket position instead of rebuilding all active inputs.
+         */
+        struct RefreshEntry
+        {
+            ALIGN int16_t output[OUTPUTS_A];
+            Bitboard pieces[6][2] = { };
+            bool turn = false;
+            bool valid = false;
+        };
+
+        struct RefreshTable
+        {
+            RefreshEntry entry[NUM_BUCKETS];
+        };
+
         /* Single slot trades the per-bucket output cache for a smaller footprint. */
         static constexpr int SLOTS = NNUE_SINGLE_BUCKET ? 1 : NUM_BUCKETS;
 
@@ -795,7 +812,8 @@ namespace nnue
             const State& prev,
             const State& state,
             const Move& move,
-            Accumulator& ancestor)
+            Accumulator& ancestor,
+            RefreshTable& refresh)
         {
             ASSERT(needs_update(state));
             ASSERT(ancestor.slot(ancestor._current_bucket).hash == prev.hash());
@@ -860,9 +878,9 @@ namespace nnue
 
             const size_t base = bucket * ACTIVE_INPUTS;
 
-            /* Where the delta loops read the prior values from: the ancestor
-             * directly on the same-bucket path (no memcpy), or this object
-             * after the cross-bucket pass below fills it.
+            /* Where the delta loops read the prior values from on the
+             * same-bucket path; unused on the bucket-change path, which
+             * refreshes slot(bucket).output from the refresh table.
              */
             const int16_t* src_a = ancestor.slot(bucket).output;
 
@@ -872,18 +890,40 @@ namespace nnue
             }
             else if (slot(bucket).hash != state.hash())
             {
-            #if DEBUG_INCREMENTAL
-                {
-                    static std::atomic<bool> seen[NUM_BUCKETS][NUM_BUCKETS];
-                    if (!seen[prev_bucket][bucket].exchange(true))
-                        std::cerr << "[nnue] cross-bucket convert " << prev_bucket << " -> " << bucket << std::endl;
-                }
-            #endif /* DEBUG_INCREMENTAL */
-                const size_t base_old = prev_bucket * ACTIVE_INPUTS;
-                const size_t base_new = bucket * ACTIVE_INPUTS;
+                auto& entry = refresh.entry[bucket];
 
-                // Start from ancestor's output (computed with prev_bucket weights for prev position)
-                memcpy(slot(bucket).output, ancestor.slot(prev_bucket).output, sizeof(slot(bucket).output));
+                if (!entry.valid)
+                {
+                    /* empty-board entry: the diff below rebuilds from bias + all pieces */
+                    memcpy(entry.output, layer_a._b, sizeof(entry.output));
+                    entry.valid = true;
+                }
+
+                int rem[MAX_ACTIVE_INPUTS], add[MAX_ACTIVE_INPUTS];
+                int nr = 0, na = 0;
+
+                const Bitboard bbs[6] = { state.kings, state.pawns, state.knights, state.bishops, state.rooks, state.queens };
+                int i = 63;
+                for (int t = 0; t != 6; ++t)
+                    for (int c = 0; c != 2; ++c)
+                    {
+                        const Bitboard bb = bbs[t] & state._occupied_co[c];
+                        const Bitboard old = entry.pieces[t][c];
+                        for_each_square_r(old & ~bb, [&](Square sq) { rem[nr++] = i - sq; });
+                        for_each_square_r(bb & ~old, [&](Square sq) { add[na++] = i - sq; });
+                        entry.pieces[t][c] = bb;
+                        i += 64;
+                    }
+
+                if (state.turn != entry.turn)
+                {
+                    if (state.turn)
+                        add[na++] = TURN_INDEX;
+                    else
+                        rem[nr++] = TURN_INDEX;
+                    entry.turn = state.turn;
+                }
+
 
             #if __ARM__
                 using VecShort = Vec16s;
@@ -892,25 +932,24 @@ namespace nnue
             #endif
                 static_assert(OUTPUTS_A % VecShort::size() == 0);
 
-                auto apply_delta = [&](int idx)
+                VecShort vo, vw;
+                for (int j = 0; j != OUTPUTS_A; j += VecShort::size())
                 {
-                    VecShort vo, vw_old, vw_new;
-
-                    for (int j = 0; j < OUTPUTS_A; j += VecShort::size())
+                    vo.load_a(&entry.output[j]);
+                    for (int k = 0; k != nr; ++k)
                     {
-                        vo.load_a(&slot(bucket).output[j]);
-                        vw_old.load_a(&layer_a._w[base_old + idx][j]);
-                        vw_new.load_a(&layer_a._w[base_new + idx][j]);
-                        vo = vo - vw_old + vw_new;
-                        vo.store_a(&slot(bucket).output[j]);
+                        vw.load_a(&layer_a._w[base + rem[k]][j]);
+                        vo -= vw;
                     }
-                };
-                for_each_active_input(prev, apply_delta);
-
-                // Now slot(bucket).output has correct output for prev position with bucket weights
-                // Set flag so move deltas get applied
-                incremental_a = true;
-                src_a = slot(bucket).output;
+                    for (int k = 0; k != na; ++k)
+                    {
+                        vw.load_a(&layer_a._w[base + add[k]][j]);
+                        vo += vw;
+                    }
+                    vo.store_a(&entry.output[j]);
+                    vo.store_a(&slot(bucket).output[j]);
+                }
+                /* layer A is final for state; incremental_update handles layer B only */
             }
 
             /* layer B: updated incrementally from the ancestor inside incremental_update */
