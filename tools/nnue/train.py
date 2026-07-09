@@ -70,16 +70,31 @@ def load_profile(path):
     return ratios
 
 
-def member_profile_table(data, filepath, args):
-    """Per-member label-scale profiles: (member start rows, (members x buckets) ratio matrix).
+def load_outcome_scale(path, default):
+    """Per-bucket outcome_scale from a profile sidecar; missing key (legacy profile) -> default."""
+    with open(path) as f:
+        profile = json.load(f)
+    scales = profile.get('outcome_scale') if isinstance(profile, dict) else None
+    if scales is None:
+        return np.full(MAIN_BUCKETS, default, dtype=np.float32)
+    scales = np.array(scales, dtype=np.float32)
+    if scales.shape != (MAIN_BUCKETS,) or not np.all(np.isfinite(scales)) or np.any(scales <= 0):
+        raise ValueError(f'{path}: outcome_scale must be {MAIN_BUCKETS} positive values')
+    logging.info('outcome_scale %s: %s', path, ' '.join(f'{s:.0f}' for s in scales))
+    return scales
 
-    --profile overrides everything. Otherwise each member of a virtual dataset
-    (or the file itself if not virtual) uses the <member>.profile.json sidecar
-    when present, falling back to the container's sidecar, then to all-ones.
-    Resolves one level, not recursively.
+
+def member_profile_table(data, filepath, args):
+    """Per-member profiles: (member start rows, ratio matrix, outcome-scale matrix), both (members x buckets).
+
+    --profile overrides everything (and keeps --outcome-scale). Otherwise each
+    member of a virtual dataset (or the file itself if not virtual) uses the
+    <member>.profile.json sidecar when present, falling back to the container's
+    sidecar, then to all-ones ratios / --outcome-scale. One level, not recursive.
     """
+    default_os = np.full(MAIN_BUCKETS, args.outcome_scale, dtype=np.float32)
     if args.profile_ratios is not None:
-        return np.zeros(1, dtype=np.int64), args.profile_ratios[np.newaxis, :]
+        return np.zeros(1, dtype=np.int64), args.profile_ratios[np.newaxis, :], default_os[np.newaxis, :]
 
     if data.is_virtual:
         # HDF5 resolves relative member paths against the container's directory
@@ -98,24 +113,28 @@ def member_profile_table(data, filepath, args):
     own_sidecar = filepath + '.profile.json'
     if os.path.exists(own_sidecar):
         default = load_profile(own_sidecar)
+        default_os = load_outcome_scale(own_sidecar, args.outcome_scale)
         print(f'{filepath}: default profile {own_sidecar}')
 
     cache = {}
     matched = 0
     profiles = []
+    oscales = []
     for start, path in members:
         sidecar = path + '.profile.json'
         if sidecar not in cache:
             if path != filepath and os.path.exists(sidecar):
-                cache[sidecar] = load_profile(sidecar)
+                cache[sidecar] = (load_profile(sidecar), load_outcome_scale(sidecar, args.outcome_scale))
                 print(f'{path}: using profile {sidecar}')
                 matched += 1
             else:
-                cache[sidecar] = default
-        profiles.append(cache[sidecar])
+                cache[sidecar] = (default, default_os)
+        r, o = cache[sidecar]
+        profiles.append(r)
+        oscales.append(o)
 
     print(f'{len(members)} member(s), {matched} with own profile')
-    return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles)
+    return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles), np.stack(oscales)
 
 
 def configure_logging(args):
@@ -167,7 +186,7 @@ def make_model(args, strategy):
         outcome_target = y_true[:, 1:2]
         piece_ratio = y_true[:, 2:3]  # 0 to 1, for dynamic outcome weighting
 
-        sigmoid_scale = tf.constant(args.outcome_scale, dtype=tf.float32)
+        sigmoid_scale = y_true[:, 4:5]  # per-row (member x bucket), from profile or --outcome-scale
 
         # convert predicted and expected (target) eval scores to Win/Draw/Loss prob. scores
         wdl_eval_pred = tf.sigmoid(y_pred * SCALE / sigmoid_scale)
@@ -393,8 +412,7 @@ def make_model(args, strategy):
             # tf.debugging.assert_all_finite(y_pred, "y_pred has nan/inf")
 
             centipawns = y_pred * SCALE
-            scale = tf.constant(args.outcome_scale, dtype=tf.float32)
-            logits = centipawns / scale
+            logits = centipawns / y_true[:, 4:5]
             probs = tf.sigmoid(logits)
             mae = tf.reduce_mean(tf.abs(probs - outcome_target))
             accuracy_score = 1.0 - mae
@@ -723,8 +741,12 @@ def dataset_from_file(args, filepath, strategy, callbacks):
 
             self.feature_count = feature_count
             self.batch_size = batch_size
-            self.member_starts, self.member_profiles = member_profile_table(self.data, filepath, args)
-            self.trivial_profiles = bool(np.all(self.member_profiles == 1.0))
+            self.member_starts, self.member_profiles, self.member_oscales = member_profile_table(
+                self.data, filepath, args
+            )
+            self.trivial_profiles = bool(np.all(self.member_profiles == 1.0)) and bool(
+                np.all(self.member_oscales == self.member_oscales.flat[0])
+            )
             self._num_batches = int(np.floor(len(self.data) / self.batch_size))  # drop incomplete batch
             if args.sample:
                 self.sample_batches()
@@ -828,12 +850,15 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 if np.any(ocb_mask):
                     y_eval = np.where(ocb_mask[:, np.newaxis], 0.0, y_eval)
 
-            # Label scale reflects how the source labeled the original position, so
-            # compute before --balance mirroring (which QK<->KQ swaps the bucket)
+            # Label/outcome scales reflect how the source labeled the original position,
+            # so compute before --balance mirroring (which QK<->KQ swaps the bucket)
             if self.trivial_profiles:
                 label_scale = np.ones((x.shape[0], 1), dtype=np.float32)
+                outcome_scale = np.full((x.shape[0], 1), self.member_oscales.flat[0], dtype=np.float32)
             else:
-                label_scale = self.member_profiles[member_ids, scale_buckets(x)][:, np.newaxis]
+                b = scale_buckets(x)
+                label_scale = self.member_profiles[member_ids, b][:, np.newaxis]
+                outcome_scale = self.member_oscales[member_ids, b][:, np.newaxis]
 
             if args.balance:
                 # Create balanced white/black batches by synthesizing symmetrical possitions
@@ -842,6 +867,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 x_flipped = flip_position(x)
                 x = np.concatenate([x, x_flipped], axis=0)
                 label_scale = np.concatenate([label_scale, label_scale])
+                outcome_scale = np.concatenate([outcome_scale, outcome_scale])
 
                 # Flip evals (negate)
                 y_eval_flipped = -y_eval
@@ -859,8 +885,9 @@ def dataset_from_file(args, filepath, strategy, callbacks):
 
             # Combine targets into a single tensor
             y_combined = tf.concat(
-                [y_eval, y_outcome, tf.constant(piece_ratio), tf.constant(label_scale)], axis=1
-            )  # Shape: (batch_size, 4)
+                [y_eval, y_outcome, tf.constant(piece_ratio), tf.constant(label_scale), tf.constant(outcome_scale)],
+                axis=1,
+            )  # Shape: (batch_size, 5)
 
             # Prepare outputs based on whether move prediction is enabled
             if args.predict_moves and self.data.shape[1] > self.feature_count + 1:
@@ -919,7 +946,6 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                         'learn rate': f'{self.model.optimizer.lr.read_value():.2e}',
                         'outcome_weight': args.outcome_weight,
                         'model': self.model.name,
-                        'outcome_scale': args.outcome_scale,
                         'profile': args.profile,
                         'sampling ratio': args.sample,
                     }
@@ -953,11 +979,11 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             )
             output_shapes = (
                 (None, packed_feature_count),
-                ((None, 4), (None, 1))
+                ((None, 5), (None, 1))
             )
         else:
             output_types = (np.uint64, np.float32)
-            output_shapes = ((None, packed_feature_count), (None, 4))
+            output_shapes = ((None, packed_feature_count), (None, 5))
 
         dataset = tf.data.Dataset.from_generator(
             generator,

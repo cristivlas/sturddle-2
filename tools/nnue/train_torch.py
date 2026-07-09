@@ -246,6 +246,7 @@ def combined_loss(y_pred, y_true, args):
     eval_target = y_true[:, 0:1] / y_true[:, 3:4]  # normalize label scale per bucket
     outcome_target = y_true[:, 1:2]
     piece_ratio = y_true[:, 2:3]
+    outcome_scale = y_true[:, 4:5]  # per-row (member x bucket), from profile or --outcome-scale
 
     if args.clip_eval:
         cv = args.clip_eval / SCALE
@@ -253,9 +254,9 @@ def combined_loss(y_pred, y_true, args):
         eval_target = clipped + 0.1 * (eval_target - clipped)  # soft clip
 
     # BCE via logits: F.binary_cross_entropy is banned under autocast and inf-prone at sigmoid saturation
-    logits = y_pred * SCALE / args.outcome_scale
+    logits = y_pred * SCALE / outcome_scale
     wdl_pred = torch.sigmoid(logits)
-    wdl_target = torch.sigmoid(eval_target * SCALE / args.outcome_scale)
+    wdl_target = torch.sigmoid(eval_target * SCALE / outcome_scale)
 
     if args.loss_mae:
         loss_eval = (wdl_pred - wdl_target).abs()
@@ -295,6 +296,7 @@ class H5Batches(torch.utils.data.Dataset):
         discard_mismatch=0,
         balance=False,
         profile_ratios=None,
+        outcome_scale=400.0,
     ):
         self.path = path
         self.batch_size = batch_size
@@ -308,8 +310,12 @@ class H5Batches(torch.utils.data.Dataset):
         with h5py.File(path, "r") as hf:
             n = hf["data"].shape[0]
             self.cols = hf["data"].shape[1]
-            self.member_starts, self.member_profiles = member_profile_table(hf["data"], path, profile_ratios)
-        self.trivial_profiles = bool(np.all(self.member_profiles == 1.0))
+            self.member_starts, self.member_profiles, self.member_oscales = member_profile_table(
+                hf["data"], path, profile_ratios, outcome_scale
+            )
+        self.trivial_profiles = bool(np.all(self.member_profiles == 1.0)) and bool(
+            np.all(self.member_oscales == self.member_oscales.flat[0])
+        )
         print(f"{n:,} rows.")
         logging.info("dataset %s: %s rows", path, f"{n:,}")
         self.feature_count = 13
@@ -374,12 +380,15 @@ class H5Batches(torch.utils.data.Dataset):
             if member_ids is not None:
                 member_ids = member_ids[keep]
 
-        # Label scale reflects how the source labeled the original position, so
-        # compute before balance mirroring (which QK<->KQ swaps the bucket)
+        # Label/outcome scales reflect how the source labeled the original position,
+        # so compute before balance mirroring (which QK<->KQ swaps the bucket)
         if self.trivial_profiles:
             label_scale = np.ones(x.shape[0], dtype=np.float32)
+            outcome_scale = np.full(x.shape[0], self.member_oscales.flat[0], dtype=np.float32)
         else:
-            label_scale = self.member_profiles[member_ids, scale_buckets(x)]
+            b = scale_buckets(x)
+            label_scale = self.member_profiles[member_ids, b]
+            outcome_scale = self.member_oscales[member_ids, b]
 
         if self.balance:
             # Synthesize color-mirrored positions: swap colors + vertical mirror + flip STM.
@@ -387,13 +396,14 @@ class H5Batches(torch.utils.data.Dataset):
             y_eval = np.concatenate([y_eval, -y_eval], axis=0)  # negate eval
             y_out = np.concatenate([y_out, 1.0 - y_out], axis=0)  # swap win/loss, keep draws
             label_scale = np.concatenate([label_scale, label_scale])
+            outcome_scale = np.concatenate([outcome_scale, outcome_scale])
 
         pc = np.zeros(x.shape[0], dtype=np.float32)
         for c in range(12):  # first 12 columns of x are the piece bitboards
             pc += popcount(x[:, c])
         piece_ratio = pc / 32.0
 
-        y = np.stack([y_eval, y_out, piece_ratio, label_scale], axis=1).astype(np.float32)
+        y = np.stack([y_eval, y_out, piece_ratio, label_scale, outcome_scale], axis=1).astype(np.float32)
         return torch.from_numpy(x), torch.from_numpy(y)
 
 
@@ -465,16 +475,31 @@ def load_profile(path):
     return ratios
 
 
-def member_profile_table(data, filepath, profile_ratios):
-    """Per-member label-scale profiles: (member start rows, (members x buckets) ratio matrix).
+def load_outcome_scale(path, default):
+    """Per-bucket outcome_scale from a profile sidecar; missing key (legacy profile) -> default."""
+    with open(path) as f:
+        profile = json.load(f)
+    scales = profile.get("outcome_scale") if isinstance(profile, dict) else None
+    if scales is None:
+        return np.full(MAIN_BUCKETS, default, dtype=np.float32)
+    scales = np.array(scales, dtype=np.float32)
+    if scales.shape != (MAIN_BUCKETS,) or not np.all(np.isfinite(scales)) or np.any(scales <= 0):
+        raise ValueError(f"{path}: outcome_scale must be {MAIN_BUCKETS} positive values")
+    logging.info("outcome_scale %s: %s", path, " ".join(f"{s:.0f}" for s in scales))
+    return scales
 
-    An explicit profile overrides everything. Otherwise each member of a virtual
-    dataset (or the file itself if not virtual) uses the <member>.profile.json
-    sidecar when present, falling back to the container's sidecar, then to
-    all-ones. Resolves one level, not recursively.
+
+def member_profile_table(data, filepath, profile_ratios, outcome_scale):
+    """Per-member profiles: (member start rows, ratio matrix, outcome-scale matrix), both (members x buckets).
+
+    An explicit profile overrides everything (and keeps --outcome-scale). Otherwise
+    each member of a virtual dataset (or the file itself if not virtual) uses the
+    <member>.profile.json sidecar when present, falling back to the container's
+    sidecar, then to all-ones ratios / --outcome-scale. One level, not recursive.
     """
+    default_os = np.full(MAIN_BUCKETS, outcome_scale, dtype=np.float32)
     if profile_ratios is not None:
-        return np.zeros(1, dtype=np.int64), profile_ratios[np.newaxis, :]
+        return np.zeros(1, dtype=np.int64), profile_ratios[np.newaxis, :], default_os[np.newaxis, :]
 
     if data.is_virtual:
         # HDF5 resolves relative member paths against the container's directory
@@ -492,24 +517,27 @@ def member_profile_table(data, filepath, profile_ratios):
     own_sidecar = filepath + ".profile.json"
     if os.path.exists(own_sidecar):
         default = load_profile(own_sidecar)
+        default_os = load_outcome_scale(own_sidecar, outcome_scale)
         print(f"{filepath}: default profile {own_sidecar}")
 
     cache = {}
     matched = 0
-    profiles = []
+    profiles, oscales = [], []
     for start, path in members:
         sidecar = path + ".profile.json"
         if sidecar not in cache:
             if path != filepath and os.path.exists(sidecar):
-                cache[sidecar] = load_profile(sidecar)
+                cache[sidecar] = (load_profile(sidecar), load_outcome_scale(sidecar, outcome_scale))
                 print(f"{path}: using profile {sidecar}")
                 matched += 1
             else:
-                cache[sidecar] = default
-        profiles.append(cache[sidecar])
+                cache[sidecar] = (default, default_os)
+        r, o = cache[sidecar]
+        profiles.append(r)
+        oscales.append(o)
 
     print(f"{len(members)} member(s), {matched} with own profile")
-    return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles)
+    return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles), np.stack(oscales)
 
 
 def summary(model):
@@ -526,10 +554,10 @@ def summary(model):
 
 
 @torch.no_grad()
-def metrics(pred, y, args):
+def metrics(pred, y):
     """Match TF: accuracy = 1 - MAE(sigmoid(cp/scale), outcome); mae = MAE(eval) * SCALE/100."""
     eval_t, out_t = y[:, 0:1] / y[:, 3:4], y[:, 1:2]
-    probs = torch.sigmoid(pred * SCALE / args.outcome_scale)
+    probs = torch.sigmoid(pred * SCALE / y[:, 4:5])
     acc = 1.0 - (probs - out_t).abs().mean().item()
     mae = (pred - eval_t).abs().mean().item() * SCALE / 100
     return acc, mae
@@ -616,11 +644,10 @@ def main(args):
         discard_mismatch=args.discard_mismatch,
         balance=args.balance,
         profile_ratios=profile_ratios,
+        outcome_scale=args.outcome_scale,
     )
     pin = device.type == "cuda"
-    loader = torch.utils.data.DataLoader(
-        ds, batch_size=None, num_workers=args.workers, shuffle=False, pin_memory=pin
-    )
+    loader = torch.utils.data.DataLoader(ds, batch_size=None, num_workers=args.workers, shuffle=False, pin_memory=pin)
 
     summary(model)
 
@@ -668,7 +695,7 @@ def main(args):
                 apply_constraints(model, args.quant_round)
                 total += loss.item()
                 count += 1
-                acc, mae = metrics(pred, y, args)
+                acc, mae = metrics(pred, y)
                 acc_sum += acc
                 mae_sum += mae
                 if tqdm:
