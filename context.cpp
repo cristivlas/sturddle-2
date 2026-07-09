@@ -844,6 +844,7 @@ namespace search
 
         #if WITH_NNUE
             NNUE_data.resize(n_threads);
+            NNUE_refresh.resize(n_threads);
         #endif
         }
     }
