@@ -319,7 +319,12 @@ using EVALType = nnue::Layer<HIDDEN_3, 1>;
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
 using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
 
-using LMOVEType = nnue::Layer<INPUTS_A / nnue::NUM_BUCKETS, 4096, int16_t, nnue::QSCALE>;
+/* Move-prediction head (experimental): own 256-wide sub-accumulator off raw inputs
+ * (decoupled from eval), then a bilinear map to the 4096 (from,to) logits scored
+ * per-move by column. Full recompute per node — only used at early iterations. */
+constexpr int MOVE_ACC = 256;
+using LMOVEAccType = nnue::Layer<INPUTS_A / nnue::NUM_BUCKETS, MOVE_ACC, int16_t, nnue::QSCALE>;
+using LMOVEType = nnue::Layer<MOVE_ACC, 4096, int16_t, nnue::QSCALE>;
 
 /* Each thread uses its own stack */
 static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
@@ -340,6 +345,7 @@ static struct Model
             + L3Type::param_count()
             + EVALType::param_count()
         #if USE_MOVE_PREDICTION
+            + LMOVEAccType::param_count()
             + LMOVEType::param_count()
         #endif
             ;
@@ -369,6 +375,7 @@ static struct Model
             EVAL.load_weights(file);
 
         #if USE_MOVE_PREDICTION
+            LMOVE_ACC.load_weights(file);
             LMOVES.load_weights(file);
         #endif
         }
@@ -388,6 +395,7 @@ static struct Model
     EVALType EVAL;
 
 #if USE_MOVE_PREDICTION
+    LMOVEAccType LMOVE_ACC;
     LMOVEType LMOVES;
 #endif
 
@@ -408,6 +416,7 @@ void Model::init()
     INIT_LAYER(EVAL, out);
 
 #if USE_MOVE_PREDICTION
+    INIT_LAYER(LMOVE_ACC, move_acc);
     INIT_LAYER(LMOVES, move);
 #endif
 }
@@ -1854,6 +1863,7 @@ namespace search
     #if USE_MOVE_PREDICTION
         int active[nnue::MAX_ACTIVE_INPUTS];
         int active_count = 0;
+        ALIGN int16_t move_acc[MOVE_ACC];  /* node sub-accumulator, filled with active[] */
     #endif /* USE_MOVE_PREDICTION */
 
         /********************************************************************/
@@ -1959,12 +1969,18 @@ namespace search
                     if (ctxt.iteration() <= MOVE_PREDICTION_MAX_ITER)
                     {
                         if (active_count == 0)
+                        {
                             nnue::for_each_active_input(ctxt.state(), [&](int idx) {
                                 ASSERT(active_count < nnue::MAX_ACTIVE_INPUTS);
                                 active[active_count++] = idx;
                             });
+                            /* Sub-accumulator depends only on the node position (same for all
+                             * moves here), so compute it once when active[] is first filled.
+                             */
+                            nnue::move_accumulate(model.LMOVE_ACC, active, active_count, move_acc);
+                        }
 
-                        nnue::score_move(model.LMOVES, active, active_count, move);
+                        nnue::score_move(model.LMOVES, move_acc, move);
                     }
                     else
                 #endif /* USE_MOVE_PREDICTION */

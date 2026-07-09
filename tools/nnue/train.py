@@ -25,6 +25,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 ACCUMULATOR_SIZE = 2048
 POOL_SIZE = 8
 MAIN_BUCKETS = 16  # Number of buckets for hidden_1a / BucketShift (4 pawn x 4 king-file)
+MOVE_ACCUMULATOR_SIZE = 256  # move-prediction sub-accumulator width (own path, decoupled from eval)
 
 Q_SCALE = 1024
 
@@ -361,9 +362,24 @@ def make_model(args, strategy):
         outputs = [eval_output]
 
         if args.predict_moves:
+            # Move path is fully decoupled from eval (stop_gradient): a prior attempt to
+            # share the trunk back-spilled into eval. Own sub-accumulator gives the head
+            # depth without that coupling. move_acc is linear-in-inputs before the relu, so
+            # the engine can update it incrementally like the eval accumulator.
             stop_grad = tf.stop_gradient(unpack_layer)
 
-            # Output layer: 4096 logits for all possible moves (64x64)
+            move_acc = Dense(
+                MOVE_ACCUMULATOR_SIZE,
+                activation=ACTIVATION,
+                kernel_initializer=K_INIT,
+                kernel_constraint=constr_a,
+                bias_constraint=constr_a,
+                name='move_acc',
+                dtype='float32',
+            )(stop_grad)
+
+            # Output layer: 4096 logits for all (from, to) squares (64x64), scored per-move by
+            # column at inference (never densely materialized).
             move_logits = Dense(
                 4096,
                 activation=None,  # Raw logits, no softmax
@@ -374,7 +390,7 @@ def make_model(args, strategy):
                 bias_constraint=constr_a,
                 name='move',
                 dtype='float32'
-            )(stop_grad)
+            )(move_acc)
 
             outputs.append(move_logits)
 
@@ -434,6 +450,10 @@ def make_model(args, strategy):
                 """
                 Scaled cross-entropy loss to prevent gradient explosion.
                 Uses label smoothing and temperature scaling.
+
+                Full softmax over all 4096 outputs unless --move-negatives > 0, in which
+                case the normalizer is over the played move + K random negatives (sampled
+                softmax): same objective, ~K logits instead of 4096.
                 """
                 # y_true: move_indices
                 y_true = tf.cast(y_true, tf.int32)
@@ -447,8 +467,26 @@ def make_model(args, strategy):
                 max_logit = tf.constant(args.move_logit_clip, dtype=tf.float32)
                 clipped_logits = soft_clip(scaled_logits, max_logit)
 
-                # Compute cross-entropy with label smoothing
-                loss = tf.keras.losses.sparse_categorical_crossentropy(y_true, clipped_logits, from_logits=True)
+                if args.move_negatives:
+                    # Sampled softmax: gather the true logit + K random negative logits per row,
+                    # normalize over that subset. Label is index 0 (the played move).
+                    batch = tf.shape(clipped_logits)[0]
+                    true_idx = tf.reshape(y_true, (batch, 1))
+                    negatives = tf.random.uniform(
+                        (batch, args.move_negatives), maxval=4096, dtype=tf.int32
+                    )
+                    # A negative colliding with the played move would double-count it in the
+                    # normalizer and soften the label; mask those logits to -inf so they vanish.
+                    collide = tf.equal(negatives, true_idx)
+                    cand = tf.concat([true_idx, negatives], axis=1)  # (batch, 1+K); true at col 0
+                    subset = tf.gather(clipped_logits, cand, batch_dims=1)  # (batch, 1+K)
+                    neg_mask = tf.concat([tf.zeros((batch, 1), tf.bool), collide], axis=1)
+                    subset = tf.where(neg_mask, tf.fill(tf.shape(subset), tf.constant(-1e9, subset.dtype)), subset)
+                    labels = tf.zeros((batch,), dtype=tf.int32)
+                    loss = tf.keras.losses.sparse_categorical_crossentropy(labels, subset, from_logits=True)
+                else:
+                    # Compute cross-entropy with label smoothing
+                    loss = tf.keras.losses.sparse_categorical_crossentropy(y_true, clipped_logits, from_logits=True)
 
                 # Scale down the loss to balance with position evaluation
                 return loss * args.move_loss_scale
@@ -581,28 +619,32 @@ def export_weights(args, model):
 
 
 def load_binary_weights(args, model, file):
-    """Load weights from a binary file into the model."""
-    for layer in model.layers:
-        weights = layer.get_weights()
-        if len(weights) == 2:
-            kernel, bias = weights
-            print(f"Loading {layer.name}: kernel {kernel.shape}, bias {bias.shape}")
+    """Load weights from a flat .bin into the eval layers, in C++/torch export order.
 
-            # Read kernel weights
-            kernel_size = np.prod(kernel.shape)
-            kernel_data = np.fromfile(file, dtype=np.float32, count=kernel_size)
-            if kernel_data.size == 0:
-                print(f"{layer.name}: skipped empty data")
-                continue
-            kernel_data = kernel_data.reshape(kernel.shape)
+    Consumes hidden_1a, 1b, 2, 3, out (kernel then bias each). The 'move' head is
+    NOT in the file (eval-only export), so it is skipped by name — importing an
+    eval-only weights.bin into a --predict-moves graph leaves the head untouched.
+    """
+    eval_order = ['hidden_1a', 'hidden_1b', 'hidden_2', 'hidden_3', 'out']
+    by_name = {l.name: l for l in model.layers}
 
-            # Read bias weights
-            bias_size = np.prod(bias.shape)
-            bias_data = np.fromfile(file, dtype=np.float32, count=bias_size)
-            bias_data = bias_data.reshape(bias.shape)
+    payload = np.fromfile(file, dtype=np.float32)
+    expected = sum(int(np.prod(by_name[n].get_weights()[0].shape)) + by_name[n].get_weights()[1].shape[0]
+                   for n in eval_order if n in by_name)
+    if payload.size != expected:
+        raise ValueError(f'{args.import_file}: expected {expected} float32, got {payload.size}')
 
-            # Set the weights back to the layer
-            layer.set_weights([kernel_data, bias_data])
+    off = 0
+    for name in eval_order:
+        layer = by_name.get(name)
+        if layer is None:
+            continue
+        kernel, bias = layer.get_weights()
+        ksize, bsize = int(np.prod(kernel.shape)), bias.shape[0]
+        k = payload[off:off + ksize].reshape(kernel.shape); off += ksize
+        b = payload[off:off + bsize].reshape(bias.shape); off += bsize
+        print(f'Loading {name}: kernel {kernel.shape}, bias {bias.shape}')
+        layer.set_weights([k, b])
 
 
 def tf_unpack_bits(bitboards):
@@ -1265,6 +1307,7 @@ if __name__ == '__main__':
         # Arguments for move prediction stability
         parser.add_argument('--move-temperature', type=float, default=1.0, help='temperature scaling for move logits')
         parser.add_argument('--move-logit-clip', type=float, default=10.0, help='clip move logits to prevent extreme values')
+        parser.add_argument('--move-negatives', type=int, default=0, help='sampled-softmax negatives per row (0 = full 4096 softmax)')
         parser.add_argument('--move-loss-scale', type=float, default=0.1, help='scale factor for move prediction loss')
         parser.add_argument('--clip-norm', type=float, default=1.0, help='gradient clipping norm')
 

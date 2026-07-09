@@ -97,6 +97,8 @@ namespace nnue
     constexpr int KING_BUCKETS = 4;
     constexpr int POOL_STRIDE = 8;
     constexpr int QSCALE = 1024;
+    constexpr int QLOG2 = 10;  /* log2(QSCALE), for shift-based requantization */
+    static_assert((1 << QLOG2) == QSCALE, "QLOG2 must be log2(QSCALE)");
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
@@ -1182,21 +1184,44 @@ namespace nnue
     }
 
 
-    template <typename LM>
-    INLINE void score_move(const LM& layer_m, const int (&active)[MAX_ACTIVE_INPUTS], int count, Move& move)
+    /* Compute the move head's sub-accumulator once per node: relu(bias + W_acc . active),
+     * kept in the quantized int16 domain (like the eval accumulator, no dequantize). Sparse
+     * gather over active inputs; the result feeds score_move for every move at this node.
+     * LMA is the [ACTIVE_INPUTS x MOVE_ACC] quantized layer.
+     */
+    template <typename LMA, size_t N>
+    INLINE void move_accumulate(
+        const LMA& layer_acc, const int (&active)[MAX_ACTIVE_INPUTS], int count, int16_t (&acc)[N])
+    {
+        for (size_t j = 0; j < N; ++j)
+        {
+            int sum = layer_acc._b[j];  /* int16 weights/bias, accumulate in int32 */
+            for (int k = 0; k < count; ++k)
+                sum += layer_acc._wt[j][active[k]];
+            /* relu; keep at QSCALE scale (like the eval accumulator), clamp to int16 */
+            sum = std::min<int>(std::numeric_limits<int16_t>::max(), std::max(0, sum));
+            acc[j] = int16_t(sum);
+        }
+    }
+
+    /* Per-move logit: bias[index] + acc . W_move[:, index]. LM is the [MOVE_ACC x 4096]
+     * quantized layer, so _wt[index] is the length-MOVE_ACC column for this (from,to) move.
+     * Stays integer: the 256 int16xint16 products need int64 (worst case ~2.7e11), then a
+     * fixed shift back into int16 range. Move scores are compared only against each other
+     * (Phase 4 LATE_MOVES), so the constant scale is irrelevant; only relative order matters.
+     */
+    template <typename LM, size_t N>
+    INLINE void score_move(const LM& layer_m, const int16_t (&acc)[N], Move& move)
     {
         const auto index = move.from_square() * 64 + move.to_square();
 
-        // Start with bias
-        auto score = layer_m._b[index];
+        int64_t score = int64_t(layer_m._b[index]) << QLOG2;  /* match the acc.wt product scale */
+        for (size_t j = 0; j < N; ++j)
+            score += int64_t(acc[j]) * int64_t(layer_m._wt[index][j]);
 
-        // Add contribution from each active feature
-        for (int k = 0; k < count; ++k)
-        {
-            score += layer_m._wt[index][active[k]];
-        }
-
+        score >>= QLOG2;  /* one QSCALE factor out; keep ordering, fit int16 */
         using move_score_t = decltype(move._score);
-        move._score = std::min(std::numeric_limits<move_score_t>::max(), score);
+        score = std::min<int64_t>(std::numeric_limits<move_score_t>::max(), score);
+        move._score = move_score_t(std::max<int64_t>(std::numeric_limits<move_score_t>::lowest(), score));
     }
 } /* namespace nnue */
