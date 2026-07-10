@@ -49,10 +49,15 @@ def bucket_ids(x):
     return pawn_id * 4 + king_id
 
 
-def load_profile(path):
+def load_ratios(path):
+    """Per-bucket eval-scale ratios from a sidecar, or None if it carries no ratios
+    (e.g. an outcome_scale-only sidecar this tool wrote). A ratio-less sidecar must
+    not shadow the container's ratios."""
     with open(path) as f:
         profile = json.load(f)
-    ratios = profile["ratios"] if isinstance(profile, dict) else profile
+    ratios = profile.get("ratios") if isinstance(profile, dict) else profile
+    if ratios is None:
+        return None
     ratios = np.asarray(ratios, dtype=np.float32)
     assert ratios.shape == (16,) and np.all(ratios > 0.0), f"{path}: expected 16 positive ratios"
     return ratios
@@ -76,7 +81,9 @@ def member_profile_table(data, filepath):
     default = np.ones(16, dtype=np.float32)
     own_sidecar = filepath + ".profile.json"
     if os.path.exists(own_sidecar):
-        default = load_profile(own_sidecar)
+        container = load_ratios(own_sidecar)
+        if container is not None:
+            default = container
 
     cache = {}
     matched = 0
@@ -84,8 +91,11 @@ def member_profile_table(data, filepath):
     for _, path in members:
         sidecar = path + ".profile.json"
         if sidecar not in cache:
-            if path != filepath and os.path.exists(sidecar):
-                cache[sidecar] = load_profile(sidecar)
+            own = load_ratios(sidecar) if (path != filepath and os.path.exists(sidecar)) else None
+            # A member sidecar without ratios (e.g. an outcome_scale-only file this tool wrote)
+            # must NOT shadow the container ratios used for scale normalization.
+            if own is not None:
+                cache[sidecar] = own
                 matched += 1
             else:
                 cache[sidecar] = default
@@ -106,7 +116,11 @@ def fit_scale(cp, y, beta=1.0 / 400.0):
         beta -= step
         if abs(step) < 1e-12 * max(abs(beta), 1e-12):
             break
-    return 1.0 / beta if beta > 0.0 else float("nan")
+    # beta <= 0 (curve inverts) or a non-positive/absurd S means the fit didn't converge.
+    if beta <= 0.0:
+        return float("nan")
+    s = 1.0 / beta
+    return s if 1.0 <= s <= 100000.0 else float("nan")
 
 
 def main(args):
@@ -192,7 +206,10 @@ def main(args):
             if os.path.exists(sidecar):
                 with open(sidecar) as f:
                     profile = json.load(f)
-            profile.setdefault("ratios", [1.0] * 16)  # trainers require ratios; scale-1 for a fresh sidecar
+            # Write the effective ratios used for the fit, making the sidecar self-contained
+            # (usable standalone as a training member); shadowing the container is then harmless
+            # because the shadowing values are the correct ones.
+            profile["ratios"] = [round(float(r), 3) for r in member_profiles[m]]
             profile["outcome_scale"] = scales
             with open(sidecar, "w") as f:
                 json.dump(profile, f, indent=2)
