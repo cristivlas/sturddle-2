@@ -211,6 +211,10 @@ def make_model(args, strategy):
                 huber_delta * (abs_err - 0.5 * huber_delta)
             )
             loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)[:, tf.newaxis]
+            if args.focal_gamma:
+                # soft-target focal: concentrate outcome gradient on confidently-wrong predictions;
+                # epsilon keeps pow gradient finite at error 0 (inf for 0 < gamma < 1)
+                loss_outcome *= (tf.abs(wdl_eval_pred - outcome_target) + 1e-6) ** args.focal_gamma
         else:
             # default: mean square error
             loss_eval = tf.square(wdl_eval_pred - wdl_eval_target)
@@ -1289,6 +1293,7 @@ if __name__ == '__main__':
         parser.add_argument('--loss-blend', action='store_true', help='use Huber on raw eval domain + BCE on outcome')
         parser.add_argument('--loss-mae', action='store_true', help='use mean absolute error loss (defaule is MSE)')
         parser.add_argument('--huber-delta', type=float, default=1.5, help='delta for Huber loss when using --loss-blend (eval domain units)')
+        parser.add_argument('--focal-gamma', type=float, default=0.0, help='focal modulation of the blend BCE outcome term (0 = off)')
 
         parser.add_argument('--no-capture', action='store_true', help='exclude captures from training')
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
@@ -1365,6 +1370,11 @@ if __name__ == '__main__':
         # Validate outcome scale parameter
         if args.outcome_scale <= 0:
             parser.error("--outcome-scale must be positive")
+
+        if args.focal_gamma < 0:
+            parser.error("--focal-gamma must be >= 0")
+        if args.focal_gamma and not args.loss_blend:
+            parser.error("--focal-gamma requires --loss-blend")
 
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout

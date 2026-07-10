@@ -270,6 +270,10 @@ def combined_loss(y_pred, y_true, args):
         a = err.abs()
         loss_eval = torch.where(a <= d, 0.5 * err * err, d * (a - 0.5 * d))
         loss_outcome = F.binary_cross_entropy_with_logits(logits, outcome_target, reduction="none")
+        if args.focal_gamma:
+            # soft-target focal: concentrate outcome gradient on confidently-wrong predictions;
+            # epsilon keeps pow backward finite at error 0 (inf gradient for 0 < gamma < 1)
+            loss_outcome = loss_outcome * ((wdl_pred - outcome_target).abs() + 1e-6) ** args.focal_gamma
     else:
         loss_eval = (wdl_pred - wdl_target) ** 2
         loss_outcome = (wdl_pred - outcome_target) ** 2
@@ -769,6 +773,7 @@ if __name__ == "__main__":
     p.add_argument("--loss-bce", action="store_true")
     p.add_argument("--loss-blend", action="store_true")
     p.add_argument("--huber-delta", type=float, default=1.5)
+    p.add_argument("--focal-gamma", type=float, default=0.0, help="focal modulation of blend BCE (0 = off)")
     p.add_argument("--profile", help="JSON dataset profile with per-bucket label scale ratios")
     p.add_argument("--sample", type=float)
     p.add_argument("-F", "--filter", type=int, help="drop positions with |eval| >= this (centipawns)")
@@ -796,4 +801,8 @@ if __name__ == "__main__":
 
     if not args.input and not args.export:
         p.error("input dataset required (or use --export)")
+    if args.focal_gamma < 0:
+        p.error("--focal-gamma must be >= 0")
+    if args.focal_gamma and not args.loss_blend:
+        p.error("--focal-gamma requires --loss-blend")
     main(args)
