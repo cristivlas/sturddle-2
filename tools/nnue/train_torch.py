@@ -253,8 +253,13 @@ def combined_loss(y_pred, y_true, args):
         clipped = torch.clamp(eval_target, -cv, cv)
         eval_target = clipped + 0.1 * (eval_target - clipped)  # soft clip
 
-    # BCE via logits: F.binary_cross_entropy is banned under autocast and inf-prone at sigmoid saturation
-    logits = y_pred * SCALE / outcome_scale
+    # BCE via logits: F.binary_cross_entropy is banned under autocast and inf-prone at sigmoid saturation.
+    # Targets use the per-row S (each source's own eval->prob calibration). Prediction side differs
+    # by regime: prob-space losses use the global --outcome-scale (one output scale, the net's cp
+    # units); blend uses the per-row S so its outcome nudge lands on the same cp scale as the Huber
+    # term instead of fighting it.
+    pred_scale = outcome_scale if args.loss_blend else args.outcome_scale
+    logits = y_pred * SCALE / pred_scale
     wdl_pred = torch.sigmoid(logits)
     wdl_target = torch.sigmoid(eval_target * SCALE / outcome_scale)
 
@@ -270,13 +275,14 @@ def combined_loss(y_pred, y_true, args):
         a = err.abs()
         loss_eval = torch.where(a <= d, 0.5 * err * err, d * (a - 0.5 * d))
         loss_outcome = F.binary_cross_entropy_with_logits(logits, outcome_target, reduction="none")
-        if args.focal_gamma:
-            # soft-target focal: concentrate outcome gradient on confidently-wrong predictions;
-            # epsilon keeps pow backward finite at error 0 (inf gradient for 0 < gamma < 1)
-            loss_outcome = loss_outcome * ((wdl_pred - outcome_target).abs() + 1e-6) ** args.focal_gamma
     else:
         loss_eval = (wdl_pred - wdl_target) ** 2
         loss_outcome = (wdl_pred - outcome_target) ** 2
+
+    if args.focal_gamma:
+        # soft-target focal: concentrate outcome gradient on confidently-wrong predictions;
+        # epsilon keeps pow backward finite at error 0 (inf gradient for 0 < gamma < 1)
+        loss_outcome = loss_outcome * ((wdl_pred - outcome_target).abs() + 1e-6) ** args.focal_gamma
 
     w = args.outcome_weight
     if args.dynamic_outcome_weight:
@@ -558,10 +564,10 @@ def summary(model):
 
 
 @torch.no_grad()
-def metrics(pred, y):
+def metrics(pred, y, outcome_scale):
     """Match TF: accuracy = 1 - MAE(sigmoid(cp/scale), outcome); mae = MAE(eval) * SCALE/100."""
     eval_t, out_t = y[:, 0:1] / y[:, 3:4], y[:, 1:2]
-    probs = torch.sigmoid(pred * SCALE / y[:, 4:5])
+    probs = torch.sigmoid(pred * SCALE / outcome_scale)
     acc = 1.0 - (probs - out_t).abs().mean().item()
     mae = (pred - eval_t).abs().mean().item() * SCALE / 100
     return acc, mae
@@ -699,7 +705,7 @@ def main(args):
                 apply_constraints(model, args.quant_round)
                 total += loss.item()
                 count += 1
-                acc, mae = metrics(pred, y)
+                acc, mae = metrics(pred, y, args.outcome_scale)
                 acc_sum += acc
                 mae_sum += mae
                 if tqdm:
@@ -767,13 +773,18 @@ if __name__ == "__main__":
     p.add_argument("--clip-norm", type=float, default=1.0)
     p.add_argument("--clip-eval", type=int)
     p.add_argument("--outcome-weight", type=float, default=0.1)
-    p.add_argument("--outcome-scale", type=float, default=400.0)
+    p.add_argument(
+        "--outcome-scale",
+        type=float,
+        default=120.0,
+        help="pred-side sigmoid scale (the net's cp units); per-row sidecar S calibrates targets",
+    )
     p.add_argument("--dynamic-outcome-weight", action="store_true")
     p.add_argument("--loss-mae", action="store_true")
     p.add_argument("--loss-bce", action="store_true")
     p.add_argument("--loss-blend", action="store_true")
     p.add_argument("--huber-delta", type=float, default=1.5)
-    p.add_argument("--focal-gamma", type=float, default=0.0, help="focal modulation of blend BCE (0 = off)")
+    p.add_argument("--focal-gamma", type=float, default=0.0, help="focal modulation of the outcome loss term (0 = off)")
     p.add_argument("--profile", help="JSON dataset profile with per-bucket label scale ratios")
     p.add_argument("--sample", type=float)
     p.add_argument("-F", "--filter", type=int, help="drop positions with |eval| >= this (centipawns)")
@@ -803,6 +814,6 @@ if __name__ == "__main__":
         p.error("input dataset required (or use --export)")
     if args.focal_gamma < 0:
         p.error("--focal-gamma must be >= 0")
-    if args.focal_gamma and not args.loss_blend:
-        p.error("--focal-gamma requires --loss-blend")
+    if sum((args.loss_mae, args.loss_bce, args.loss_blend)) > 1:
+        p.error("--loss-mae, --loss-bce and --loss-blend are mutually exclusive")
     main(args)

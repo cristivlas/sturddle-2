@@ -189,8 +189,12 @@ def make_model(args, strategy):
 
         sigmoid_scale = y_true[:, 4:5]  # per-row (member x bucket), from profile or --outcome-scale
 
-        # convert predicted and expected (target) eval scores to Win/Draw/Loss prob. scores
-        wdl_eval_pred = tf.sigmoid(y_pred * SCALE / sigmoid_scale)
+        # Targets use the per-row S (each source's own eval->prob calibration). Prediction side
+        # differs by regime: prob-space losses use the global --outcome-scale (one output scale,
+        # the net's cp units); blend uses the per-row S so its outcome nudge lands on the same cp
+        # scale as the Huber term instead of fighting it.
+        pred_scale = sigmoid_scale if args.loss_blend else args.outcome_scale
+        wdl_eval_pred = tf.sigmoid(y_pred * SCALE / pred_scale)
         wdl_eval_target = tf.sigmoid(eval_target * SCALE / sigmoid_scale)
 
         # Compute per-sample losses
@@ -211,14 +215,15 @@ def make_model(args, strategy):
                 huber_delta * (abs_err - 0.5 * huber_delta)
             )
             loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)[:, tf.newaxis]
-            if args.focal_gamma:
-                # soft-target focal: concentrate outcome gradient on confidently-wrong predictions;
-                # epsilon keeps pow gradient finite at error 0 (inf for 0 < gamma < 1)
-                loss_outcome *= (tf.abs(wdl_eval_pred - outcome_target) + 1e-6) ** args.focal_gamma
         else:
             # default: mean square error
             loss_eval = tf.square(wdl_eval_pred - wdl_eval_target)
             loss_outcome = tf.square(wdl_eval_pred - outcome_target)
+
+        if args.focal_gamma:
+            # soft-target focal: concentrate outcome gradient on confidently-wrong predictions;
+            # epsilon keeps pow gradient finite at error 0 (inf for 0 < gamma < 1)
+            loss_outcome *= (tf.abs(wdl_eval_pred - outcome_target) + 1e-6) ** args.focal_gamma
 
         # Blend the losses with dynamic per-sample weighting based on piece count
         base_outcome_weight = tf.constant(args.outcome_weight, dtype=tf.float32)
@@ -432,7 +437,7 @@ def make_model(args, strategy):
             # tf.debugging.assert_all_finite(y_pred, "y_pred has nan/inf")
 
             centipawns = y_pred * SCALE
-            logits = centipawns / y_true[:, 4:5]
+            logits = centipawns / args.outcome_scale
             probs = tf.sigmoid(logits)
             mae = tf.reduce_mean(tf.abs(probs - outcome_target))
             accuracy_score = 1.0 - mae
@@ -1293,7 +1298,7 @@ if __name__ == '__main__':
         parser.add_argument('--loss-blend', action='store_true', help='use Huber on raw eval domain + BCE on outcome')
         parser.add_argument('--loss-mae', action='store_true', help='use mean absolute error loss (defaule is MSE)')
         parser.add_argument('--huber-delta', type=float, default=1.5, help='delta for Huber loss when using --loss-blend (eval domain units)')
-        parser.add_argument('--focal-gamma', type=float, default=0.0, help='focal modulation of the blend BCE outcome term (0 = off)')
+        parser.add_argument('--focal-gamma', type=float, default=0.0, help='focal modulation of the outcome loss term (0 = off)')
 
         parser.add_argument('--no-capture', action='store_true', help='exclude captures from training')
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
@@ -1302,7 +1307,7 @@ if __name__ == '__main__':
         parser.add_argument('--ocb-max-pieces', type=int, default=12, help='max total pieces (incl. kings) for OCB draw adjustment')
 
         parser.add_argument('--outcome-weight', type=float, default=0.1, help='weight for outcome loss vs eval loss')
-        parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
+        parser.add_argument('--outcome-scale', type=float, default=120.0, help='pred-side sigmoid scale (the net cp units); per-row sidecar S calibrates targets')
         parser.add_argument('--dynamic-outcome-weight', action='store_true', help='scale outcome weight by piece count (more pieces = trust outcome more)')
 
         # Move prediction related arguments
@@ -1373,8 +1378,8 @@ if __name__ == '__main__':
 
         if args.focal_gamma < 0:
             parser.error("--focal-gamma must be >= 0")
-        if args.focal_gamma and not args.loss_blend:
-            parser.error("--focal-gamma requires --loss-blend")
+        if sum((args.loss_mae, args.loss_bce, args.loss_blend)) > 1:
+            parser.error("--loss-mae, --loss-bce and --loss-blend are mutually exclusive")
 
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout
