@@ -156,11 +156,24 @@ def restore(args):
     print(f"{src}: restored {restored}, skipped {skipped}")
 
 
+def clear(args):
+    """Backup current sidecars, then remove them — a clean slate (all-ones ratios,
+    ready for a from-scratch outcome_scale.py --update-profile run)."""
+    backup(argparse.Namespace(vds=args.vds, tag=None))
+    removed = 0
+    for sc in sidecars(args.vds):
+        if os.path.exists(sc):
+            os.remove(sc)
+            print(f"removed {sc}")
+            removed += 1
+    print(f"cleared {removed} sidecar(s)")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("action", choices=["backup", "restore", "list"])
+    parser.add_argument("action", choices=["backup", "restore", "list", "clear"])
     parser.add_argument("vds", help="dataset (h5/VDS container) path")
     parser.add_argument("--tag", help="archive tag (backup: default auto-number; restore: default latest)")
     args = parser.parse_args()
 
-    {"backup": backup, "restore": restore, "list": list_archives}[args.action](args)
+    {"backup": backup, "restore": restore, "list": list_archives, "clear": clear}[args.action](args)
