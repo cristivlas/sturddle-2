@@ -83,6 +83,9 @@ def analyse_file(path, engine, limit, args):
         data = hf["data"]
         rows = len(data)
 
+        if args.no_capture and data.shape[1] <= FEATURE_COUNT + 3:
+            print(f"{path}: no move columns, --no-capture has no effect")
+
         while min(band_counts) < args.per_band and scanned < args.per_band * 400:
             row = data[rng.integers(0, rows)]
             scanned += 1
@@ -96,12 +99,20 @@ def analyse_file(path, engine, limit, args):
             if band_counts[bucket // 4] >= args.per_band:
                 continue
 
+            if args.no_capture and len(row) > FEATURE_COUNT + 3:
+                from_square = int(row[FEATURE_COUNT + 2])
+                to_square = int(row[FEATURE_COUNT + 3])
+                # from == to means NULL move (no move stored), not a capture
+                if from_square != to_square and (board.occupied_co[not board.turn] >> to_square) & 1:
+                    continue
+
             label_cp = int(np.int64(row[FEATURE_COUNT]))  # STM POV
             if not board.turn:
                 label_cp = -label_cp  # white POV
 
             try:
-                info = engine.analyse(board, limit)
+                # fresh game key -> ucinewgame between positions, keeps analyses TT-independent
+                info = engine.analyse(board, limit, game=object())
             except chess.engine.EngineError:
                 continue
             engine_cp = info["score"].white().score(mate_score=args.mate_score)
@@ -232,6 +243,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--per-group", type=int, default=0, help="check only N random files per source group (folder + name prefix)"
     )
+    parser.add_argument("--no-capture", action="store_true", help="exclude positions whose move is a capture")
     args = parser.parse_args()
 
     main(args)
