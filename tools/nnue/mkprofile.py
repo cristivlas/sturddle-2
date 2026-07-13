@@ -9,10 +9,12 @@ The output feeds train.py --profile.
 
 Usage:
     ./mkprofile.py report.txt [more_reports...] --match leela T80 --out profile.json
+    ./mkprofile.py report.txt --files group.txt --out group.h5.profile.json
 """
 
 import argparse
 import json
+import os
 import re
 import sys
 
@@ -30,11 +32,18 @@ def main(args):
     files = []
     current = None
 
+    wanted = None
+    if args.files:
+        wanted = {line.strip() for f in args.files for line in open(f) if line.strip()}
+
     for rp in args.reports:
         for line in open(rp):
             if line[:1] not in ("", " ", "\t", "\n") and line.rstrip().endswith(".h5"):
                 current = line.strip()
-                if not args.match or any(m in current for m in args.match):
+                if wanted is not None:
+                    if current in wanted:
+                        files.append(current)
+                elif not args.match or any(m in current for m in args.match):
                     files.append(current)
                 continue
             if current not in files:
@@ -46,6 +55,10 @@ def main(args):
             label[b] += n * ml
             engine[b] += n * me
             counts[b] += n
+
+    if not files:
+        sys.exit("no report files matched")
+    print(f"using {len(files)} report file(s)", file=sys.stderr)
 
     overall = sum(label) / sum(engine) if sum(engine) else 1.0
     ratios = []
@@ -63,6 +76,8 @@ def main(args):
         "ratios": ratios,
     }
     text = json.dumps(profile, indent=2)
+    if args.out and os.path.exists(args.out) and not args.force:
+        sys.exit(f"{args.out}: exists, use --force to overwrite")
     if args.out:
         with open(args.out, "w") as f:
             f.write(text + "\n")
@@ -74,8 +89,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("reports", nargs="+", help="label_check report file(s)")
     parser.add_argument("--match", nargs="*", help="only use report files whose path contains any of these substrings")
+    parser.add_argument("--files", nargs="*", help="only use report files exactly listed in these text file(s)")
     parser.add_argument("--min-n", type=int, default=50, help="buckets with fewer samples default to ratio 1.0")
     parser.add_argument("--out", help="write profile JSON here (default: print to stdout)")
+    parser.add_argument("--force", action="store_true", help="overwrite existing --out file")
     args = parser.parse_args()
 
     main(args)
