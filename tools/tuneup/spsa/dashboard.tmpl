@@ -382,6 +382,31 @@
             background: var(--surface-hover);
             box-shadow: inset 2px 0 0 var(--border), inset -2px 0 0 var(--border);
         }}
+        th.th-sortable {{
+            cursor: pointer;
+        }}
+        /* Reserve the arrow's width on every sortable th so the indicator
+           appearing/disappearing never reflows the header text. */
+        th.th-sortable::after {{
+            content: '\2195';
+            font-size: 9px;
+            margin-left: 4px;
+            opacity: 0;
+            color: var(--text-faint);
+        }}
+        th.th-sortable:hover::after {{
+            opacity: 0.5;
+        }}
+        th.th-sortable[aria-sort="ascending"]::after {{
+            content: '\25B2';
+            opacity: 1;
+            color: var(--accent-start);
+        }}
+        th.th-sortable[aria-sort="descending"]::after {{
+            content: '\25BC';
+            opacity: 1;
+            color: var(--accent-start);
+        }}
         td {{
             border-bottom: 1px solid var(--border);
             font-size: 14px;
@@ -978,6 +1003,83 @@
             return {{ stddev: stddev, range: range, pct: range > 0 ? (stddev / range * 100) : 0, window: vals.length }};
         }}
 
+        // --- Convergence-tab column sort -------------------------------------
+        // Click cycle per column: none -> first -> other -> none, one active
+        // column at a time. Only the Conv view sorts; the Internal/Engine views
+        // keep theta's natural (config) order, so the state is parked whenever
+        // the view isn't 'convergence'.
+        var CONV_SORT_COLS = [
+            {{ key: 'name',   firstDir: 'asc' }},
+            {{ key: 'stddev', firstDir: 'desc' }},
+            {{ key: 'pct',    firstDir: 'desc' }}
+        ];
+        var convSort = null;  // {{ key, dir }} | null
+        try {{
+            var savedSort = JSON.parse(localStorage.getItem('dashConvSort') || 'null');
+            if (savedSort && CONV_SORT_COLS.some(function(c) {{ return c.key === savedSort.key; }})
+                && (savedSort.dir === 'asc' || savedSort.dir === 'desc')) {{
+                convSort = savedSort;
+            }}
+        }} catch (e) {{}}
+
+        function nextSortDir(current, firstDir) {{
+            var other = firstDir === 'asc' ? 'desc' : 'asc';
+            if (current === firstDir) return other;
+            if (current === other) return null;
+            return firstDir;
+        }}
+
+        // Params below CONVERGENCE_MIN samples have no stddev/pct ('--'); keep
+        // them pinned last in both directions rather than letting them sort as 0.
+        function sortConvNames(names) {{
+            if (!convSort) return names;
+            var sign = convSort.dir === 'asc' ? 1 : -1;
+            var key = convSort.key;
+            var byName = function(a, b) {{
+                return a.localeCompare(b, undefined, {{ sensitivity: 'base', numeric: true }});
+            }};
+            return names.slice().sort(function(a, b) {{
+                if (key === 'name') return sign * byName(a, b);
+                var ca = paramConvergence(a), cb = paramConvergence(b);
+                if (!ca && !cb) return byName(a, b);
+                if (!ca) return 1;
+                if (!cb) return -1;
+                var d = ca[key] - cb[key];
+                return d !== 0 ? sign * d : byName(a, b);
+            }});
+        }}
+
+        function syncConvSortIndicators() {{
+            var ths = document.getElementById('thetaHeadRow').querySelectorAll('th');
+            ths.forEach(function(th, i) {{
+                var col = CONV_SORT_COLS[i];
+                if (!col) return;
+                th.classList.add('th-sortable');
+                var dir = convSort && convSort.key === col.key ? convSort.dir : null;
+                th.setAttribute('aria-sort',
+                    dir === 'asc' ? 'ascending' : dir === 'desc' ? 'descending' : 'none');
+            }});
+        }}
+
+        function wireConvSort() {{
+            var ths = document.getElementById('thetaHeadRow').querySelectorAll('th');
+            ths.forEach(function(th, i) {{
+                var col = CONV_SORT_COLS[i];
+                if (!col) return;
+                th.addEventListener('click', function(ev) {{
+                    // Ignore clicks on the resize grip so a drag never sorts.
+                    if (ev.target.closest('.th-grip')) return;
+                    var current = convSort && convSort.key === col.key ? convSort.dir : null;
+                    var dir = nextSortDir(current, col.firstDir);
+                    convSort = dir ? {{ key: col.key, dir: dir }} : null;
+                    localStorage.setItem('dashConvSort', JSON.stringify(convSort));
+                    renderTheta(showInternal ? currentThetaInternal : currentTheta,
+                                showInternal ? initialThetaInternal : initialTheta);
+                }});
+            }});
+            syncConvSortIndicators();
+        }}
+
         function renderTheta(theta, initial) {{
             var isConv = thetaViewMode === 'convergence';
             // Update headers
@@ -988,12 +1090,16 @@
                 hr.innerHTML = '<th>Parameter</th><th>Initial</th><th>Current</th>';
             }}
             if (thetaColResizer) thetaColResizer.reattach();
+            // innerHTML above replaced the th nodes, so re-wire click handlers.
+            if (isConv) wireConvSort();
             const tbody = document.getElementById('thetaBody');
             tbody.innerHTML = '';
             var dec = showInternal ? 5 : 6;
             var hasPrev = Object.keys(prevTheta).length > 0;
-            for (const [name, value] of Object.entries(theta)) {{
-                if (hiddenParams.has(name)) continue;
+            var names = Object.keys(theta).filter(function(n) {{ return !hiddenParams.has(n); }});
+            if (isConv) names = sortConvNames(names);
+            for (const name of names) {{
+                const value = theta[name];
                 const tr = document.createElement('tr');
                 var tint = paramTints[name] || (groupedMode && groupMap[name] ? paramTints[groupLabel(groupMap[name])] : '');
                 if (tint) tr.style.background = tint;

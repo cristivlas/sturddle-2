@@ -59,6 +59,10 @@
             min-height: 100vh;
             padding: 12px;
             transition: background 1s ease;
+            /* App feel: page chrome is not selectable, so Ctrl+A never drags in
+               the header/toolbar. .log-line-content opts back in. */
+            -webkit-user-select: none;
+            user-select: none;
         }}
         .container {{
             max-width: 1400px;
@@ -168,6 +172,10 @@
             color: var(--text);
             transition: border-color 0.2s;
         }}
+        .search-input {{
+            -webkit-user-select: text;
+            user-select: text;
+        }}
         .search-input:focus {{
             outline: none;
             border-color: var(--accent-start);
@@ -275,6 +283,8 @@
             white-space: pre;
             flex: 1;
             padding: 0 16px 0 8px;
+            -webkit-user-select: text;
+            user-select: text;
         }}
         .log-line mark {{
             background: rgba(255, 235, 59, 0.3);
@@ -492,6 +502,10 @@
             parts.push('<div style="height:' + padBottom + 'px"></div>');
             container.innerHTML = parts.join('');
             container.scrollLeft = scrollLeft;
+            // innerHTML dropped the nodes any select-all range was anchored to;
+            // repaint it over the newly rendered slice so scrolling during a
+            // select-all keeps showing the highlight.
+            if (typeof repaintSelectAll === 'function') repaintSelectAll();
         }}
 
         var rafId = 0;
@@ -627,6 +641,67 @@
                 clearSearch();
             }}
         }});
+
+        /* --- Ctrl/Cmd+A selects the log text, not the whole page ------------
+           Desktop only: on a touch/coarse-pointer device there is no Ctrl+A,
+           and the native long-press selection UI is left alone.
+
+           The container is virtually scrolled -- only the visible slice of
+           lines exists in the DOM, wrapped in spacer divs -- so selecting its
+           contents would silently yield a fraction of the log (plus blank
+           spacer lines). Instead: paint a selection over the rendered lines so
+           there is visible feedback, mark the selection as "all lines", and
+           serve the full text from LOG_DATA on copy. */
+        var isDesktop = !window.matchMedia || window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+        var selectedAll = false;
+
+        function isEditableTarget(el) {{
+            return !!el && (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
+        }}
+
+        // Paint a selection across every currently rendered log line.
+        function repaintSelectAll() {{
+            if (!selectedAll) return;
+            var lines = container.querySelectorAll('.log-line-content');
+            if (!lines.length) return;
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            var range = document.createRange();
+            range.setStartBefore(lines[0]);
+            range.setEndAfter(lines[lines.length - 1]);
+            sel.addRange(range);
+        }}
+
+        if (isDesktop) {{
+            document.addEventListener('keydown', function(e) {{
+                if (!((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A'))) return;
+                // Leave the search field's own select-all alone.
+                if (isEditableTarget(document.activeElement)) return;
+                e.preventDefault();
+                selectedAll = true;
+                repaintSelectAll();
+            }});
+
+            // Escape drops the select-all highlight (it also clears search).
+            document.addEventListener('keydown', function(e) {{
+                if (e.key !== 'Escape' || !selectedAll) return;
+                selectedAll = false;
+                window.getSelection().removeAllRanges();
+            }});
+
+            // Any fresh selection gesture invalidates the select-all state, so a
+            // later copy serializes what the user actually dragged over.
+            container.addEventListener('mousedown', function() {{ selectedAll = false; }});
+
+            document.addEventListener('copy', function(e) {{
+                if (!selectedAll) return;
+                var sel = window.getSelection();
+                if (!sel || sel.isCollapsed) {{ selectedAll = false; return; }}
+                e.clipboardData.setData('text/plain',
+                    LOG_DATA.map(function(l) {{ return l[0]; }}).join('\n'));
+                e.preventDefault();
+            }});
+        }}
 
         /* --- Initial render, scrolled to bottom --- */
         container.innerHTML = '<div style="height:' + (LOG_DATA.length * LINE_HEIGHT) + 'px"></div>';
