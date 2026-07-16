@@ -204,7 +204,10 @@ def main(args):
 
     summary = []
     try:
-        for name, value in [("Threads", args.threads), ("Hash", args.hash)]:
+        options = [("Threads", args.threads), ("Hash", args.hash)]
+        if args.syzygy_path:
+            options.append(("SyzygyPath", args.syzygy_path))
+        for name, value in options:
             try:
                 engine.configure({name: value})
             except chess.engine.EngineError:
@@ -235,6 +238,7 @@ if __name__ == "__main__":
     parser.add_argument("--nodes", type=int, default=100000, help="node limit when --depth 0")
     parser.add_argument("--hash", type=int, default=256, help="engine hash MB")
     parser.add_argument("--threads", type=int, default=1, help="engine threads")
+    parser.add_argument("--syzygy-path", help="path to Syzygy tablebases (sets engine SyzygyPath option)")
     parser.add_argument("--scale", type=float, default=390.0, help="cp -> WDL sigmoid scale")
     parser.add_argument("--mate-score", type=int, default=3000, help="cp value for mate scores")
     parser.add_argument(
