@@ -3,16 +3,21 @@
 Build native Sturddle executable (no Python runtime embedded).
 
 Usage:
-    python tools/make-native.py [ARCH]
+    python tools/make-native.py [ARCH] [--embed]
 
 ARCH is one of: native (default), AVX, AVX2, AVX2_VNNI, AVX512, AVX512_BF16.
 
+By default the weights are shared: weights.bin is loaded at runtime from next
+to the binary. With --embed, weights.bin is baked into the binary via C23/C++26
+#embed (see context.cpp) and no separate weights.bin is needed at runtime.
+Either way the weights come from weights.bin / weights.bin.gz at the repo root
+(ensured via tools/fetch_weights.py) -- there is no TensorFlow model dependency.
+
 Output: dist/native/sturddle-<version><arch-suffix>.exe (Windows)
         dist/native/sturddle-<version><arch-suffix>      (Linux)
-Copies weights.bin and book.bin next to the binary.
+Copies book.bin (and weights.bin unless --embed) next to the binary.
 """
 import argparse
-import hashlib
 import os
 import re
 import shlex
@@ -42,9 +47,10 @@ SOURCES = ['chess.cpp', 'context.cpp', 'search.cpp', 'uci_native.cpp', 'tbprobe.
 INCLUDES = ['.', 'libpopcnt', 'magic-bits/include', 'version2', 'Fathom/src']
 DEFINES = ['NATIVE_BUILD=1', 'NATIVE_UCI=1', 'NATIVE_BOOK=1', 'WITH_NNUE', 'CALLBACK_PERIOD=8192', 'NO_ASSERT']
 
-DEFAULT_MODEL = 'models/Raptor-III'
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+sys.path.insert(0, str(REPO_ROOT / 'tools'))
+import fetch_weights
 OUT_DIR = REPO_ROOT / 'dist' / 'native'
 
 
@@ -69,7 +75,7 @@ def init_msvc_env():
             os.environ[k] = v
 
 
-def build_windows(arch, version, build_stamp, embed):
+def build_windows(arch, version, define_args):
     cl_exe = Path(r'C:\Program Files\LLVM\bin\clang-cl.exe')
     if not cl_exe.exists():
         sys.exit(f'ERROR: clang-cl not found at {cl_exe}')
@@ -83,8 +89,6 @@ def build_windows(arch, version, build_stamp, embed):
         '-Wno-unused-label', '-Wno-unused-variable', '-Wno-nan-infinity-disabled',
         '/D_FORTIFY_SOURCE=0', '/GS-',
     ] + shlex.split(os.environ.get('CXXFLAGS', ''))
-    defines = DEFINES if embed else DEFINES + ['SHARED_WEIGHTS']
-    define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}']
     include_args = [f'-I{d}' for d in INCLUDES]
 
     with tempfile.TemporaryDirectory(prefix='sturddle-native-') as tmp:
@@ -114,7 +118,7 @@ def build_windows(arch, version, build_stamp, embed):
     return exe
 
 
-def build_linux(arch, version, build_stamp, embed):
+def build_linux(arch, version, define_args):
     cxx = os.environ.get('CXX')
     if not cxx:
         sys.exit('ERROR: set CXX (e.g. CXX=clang++-20) before invoking this script.')
@@ -149,8 +153,6 @@ def build_linux(arch, version, build_stamp, embed):
         ]
     cxxflags += shlex.split(os.environ.get('CXXFLAGS', ''))
 
-    defines = DEFINES if embed else DEFINES + ['SHARED_WEIGHTS']
-    define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}']
     include_args = [f'-I{d}' for d in INCLUDES]
 
     with tempfile.TemporaryDirectory(prefix='sturddle-native-') as tmp:
@@ -185,72 +187,46 @@ def build_linux(arch, version, build_stamp, embed):
     return exe
 
 
-def ensure_weights_h(model_path):
-    weights_h = REPO_ROOT / 'weights.h'
-    marker = f'// Generated from {model_path}'
-
-    if weights_h.exists():
-        with open(weights_h, 'r') as f:
-            head = [next(f, '') for _ in range(2)]
-        if any(marker in line for line in head):
-            print(f'weights.h is up-to-date for {model_path}')
-            return
-
-    print(f'Regenerating weights.h from {model_path} ...')
-    cmd = [sys.executable, str(REPO_ROOT / 'tools' / 'nnue' / 'train.py'),
-           '-m', model_path, '-o', 'weights.h', '--predict-moves', 'export']
-    env = os.environ.copy()
-    if _tf_version() >= (2, 16):
-        env['TF_USE_LEGACY_KERAS'] = '1'
-    subprocess.check_call(cmd, cwd=REPO_ROOT, env=env)
-
-
-def _tf_version():
-    out = subprocess.check_output(
-        [sys.executable, '-c', 'import tensorflow; print(tensorflow.__version__)'],
-        text=True,
-    ).strip()
-    major, minor = out.split('.')[:2]
-    return (int(major), int(minor))
-
-
 def write_sha256(exe_path):
-    h = hashlib.sha256()
-    with open(exe_path, 'rb') as f:
-        for chunk in iter(lambda: f.read(65536), b''):
-            h.update(chunk)
     dgst_path = Path(f'{exe_path}-sha256.txt')
-    dgst_path.write_bytes(f'{h.hexdigest()} *{exe_path.name}\n'.encode())
+    dgst_path.write_bytes(f'{fetch_weights.sha256(exe_path)} *{exe_path.name}\n'.encode())
     return dgst_path
 
 
 def main():
     parser = argparse.ArgumentParser(description='Build native Sturddle binary')
     parser.add_argument('arch', nargs='?', default='native', choices=list(ARCH_FLAGS.keys()), help='Target SIMD architecture')
-    parser.add_argument('--embed', nargs='?', const=DEFAULT_MODEL, default=None, metavar='MODEL',
-                        help=f'Embed NNUE weights in the binary. Bare --embed uses {DEFAULT_MODEL}; pass a path to override.')
+    parser.add_argument('--embed', action='store_true',
+                        help='Embed weights.bin in the binary via #embed (no separate weights.bin needed at runtime).')
     args = parser.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     version = parse_version()
     build_stamp = datetime.now().strftime('%m%d%y')
 
-    if args.embed:
-        ensure_weights_h(args.embed)
+    embed = args.embed
 
-    embed = args.embed is not None
+    # weights.bin is needed either way: #embed reads it at compile time, the
+    # shared build copies it next to the exe. Decompress/verify it in-process
+    # (same as setup.py) so a clean checkout with only weights.bin.gz works.
+    fetch_weights.ensure()
+
+    defines = DEFINES if embed else DEFINES + ['SHARED_WEIGHTS']
+    define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}']
+
     if sys.platform.startswith('win'):
-        exe = build_windows(args.arch, version, build_stamp, embed)
+        exe = build_windows(args.arch, version, define_args)
     elif sys.platform.startswith('linux'):
-        exe = build_linux(args.arch, version, build_stamp, embed)
+        exe = build_linux(args.arch, version, define_args)
     else:
         sys.exit(f'Unsupported platform: {sys.platform}')
 
     assets = ('book.bin',) if embed else ('weights.bin', 'book.bin')
     for asset in assets:
         src = REPO_ROOT / asset
-        if src.exists():
-            shutil.copy(src, OUT_DIR / asset)
+        if not src.exists():
+            sys.exit(f'ERROR: required asset {asset} not found at {src}')
+        shutil.copy(src, OUT_DIR / asset)
 
     dgst = write_sha256(exe)
 

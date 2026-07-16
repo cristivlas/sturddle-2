@@ -428,6 +428,18 @@ void Model::init()
   #error "weights.bin not found; run tools/fetch_weights.py before building"
 #endif
 
+/* #embed is a C23/C++26 feature; under -std=c++20 -Werror it is diagnosed as an
+ * extension (clang: -Wc23-extensions, gcc: -Wc++26-extensions). Silence it here so
+ * every compiler/build path is covered in one place rather than via build flags. */
+#if defined(__clang__)
+  #pragma clang diagnostic push
+  #pragma clang diagnostic ignored "-Wc23-extensions"
+#elif defined(__GNUC__)
+  #pragma GCC diagnostic push
+  #pragma GCC diagnostic ignored "-Wpedantic"       /* umbrella: any gcc with #embed */
+  #pragma GCC diagnostic ignored "-Wc++26-extensions" /* precise name where recognized */
+#endif
+
 void Model::init()
 {
     static constexpr unsigned char WEIGHTS_DATA[] = {
@@ -453,9 +465,15 @@ void Model::init()
     L3.load_weights(file);
     EVAL.load_weights(file);
 #if USE_MOVE_PREDICTION
+    LMOVE_ACC.load_weights(file);
     LMOVES.load_weights(file);
 #endif
 }
+#if defined(__clang__)
+  #pragma clang diagnostic pop
+#elif defined(__GNUC__)
+  #pragma GCC diagnostic pop
+#endif
 #endif /* USE_WEIGHTS_H */
 #else
 
