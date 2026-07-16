@@ -920,6 +920,33 @@
         var paramColors = {{}};
         var paramTints = {{}};
         var hiddenParams = new Set();
+
+        // --- Legend filter persistence ---------------------------------------
+        // Legend clicks hide/show chart series (and, via hiddenParams, the rows
+        // in the params table). Persist that selection so a reload keeps it.
+        //
+        // Keyed by dataset _groupKey (stable id) rather than label: in grouped
+        // mode the label is a display string ('PS_1 (Pawn)') that GROUP_LABELS
+        // can rename, which would orphan saved state. Grouped and ungrouped
+        // modes have different identities for the same chart, so they get
+        // separate keys and never leak into each other.
+        function hiddenStoreKey() {{
+            return groupedMode ? 'dashHiddenGroups' : 'dashHiddenParams';
+        }}
+
+        function loadHiddenFilter() {{
+            try {{
+                var saved = JSON.parse(localStorage.getItem(hiddenStoreKey()) || 'null');
+                return Array.isArray(saved) ? saved : null;
+            }} catch (e) {{ return null; }}
+        }}
+
+        function saveHiddenFilter(keys) {{
+            try {{
+                if (!keys.length) localStorage.removeItem(hiddenStoreKey());
+                else localStorage.setItem(hiddenStoreKey(), JSON.stringify(keys));
+            }} catch (e) {{}}
+        }}
         var prevTheta = {{}};
         var paramRanges = {{}};
         var paramConfig = {{}};  // name -> param record from /config (has original_lower/upper, type, init, etc.)
@@ -1372,14 +1399,26 @@
 
         function createThetaChart(keys, labels, dataFn, labelFn) {{
             var ctx = document.getElementById('thetaChart').getContext('2d');
+            // Restore the persisted legend filter. Every chart-creation path
+            // funnels through here, so this covers first load and rebuilds.
+            var savedHidden = loadHiddenFilter();
+            var hiddenSet = savedHidden ? new Set(savedHidden) : null;
+            // Never restore a state that hides every series (a blank chart with
+            // no obvious way back); treat it as "show all".
+            if (hiddenSet && keys.every(function(k) {{ return hiddenSet.has(k); }})) hiddenSet = null;
+            hiddenParams.clear();
             var chart = new Chart(ctx, {{
                 type: 'line',
                 data: {{
                     labels: labels,
                     datasets: keys.map(function(k, i) {{
+                        var label = labelFn ? labelFn(k) : k;
+                        var isHidden = hiddenSet ? hiddenSet.has(k) : false;
+                        if (isHidden) hiddenParams.add(label);
                         return {{
-                            label: labelFn ? labelFn(k) : k,
+                            label: label,
                             _groupKey: k,
+                            hidden: isHidden,
                             data: dataFn(k),
                             borderColor: palette[i % palette.length],
                             backgroundColor: palette[i % palette.length] + '30',
@@ -1404,9 +1443,13 @@
             Chart.defaults.plugins.legend.onClick.call(this, e, item, legend);
             // Sync hidden set from chart dataset visibility
             hiddenParams.clear();
+            var hiddenKeys = [];
             legend.chart.data.datasets.forEach(function(ds, i) {{
-                if (!legend.chart.isDatasetVisible(i)) hiddenParams.add(ds.label);
+                if (legend.chart.isDatasetVisible(i)) return;
+                hiddenParams.add(ds.label);
+                hiddenKeys.push(ds._groupKey || ds.label);
             }});
+            saveHiddenFilter(hiddenKeys);
             renderTheta(
                 showInternal ? currentThetaInternal : currentTheta,
                 showInternal ? initialThetaInternal : initialTheta
