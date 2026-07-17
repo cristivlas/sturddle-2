@@ -17,10 +17,13 @@ Usage:
 """
 
 import argparse
+import logging
 import math
 import os
 import random
 import re
+import threading
+import time
 
 import chess
 import chess.engine
@@ -70,7 +73,38 @@ def wdl(cp, scale):
     return 1.0 / (1.0 + math.exp(-cp / scale))
 
 
-def analyse_file(path, engine, limit, args):
+class Watchdog(threading.Thread):
+    """Warns (stderr + log file) when a single engine.analyse has been in flight too long."""
+
+    def __init__(self, timeout):
+        super().__init__(daemon=True)
+        self.timeout = timeout
+        self.lock = threading.Lock()
+        self.fen = None
+        self.since = 0.0
+        if timeout > 0:
+            self.start()
+
+    def begin(self, board):
+        with self.lock:
+            self.fen, self.since = board.fen(), time.monotonic()
+        logging.debug("analyse %s", self.fen)
+
+    def done(self):
+        with self.lock:
+            self.fen = None
+
+    def run(self):
+        while True:
+            time.sleep(min(5, self.timeout))
+            with self.lock:
+                elapsed = time.monotonic() - self.since
+                if self.fen and elapsed >= self.timeout:
+                    logging.warning("engine silent %.0fs on %s", elapsed, self.fen)
+                    self.since = time.monotonic()  # re-arm so it repeats, not spams
+
+
+def analyse_file(path, engine, limit, args, watchdog):
     """Returns list of (bucket, label_wdl, engine_wdl, label_cp, engine_cp)."""
     rng = np.random.default_rng()
     band_counts = [0] * 4
@@ -111,10 +145,13 @@ def analyse_file(path, engine, limit, args):
                 label_cp = -label_cp  # white POV
 
             try:
+                watchdog.begin(board)
                 # fresh game key -> ucinewgame between positions, keeps analyses TT-independent
                 info = engine.analyse(board, limit, game=object())
             except chess.engine.EngineError:
                 continue
+            finally:
+                watchdog.done()
             engine_cp = info["score"].white().score(mate_score=args.mate_score)
 
             band_counts[bucket // 4] += 1
@@ -172,6 +209,16 @@ def report(path, records, args):
 
 
 def main(args):
+    handlers = [logging.StreamHandler()]  # stderr, warnings only
+    handlers[0].setLevel(logging.WARNING)
+    if args.log:
+        handlers.append(logging.FileHandler(args.log, mode="w"))  # full UCI traffic
+    logging.basicConfig(
+        level=logging.DEBUG if args.log else logging.WARNING,
+        format="%(asctime)s %(levelname).1s %(message)s",
+        handlers=handlers,
+    )
+
     paths = []
     for arg in args.input:
         if arg.endswith(".h5"):
@@ -213,8 +260,9 @@ def main(args):
             except chess.engine.EngineError:
                 pass
 
+        watchdog = Watchdog(args.watchdog)
         for path in paths:
-            records = analyse_file(path, engine, limit, args)
+            records = analyse_file(path, engine, limit, args, watchdog)
             if not records:
                 print(f"\n{path}: no valid positions sampled")
                 continue
@@ -239,6 +287,10 @@ if __name__ == "__main__":
     parser.add_argument("--hash", type=int, default=256, help="engine hash MB")
     parser.add_argument("--threads", type=int, default=1, help="engine threads")
     parser.add_argument("--syzygy-path", help="path to Syzygy tablebases (sets engine SyzygyPath option)")
+    parser.add_argument("--log", help="write debug log (UCI traffic, analysed positions) to this file")
+    parser.add_argument(
+        "--watchdog", type=int, default=60, help="warn if one analyse exceeds this many seconds (0 disables)"
+    )
     parser.add_argument("--scale", type=float, default=390.0, help="cp -> WDL sigmoid scale")
     parser.add_argument("--mate-score", type=int, default=3000, help="cp value for mate scores")
     parser.add_argument(
