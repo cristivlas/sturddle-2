@@ -602,6 +602,9 @@ static bool probe_root(Context& ctxt, TranspositionTable& table)
             board.turn,
             nullptr);
 
+        if (result == TB_RESULT_CHECKMATE || result == TB_RESULT_STALEMATE)
+            return false; /* terminal: normal search scores it correctly */
+
         if (result != TB_RESULT_FAILED)
         {
             ++table._tb_hits;
@@ -612,15 +615,13 @@ static bool probe_root(Context& ctxt, TranspositionTable& table)
             switch (wdl)
             {
                 case TB_LOSS:
-                    ctxt._score = MATE_LOW + dtz;
-                    ctxt._alpha = ctxt._score;
-                    ctxt._beta = SCORE_MAX;
-
-                    table._w_alpha = ctxt._alpha; // keep Context::reset ASSERT from firing
-
-                   /* Do not use move from probe result - search will find the
-                    * move that maximizes resistance (longest mate) among
-                    * equivalent losing moves -- don't make it easy for the opponent.
+                   /* Fall through to normal search. Do not use the move from the
+                    * probe result - search will find the move that maximizes
+                    * resistance (longest mate) among equivalent losing moves --
+                    * don't make it easy for the opponent. Do not impose the TB
+                    * score as a window bound either: WDL probes fail inside the
+                    * tree whenever the halfmove clock is non-zero, so the search
+                    * cannot corroborate the bound and only thrashes against it.
                     */
                     break;
 
