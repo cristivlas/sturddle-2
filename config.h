@@ -301,7 +301,7 @@ DECLARE_VALUE(  MOVE_PREDICTION_MAX_ITER,             3,    0,      10)
 #endif
 
 #if WITH_NNUE
-DECLARE_VALUE(  NNUE_BLEND_PERCENT,                  82,   50,     100)
+DECLARE_VALUE(  NNUE_BLEND_PERCENT,                 100,   50,     100)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      459,  400,     600)
 #endif /* WITH_NNUE */
 
@@ -325,7 +325,7 @@ DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  248,   25,     300)
 DECLARE_VALUE(  RAZOR_INTERCEPT,                    224,  150,     250)
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
 DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     150)
-DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             33,    0,     150)
+DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             16,    0,     150)
 
 /* SEE */
 DECLARE_VALUE(  SEE_PRUNING,                          1,    0,       1)
