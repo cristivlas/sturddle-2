@@ -64,8 +64,8 @@ to `DECLARE_VALUE`.
 
 ### Distributed SPSA Tuner (Experimental)
 
-Starting with version 2.6.0, a distributed SPSA tuner is available. It uses a
-coordinator/worker architecture designed for small heterogeneous LANs and provides
+Starting with version 2.6.0, a distributed SPSA tuner is included in the project tree.
+It uses a coordinator/worker architecture designed for small heterogeneous LANs and provides
 a live web dashboard for monitoring progress.
 
 See [tools/tuneup/spsa/README.md](tools/tuneup/spsa/README.md) for setup and usage.
