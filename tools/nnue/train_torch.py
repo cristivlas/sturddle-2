@@ -243,10 +243,9 @@ def load_bin(model, path):
 # Loss: combine eval (Huber on raw domain) with WDL outcome (BCE on prob domain)
 # ---------------------------------------------------------------------------
 def combined_loss(y_pred, y_true, args):
-    eval_target = y_true[:, 0:1] / y_true[:, 3:4]  # normalize label scale per bucket
+    eval_target = y_true[:, 0:1] / y_true[:, 2:3]  # normalize label scale per bucket
     outcome_target = y_true[:, 1:2]
-    piece_ratio = y_true[:, 2:3]
-    outcome_scale = y_true[:, 4:5]  # per-row (member x bucket), from profile or --outcome-scale
+    outcome_scale = y_true[:, 3:4]  # per-row (member x bucket), from profile or --outcome-scale
 
     if args.clip_eval:
         cv = args.clip_eval / SCALE
@@ -285,8 +284,6 @@ def combined_loss(y_pred, y_true, args):
         loss_outcome = loss_outcome * ((wdl_pred - outcome_target).abs() + 1e-6) ** args.focal_gamma
 
     w = args.outcome_weight
-    if args.dynamic_outcome_weight:
-        w = w * piece_ratio
     loss = loss_eval * (1.0 - w) + loss_outcome * w
     return loss.mean()
 
@@ -303,7 +300,6 @@ class H5Batches(torch.utils.data.Dataset):
         smoothing=0.025,
         filter=None,
         no_capture=False,
-        discard_mismatch=0,
         balance=False,
         profile_ratios=None,
         outcome_scale=400.0,
@@ -314,7 +310,6 @@ class H5Batches(torch.utils.data.Dataset):
         self.smoothing = smoothing
         self.filter = filter
         self.no_capture = no_capture
-        self.discard_mismatch = discard_mismatch
         self.balance = balance
         print(f"Loading dataset {path}")
         with h5py.File(path, "r") as hf:
@@ -372,11 +367,6 @@ class H5Batches(torch.utils.data.Dataset):
         if self.filter:
             keep = np.abs(y_eval) < (self.filter / SCALE)
 
-        if self.discard_mismatch:
-            t = self.discard_mismatch / SCALE
-            mismatch = ((y_eval > t) & (y_out < 0.25)) | ((y_eval < -t) & (y_out > 0.75))
-            keep = ~mismatch if keep is None else (keep & ~mismatch)
-
         if self.no_capture and rows.shape[1] > self.feature_count + 3:
             to_square = rows[:, self.feature_count + 3]
             black_occ = np.bitwise_or.reduce(rows[:, 0:12:2], axis=1)
@@ -408,12 +398,7 @@ class H5Batches(torch.utils.data.Dataset):
             label_scale = np.concatenate([label_scale, label_scale])
             outcome_scale = np.concatenate([outcome_scale, outcome_scale])
 
-        pc = np.zeros(x.shape[0], dtype=np.float32)
-        for c in range(12):  # first 12 columns of x are the piece bitboards
-            pc += popcount(x[:, c])
-        piece_ratio = pc / 32.0
-
-        y = np.stack([y_eval, y_out, piece_ratio, label_scale, outcome_scale], axis=1).astype(np.float32)
+        y = np.stack([y_eval, y_out, label_scale, outcome_scale], axis=1).astype(np.float32)
         return torch.from_numpy(x), torch.from_numpy(y)
 
 
@@ -566,7 +551,7 @@ def summary(model):
 @torch.no_grad()
 def metrics(pred, y, outcome_scale):
     """Match TF: accuracy = 1 - MAE(sigmoid(cp/scale), outcome); mae = MAE(eval) * SCALE/100."""
-    eval_t, out_t = y[:, 0:1] / y[:, 3:4], y[:, 1:2]
+    eval_t, out_t = y[:, 0:1] / y[:, 2:3], y[:, 1:2]
     probs = torch.sigmoid(pred * SCALE / outcome_scale)
     acc = 1.0 - (probs - out_t).abs().mean().item()
     mae = (pred - eval_t).abs().mean().item() * SCALE / 100
@@ -620,7 +605,9 @@ def main(args):
 
     sched = None
     if args.schedule:
-        sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, factor=0.5, patience=args.patience)
+        sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            opt, factor=0.5, patience=args.patience, threshold=args.sched_threshold
+        )
 
     use_amp = args.mixed_precision and device.type == "cuda"
     if use_amp:
@@ -651,7 +638,6 @@ def main(args):
         smoothing=args.outcome_smoothing,
         filter=args.filter,
         no_capture=args.no_capture,
-        discard_mismatch=args.discard_mismatch,
         balance=args.balance,
         profile_ratios=profile_ratios,
         outcome_scale=args.outcome_scale,
@@ -779,7 +765,6 @@ if __name__ == "__main__":
         default=120.0,
         help="pred-side sigmoid scale (the net's cp units); per-row sidecar S calibrates targets",
     )
-    p.add_argument("--dynamic-outcome-weight", action="store_true")
     p.add_argument("--loss-mae", action="store_true")
     p.add_argument("--loss-bce", action="store_true")
     p.add_argument("--loss-blend", action="store_true")
@@ -790,15 +775,15 @@ if __name__ == "__main__":
     p.add_argument("-F", "--filter", type=int, help="drop positions with |eval| >= this (centipawns)")
     p.add_argument("--balance", action="store_true", help="augment each batch with color-mirrored positions")
     p.add_argument("--no-capture", action="store_true", help="exclude positions whose move is a capture")
-    p.add_argument(
-        "--discard-mismatch",
-        type=float,
-        default=0,
-        help="drop positions where |eval| > threshold (cp) and outcome disagrees",
-    )
     p.add_argument("--mem-limit", type=int, default=0, help="GPU memory limit in MB (0 = unlimited)")
     p.add_argument("--schedule", action="store_true")
     p.add_argument("--patience", type=int, default=3)
+    p.add_argument(
+        "--sched-threshold",
+        type=float,
+        default=1e-4,
+        help="--schedule: min relative loss improvement that counts as progress (raise when --sample adds noise)",
+    )
     p.add_argument("--workers", type=int, default=0)
     p.add_argument("--ncols", type=int, default=120, help="progress bar width (0 = auto/full terminal)")
     p.add_argument("--log-every", type=float, default=30, help="seconds between status lines when tqdm is missing")
