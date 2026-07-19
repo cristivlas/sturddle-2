@@ -598,7 +598,11 @@ def write_weigths(args, model, indent=2):
 
 
 def write_binary_weights(args, model, file):
-    for layer in model.layers:
+    # Fixed engine load order (context.cpp): eval layers, then move head.
+    # model.layers is graph-depth ordered and interleaves the head into the eval layers.
+    order = ['hidden_1a', 'hidden_1b', 'hidden_2', 'hidden_3', 'out', 'move_acc', 'move']
+    layers = [model.get_layer(n) for n in order if any(l.name == n for l in model.layers)]
+    for layer in layers:
         params = get_layer_weights(args, layer)
         if params:
             kernel, bias = params
