@@ -50,6 +50,25 @@ def denormalize(param, theta_val):
     return engine_val
 
 
+def average_theta(state, window):
+    """Mean theta over the last `window` iterates (history + current theta).
+
+    Skipped iterations are excluded -- they re-record an unchanged theta and
+    would double-weight stalled values. Averages per-param over entries where
+    the param is present; falls back to the current value for params with no
+    history occurrences.
+    """
+    series = [h.get('theta', {}) for h in state.get('history', []) if not h.get('skipped')]
+    current = state.get('theta', {})
+    series.append(current)
+    series = series[-window:]
+    avg = {}
+    for name, cur_val in current.items():
+        vals = [t[name] for t in series if name in t]
+        avg[name] = sum(vals) / len(vals) if vals else cur_val
+    return avg
+
+
 def compute_range(value, range_pct):
     """Compute bounds as value +/- range_pct% of value."""
     half = value * range_pct / 100.0
@@ -581,12 +600,17 @@ def main():
                             help='Override R_target for --rebalance')
     target_grp.add_argument('--target-c', type=float, default=None,
                             help='Override c for --rebalance; R_target derived as N^gamma / c')
+    parser.add_argument('--window', type=int, default=None, metavar='N',
+                        help='Average theta over the last N non-skipped iterates, current theta included '
+                             '(N=1 is the final value; omit to use the final value without averaging)')
     parser.add_argument('--dry-run', action='store_true',
                         help='Compute and report changes without writing any files')
     args = parser.parse_args()
 
     if args.range_pct is not None and args.range_pct <= 0:
         parser.error('--range must be > 0')
+    if args.window is not None and args.window < 1:
+        parser.error('--window must be >= 1')
     if args.auto_range and args.range_pct is not None:
         parser.error('--range and --auto-range are mutually exclusive')
     if args.rebalance and (args.range_pct is not None or args.auto_range):
@@ -633,6 +657,16 @@ def main():
 
     iteration = state.get('iteration', '?')
     logging.info(f"State at iteration {iteration}, {len(theta)} parameter(s)")
+
+    if args.window is not None:
+        n_avail = sum(1 for h in state.get('history', []) if not h.get('skipped')) + 1
+        if args.window > n_avail:
+            logging.warning(f"--window {args.window} exceeds {n_avail} available iterate(s); using all")
+        theta = average_theta(state, args.window)
+        # Recenter state's theta so drift / --auto-range computations are
+        # consistent with the averaged values applied below.
+        state['theta'] = theta
+        logging.info(f"Averaged theta over last {min(args.window, n_avail)} non-skipped iterate(s)")
 
     # Report the minimum safe --range based on full exploration history,
     # along with per-param drift sorted by swing percentage.

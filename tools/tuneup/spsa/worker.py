@@ -47,6 +47,7 @@ PIPE_DRAIN_TIMEOUT = 30    # seconds to wait for pipe readers after exit
 POLL_INTERVAL = 0.5        # seconds between process-alive checks
 HTTP_TIMEOUT = 30          # seconds for general HTTP requests
 VALIDATE_TIMEOUT = 3       # seconds for chunk-validity HTTP checks
+SHUTDOWN_NOTIFY_TIMEOUT = 5  # seconds for the best-effort shutdown notify
 
 # Graceful-shutdown state
 _current_process = None       # cutechess-cli Popen while games run
@@ -193,11 +194,11 @@ def http_get(url: str, timeout: int) -> dict:
         return json.loads(resp.read())
 
 
-def http_post(url: str, data: dict, retry_timeout: int = 0) -> dict:
+def http_post(url: str, data: dict, retry_timeout: int = 0, timeout: int = HTTP_TIMEOUT) -> dict:
     """POST JSON, return parsed JSON response.
 
     On connection errors, retries with exponential backoff for up to
-    retry_timeout seconds (0 = no retry).
+    retry_timeout seconds (0 = no retry). timeout is the per-request limit.
     """
     body = json.dumps(data).encode()
     deadline = time.monotonic() + retry_timeout
@@ -208,7 +209,7 @@ def http_post(url: str, data: dict, retry_timeout: int = 0) -> dict:
             headers={"Content-Type": "application/json"},
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read())
         except (ConnectionError, TimeoutError, urllib.error.URLError) as e:
             if time.monotonic() + delay > deadline:
@@ -833,6 +834,19 @@ def worker_loop(worker_config: WorkerConfig):
             game_result = run_games(worker_config, tuning_config, work)
             if game_result is None:
                 if _shutdown_requested:
+                    # Notify the coordinator so it deregisters us instead of
+                    # waiting for the idle timeout to reap us as crashed.
+                    try:
+                        http_post(f"{base_url}/result", {
+                            "iteration": work.iteration,
+                            "chunk_id": work.chunk_id,
+                            "worker": worker_name,
+                            "num_games": 0,
+                            "reference_mode": bool(worker_config.reference_engine),
+                            "shutting_down": True,
+                        }, timeout=SHUTDOWN_NOTIFY_TIMEOUT)
+                    except Exception as e:
+                        logger.debug("Shutdown notify failed: %s", e)
                     break
                 continue  # chunk cancelled, request new work
 
