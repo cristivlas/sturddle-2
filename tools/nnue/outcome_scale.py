@@ -6,7 +6,8 @@ The blend loss calibrates evals to game outcomes via P(win) = sigmoid(eval / S).
 This tool fits S directly: single-parameter logistic regression (Newton on
 beta = 1/S) minimizing cross-entropy between sigmoid(beta * cp) and the
 recorded outcome, overall and per bucket. Evals and outcomes are both STM-POV,
-matching the loss.
+matching the loss. S is also reported split by side-to-move (report only;
+sidecars are unchanged).
 
 Evals are first divided by the same per-bucket label-scale ratios the trainers
 apply: per-member sidecar profiles (<member>.h5.profile.json) are auto-resolved
@@ -124,7 +125,7 @@ def fit_scale(cp, y, beta=1.0 / 400.0):
 
 
 def main(args):
-    cp_parts, y_parts, bucket_parts, member_parts = [], [], [], []
+    cp_parts, y_parts, bucket_parts, member_parts, stm_parts = [], [], [], [], []
     member_paths = []
     for path in args.input:
         with h5py.File(path, "r") as hf:
@@ -156,6 +157,7 @@ def main(args):
                 y_parts.append(y[mask])
                 bucket_parts.append(buckets)
                 member_parts.append(member_ids)
+                stm_parts.append(block[:, 12][mask] == 1)
                 if (n + 1) % 50 == 0 or n + 1 == len(indices):
                     print(f"\r{n + 1}/{len(indices)} batches", end="", flush=True)
             print()
@@ -164,11 +166,14 @@ def main(args):
     y = np.concatenate(y_parts)
     buckets = np.concatenate(bucket_parts)
     member_ids = np.concatenate(member_parts)
+    wtm = np.concatenate(stm_parts)
     if args.max_rows and len(cp) > args.max_rows:
         keep = np.random.choice(len(cp), args.max_rows, replace=False)
-        cp, y, buckets, member_ids = cp[keep], y[keep], buckets[keep], member_ids[keep]
+        cp, y, buckets, member_ids, wtm = cp[keep], y[keep], buckets[keep], member_ids[keep], wtm[keep]
 
-    print(f"{'bucket':>6} {'pawns':>7} {'kings':>5} {'n':>12} {'draw%':>6} {'|cp|':>6} {'S':>7}")
+    print(
+        f"{'bucket':>6} {'pawns':>7} {'kings':>5} {'n':>12} {'draw%':>6} {'|cp|':>6} {'S':>7} {'S.wtm':>7} {'S.btm':>7}"
+    )
     for b in range(16):
         sel = buckets == b
         n = int(sel.sum())
@@ -177,11 +182,21 @@ def main(args):
         row = f"{b:>6} {pawns:>7} {KING_LABELS[king_id]:>5} {n:>12,}"
         if n:
             sb = fit_scale(cp[sel], y[sel])
-            row += f" {100.0 * np.mean(y[sel] == 0.5):>6.2f} {np.mean(np.abs(cp[sel])):>6.0f} {sb:>7.1f}"
+            s_wtm = fit_scale(cp[sel & wtm], y[sel & wtm])
+            s_btm = fit_scale(cp[sel & ~wtm], y[sel & ~wtm])
+            row += (
+                f" {100.0 * np.mean(y[sel] == 0.5):>6.2f} {np.mean(np.abs(cp[sel])):>6.0f}"
+                f" {sb:>7.1f} {s_wtm:>7.1f} {s_btm:>7.1f}"
+            )
         print(row)
 
     s = fit_scale(cp, y)
-    print(f"{'overall':>33} {len(cp):>12,} {100.0 * np.mean(y == 0.5):>6.2f} {np.mean(np.abs(cp)):>6.0f} {s:>7.1f}")
+    s_wtm = fit_scale(cp[wtm], y[wtm])
+    s_btm = fit_scale(cp[~wtm], y[~wtm])
+    print(
+        f"{'overall':>33} {len(cp):>12,} {100.0 * np.mean(y == 0.5):>6.2f} {np.mean(np.abs(cp)):>6.0f}"
+        f" {s:>7.1f} {s_wtm:>7.1f} {s_btm:>7.1f}"
+    )
 
     if args.update_profile:
         # Fit each member on its own rows and write its sidecar (thin buckets -> member overall)
