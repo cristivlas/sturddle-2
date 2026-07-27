@@ -23,6 +23,8 @@ ACCUMULATOR_SIZE = 2048
 POOL_SIZE = 8
 POOLED = ACCUMULATOR_SIZE // POOL_SIZE  # hidden_1b output width (modulates pooled 1:1)
 MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
+MOVE_ACCUMULATOR_SIZE = 256
+MOVE_OUTPUTS = 4096  # 64x64 (from, to)
 
 # Layer definitions: (name, kernel_shape, bias_shape, constraint_type)
 # constraint_type: 'A', 'B', or None
@@ -36,8 +38,11 @@ LAYERS = [
     ('out', (16, 1), (1,), None),
 ]
 
-# Optional move prediction layer
-MOVE_LAYER = ('move', (ACTIVE_INPUTS, 4096), (4096,), 'A')
+# Optional move prediction head: own sub-accumulator, decoupled from eval
+MOVE_LAYERS = [
+    ('move_acc', (ACTIVE_INPUTS, MOVE_ACCUMULATOR_SIZE), (MOVE_ACCUMULATOR_SIZE,), 'A'),
+    ('move', (MOVE_ACCUMULATOR_SIZE, MOVE_OUTPUTS), (MOVE_OUTPUTS,), 'A'),
+]
 
 
 def get_constraint_params(constraint_type):
@@ -147,7 +152,7 @@ def main():
     
     # Calculate expected sizes
     base_total = sum(np.prod(k) + np.prod(b) for _, k, b, _ in LAYERS)
-    move_total = np.prod(MOVE_LAYER[1]) + np.prod(MOVE_LAYER[2])
+    move_total = sum(np.prod(k) + np.prod(b) for _, k, b, _ in MOVE_LAYERS)
     
     print(f"Expected (without move): {base_total}")
     print(f"Expected (with move): {base_total + move_total}")
@@ -171,14 +176,14 @@ def main():
         print("ERROR: Unexpected end of data while reading base layers")
         sys.exit(1)
     
-    # Verify move layer if present
+    # Verify move head if present
     if has_move_layer:
-        offset, clip_v, round_v, success = verify_layers(data, [MOVE_LAYER], offset)
+        offset, clip_v, round_v, success = verify_layers(data, MOVE_LAYERS, offset)
         total_clip_violations += clip_v
         total_round_violations += round_v
-        
+
         if not success:
-            print("ERROR: Unexpected end of data while reading move layer")
+            print("ERROR: Unexpected end of data while reading move head")
             sys.exit(1)
     
     # Verify we consumed all data
