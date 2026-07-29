@@ -4,12 +4,19 @@ Build a per-bucket label-scale profile (JSON) from label_check report(s).
 
 Parses the per-file bucket tables, aggregates |label| and |engine| sums
 weighted by sample count, and emits ratio = sum|label| / sum|engine| per
-bucket. Buckets with fewer than --min-n samples fall back to ratio 1.0.
-The output feeds train.py --profile.
+bucket. Buckets with fewer than --min-n samples fall back to the overall
+ratio. The output feeds train.py --profile.
+
+With --reference, ratios are normalized per bucket by a reference dataset's
+ratios (selected from the same reports, --match-style substrings): the
+referee's own scale cancels out, so labels land in the reference's units
+rather than the referee's. --amplify scales the resulting evals uniformly
+(ratios are divided by it; the trainers divide labels by ratio).
 
 Usage:
     ./mkprofile.py report.txt [more_reports...] --match leela T80 --out profile.json
     ./mkprofile.py report.txt --files group.txt --out group.h5.profile.json
+    ./mkprofile.py report.txt --match T80 --reference spsa --out T80.h5.profile.json
 """
 
 import argparse
@@ -25,52 +32,81 @@ ROW_RGX = re.compile(
 )
 
 
-def main(args):
-    label = [0.0] * BUCKETS
-    engine = [0.0] * BUCKETS
-    counts = [0] * BUCKETS
-    files = []
+def parse_reports(reports):
+    """{file path: ([label sums], [engine sums], [counts]) per bucket}."""
+    tables = {}
     current = None
+    for rp in reports:
+        for line in open(rp):
+            if line[:1] not in ("", " ", "\t", "\n") and line.rstrip().endswith(".h5"):
+                current = line.strip()
+                tables.setdefault(current, ([0.0] * BUCKETS, [0.0] * BUCKETS, [0] * BUCKETS))
+                continue
+            m = ROW_RGX.match(line)
+            if not m or current is None:
+                continue
+            b, n, ml, me = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+            label, engine, counts = tables[current]
+            label[b] += n * ml
+            engine[b] += n * me
+            counts[b] += n
+    return tables
+
+
+def aggregate(tables, files, min_n, what):
+    """Count-weighted per-bucket ratios over a set of files; thin/degenerate buckets fall back to overall.
+
+    Returns (ratios, counts, overall, fell_back) — fell_back marks buckets holding the overall ratio."""
+    label = [sum(tables[f][0][b] for f in files) for b in range(BUCKETS)]
+    engine = [sum(tables[f][1][b] for f in files) for b in range(BUCKETS)]
+    counts = [sum(tables[f][2][b] for f in files) for b in range(BUCKETS)]
+
+    overall = sum(label) / sum(engine) if sum(engine) and sum(label) else 1.0
+    ratios, fell_back = [], []
+    for b in range(BUCKETS):
+        degenerate = counts[b] < min_n or engine[b] == 0 or label[b] == 0
+        if degenerate:
+            print(f"{what} bucket {b}: n={counts[b]}, falling back to overall ratio {overall:.3f}", file=sys.stderr)
+        ratios.append(overall if degenerate else label[b] / engine[b])
+        fell_back.append(degenerate)
+    return ratios, counts, overall, fell_back
+
+
+def main(args):
+    tables = parse_reports(args.reports)
 
     wanted = None
     if args.files:
         wanted = {line.strip() for f in args.files for line in open(f) if line.strip()}
-
-    for rp in args.reports:
-        for line in open(rp):
-            if line[:1] not in ("", " ", "\t", "\n") and line.rstrip().endswith(".h5"):
-                current = line.strip()
-                if wanted is not None:
-                    if current in wanted:
-                        files.append(current)
-                elif not args.match or any(m in current for m in args.match):
-                    files.append(current)
-                continue
-            if current not in files:
-                continue
-            m = ROW_RGX.match(line)
-            if not m:
-                continue
-            b, n, ml, me = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
-            label[b] += n * ml
-            engine[b] += n * me
-            counts[b] += n
-
+    files = [
+        f
+        for f in tables
+        if (f in wanted if wanted is not None else (not args.match or any(m in f for m in args.match)))
+    ]
     if not files:
         sys.exit("no report files matched")
     print(f"using {len(files)} report file(s)", file=sys.stderr)
 
-    overall = sum(label) / sum(engine) if sum(engine) else 1.0
-    ratios = []
-    for b in range(BUCKETS):
-        if counts[b] < args.min_n or engine[b] == 0:
-            print(f"bucket {b}: n={counts[b]}, falling back to overall ratio {overall:.3f}", file=sys.stderr)
-            ratios.append(round(overall, 3))
-        else:
-            ratios.append(round(label[b] / engine[b], 3))
+    ratios, counts, overall, thin = aggregate(tables, files, args.min_n, "target")
+
+    if args.reference:
+        ref_files = [f for f in tables if any(m in f for m in args.reference)]
+        if not ref_files:
+            sys.exit("no report files matched --reference")
+        both = sorted(set(ref_files) & set(files))
+        if both:
+            print(f"warning: {len(both)} file(s) in both target and reference sets: {' '.join(both)}", file=sys.stderr)
+        print(f"reference: {len(ref_files)} report file(s)", file=sys.stderr)
+        ref_ratios, _, ref_overall, _ = aggregate(tables, ref_files, args.min_n, "reference")
+        # a thin target bucket holds the target overall — divide by the reference overall, not a per-bucket ratio
+        ratios = [overall / ref_overall if t else r / ref for r, ref, t in zip(ratios, ref_ratios, thin)]
+
+    ratios = [round(r / args.amplify, 3) for r in ratios]
 
     profile = {
-        "comment": f"generated by mkprofile.py from {', '.join(args.reports)}",
+        "comment": f"generated by mkprofile.py from {', '.join(args.reports)}"
+        + (f", reference {' '.join(args.reference)}" if args.reference else "")
+        + (f", amplify {args.amplify}" if args.amplify != 1.0 else ""),
         "files": len(files),
         "positions": counts,
         "ratios": ratios,
@@ -90,9 +126,20 @@ if __name__ == "__main__":
     parser.add_argument("reports", nargs="+", help="label_check report file(s)")
     parser.add_argument("--match", nargs="*", help="only use report files whose path contains any of these substrings")
     parser.add_argument("--files", nargs="*", help="only use report files exactly listed in these text file(s)")
-    parser.add_argument("--min-n", type=int, default=50, help="buckets with fewer samples default to ratio 1.0")
+    parser.add_argument(
+        "--reference",
+        nargs="*",
+        help="normalize per-bucket by the ratios of report files matching these substrings (referee scale cancels)",
+    )
+    parser.add_argument("--amplify", type=float, default=1.0, help="uniform eval scale-up (divides all ratios)")
+    parser.add_argument("--min-n", type=int, default=50, help="buckets with fewer samples fall back to overall ratio")
     parser.add_argument("--out", help="write profile JSON here (default: print to stdout)")
     parser.add_argument("--force", action="store_true", help="overwrite existing --out file")
     args = parser.parse_args()
+
+    if args.amplify <= 0:
+        parser.error("--amplify must be positive")
+    if args.reference is not None and not args.reference:
+        parser.error("--reference requires at least one substring")
 
     main(args)
