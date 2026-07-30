@@ -1023,15 +1023,44 @@
         function convColor(pct) {{
             return pct < CONV_THRESHOLDS[0] ? CONV_COLORS[0] : pct < CONV_THRESHOLDS[1] ? CONV_COLORS[1] : CONV_COLORS[2];
         }}
+        // Theta trajectories are strongly autocorrelated, which inflates the
+        // slope t-stat; use it only as a significance gate and grade the drift
+        // by magnitude (same %-of-range thresholds as the StdDev column).
+        function trendColor(trendPct, t) {{
+            if (Math.abs(t) < 2) return CONV_COLORS[0];
+            return convColor(Math.abs(trendPct));
+        }}
         function paramConvergence(name) {{
             var range = paramRanges[name];
             if (!range) return null;
             var vals = historyWindow.map(function(h) {{ return h.theta && h.theta[name]; }}).filter(function(v) {{ return v != null; }});
             if (vals.length < CONVERGENCE_MIN) return null;
-            var mean = vals.reduce(function(a, b) {{ return a + b; }}, 0) / vals.length;
-            var variance = vals.reduce(function(a, v) {{ return a + (v - mean) * (v - mean); }}, 0) / vals.length;
+            var n = vals.length;
+            var mean = vals.reduce(function(a, b) {{ return a + b; }}, 0) / n;
+            var variance = vals.reduce(function(a, v) {{ return a + (v - mean) * (v - mean); }}, 0) / n;
             var stddev = Math.sqrt(variance);
-            return {{ stddev: stddev, range: range, pct: range > 0 ? (stddev / range * 100) : 0, window: vals.length }};
+            // Least-squares slope of theta vs. iteration index over the window:
+            // stddev alone can't tell jitter from a slow one-directional drift
+            // (annealed gains keep it small either way), so report the trend and
+            // its t-statistic against the detrended residuals separately.
+            var xm = (n - 1) / 2;
+            var sxx = 0, sxy = 0;
+            for (var i = 0; i < n; i++) {{
+                sxx += (i - xm) * (i - xm);
+                sxy += (i - xm) * (vals[i] - mean);
+            }}
+            var slope = sxx > 0 ? sxy / sxx : 0;
+            var ssRes = 0;
+            for (var j = 0; j < n; j++) {{
+                var r = vals[j] - mean - slope * (j - xm);
+                ssRes += r * r;
+            }}
+            var se = (n > 2 && sxx > 0) ? Math.sqrt(ssRes / (n - 2) / sxx) : 0;
+            var tstat = se > 0 ? slope / se : 0;
+            var trendPct = range > 0 ? slope * n / range * 100 : 0;  // % of range per window
+            return {{ stddev: stddev, range: range, pct: range > 0 ? (stddev / range * 100) : 0,
+                     window: n, trend: trendPct, trendAbs: Math.abs(trendPct), tstat: tstat,
+                     residSd: Math.sqrt(ssRes / n) }};
         }}
 
         // --- Convergence-tab column sort -------------------------------------
@@ -1040,9 +1069,10 @@
         // keep theta's natural (config) order, so the state is parked whenever
         // the view isn't 'convergence'.
         var CONV_SORT_COLS = [
-            {{ key: 'name',   firstDir: 'asc' }},
-            {{ key: 'stddev', firstDir: 'desc' }},
-            {{ key: 'pct',    firstDir: 'desc' }}
+            {{ key: 'name',     firstDir: 'asc' }},
+            {{ key: 'stddev',   firstDir: 'desc' }},
+            {{ key: 'pct',      firstDir: 'desc' }},
+            {{ key: 'trendAbs', firstDir: 'desc' }}
         ];
         var convSort = null;  // {{ key, dir }} | null
         try {{
@@ -1116,7 +1146,7 @@
             // Update headers
             var hr = document.getElementById('thetaHeadRow');
             if (isConv) {{
-                hr.innerHTML = '<th>Parameter</th><th>StdDev</th><th>% Range</th>';
+                hr.innerHTML = '<th>Parameter</th><th>StdDev</th><th>% Range</th><th>Trend</th>';
             }} else {{
                 hr.innerHTML = '<th>Parameter</th><th>Initial</th><th>Current</th>';
             }}
@@ -1140,10 +1170,18 @@
                     var pctTxt = conv ? conv.pct.toFixed(1) + '%' : '--';
                     var pctColor = '';
                     if (conv) pctColor = 'color:' + convColor(conv.pct) + ';font-weight:600;';
+                    var trendTxt = '--', trendStyle = '', trendTip = '';
+                    if (conv) {{
+                        trendTxt = (conv.trend >= 0 ? '+' : '') + conv.trend.toFixed(1) + '%';
+                        trendStyle = 'color:' + trendColor(conv.trend, conv.tstat) + ';font-weight:600;';
+                        trendTip = 'drift over ' + conv.window + '-iter window, % of range (t=' + conv.tstat.toFixed(1)
+                                 + ', detrended σ=' + conv.residSd.toFixed(4) + ')';
+                    }}
                     var tip = name;
                     tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" title="' + tip + '"><span class="solo-link">' + name + '</span></td>'
                                  + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + sdTxt + '</td>'
-                                 + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;' + pctColor + '">' + pctTxt + '</td>';
+                                 + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;' + pctColor + '">' + pctTxt + '</td>'
+                                 + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;' + trendStyle + '" title="' + trendTip + '">' + trendTxt + '</td>';
                 }} else {{
                     var initVal = initial && initial[name] !== undefined ? fmtVal(initial[name], dec) : '';
                     var ival = currentThetaInternal[name];
@@ -1998,6 +2036,31 @@
             var headCols = headCg.querySelectorAll('col');
             var bodyCols = bodyCg.querySelectorAll('col');
             var nCols = headCols.length;
+            // Views may render a different number of columns (e.g. the Conv
+            // view adds a Trend column); remember the markup's defaults so the
+            // colgroups can be rebuilt to match, with widths saved per count.
+            var baseCols = nCols;
+            var baseWidths = [];
+            headCols.forEach(function(c) {{ baseWidths.push(c.style.width); }});
+            function keyFor(n) {{ return n === baseCols ? storageKey : storageKey + '.' + n; }}
+            function rebuildCols(n) {{
+                [headCg, bodyCg].forEach(function(cg) {{
+                    cg.innerHTML = '';
+                    for (var i = 0; i < n; i++) {{
+                        var c = document.createElement('col');
+                        c.style.width = (n === baseCols && baseWidths[i]) ? baseWidths[i]
+                            : (i === 0 ? 40 : 60 / (n - 1)) + '%';
+                        cg.appendChild(c);
+                    }}
+                }});
+                headCols = headCg.querySelectorAll('col');
+                bodyCols = bodyCg.querySelectorAll('col');
+                nCols = n;
+                try {{
+                    var savedN = JSON.parse(localStorage.getItem(keyFor(n)) || 'null');
+                    if (Array.isArray(savedN) && savedN.length === n) applyWidths(savedN);
+                }} catch (e) {{}}
+            }}
             var headTbl = headCg.parentElement;
             var bodyTbl = bodyCg.parentElement;
             var bodyWrapper = bodyTbl.parentElement;
@@ -2027,7 +2090,8 @@
             }} catch (e) {{}}
             function attach() {{
                 var ths = headRow.querySelectorAll('th');
-                if (ths.length !== nCols) return;
+                if (ths.length < 2) return;
+                if (ths.length !== nCols) rebuildCols(ths.length);
                 for (var i = 0; i < ths.length - 1; i++) {{
                     (function(idx, th) {{
                         if (th.querySelector('.th-grip')) return;
@@ -2087,7 +2151,7 @@
                                 save: function() {{
                                     overlay.remove();
                                     leftLine.remove();
-                                    if (moved) localStorage.setItem(storageKey, JSON.stringify(readPcts()));
+                                    if (moved) localStorage.setItem(keyFor(nCols), JSON.stringify(readPcts()));
                                 }}
                             }};
                         }});
