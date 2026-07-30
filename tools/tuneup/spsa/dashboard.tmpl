@@ -1058,9 +1058,13 @@
             var se = (n > 2 && sxx > 0) ? Math.sqrt(ssRes / (n - 2) / sxx) : 0;
             var tstat = se > 0 ? slope / se : 0;
             var trendPct = range > 0 ? slope * n / range * 100 : 0;  // % of range per window
-            return {{ stddev: stddev, range: range, pct: range > 0 ? (stddev / range * 100) : 0,
+            // StdDev/% Range report the detrended residual σ so they measure
+            // jitter only (roughly window-size invariant); the drift component
+            // lives in the Trend column. Raw σ kept for the tooltip.
+            var residSd = Math.sqrt(ssRes / n);
+            return {{ stddev: residSd, range: range, pct: range > 0 ? (residSd / range * 100) : 0,
                      window: n, trend: trendPct, trendAbs: Math.abs(trendPct), tstat: tstat,
-                     residSd: Math.sqrt(ssRes / n) }};
+                     rawSd: stddev }};
         }}
 
         // --- Convergence-tab column sort -------------------------------------
@@ -1175,7 +1179,7 @@
                         trendTxt = (conv.trend >= 0 ? '+' : '') + conv.trend.toFixed(1) + '%';
                         trendStyle = 'color:' + trendColor(conv.trend, conv.tstat) + ';font-weight:600;';
                         trendTip = 'drift over ' + conv.window + '-iter window, % of range (t=' + conv.tstat.toFixed(1)
-                                 + ', detrended σ=' + conv.residSd.toFixed(4) + ')';
+                                 + ', raw σ=' + conv.rawSd.toFixed(4) + ')';
                     }}
                     var tip = name;
                     tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" title="' + tip + '"><span class="solo-link">' + name + '</span></td>'
