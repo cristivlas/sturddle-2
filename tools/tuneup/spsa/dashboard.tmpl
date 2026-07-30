@@ -951,7 +951,6 @@
                 else localStorage.setItem(hiddenStoreKey(), JSON.stringify(keys));
             }} catch (e) {{}}
         }}
-        var prevTheta = {{}};
         var paramRanges = {{}};
         var paramConfig = {{}};  // name -> param record from /config (has original_lower/upper, type, init, etc.)
 
@@ -1160,7 +1159,6 @@
             const tbody = document.getElementById('thetaBody');
             tbody.innerHTML = '';
             var dec = showInternal ? 5 : 6;
-            var hasPrev = Object.keys(prevTheta).length > 0;
             var names = Object.keys(theta).filter(function(n) {{ return !hiddenParams.has(n); }});
             if (isConv) names = sortConvNames(names);
             for (const name of names) {{
@@ -1188,21 +1186,21 @@
                                  + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;' + trendStyle + '" title="' + trendTip + '">' + trendTxt + '</td>';
                 }} else {{
                     var initVal = initial && initial[name] !== undefined ? fmtVal(initial[name], dec) : '';
-                    var ival = currentThetaInternal[name];
-                    var arrow = '';
-                    if (initial && initial[name] !== undefined && typeof value === 'number') {{
-                        var diff = value - initial[name];
-                        if (diff > 0) arrow = ' <span style="color:#4CAF50;font-size:11px;">&#9650;</span>';
-                        else if (diff < 0) arrow = ' <span style="color:#f44336;font-size:11px;">&#9660;</span>';
-                        else arrow = ' <span style="color:var(--text-faint);font-size:11px;">&#9644;</span>';
-                    }}
+                    // Compact mirror of the Conv tab: jitter dot left of the
+                    // name, trend arrow right of the value.
+                    var conv = paramConvergence(name);
                     var dot = '';
-                    if (hasPrev && (paramColors[name] || (groupedMode && groupMap[name] && paramColors[groupLabel(groupMap[name])])) && prevTheta[name] !== undefined && typeof ival === 'number') {{
-                        var pdiff = ival - prevTheta[name];
-                        var sym = pdiff > 0 ? '&#9650;' : pdiff < 0 ? '&#9660;' : '&#9644;';
-                        var conv = paramConvergence(name);
-                        var dotStyle = pdiff === 0 ? 'color:var(--text-faint);' : conv ? 'color:' + convColor(conv.pct) + ';' : '';
-                        dot = '<span style="font-size:9px;margin-right:4px;' + dotStyle + '">' + sym + '</span>';
+                    if (conv) {{
+                        dot = '<span style="font-size:9px;margin-right:4px;color:' + convColor(conv.pct)
+                            + ';" title="jitter (detrended): σ=' + conv.stddev.toFixed(4) + ', '
+                            + conv.pct.toFixed(1) + '% of range">&#9679;</span>';
+                    }}
+                    var arrow = '';
+                    if (conv) {{
+                        var sym = Math.abs(conv.tstat) < 2 ? '&#9644;' : conv.trend > 0 ? '&#9650;' : '&#9660;';
+                        arrow = ' <span style="font-size:11px;color:' + trendColor(conv.trend, conv.tstat)
+                              + ';" title="trend: ' + (conv.trend >= 0 ? '+' : '') + conv.trend.toFixed(1)
+                              + '% of range over ' + conv.window + '-iter window (t=' + conv.tstat.toFixed(1) + ')">' + sym + '</span>';
                     }}
                     tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" title="' + name + '">' + dot + '<span class="solo-link">' + name + '</span></td>'
                                  + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + initVal + '</td>'
@@ -1746,12 +1744,6 @@
                 const history = historyWindow.slice().sort((a,b) => (a.iteration||0) - (b.iteration||0));
                 if (!history.length) return;
 
-                // Previous iteration theta (for trend dots)
-                if (history.length >= 1) {{
-                    var last = history[history.length - 1];
-                    if (last.theta) prevTheta = Object.assign({{}}, last.theta);
-                }}
-
                 const labels = history.map(h => h.iteration);
                 const thetaKeys = [...new Set(
                     history.flatMap(h => Object.keys(h.theta || {{}}))
@@ -1927,9 +1919,8 @@
                         thetaChart.update();
                         syncParamColors();
                     }}
-                    // Update previous-iteration theta for trend dots
+                    // Grow the client-side window backing the convergence metrics
                     if (d.last_history.theta) {{
-                        prevTheta = Object.assign({{}}, d.last_history.theta);
                         historyWindow.push(d.last_history);
                         if (maxHist > 0 && historyWindow.length > maxHist) historyWindow.shift();
                     }}
