@@ -1443,6 +1443,25 @@
             updateLegend();
         }}
 
+        // Dots read fine up to ~DOT_LIMIT points; beyond that they merge
+        // into fat ropes, so draw plain thinner lines. Applied as plain
+        // dataset values (cheap, matches charts.tmpl's _pr approach) and
+        // rechecked whenever the data length changes. Length only grows —
+        // the maxHist shift keeps it constant — so this flips at most once.
+        var DOT_LIMIT = 150;
+        function applyChartDensity(chart) {{
+            var dense = chart.data.labels.length > DOT_LIMIT;
+            if (chart._dense === dense) return;
+            chart._dense = dense;
+            chart.data.datasets.forEach(function(ds) {{
+                ds.pointRadius = dense ? 0 : 2;
+                ds.borderWidth = dense ? 1.5 : 2;
+            }});
+            // Self-contained: don't rely on callers updating soon after.
+            // Only runs on an actual flip, so the extra render is rare.
+            chart.update('none');
+        }}
+
         function createThetaChart(keys, labels, dataFn, labelFn) {{
             var ctx = document.getElementById('thetaChart').getContext('2d');
             // Restore the persisted legend filter. Every chart-creation path
@@ -1478,9 +1497,13 @@
                     responsive: true,
                     maintainAspectRatio: false,
                     animation: false,
+                    scales: {{
+                        x: {{ ticks: {{ maxRotation: 0, autoSkipPadding: 24 }} }}
+                    }},
                     plugins: {{ tooltip: {{ enabled: false }}, legend: {{ display: false, position: 'bottom', onClick: legendClick }} }}
                 }}
             }});
+            applyChartDensity(chart);
             return chart;
         }}
 
@@ -1900,6 +1923,7 @@
                             thetaChart.data.labels.shift();
                             thetaChart.data.datasets.forEach(ds => ds.data.shift());
                         }}
+                        applyChartDensity(thetaChart);
                         thetaChart.update();
                         syncParamColors();
                     }}
