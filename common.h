@@ -78,7 +78,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define COUNT_VALID_MOVES_AS_NODES          true
 
 /* Experimental in 2.03 */
-#define EVAL_PIECE_GRADING                  false /* TODO: tuneup */
+#define EVAL_PIECE_GRADING                  true
 
 /* Collect extra stats for troubleshooting */
 #define EXTRA_STATS                         false
