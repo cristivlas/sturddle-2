@@ -602,21 +602,6 @@
         .resize-handle:hover::before, .resize-handle.dragging::before {{
             opacity: 1;
         }}
-        .resize-handle::after {{
-            content: '';
-            display: block;
-            width: 48px;
-            height: 4px;
-            border-radius: 2px;
-            transition: opacity 0.15s;
-            position: relative;
-            z-index: 1;
-            background: var(--accent-start);
-            opacity: 0;
-        }}
-        .resize-handle:hover::after, .resize-handle.dragging::after {{
-            opacity: 1;
-        }}
         .col-resize-handle {{
             flex-shrink: 0;
             width: 10px;
@@ -643,21 +628,6 @@
             pointer-events: none;
         }}
         .col-resize-handle:hover::before, .col-resize-handle.dragging::before {{
-            opacity: 1;
-        }}
-        .col-resize-handle::after {{
-            content: '';
-            display: block;
-            width: 4px;
-            height: 48px;
-            border-radius: 2px;
-            transition: opacity 0.15s;
-            position: relative;
-            z-index: 1;
-            background: var(--accent-start);
-            opacity: 0;
-        }}
-        .col-resize-handle:hover::after, .col-resize-handle.dragging::after {{
             opacity: 1;
         }}
         .th-grip {{
