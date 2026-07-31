@@ -142,12 +142,11 @@ The dashboard auto-refreshes using Server-Sent Events (SSE) and failover to an
 interval set by `dashboard_refresh` in tuning.json.
 
 <table><tr>
-<td><img src="screenshots/dash-1.png" alt="Parameters and workers" width="250"></td>
-<td><img src="screenshots/dash-2.png" alt="Charts" width="250"></td>
-<td><img src="screenshots/dash-3.png" alt="Progress" width="250"></td>
-</tr></table>
-<table><tr>
-<td><img src="screenshots/dash-4.png" alt="Desktop" width="805"></td>
+<td><img src="screenshots/dash-dark.png" alt="Dashboard (dark theme)" width="400"></td>
+<td><img src="screenshots/dash-light.png" alt="Dashboard (light theme)" width="400"></td>
+</tr><tr>
+<td><img src="screenshots/charts-full.png" alt="Charts page" width="400"></td>
+<td><img src="screenshots/charts-conv.png" alt="Detrended convergence view" width="400"></td>
 </tr></table>
 
 
