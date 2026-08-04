@@ -433,12 +433,12 @@ namespace chess
 
 
 #if EVAL_PIECE_GRADING
-#define PIECE_VALUES { 0, 73, 305, 367, 528, 1083, 20000 }
+#define PIECE_VALUES { 0, 67, 303, 362, 511, 1059, 20000 }
 #else
 #define PIECE_VALUES { 0, 87, 339, 365, 545, 1046, 20000 }
 #endif /* EVAL_PIECE_GRADING */
 
-#define ENDGAME_ADJUST { 0, 21, -12, -16, 65, -24, 0 }
+#define ENDGAME_ADJUST { 0, 20, -10, -16, 40, -12, 0 }
 
 
     /* Piece values */
