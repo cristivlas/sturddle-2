@@ -246,8 +246,10 @@ namespace impl
 
 #if NO_ASSERT && !TUNING_ENABLED && !TUNING_PARTIAL
     #define interpolate(pc, from, to) impl::Interpolate<from, to>::value(pc)
+    #define PIECE_GRADING_LUT true
 #else
     #define interpolate(pc, from, to) impl::_interpolate(pc, from, to)
+    #define PIECE_GRADING_LUT false
 #endif
 
 
@@ -433,12 +435,12 @@ namespace chess
 
 
 #if EVAL_PIECE_GRADING
-#define PIECE_VALUES { 0, 67, 303, 362, 511, 1059, 20000 }
+#define PIECE_VALUES { 0, 61, 329, 351, 499, 1082, 20000 }
 #else
 #define PIECE_VALUES { 0, 87, 339, 365, 545, 1046, 20000 }
 #endif /* EVAL_PIECE_GRADING */
 
-#define ENDGAME_ADJUST { 0, 20, -10, -16, 40, -12, 0 }
+#define ENDGAME_ADJUST { 0, 18, 0, -2, 4, -18, 0 }
 
 
     /* Piece values */
@@ -449,6 +451,20 @@ namespace chess
     constexpr int WEIGHT[7] = PIECE_VALUES;
     constexpr int ADJUST[7] = ENDGAME_ADJUST;
 #endif /* WEIGHT_TUNING_ENABLED */
+
+#if EVAL_PIECE_GRADING && PIECE_GRADING_LUT
+    /* Values are pre-truncated to match the int return of piece_value_adjustment. */
+    inline constexpr auto ADJUST_TABLE = []
+    {
+        std::array<std::array<int, 33>, 7> table = {};
+
+        for (int pt = PAWN; pt <= QUEEN; ++pt)
+            for (int pc = 0; pc <= 32; ++pc)
+                table[pt][pc] = int(impl::_interpolate(pc, 0, ADJUST[pt]));
+
+        return table;
+    }();
+#endif /* EVAL_PIECE_GRADING && PIECE_GRADING_LUT */
 
 
     /**************************************************************************
@@ -1232,16 +1248,32 @@ namespace chess
             return _piece_count;
         }
 
+        template<PieceType PT> INLINE int piece_value_adjustment() const
+        {
+    #if EVAL_PIECE_GRADING
+      #if PIECE_GRADING_LUT
+            if constexpr (ADJUST[PT] != 0)
+                return ADJUST_TABLE[PT][piece_count()];
+            else
+                return 0;
+      #else
+            return ADJUST[PT] ? int(interpolate(piece_count(), 0, ADJUST[PT])) : 0;
+      #endif /* PIECE_GRADING_LUT */
+    #else
+            return 0;
+    #endif /* EVAL_PIECE_GRADING */
+        }
+
         INLINE int piece_value_adjustment(PieceType piece_type) const
         {
     #if EVAL_PIECE_GRADING
             switch (piece_type)
             {
-            case PAWN: return interpolate(piece_count(), 0, ADJUST[PAWN]);
-            case KNIGHT: return interpolate(piece_count(), 0, ADJUST[KNIGHT]);
-            case BISHOP: return interpolate(piece_count(), 0, ADJUST[BISHOP]);
-            case ROOK: return interpolate(piece_count(), 0, ADJUST[ROOK]);
-            case QUEEN: return interpolate(piece_count(), 0, ADJUST[QUEEN]);
+            case PAWN: return piece_value_adjustment<PAWN>();
+            case KNIGHT: return piece_value_adjustment<KNIGHT>();
+            case BISHOP: return piece_value_adjustment<BISHOP>();
+            case ROOK: return piece_value_adjustment<ROOK>();
+            case QUEEN: return piece_value_adjustment<QUEEN>();
             case KING:
             case NONE:
                 break;
