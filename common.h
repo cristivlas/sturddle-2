@@ -56,6 +56,7 @@ using score_t = int;
 
 constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
+
 #if WEIGHT_TUNING_ENABLED
   #define TUNING_PARTIAL                    true
 #endif
@@ -67,6 +68,8 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define ADAPTIVE_NULL_MOVE                  true
 
 #define CAPTURE_HISTORY                     false
+
+#define CONTINUATION_HISTORY                false
 
 /*
  * Count valid moves made as nodes if true, otherwise use effectively
@@ -86,6 +89,8 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define GROUP_QUIET_MOVES                   true
 
 #define IMPROVEMENT_EXTENSION               false
+
+#define IGNORE_CANCELLED_ITER               false
 
 #define KILLER_MOVE_HEURISTIC               true
 
@@ -118,12 +123,12 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define SMP                                 true
 
 #if !defined(USE_PIECE_SQUARE_TABLES)
-  #define USE_PIECE_SQUARE_TABLES           false /* TODO: tuneup */
+  #define USE_PIECE_SQUARE_TABLES           true /* TODO: tuneup */
 #endif
 
 /* Experimental */
 #define USE_BOOK_HINT                       false
-#define USE_MOVE_PREDICTION                 true
+#define USE_MOVE_PREDICTION                 false
 
 /* Support endtable probing with the Fathom library */
 #define USE_ENDTABLES                       true

@@ -6,6 +6,7 @@ Copyright (c) 2023 - 2026 Cristian Vlasceanu.
 **********************************************************************
 '''
 import argparse
+import json
 import logging
 import math
 import os
@@ -21,17 +22,16 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # uncomment (or set in environment) for newer TF versions (> 2.15.1 ?) that use Keras 3
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
-ACCUMULATOR_SIZE = 1280
-ATTN_FAN_OUT = 32
+ACCUMULATOR_SIZE = 2048
 POOL_SIZE = 8
-ATTN_BUCKETS = 4  # Number of buckets for spatial attention layer
-HIDDEN2_BUCKETS = 4  # Number of buckets for hidden_2 layer
+MAIN_BUCKETS = 16  # Number of buckets for hidden_1a / BucketShift (4 pawn x 4 king-file)
+MOVE_ACCUMULATOR_SIZE = 256  # move-prediction sub-accumulator width (own path, decoupled from eval)
 
 Q_SCALE = 1024
 
 # Quantization range: use int16_t with Q_SCALE, prevent overflow
-# 32 pieces + (16 + 16) occupancy + 1 side-to-move + 1 bias == 66
-Q_MAX_A = 32767 / Q_SCALE / 66
+# 32 pieces + 1 side-to-move + 1 bias == 34
+Q_MAX_A = 32767 / Q_SCALE / 34
 Q_MIN_A = -Q_MAX_A
 
 # (8 pawns + 1 king) x 2 + 1 bias == 19
@@ -39,6 +39,103 @@ Q_MAX_B = 32767  / Q_SCALE / 19
 Q_MIN_B = -Q_MAX_B
 
 SCALE = 100.0
+
+# Square color masks for OCB detection
+LIGHT_SQUARES = np.uint64(0x55AA55AA55AA55AA)
+DARK_SQUARES = np.uint64(0xAA55AA55AA55AA55)
+
+# Squares on files e-h, for king-file bucketing
+FILES_EFGH = np.uint64(0xF0F0F0F0F0F0F0F0)
+
+
+def scale_buckets(x):
+    """Per-sample pawn x king-file bucket ids, same scheme as BucketShift / nnue.h get_bucket."""
+    pawns = popcount(x[:, 2]) + popcount(x[:, 3])
+    pawn_id = np.where(pawns <= 4, 0, np.minimum((pawns - 1) // 4, 3))
+    wk_right = (x[:, 1] & FILES_EFGH) != 0
+    bk_right = (x[:, 0] & FILES_EFGH) != 0
+    return (pawn_id * 4 + wk_right * 2 + bk_right).astype(np.int64)
+
+
+def load_profile(path):
+    """Load per-bucket label scale ratios (dataset profile); eval labels are divided by these."""
+    with open(path) as f:
+        profile = json.load(f)
+    ratios = profile['ratios'] if isinstance(profile, dict) else profile
+    if not isinstance(ratios, list) or len(ratios) != MAIN_BUCKETS:
+        raise ValueError(f'{path}: expected a list of {MAIN_BUCKETS} bucket ratios')
+    ratios = np.array(ratios, dtype=np.float32)
+    if not np.all(np.isfinite(ratios)) or np.any(ratios <= 0):
+        raise ValueError(f'{path}: ratios must be positive and finite')
+    logging.info('profile %s: %s', path, ' '.join(f'{r:.3f}' for r in ratios))
+    return ratios
+
+
+def load_outcome_scale(path, default):
+    """Per-bucket outcome_scale from a profile sidecar; missing key (legacy profile) -> default."""
+    with open(path) as f:
+        profile = json.load(f)
+    scales = profile.get('outcome_scale') if isinstance(profile, dict) else None
+    if scales is None:
+        return np.full(MAIN_BUCKETS, default, dtype=np.float32)
+    scales = np.array(scales, dtype=np.float32)
+    if scales.shape != (MAIN_BUCKETS,) or not np.all(np.isfinite(scales)) or np.any(scales <= 0):
+        raise ValueError(f'{path}: outcome_scale must be {MAIN_BUCKETS} positive values')
+    logging.info('outcome_scale %s: %s', path, ' '.join(f'{s:.0f}' for s in scales))
+    return scales
+
+
+def member_profile_table(data, filepath, args):
+    """Per-member profiles: (member start rows, ratio matrix, outcome-scale matrix), both (members x buckets).
+
+    --profile overrides everything (and keeps --outcome-scale). Otherwise each
+    member of a virtual dataset (or the file itself if not virtual) uses the
+    <member>.profile.json sidecar when present, falling back to the container's
+    sidecar, then to all-ones ratios / --outcome-scale. One level, not recursive.
+    """
+    default_os = np.full(MAIN_BUCKETS, args.outcome_scale, dtype=np.float32)
+    if args.profile_ratios is not None:
+        return np.zeros(1, dtype=np.int64), args.profile_ratios[np.newaxis, :], default_os[np.newaxis, :]
+
+    if data.is_virtual:
+        # HDF5 resolves relative member paths against the container's directory
+        base = os.path.dirname(os.path.abspath(filepath))
+        members = sorted((vs.vspace.get_select_bounds()[0][0], vs.file_name) for vs in data.virtual_sources())
+        members = [
+            (start, filepath if path == '.' else (path if os.path.isabs(path) else os.path.join(base, path)))
+            for start, path in members
+        ]
+    else:
+        members = [(0, filepath)]
+    assert members[0][0] == 0, 'first member must start at row 0'
+
+    # members without their own sidecar fall back to the container's, then to all-ones
+    default = np.ones(MAIN_BUCKETS, dtype=np.float32)
+    own_sidecar = filepath + '.profile.json'
+    if os.path.exists(own_sidecar):
+        default = load_profile(own_sidecar)
+        default_os = load_outcome_scale(own_sidecar, args.outcome_scale)
+        print(f'{filepath}: default profile {own_sidecar}')
+
+    cache = {}
+    matched = 0
+    profiles = []
+    oscales = []
+    for start, path in members:
+        sidecar = path + '.profile.json'
+        if sidecar not in cache:
+            if path != filepath and os.path.exists(sidecar):
+                cache[sidecar] = (load_profile(sidecar), load_outcome_scale(sidecar, args.outcome_scale))
+                print(f'{path}: using profile {sidecar}')
+                matched += 1
+            else:
+                cache[sidecar] = (default, default_os)
+        r, o = cache[sidecar]
+        profiles.append(r)
+        oscales.append(o)
+
+    print(f'{len(members)} member(s), {matched} with own profile')
+    return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles), np.stack(oscales)
 
 
 def configure_logging(args):
@@ -80,7 +177,7 @@ def make_model(args, strategy):
         y_true = tf.cast(y_true, tf.float32)
         y_pred = tf.cast(y_pred, tf.float32)
 
-        eval_target = y_true[:, 0:1]
+        eval_target = y_true[:, 0:1] / y_true[:, 3:4]  # normalize label scale per bucket
 
         if args.clip_eval:
             clipped = soft_clip(eval_target, args.clip_eval / SCALE);
@@ -90,10 +187,14 @@ def make_model(args, strategy):
         outcome_target = y_true[:, 1:2]
         piece_ratio = y_true[:, 2:3]  # 0 to 1, for dynamic outcome weighting
 
-        sigmoid_scale = tf.constant(args.outcome_scale, dtype=tf.float32)
+        sigmoid_scale = y_true[:, 4:5]  # per-row (member x bucket), from profile or --outcome-scale
 
-        # convert predicted and expected (target) eval scores to Win/Draw/Loss prob. scores
-        wdl_eval_pred = tf.sigmoid(y_pred * SCALE / sigmoid_scale)
+        # Targets use the per-row S (each source's own eval->prob calibration). Prediction side
+        # differs by regime: prob-space losses use the global --outcome-scale (one output scale,
+        # the net's cp units); blend uses the per-row S so its outcome nudge lands on the same cp
+        # scale as the Huber term instead of fighting it.
+        pred_scale = sigmoid_scale if args.loss_blend else args.outcome_scale
+        wdl_eval_pred = tf.sigmoid(y_pred * SCALE / pred_scale)
         wdl_eval_target = tf.sigmoid(eval_target * SCALE / sigmoid_scale)
 
         # Compute per-sample losses
@@ -103,10 +204,26 @@ def make_model(args, strategy):
         elif args.loss_bce:
             loss_eval = tf.keras.losses.binary_crossentropy(wdl_eval_target, wdl_eval_pred)[:, tf.newaxis]
             loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)[:, tf.newaxis]
+        elif args.loss_blend:
+            # Huber on raw eval domain; BCE on outcome in probability domain
+            huber_delta = tf.constant(args.huber_delta, dtype=tf.float32)
+            err = y_pred - eval_target
+            abs_err = tf.abs(err)
+            loss_eval = tf.where(
+                abs_err <= huber_delta,
+                0.5 * tf.square(err),
+                huber_delta * (abs_err - 0.5 * huber_delta)
+            )
+            loss_outcome = tf.keras.losses.binary_crossentropy(outcome_target, wdl_eval_pred)[:, tf.newaxis]
         else:
             # default: mean square error
             loss_eval = tf.square(wdl_eval_pred - wdl_eval_target)
             loss_outcome = tf.square(wdl_eval_pred - outcome_target)
+
+        if args.focal_gamma:
+            # soft-target focal: concentrate outcome gradient on confidently-wrong predictions;
+            # epsilon keeps pow gradient finite at error 0 (inf for 0 < gamma < 1)
+            loss_outcome *= (tf.abs(wdl_eval_pred - outcome_target) + 1e-6) ** args.focal_gamma
 
         # Blend the losses with dynamic per-sample weighting based on piece count
         base_outcome_weight = tf.constant(args.outcome_weight, dtype=tf.float32)
@@ -133,86 +250,52 @@ def make_model(args, strategy):
             return tf.cast(f, tf.float32)
 
     class BucketShift(tf.keras.layers.Layer):
+        def __init__(self, num_buckets, **kwargs):
+            super(BucketShift, self).__init__(**kwargs)
+            self.num_buckets = num_buckets
+
         def call(self, features):
-            # Extract already-unpacked pawn bits from features
-            # Pawns are pieces index 2 (white) and 3 (black) in the 12 bitboards
+            # Bitboards are encoded [black, white] per piece (black first).
             # Each bitboard unpacks to 64 bits, so:
-            # - Piece 0 (black king): features[:, 0:64]
-            # - Piece 1 (white king): features[:, 64:128]
-            # - Piece 2 (white pawns): features[:, 128:192]
-            # - Piece 3 (black pawns): features[:, 192:256]
+            # - Piece 0 (black king):  features[:, 0:64]
+            # - Piece 1 (white king):  features[:, 64:128]
+            # - Piece 2 (black pawns): features[:, 128:192]
+            # - Piece 3 (white pawns): features[:, 192:256]
             pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
 
             # Count total pawns on the board
             pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
 
-            # Assign bucket based on pawn count
-            # Bucket 0: 0-3 pawns, Bucket 1: 4-7 pawns
-            # Bucket 2: 8-11 pawns, Bucket 3: 12-16 pawns
-            bucket_id = tf.cast(tf.minimum(pawn_count // 4, 3), tf.int32)
+            # Pawn dimension: fat bucket 0 spans {0,1,2,3,4} pawns; every bucket above spans 4 pawns.
+            pawn_id = tf.cast(
+                tf.where(
+                    pawn_count <= 4.0,
+                    tf.zeros_like(pawn_count),
+                    tf.minimum((pawn_count - 1.0) // 4.0, 3.0),
+                ),
+                tf.int32
+            )
+
+            # King-file dimension: board split into left (files a-d) / right (files e-h).
+            # Feature index idx within a 64-block holds bitboard bit (63 - idx); file = bit % 8.
+            right_mask = tf.constant([1.0 if ((63 - idx) % 8) >= 4 else 0.0 for idx in range(64)], dtype=tf.float32)
+            black_king = tf.cast(features[:, 0:64], tf.float32)
+            white_king = tf.cast(features[:, 64:128], tf.float32)
+            wk_right = tf.cast(tf.reduce_sum(white_king * right_mask, axis=1), tf.int32)
+            bk_right = tf.cast(tf.reduce_sum(black_king * right_mask, axis=1), tf.int32)
+            king_id = wk_right * 2 + bk_right
+
+            # Compose: pawn dimension (4) x king-file dimension (4) = 16 buckets.
+            bucket_id = pawn_id * 4 + king_id
 
             # tf.print("\nPawn count:", pawn_count, "\nBucket id:", bucket_id)
 
-            # Shift features into 4 buckets
+            # Shift features into N buckets
             num_features = tf.shape(features)[1]
-            bucket_mask = tf.one_hot(bucket_id, 4, dtype=features.dtype)
+            bucket_mask = tf.one_hot(bucket_id, self.num_buckets, dtype=features.dtype)
             bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
 
-            features_tiled = tf.tile(tf.expand_dims(features, 1), [1, 4, 1])
-            sparse = features_tiled * bucket_mask
-
-            return tf.reshape(sparse, [-1, 4 * num_features])
-
-
-    class AttnBucketShift(tf.keras.layers.Layer):
-        """Shift attention inputs into buckets based on pawn count (input-side bucketing)."""
-        def __init__(self, num_buckets, **kwargs):
-            super(AttnBucketShift, self).__init__(**kwargs)
-            self.num_buckets = num_buckets
-
-        def call(self, inputs):
-            # inputs[0]: hidden_1b output, shape (batch, 64)
-            # inputs[1]: unpacked features (to extract pawn count)
-            hidden_1b, features = inputs
-
-            # Extract pawn bits from features (same logic as BucketShift)
-            pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
-            pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
-            bucket_id = tf.cast(tf.minimum(pawn_count // 4, self.num_buckets - 1), tf.int32)
-
-            # Shift features into buckets (same approach as BucketShift)
-            num_features = tf.shape(hidden_1b)[1]
-            bucket_mask = tf.one_hot(bucket_id, self.num_buckets, dtype=hidden_1b.dtype)
-            bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
-
-            features_tiled = tf.tile(tf.expand_dims(hidden_1b, 1), [1, self.num_buckets, 1])
-            sparse = features_tiled * bucket_mask
-
-            return tf.reshape(sparse, [-1, self.num_buckets * num_features])
-
-
-    class Hidden2BucketShift(tf.keras.layers.Layer):
-        """Shift pooled hidden_1a output into buckets based on pawn count."""
-        def __init__(self, num_buckets, **kwargs):
-            super(Hidden2BucketShift, self).__init__(**kwargs)
-            self.num_buckets = num_buckets
-
-        def call(self, inputs):
-            # inputs[0]: pooled output (after residual), shape (batch, 160)
-            # inputs[1]: unpacked features (to extract pawn count)
-            pooled, features = inputs
-
-            # Extract pawn bits from features
-            pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
-            pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
-            bucket_id = tf.cast(tf.minimum(pawn_count // 4, self.num_buckets - 1), tf.int32)
-
-            # Shift features into buckets
-            num_features = tf.shape(pooled)[1]
-            bucket_mask = tf.one_hot(bucket_id, self.num_buckets, dtype=pooled.dtype)
-            bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
-
-            features_tiled = tf.tile(tf.expand_dims(pooled, 1), [1, self.num_buckets, 1])
+            features_tiled = tf.tile(tf.expand_dims(features, 1), [1, self.num_buckets, 1])
             sparse = features_tiled * bucket_mask
 
             return tf.reshape(sparse, [-1, self.num_buckets * num_features])
@@ -226,27 +309,8 @@ def make_model(args, strategy):
         input_layer = Input(shape=(13,), dtype=tf.uint64, name='input')
         unpack_layer = Unpack(args.hot_encoding, name='unpack')(input_layer)
 
-        def black_occupied_mask(x):
-            mask = tf.zeros_like(x[:, :64])
-            for i in range(0, 12, 2):
-                mask = tf.math.add(mask, x[:, i*64:(i+1)*64])
-            return mask
-
-        def white_occupied_mask(x):
-            mask = tf.zeros_like(x[:, :64])
-            for i in range(1, 12, 2):
-                mask = tf.math.add(mask, x[:, i*64:(i+1)*64])
-            return mask
-
-        # Extract black occupation mask (summing black pieces' bitboards)
-        black_occupied = Lambda(black_occupied_mask, name='black')(unpack_layer)
-        # Extract white occupation mask (summing white pieces' bitboards)
-        white_occupied = Lambda(white_occupied_mask, name='white')(unpack_layer)
-
-        concat = Concatenate(name='features')([unpack_layer, black_occupied, white_occupied])
-
         # Apply bucketing
-        bucketed = BucketShift(name='bucket_shift')(concat)
+        bucketed = BucketShift(MAIN_BUCKETS, name='bucket_shift')(unpack_layer)
 
         constr_a = QConstraint(Q_MIN_A, Q_MAX_A)
         hidden_1a = Dense(
@@ -261,27 +325,18 @@ def make_model(args, strategy):
 
         constr_b = QConstraint(Q_MIN_B, Q_MAX_B)
 
-        # Define hidden layer 1b (use kings and pawns to modulate "main" network path)
-        # hidden_1b_layer: selects the pawns and kings features.
+        # Hidden layer 1b (kings and pawns) directly modulates the pooled main path.
+        # Output width matches pooled (ACCUMULATOR_SIZE / POOL_SIZE) for 1:1 modulation.
         input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
         hidden_1b = Dense(
-            64,
-            activation=ACTIVATION,
+            ACCUMULATOR_SIZE // POOL_SIZE,
+            activation=None,
             name='hidden_1b',
             kernel_initializer=K_INIT,
             kernel_constraint=constr_b,
             bias_constraint=constr_b,
             trainable=not args.freeze_eval,
         )(input_1b)
-
-        # Bucketed spatial attention: shift hidden_1b into buckets based on pawn count, then apply Dense
-        hidden_1b_bucketed = AttnBucketShift(ATTN_BUCKETS, name='attn_bucket_shift')([hidden_1b, unpack_layer])
-        spatial_attn = Dense(
-            ATTN_FAN_OUT,
-            activation=None,
-            name='spatial_attn',
-            trainable=not args.freeze_eval
-        )(hidden_1b_bucketed)
 
         def custom_pooling(x):
             reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
@@ -290,17 +345,9 @@ def make_model(args, strategy):
 
         pooled = Lambda(custom_pooling, name='pool')(hidden_1a)
 
-        # The "reshaping" layer repeats or tiles the dynamic weights to match the output shape of pooled
-        attn_reshape_layer = Lambda(lambda x: tf.tile(x, tf.constant([1, ACCUMULATOR_SIZE // POOL_SIZE // ATTN_FAN_OUT])))
-
-        # Compute spatial attention modulation
-        modulation = Multiply(name='modulation')([pooled, attn_reshape_layer(spatial_attn)])
-
-        # Add residual connection: pooled + pooled * attention_weights
+        # Modulate pooled by 1b: pooled * (1 + h1b)
+        modulation = Multiply(name='modulation')([pooled, hidden_1b])
         residual = Add(name='residual')([pooled, modulation])
-
-        # Bucket the residual output before hidden_2
-        residual_bucketed = Hidden2BucketShift(HIDDEN2_BUCKETS, name='hidden2_bucket_shift')([residual, unpack_layer])
 
         hidden_2 = Dense(
             16,
@@ -308,7 +355,7 @@ def make_model(args, strategy):
             kernel_initializer=K_INIT,
             name='hidden_2',
             trainable=not args.freeze_eval,
-        )(residual_bucketed)
+        )(residual)
 
         hidden_3 = Dense(
             16,
@@ -318,16 +365,30 @@ def make_model(args, strategy):
             trainable=not args.freeze_eval,
         )(hidden_2)
 
-        # Define the position evaluation output
         eval_output = Dense(1, name='out', dtype='float32', trainable=not args.freeze_eval)(hidden_3)
 
         # Add move prediction heads if enabled
         outputs = [eval_output]
 
         if args.predict_moves:
-            stop_grad = tf.stop_gradient(concat)
+            # Move path is fully decoupled from eval (stop_gradient): a prior attempt to
+            # share the trunk back-spilled into eval. Own sub-accumulator gives the head
+            # depth without that coupling. move_acc is linear-in-inputs before the relu, so
+            # the engine can update it incrementally like the eval accumulator.
+            stop_grad = tf.stop_gradient(unpack_layer)
 
-            # Output layer: 4096 logits for all possible moves (64x64)
+            move_acc = Dense(
+                MOVE_ACCUMULATOR_SIZE,
+                activation=ACTIVATION,
+                kernel_initializer=K_INIT,
+                kernel_constraint=constr_a,
+                bias_constraint=constr_a,
+                name='move_acc',
+                dtype='float32',
+            )(stop_grad)
+
+            # Output layer: 4096 logits for all (from, to) squares (64x64), scored per-move by
+            # column at inference (never densely materialized).
             move_logits = Dense(
                 4096,
                 activation=None,  # Raw logits, no softmax
@@ -338,7 +399,7 @@ def make_model(args, strategy):
                 bias_constraint=constr_a,
                 name='move',
                 dtype='float32'
-            )(stop_grad)
+            )(move_acc)
 
             outputs.append(move_logits)
 
@@ -376,8 +437,7 @@ def make_model(args, strategy):
             # tf.debugging.assert_all_finite(y_pred, "y_pred has nan/inf")
 
             centipawns = y_pred * SCALE
-            scale = tf.constant(args.outcome_scale, dtype=tf.float32)
-            logits = centipawns / scale
+            logits = centipawns / args.outcome_scale
             probs = tf.sigmoid(logits)
             mae = tf.reduce_mean(tf.abs(probs - outcome_target))
             accuracy_score = 1.0 - mae
@@ -385,7 +445,7 @@ def make_model(args, strategy):
 
         @tf.function
         def mae(y_true, y_pred):
-            eval_target = y_true[:, 0:1]  # Extract eval component
+            eval_target = y_true[:, 0:1] / y_true[:, 3:4]  # eval component, scale-normalized
             return tf.keras.metrics.mean_absolute_error(eval_target, y_pred) * SCALE / 100
 
         losses = {'out': combined_loss}
@@ -399,6 +459,10 @@ def make_model(args, strategy):
                 """
                 Scaled cross-entropy loss to prevent gradient explosion.
                 Uses label smoothing and temperature scaling.
+
+                Full softmax over all 4096 outputs unless --move-negatives > 0, in which
+                case the normalizer is over the played move + K random negatives (sampled
+                softmax): same objective, ~K logits instead of 4096.
                 """
                 # y_true: move_indices
                 y_true = tf.cast(y_true, tf.int32)
@@ -412,8 +476,26 @@ def make_model(args, strategy):
                 max_logit = tf.constant(args.move_logit_clip, dtype=tf.float32)
                 clipped_logits = soft_clip(scaled_logits, max_logit)
 
-                # Compute cross-entropy with label smoothing
-                loss = tf.keras.losses.sparse_categorical_crossentropy(y_true, clipped_logits, from_logits=True)
+                if args.move_negatives:
+                    # Sampled softmax: gather the true logit + K random negative logits per row,
+                    # normalize over that subset. Label is index 0 (the played move).
+                    batch = tf.shape(clipped_logits)[0]
+                    true_idx = tf.reshape(y_true, (batch, 1))
+                    negatives = tf.random.uniform(
+                        (batch, args.move_negatives), maxval=4096, dtype=tf.int32
+                    )
+                    # A negative colliding with the played move would double-count it in the
+                    # normalizer and soften the label; mask those logits to -inf so they vanish.
+                    collide = tf.equal(negatives, true_idx)
+                    cand = tf.concat([true_idx, negatives], axis=1)  # (batch, 1+K); true at col 0
+                    subset = tf.gather(clipped_logits, cand, batch_dims=1)  # (batch, 1+K)
+                    neg_mask = tf.concat([tf.zeros((batch, 1), tf.bool), collide], axis=1)
+                    subset = tf.where(neg_mask, tf.fill(tf.shape(subset), tf.constant(-1e9, subset.dtype)), subset)
+                    labels = tf.zeros((batch,), dtype=tf.int32)
+                    loss = tf.keras.losses.sparse_categorical_crossentropy(labels, subset, from_logits=True)
+                else:
+                    # Compute cross-entropy with label smoothing
+                    loss = tf.keras.losses.sparse_categorical_crossentropy(y_true, clipped_logits, from_logits=True)
 
                 # Scale down the loss to balance with position evaluation
                 return loss * args.move_loss_scale
@@ -516,7 +598,11 @@ def write_weigths(args, model, indent=2):
 
 
 def write_binary_weights(args, model, file):
-    for layer in model.layers:
+    # Fixed engine load order (context.cpp): eval layers, then move head.
+    # model.layers is graph-depth ordered and interleaves the head into the eval layers.
+    order = ['hidden_1a', 'hidden_1b', 'hidden_2', 'hidden_3', 'out', 'move_acc', 'move']
+    layers = [model.get_layer(n) for n in order if any(l.name == n for l in model.layers)]
+    for layer in layers:
         params = get_layer_weights(args, layer)
         if params:
             kernel, bias = params
@@ -546,28 +632,32 @@ def export_weights(args, model):
 
 
 def load_binary_weights(args, model, file):
-    """Load weights from a binary file into the model."""
-    for layer in model.layers:
-        weights = layer.get_weights()
-        if len(weights) == 2:
-            kernel, bias = weights
-            print(f"Loading {layer.name}: kernel {kernel.shape}, bias {bias.shape}")
+    """Load weights from a flat .bin into the eval layers, in C++/torch export order.
 
-            # Read kernel weights
-            kernel_size = np.prod(kernel.shape)
-            kernel_data = np.fromfile(file, dtype=np.float32, count=kernel_size)
-            if kernel_data.size == 0:
-                print(f"{layer.name}: skipped empty data")
-                continue
-            kernel_data = kernel_data.reshape(kernel.shape)
+    Consumes hidden_1a, 1b, 2, 3, out (kernel then bias each). The 'move' head is
+    NOT in the file (eval-only export), so it is skipped by name — importing an
+    eval-only weights.bin into a --predict-moves graph leaves the head untouched.
+    """
+    eval_order = ['hidden_1a', 'hidden_1b', 'hidden_2', 'hidden_3', 'out']
+    by_name = {l.name: l for l in model.layers}
 
-            # Read bias weights
-            bias_size = np.prod(bias.shape)
-            bias_data = np.fromfile(file, dtype=np.float32, count=bias_size)
-            bias_data = bias_data.reshape(bias.shape)
+    payload = np.fromfile(file, dtype=np.float32)
+    expected = sum(int(np.prod(by_name[n].get_weights()[0].shape)) + by_name[n].get_weights()[1].shape[0]
+                   for n in eval_order if n in by_name)
+    if payload.size != expected:
+        raise ValueError(f'{args.import_file}: expected {expected} float32, got {payload.size}')
 
-            # Set the weights back to the layer
-            layer.set_weights([kernel_data, bias_data])
+    off = 0
+    for name in eval_order:
+        layer = by_name.get(name)
+        if layer is None:
+            continue
+        kernel, bias = layer.get_weights()
+        ksize, bsize = int(np.prod(kernel.shape)), bias.shape[0]
+        k = payload[off:off + ksize].reshape(kernel.shape); off += ksize
+        b = payload[off:off + bsize].reshape(bias.shape); off += bsize
+        print(f'Loading {name}: kernel {kernel.shape}, bias {bias.shape}')
+        layer.set_weights([k, b])
 
 
 def tf_unpack_bits(bitboards):
@@ -589,6 +679,68 @@ def tf_unpack_bits(bitboards):
     # Flatten the isolated bits tensor
     # return tf.reshape(isolated_bits, [tf.shape(bitboards)[0], -1])
     return tf.reshape(isolated_bits, [-1, 12 * 64])
+
+
+def popcount(bb):
+    """Count bits in uint64 array using parallel bit counting."""
+    bb = bb.astype(np.uint64)
+    bb = bb - ((bb >> 1) & np.uint64(0x5555555555555555))
+    bb = (bb & np.uint64(0x3333333333333333)) + ((bb >> 2) & np.uint64(0x3333333333333333))
+    bb = (bb + (bb >> 4)) & np.uint64(0x0F0F0F0F0F0F0F0F)
+    return ((bb * np.uint64(0x0101010101010101)) >> 56).astype(np.float32)
+
+
+def detect_ocb(x):
+    """
+    Detect opposite-colored bishop endgame positions (bishops + pawns only).
+    x: shape (batch, 13) - bitboards + side-to-move
+    Returns: boolean array of shape (batch,)
+    """
+    black_bishops = x[:, 6]
+    white_bishops = x[:, 7]
+
+    # Check each side's bishop square colors
+    white_on_light = (white_bishops & LIGHT_SQUARES) != 0
+    white_on_dark = (white_bishops & DARK_SQUARES) != 0
+    black_on_light = (black_bishops & LIGHT_SQUARES) != 0
+    black_on_dark = (black_bishops & DARK_SQUARES) != 0
+
+    # Single color only (no bishop pair)
+    white_light_only = white_on_light & ~white_on_dark
+    white_dark_only = white_on_dark & ~white_on_light
+    black_light_only = black_on_light & ~black_on_dark
+    black_dark_only = black_on_dark & ~black_on_light
+
+    # OCB: opposite colors, neither side has bishop pair
+    is_ocb = (white_light_only & black_dark_only) | (white_dark_only & black_light_only)
+
+    # Only apply to pure bishop endgames: no knights, rooks, or queens
+    other_pieces = x[:, 4] | x[:, 5] | x[:, 8] | x[:, 9] | x[:, 10] | x[:, 11]
+
+    return is_ocb & (other_pieces == 0)
+
+
+# DEBUG: Remove this function once OCB feature is verified
+def decode_position(array):
+    """Decode bitboards to python-chess board for debugging."""
+    import chess
+    turn = array[12]
+    bitboards = [int(x) for x in list(array[:12])]
+    board = chess.Board(fen=None)
+    for b in bitboards:
+        board.occupied |= b
+    for b in bitboards[::2]:
+        board.occupied_co[chess.BLACK] |= b
+    for b in bitboards[1::2]:
+        board.occupied_co[chess.WHITE] |= b
+    board.kings = bitboards[0] | bitboards[1]
+    board.pawns = bitboards[2] | bitboards[3]
+    board.knights = bitboards[4] | bitboards[5]
+    board.bishops = bitboards[6] | bitboards[7]
+    board.rooks = bitboards[8] | bitboards[9]
+    board.queens = bitboards[10] | bitboards[11]
+    board.turn = bool(turn)
+    return board
 
 
 def dataset_from_file(args, filepath, strategy, callbacks):
@@ -644,6 +796,12 @@ def dataset_from_file(args, filepath, strategy, callbacks):
 
             self.feature_count = feature_count
             self.batch_size = batch_size
+            self.member_starts, self.member_profiles, self.member_oscales = member_profile_table(
+                self.data, filepath, args
+            )
+            self.trivial_profiles = bool(np.all(self.member_profiles == 1.0)) and bool(
+                np.all(self.member_oscales == self.member_oscales.flat[0])
+            )
             self._num_batches = int(np.floor(len(self.data) / self.batch_size))  # drop incomplete batch
             if args.sample:
                 self.sample_batches()
@@ -670,6 +828,11 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             # Get input features (bitboards)
             x = self.data[start:end, :self.feature_count]
 
+            # Member (source file) of each row, for per-member label-scale profiles
+            member_ids = None
+            if not self.trivial_profiles:
+                member_ids = np.searchsorted(self.member_starts, np.arange(start, end), side='right') - 1
+
             white_to_move = tf.equal(x[:,-1:], 1)  # Training data is from side-to-move POV
 
             # Get both evaluation and outcome data
@@ -684,6 +847,9 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             y_outcome_white_pov = tf.where(white_to_move, y_outcome, -y_outcome)
             # Convert to win probability: -1->0.0, 0->0.5, 1->1.0
             y_outcome = (y_outcome_white_pov + 1.0) / 2.0
+
+            # Capture draw status before smoothing (for OCB adjustment)
+            is_draw = np.squeeze(y_outcome == 0.5)
 
             y_outcome = y_outcome * (1 - args.outcome_smoothing) + 0.5 * args.outcome_smoothing
 
@@ -710,6 +876,44 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 x = x[mask]
                 y_eval = y_eval[mask]
                 y_outcome = y_outcome[mask]
+                is_draw = is_draw[mask]
+                if member_ids is not None:
+                    member_ids = member_ids[mask]
+
+            # OCB draw adjustment (must be before balance)
+            if args.ocb_draw_margin > 0:
+                piece_count_ocb = np.zeros(x.shape[0], dtype=np.float32)
+                for i in range(12):
+                    piece_count_ocb += popcount(x[:, i])
+
+                margin = args.ocb_draw_margin / SCALE
+                within_margin = np.abs(np.squeeze(y_eval)) <= margin
+                is_ocb = detect_ocb(x)
+                is_endgame = piece_count_ocb <= args.ocb_max_pieces
+
+                not_already_zero = np.squeeze(y_eval) != 0
+                ocb_mask = is_draw & within_margin & is_ocb & is_endgame & not_already_zero
+
+                # DEBUG: Remove this block once OCB feature is verified
+                if args.debug and np.any(ocb_mask):
+                    indices = np.where(ocb_mask)[0][:3]  # First 3 matches
+                    for idx in indices:
+                        board = decode_position(x[idx])
+                        print(f"OCB adjustment: {board.epd()} eval={y_eval[idx][0]*SCALE:.0f}cp -> 0")
+
+                # Apply adjustment
+                if np.any(ocb_mask):
+                    y_eval = np.where(ocb_mask[:, np.newaxis], 0.0, y_eval)
+
+            # Label/outcome scales reflect how the source labeled the original position,
+            # so compute before --balance mirroring (which QK<->KQ swaps the bucket)
+            if self.trivial_profiles:
+                label_scale = np.ones((x.shape[0], 1), dtype=np.float32)
+                outcome_scale = np.full((x.shape[0], 1), self.member_oscales.flat[0], dtype=np.float32)
+            else:
+                b = scale_buckets(x)
+                label_scale = self.member_profiles[member_ids, b][:, np.newaxis]
+                outcome_scale = self.member_oscales[member_ids, b][:, np.newaxis]
 
             if args.balance:
                 # Create balanced white/black batches by synthesizing symmetrical possitions
@@ -717,6 +921,8 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 # Flip positions
                 x_flipped = flip_position(x)
                 x = np.concatenate([x, x_flipped], axis=0)
+                label_scale = np.concatenate([label_scale, label_scale])
+                outcome_scale = np.concatenate([outcome_scale, outcome_scale])
 
                 # Flip evals (negate)
                 y_eval_flipped = -y_eval
@@ -727,21 +933,16 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 y_outcome = tf.concat([y_outcome, y_outcome_flipped], axis=0)
 
             # Compute piece count ratio (0 to 1) for dynamic outcome weighting
-            def popcount(bb):
-                """Count bits in uint64 array using parallel bit counting."""
-                bb = bb.astype(np.uint64)
-                bb = bb - ((bb >> 1) & np.uint64(0x5555555555555555))
-                bb = (bb & np.uint64(0x3333333333333333)) + ((bb >> 2) & np.uint64(0x3333333333333333))
-                bb = (bb + (bb >> 4)) & np.uint64(0x0F0F0F0F0F0F0F0F)
-                return ((bb * np.uint64(0x0101010101010101)) >> 56).astype(np.float32)
-
             piece_count = np.zeros(x.shape[0], dtype=np.float32)
             for i in range(12):
                 piece_count += popcount(x[:, i])
             piece_ratio = (piece_count / 32.0)[:, np.newaxis]
 
-            # Combine both targets into a single tensor
-            y_combined = tf.concat([y_eval, y_outcome, tf.constant(piece_ratio)], axis=1)  # Shape: (batch_size, 3)
+            # Combine targets into a single tensor
+            y_combined = tf.concat(
+                [y_eval, y_outcome, tf.constant(piece_ratio), tf.constant(label_scale), tf.constant(outcome_scale)],
+                axis=1,
+            )  # Shape: (batch_size, 5)
 
             # Prepare outputs based on whether move prediction is enabled
             if args.predict_moves and self.data.shape[1] > self.feature_count + 1:
@@ -800,7 +1001,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                         'learn rate': f'{self.model.optimizer.lr.read_value():.2e}',
                         'outcome_weight': args.outcome_weight,
                         'model': self.model.name,
-                        'outcome_scale': args.outcome_scale,
+                        'profile': args.profile,
                         'sampling ratio': args.sample,
                     }
 
@@ -833,11 +1034,11 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             )
             output_shapes = (
                 (None, packed_feature_count),
-                ((None, 3), (None, 1))
+                ((None, 5), (None, 1))
             )
         else:
             output_types = (np.uint64, np.float32)
-            output_shapes = ((None, packed_feature_count), (None, 3))
+            output_shapes = ((None, packed_feature_count), (None, 5))
 
         dataset = tf.data.Dataset.from_generator(
             generator,
@@ -909,7 +1110,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
     return make_dataset(), len(generator)
 
 
-def load_model(path):
+def load_model(path, pool_size=None):
     custom_objects = {
         'combined_loss': None,
         'scaled_sparse_categorical_crossentropy': None,
@@ -918,7 +1119,17 @@ def load_model(path):
         'top_5': None,
     }
 
-    return tf.keras.models.load_model(path, custom_objects=custom_objects)
+    # The 'pool' Lambda binds the module-global POOL_SIZE at load time. When the
+    # source model was trained with a different POOL_SIZE, temporarily restore it
+    # so the saved graph reconstructs with the correct pooled width.
+    global POOL_SIZE
+    saved = POOL_SIZE
+    if pool_size is not None:
+        POOL_SIZE = pool_size
+    try:
+        return tf.keras.models.load_model(path, custom_objects=custom_objects)
+    finally:
+        POOL_SIZE = saved
 
 
 def set_weights(from_model, to_model):
@@ -934,36 +1145,12 @@ def set_weights(from_model, to_model):
             logging.warning(f"Layer {name} not found in target model, skipping")
             continue
 
-        if len(to_layer.get_weights()):  # Trainable?
+        dst = to_layer.get_weights()
+        if dst:  # Trainable?
+            if [w.shape for w in dst] != [w.shape for w in params]:
+                logging.warning(f"Layer {name}: shape mismatch {[w.shape for w in params]} -> {[w.shape for w in dst]}, skipping")
+                continue
             try:
-                to_weights = to_layer.get_weights()
-                # Handle spatial_attn layer shape mismatch (unbucketed -> bucketed input)
-                if name == 'spatial_attn' and len(params) == 2 and len(to_weights) == 2:
-                    old_kernel, old_bias = params
-                    new_kernel, new_bias = to_weights
-                    # Check if source is unbucketed (64, 32) and target is bucketed (64*N, 32)
-                    if old_kernel.shape[0] < new_kernel.shape[0] and new_kernel.shape[0] % old_kernel.shape[0] == 0:
-                        num_buckets = new_kernel.shape[0] // old_kernel.shape[0]
-                        print(f"Converting spatial_attn: {old_kernel.shape} -> {new_kernel.shape} ({num_buckets} buckets)")
-                        # Tile weights across input buckets to preserve learned representation
-                        # Each bucket gets a copy of the original weights
-                        params = [
-                            np.tile(old_kernel, (num_buckets, 1)),
-                            old_bias  # bias stays the same size (32,)
-                        ]
-                # Handle hidden_2 layer shape mismatch (unbucketed -> bucketed input)
-                elif name == 'hidden_2' and len(params) == 2 and len(to_weights) == 2:
-                    old_kernel, old_bias = params
-                    new_kernel, new_bias = to_weights
-                    # Check if conversion is needed: old (160, 16) -> new (640, 16)
-                    if old_kernel.shape[0] < new_kernel.shape[0] and new_kernel.shape[0] % old_kernel.shape[0] == 0:
-                        num_buckets = new_kernel.shape[0] // old_kernel.shape[0]
-                        print(f"Converting hidden_2: {old_kernel.shape} -> {new_kernel.shape} ({num_buckets} buckets)")
-                        # Tile kernel across input buckets
-                        params = [
-                            np.tile(old_kernel, (num_buckets, 1)),
-                            old_bias  # bias stays the same size (16,)
-                        ]
                 to_layer.set_weights(params)
             except Exception:
                 logging.exception(name)
@@ -977,7 +1164,7 @@ def main(args):
 
     alt_model = None
     if args.alt_model and os.path.exists(args.alt_model):
-        alt_model = load_model(args.alt_model)
+        alt_model = load_model(args.alt_model, pool_size=args.alt_pool_size)
 
     if args.model and os.path.exists(args.model):
         saved_model = load_model(args.model)
@@ -1026,7 +1213,9 @@ def main(args):
         if args.model is not None:
             assert os.path.exists(os.path.dirname(args.model))
 
-            save_best_only = not bool(args.save_freq)
+            # When sampling, per-epoch loss is not comparable (different subset each
+            # epoch), so best-only would save erratically: force every-epoch saves.
+            save_best_only = not bool(args.save_freq) and not args.sample
 
             # https://keras.io/api/callbacks/model_checkpoint/
             model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
@@ -1038,7 +1227,7 @@ def main(args):
             )
             callbacks.append(model_checkpoint_callback)
 
-        model.summary(line_length=140)
+        model.summary(line_length=148)
         if not args.model:
             print('*****************************************************************')
             print(' WARNING: checkpoint path not provided, model WILL NOT BE SAVED! ')
@@ -1110,14 +1299,19 @@ if __name__ == '__main__':
         parser.add_argument('--save-model', action='store_true', help='save model immediately, use with --import and/or --alt-model')
 
         parser.add_argument('--loss-bce', action='store_true', help='use binary cross-entropy loss (default is MSE)')
+        parser.add_argument('--loss-blend', action='store_true', help='use Huber on raw eval domain + BCE on outcome')
         parser.add_argument('--loss-mae', action='store_true', help='use mean absolute error loss (defaule is MSE)')
+        parser.add_argument('--huber-delta', type=float, default=1.5, help='delta for Huber loss when using --loss-blend (eval domain units)')
+        parser.add_argument('--focal-gamma', type=float, default=0.0, help='focal modulation of the outcome loss term (0 = off)')
 
         parser.add_argument('--no-capture', action='store_true', help='exclude captures from training')
         parser.add_argument('--no-draw', action='store_true', help='exclude draws from training')
         parser.add_argument('--discard-mismatch', type=float, default=0, help='discard examples where |eval| > threshold (in centipawns) AND game outcome disagrees')
+        parser.add_argument('--ocb-draw-margin', type=float, default=0, help='force eval to 0 for OCB draws within margin in centipawns (0=disabled)')
+        parser.add_argument('--ocb-max-pieces', type=int, default=12, help='max total pieces (incl. kings) for OCB draw adjustment')
 
         parser.add_argument('--outcome-weight', type=float, default=0.1, help='weight for outcome loss vs eval loss')
-        parser.add_argument('--outcome-scale', type=float, default=400.0, help='scale factor for converting centipawns to win probability (sigmoid scaling)')
+        parser.add_argument('--outcome-scale', type=float, default=120.0, help='pred-side sigmoid scale (the net cp units); per-row sidecar S calibrates targets')
         parser.add_argument('--dynamic-outcome-weight', action='store_true', help='scale outcome weight by piece count (more pieces = trust outcome more)')
 
         # Move prediction related arguments
@@ -1127,10 +1321,14 @@ if __name__ == '__main__':
         # Arguments for move prediction stability
         parser.add_argument('--move-temperature', type=float, default=1.0, help='temperature scaling for move logits')
         parser.add_argument('--move-logit-clip', type=float, default=10.0, help='clip move logits to prevent extreme values')
+        parser.add_argument('--move-negatives', type=int, default=0, help='sampled-softmax negatives per row (0 = full 4096 softmax)')
         parser.add_argument('--move-loss-scale', type=float, default=0.1, help='scale factor for move prediction loss')
         parser.add_argument('--clip-norm', type=float, default=1.0, help='gradient clipping norm')
 
         parser.add_argument('--alt-model', help='Path to another model to load/merge weights from')
+        parser.add_argument('--alt-pool-size', type=int, default=POOL_SIZE, help='POOL_SIZE the --alt-model was trained with (for loading its pool Lambda)')
+
+        parser.add_argument('--profile', help='JSON dataset profile with per-bucket label scale ratios')
 
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
@@ -1182,6 +1380,11 @@ if __name__ == '__main__':
         if args.outcome_scale <= 0:
             parser.error("--outcome-scale must be positive")
 
+        if args.focal_gamma < 0:
+            parser.error("--focal-gamma must be >= 0")
+        if sum((args.loss_mae, args.loss_bce, args.loss_blend)) > 1:
+            parser.error("--loss-mae, --loss-bce and --loss-blend are mutually exclusive")
+
         if args.input[0] == 'export' and not args.export:
             args.export = sys.stdout
 
@@ -1190,6 +1393,12 @@ if __name__ == '__main__':
             print(f'Sampling ratio={args.sample}')
 
         log_level = configure_logging(args)
+
+        if args.profile:
+            args.profile_ratios = load_profile(args.profile)
+            print(f'Loaded profile {args.profile}')
+        else:
+            args.profile_ratios = None  # per-member sidecar profiles, see member_profile_table
 
         # delay tensorflow import so that --help does not have to wait
         print('Importing TensorFlow')

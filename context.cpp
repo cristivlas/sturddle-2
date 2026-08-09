@@ -42,7 +42,7 @@
 
 #if WITH_NNUE
   #include "nnue.h"
-  #if !(SHARED_WEIGHTS)
+  #if !SHARED_WEIGHTS && defined(USE_WEIGHTS_H)
     #include "weights.h"
   #endif
 #endif
@@ -62,12 +62,15 @@ using std::chrono::nanoseconds;
 
 #if __linux__
 #include <signal.h>
+#include <unistd.h>
 
 static void segv_handler(int sig)
 {
     dump_backtrace(std::cerr);
+#if !NATIVE_BUILD
     cython_wrapper::GIL_State gil_state;
     PyErr_SetString(PyExc_Exception, "Segmentation Fault");
+#endif /* !NATIVE_BUILD */
 }
 
 static void setup_crash_handler()
@@ -104,6 +107,8 @@ namespace
         std::vector<Entry> _data;
 
     public:
+        /* Non-power-of-2 on purpose: mask gaps scatter the 2nd probe for better
+           eviction spread. Do NOT make this a power of two -- regresses strength. */
         explicit MovesCache(size_t size = 4000) : _data(size)
         {
             ASSERT_ALWAYS(size);
@@ -239,6 +244,9 @@ void _set_param(const std::string& name, int value, bool echo)
     if (iter == Config::_namespace.end())
     {
         search::Context::log_message(LogLevel::ERROR, "unknown parameter: \"" + name + "\"");
+#if TUNING_ENABLED || TUNING_PARTIAL
+        throw std::invalid_argument("unknown parameter: \"" + name + "\"");
+#endif
     }
     else if (value < iter->second._min || value > iter->second._max)
     {
@@ -247,6 +255,9 @@ void _set_param(const std::string& name, int value, bool echo)
         err << iter->second._min << ", " << iter->second._max << "]";
 
         search::Context::log_message(LogLevel::ERROR, err.str());
+#if TUNING_ENABLED || TUNING_PARTIAL
+        throw std::out_of_range(err.str());
+#endif
     }
     else
     {
@@ -281,21 +292,20 @@ std::map<std::string, int> _get_params()
 
 #if WITH_NNUE
 /* Define the network architecture */
-constexpr int INPUTS_A = 3588;
+constexpr int INPUTS_A = nnue::ACTIVE_INPUTS * nnue::NUM_BUCKETS;
 constexpr int INPUTS_B = 256;
-constexpr int HIDDEN_1A = 1280;
+constexpr int HIDDEN_1A = 2048;
 constexpr int HIDDEN_1A_POOLED = HIDDEN_1A / nnue::POOL_STRIDE;
-constexpr int HIDDEN_1B = 64;
+constexpr int HIDDEN_1B = HIDDEN_1A_POOLED; /* 1b modulates pooled 1:1 */
 constexpr int HIDDEN_2 = 16;
 constexpr int HIDDEN_3 = 16;
 
-using LAttnType = nnue::Layer<HIDDEN_1B * nnue::ATTN_BUCKETS, 32>;
 using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
 using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
 #if USE_BF16
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED * nnue::HIDDEN2_BUCKETS, HIDDEN_2, __bf16>;
+  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, __bf16>;
 #else
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED * nnue::HIDDEN2_BUCKETS, HIDDEN_2, float>;
+  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, float>;
 #endif
 using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
 using EVALType = nnue::Layer<HIDDEN_3, 1>;
@@ -303,16 +313,24 @@ using EVALType = nnue::Layer<HIDDEN_3, 1>;
 /*
  * The accumulator takes the inputs and processes them into two outputs,
  * using layers L1A and L1B. L1B processes the 1st 256 inputs, which
- * correspond to kings and pawns. The output of L1B is processed by the
- * spatial attention layer, which moodulates the outputs of the L1A layer.
+ * correspond to kings and pawns. The (linear) output of L1B modulates the
+ * pooled output of L1A 1:1.
  */
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
 using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
 
-using LMOVEType = nnue::Layer<INPUTS_A / Accumulator::NUM_BUCKETS, 4096, int16_t, nnue::QSCALE>;
+/* Move-prediction head (experimental): own 256-wide sub-accumulator off raw inputs
+ * (decoupled from eval), then a bilinear map to the 4096 (from,to) logits scored
+ * per-move by column. Full recompute per node — only used at early iterations. */
+constexpr int MOVE_ACC = 256;
+using LMOVEAccType = nnue::Layer<INPUTS_A / nnue::NUM_BUCKETS, MOVE_ACC, int16_t, nnue::QSCALE>;
+using LMOVEType = nnue::Layer<MOVE_ACC, 4096, int16_t, nnue::QSCALE>;
 
 /* Each thread uses its own stack */
 static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
+
+/* Per-thread bucket-refresh caches */
+static std::vector<Accumulator::RefreshTable> NNUE_refresh(SMP_CORES);
 
 static struct Model
 {
@@ -323,11 +341,11 @@ static struct Model
         constexpr auto param_count =
             L1AType::param_count()
             + L1BType::param_count()
-            + LAttnType::param_count()
             + L2Type::param_count()
             + L3Type::param_count()
             + EVALType::param_count()
         #if USE_MOVE_PREDICTION
+            + LMOVEAccType::param_count()
             + LMOVEType::param_count()
         #endif
             ;
@@ -350,14 +368,14 @@ static struct Model
         try
         {
             /* Load layers in the same order that the trainer exports them. */
-            L1B.load_weights(file);
             L1A.load_weights(file);
-            LATTN.load_weights(file);
+            L1B.load_weights(file);
             L2.load_weights(file);
             L3.load_weights(file);
             EVAL.load_weights(file);
 
         #if USE_MOVE_PREDICTION
+            LMOVE_ACC.load_weights(file);
             LMOVES.load_weights(file);
         #endif
         }
@@ -365,12 +383,11 @@ static struct Model
         {
             throw std::runtime_error("Error reading weights from: " + weights_path.string());
         }
-        Context::log_message(LogLevel::INFO, "Loaded " + weights_path.string());
+        Context::log_message(LogLevel::DEBUG, "Loaded " + weights_path.string());
     }
 
     std::string default_weights_path;
 
-    LAttnType LATTN;
     L1AType L1A;
     L1BType L1B;
     L2Type L2;
@@ -378,6 +395,7 @@ static struct Model
     EVALType EVAL;
 
 #if USE_MOVE_PREDICTION
+    LMOVEAccType LMOVE_ACC;
     LMOVEType LMOVES;
 #endif
 
@@ -385,12 +403,12 @@ static struct Model
 
 
 #if !SHARED_WEIGHTS
-/* weights are compiled-in */
+#ifdef USE_WEIGHTS_H
+/* Legacy debug path: weights baked in as constexpr arrays from weights.h */
 #define INIT_LAYER(layer, name) layer.set_weights(name ## _w, name ## _b)
 
 void Model::init()
 {
-    INIT_LAYER(LATTN, spatial_attn);
     INIT_LAYER(L1A, hidden_1a);
     INIT_LAYER(L1B, hidden_1b);
     INIT_LAYER(L2, hidden_2);
@@ -398,9 +416,65 @@ void Model::init()
     INIT_LAYER(EVAL, out);
 
 #if USE_MOVE_PREDICTION
+    INIT_LAYER(LMOVE_ACC, move_acc);
     INIT_LAYER(LMOVES, move);
 #endif
 }
+#else /* default: C23/C++26 #embed of weights.bin */
+#if !defined(__has_embed)
+  #error "embedded build requires #embed support (GCC 15+, Clang 19+, MSVC 17.15+); define USE_WEIGHTS_H to use the weights.h fallback"
+#endif
+#if __has_embed("weights.bin") != __STDC_EMBED_FOUND__
+  #error "weights.bin not found; run tools/fetch_weights.py before building"
+#endif
+
+/* #embed is a C23/C++26 feature; under -std=c++20 -Werror it is diagnosed as an
+ * extension (clang: -Wc23-extensions, gcc: -Wc++26-extensions). Silence it here so
+ * every compiler/build path is covered in one place rather than via build flags. */
+#if defined(__clang__)
+  #pragma clang diagnostic push
+  #pragma clang diagnostic ignored "-Wc23-extensions"
+#elif defined(__GNUC__)
+  #pragma GCC diagnostic push
+  #pragma GCC diagnostic ignored "-Wpedantic"       /* umbrella: any gcc with #embed */
+  #pragma GCC diagnostic ignored "-Wc++26-extensions" /* precise name where recognized */
+#endif
+
+void Model::init()
+{
+    static constexpr unsigned char WEIGHTS_DATA[] = {
+        #embed "weights.bin"
+    };
+
+    struct membuf : std::streambuf
+    {
+        membuf(const char* data, size_t size)
+        {
+            char* p = const_cast<char*>(data);
+            setg(p, p, p + size);
+        }
+    } buf(reinterpret_cast<const char*>(WEIGHTS_DATA), sizeof(WEIGHTS_DATA));
+
+    std::istream file(&buf);
+    file.exceptions(std::ios::failbit | std::ios::badbit);
+
+    /* Same order as Model::load_weights file-based path */
+    L1A.load_weights(file);
+    L1B.load_weights(file);
+    L2.load_weights(file);
+    L3.load_weights(file);
+    EVAL.load_weights(file);
+#if USE_MOVE_PREDICTION
+    LMOVE_ACC.load_weights(file);
+    LMOVES.load_weights(file);
+#endif
+}
+#if defined(__clang__)
+  #pragma clang diagnostic pop
+#elif defined(__GNUC__)
+  #pragma GCC diagnostic pop
+#endif
+#endif /* USE_WEIGHTS_H */
 #else
 
 void Model::init()
@@ -419,6 +493,10 @@ static void _load_weights(const std::string& file_path)
         model.init();
     else
         model.load_weights(file_path);
+
+    /* cached outputs are only valid for the weights they were computed with */
+    for (auto& table : NNUE_refresh)
+        table = {};
 }
 
 
@@ -437,7 +515,7 @@ static INLINE void update(Accumulator& accumulator, const Context* ctxt)
 /* incremental version */
 static INLINE void update(Accumulator& accumulator, const Context* ctxt, Accumulator& prev_acc)
 {
-    accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc);
+    accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc, NNUE_refresh[ctxt->tid()]);
 }
 
 
@@ -492,7 +570,7 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     auto& acc = NNUE_data[tid()][_ply];
     ASSERT(!acc.needs_update(state()));
 
-    _eval_raw = nnue::eval(acc, model.LATTN, model.L2, model.L3, model.EVAL);
+    _eval_raw = nnue::eval(acc, model.L2, model.L3, model.EVAL);
 
     if (stm_perspective)
     {
@@ -605,14 +683,41 @@ namespace search
     std::vector<Context::StateStack> Context::_state_stacks(SMP_CORES);
     std::vector<MovesCache> _moves_cache(SMP_CORES);
     std::vector<PV> Context::_pvs(SMP_CORES);
+    std::vector<chess::BaseMove> Context::_root_filter;
 
-    /* Cython callbacks */
+#if NATIVE_BUILD
+    /* Default sinks so native builds work without Cython-installed callbacks. */
+    LogLevel native_log_level = LogLevel::INFO;
+
+    static void native_log_message(int level, const std::string& msg, bool force)
+    {
+        if (!force && level < int(native_log_level))
+            return;
+        static constexpr const char* names[] = { "?", "DEBUG", "INFO", "WARN", "ERROR" };
+        const auto name = (level >= 1 && level <= 4) ? names[level] : names[0];
+        std::fprintf(stderr, "[%s] %s\n", name, msg.c_str());
+    }
+
+    /* Last-resort fallback for initial_hash_size(); the OS-native branches in
+     * search.cpp handle all three platforms, so this is only hit if those fail.
+     */
+    static size_t native_vmem_avail()
+    {
+        return 0;
+    }
+#endif /* NATIVE_BUILD */
+
+    /* Cython callbacks (stubbed with native defaults under NATIVE_BUILD) */
     PyObject* Context::_engine = nullptr;
 
     bool (*Context::_book_init)(const std::string&) = nullptr;
     BaseMove (*Context::_book_lookup)(const State&, bool) = nullptr;
     std::string (*Context::_epd)(const State&) = nullptr;
+#if NATIVE_BUILD
+    void (*Context::_log_message)(int, const std::string&, bool) = native_log_message;
+#else
     void (*Context::_log_message)(int, const std::string&, bool) = nullptr;
+#endif /* NATIVE_BUILD */
 
     void (*Context::_on_iter)(PyObject*, Context*, const IterationInfo*) = nullptr;
     void (*Context::_on_move)(PyObject*, const std::string&, int) = nullptr;
@@ -621,7 +726,11 @@ namespace search
     std::string(*Context::_pgn)(Context*) = nullptr;
     void (*Context::_print_state)(const State&, bool) = nullptr;
     void (*Context::_report)(PyObject*, std::vector<Context*>&) = nullptr;
+#if NATIVE_BUILD
+    size_t (*Context::_vmem_avail)() = native_vmem_avail;
+#else
     size_t (*Context::_vmem_avail)() = nullptr;
+#endif /* NATIVE_BUILD */
 
     std::string Context::_syzygy_path;
 
@@ -762,6 +871,7 @@ namespace search
 
         #if WITH_NNUE
             NNUE_data.resize(n_threads);
+            NNUE_refresh.resize(n_threads);
         #endif
         }
     }
@@ -1370,7 +1480,13 @@ namespace search
 
         /* late move pruning */
         if (depth > 0 && count >= LMP[depth] && can_prune())
-            return LMRAction::Prune;
+        {
+        #if CONTINUATION_HISTORY
+            const auto cont_score = _tt->continuation_history_score(*_parent, _parent->turn(), _move);
+            if (cont_score <= CONTINUATION_HISTORY_PRUNING)
+        #endif /* CONTINUATION_HISTORY */
+                return LMRAction::Prune;
+        }
 
         /* no reductions at very low depth and in qsearch */
         if (depth < 3 || count < LATE_MOVE_REDUCTION_THRESHOLD || !can_reduce())
@@ -1381,6 +1497,43 @@ namespace search
         /* Lookup reduction in the Late Move Reduction table. */
         auto reduction = LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)];
 
+        if (_move._group != MoveOrder::TACTICAL_MOVES)
+        {
+            reduction += !_parent->has_improved<THEM>();
+            reduction -= 2 * _parent->is_counter_move(_move);
+
+        #if 0 && CONTINUATION_HISTORY
+            {
+                const auto cont_score = _tt->continuation_history_score(*_parent, _parent->turn(), _move);
+                if (cont_score > 0)
+                    reduction -= std::min(2, int(cont_score * 1000 / CONTINUATION_HISTORY_LMR_DIV));
+            }
+        #endif /* CONTINUATION_HISTORY */
+
+            if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= 13)
+                ++reduction;
+        }
+
+        if (is_capture())
+        {
+            --reduction;
+        #if CAPTURE_HISTORY
+            const auto cap_hist = _tt->capture_history_score(_parent->state(), _parent->turn(), _move);
+            if (cap_hist > CAPTURE_HISTORY_LMR_HIGH)
+                /* --reduction */;
+            else if (cap_hist > 0 && cap_hist < CAPTURE_HISTORY_LMR_LOW)
+                ++reduction;
+        #endif /* CAPTURE_HISTORY */
+        }
+        else if (_move.from_square() == _parent->_capture_square)
+        {
+            --reduction;
+        }
+
+        const auto hist_score = _parent->history_score(_move);
+        if (hist_score > 0 && hist_score < HISTORY_LOW)
+            ++reduction;
+
         /* Adjust for time -- main thread only */
         if (time_left)
         {
@@ -1389,31 +1542,6 @@ namespace search
             auto affordable_depth = fast_log2(1 + node_count) * recip_log_branch;
             reduction = std::max(reduction, std::max<int>(0, depth - affordable_depth));
         }
-
-        if (_move._group != MoveOrder::TACTICAL_MOVES)
-        {
-            reduction += !_parent->has_improved<THEM>();
-            reduction -= 2 * _parent->is_counter_move(_move);
-
-            if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= 13)
-                ++reduction;
-        }
-
-        if (is_capture() || (_move.from_square() == _parent->_capture_square))
-        {
-            --reduction;
-        #if CAPTURE_HISTORY
-            const auto cap_hist = _tt->capture_history_score(_parent->state(), _parent->turn(), _move);
-            if (cap_hist > CAPTURE_HISTORY_LMR_HIGH)
-                --reduction;
-            else if (cap_hist > 0 && cap_hist < CAPTURE_HISTORY_LMR_LOW)
-                ++reduction;
-        #endif /* CAPTURE_HISTORY */
-        }
-
-        const auto hist_score = _parent->history_score(_move);
-        if (hist_score > 0 && hist_score < HISTORY_LOW)
-            ++reduction;
 
         reduction = std::max(1, reduction);
         if (reduction > depth && can_prune())
@@ -1494,7 +1622,11 @@ namespace search
      */
     std::string Context::epd(const State& state)
     {
+    #if NATIVE_BUILD
+        return chess::epd::to_string(state);
+    #else
         return cython_wrapper::call(_epd, state);
+    #endif /* NATIVE_BUILD */
     }
 
 
@@ -1747,8 +1879,9 @@ namespace search
         const double hist_high = (Phase == 3) ? hist_thresholds[ctxt.iteration()] : 0;
 
     #if USE_MOVE_PREDICTION
-        int active[65];  // 32 pieces + 1 stm + 16 + 16 occupancy
+        int active[nnue::MAX_ACTIVE_INPUTS];
         int active_count = 0;
+        ALIGN int16_t move_acc[MOVE_ACC];  /* node sub-accumulator, filled with active[] */
     #endif /* USE_MOVE_PREDICTION */
 
         /********************************************************************/
@@ -1854,12 +1987,18 @@ namespace search
                     if (ctxt.iteration() <= MOVE_PREDICTION_MAX_ITER)
                     {
                         if (active_count == 0)
+                        {
                             nnue::for_each_active_input(ctxt.state(), [&](int idx) {
-                                ASSERT(active_count < 65);
+                                ASSERT(active_count < nnue::MAX_ACTIVE_INPUTS);
                                 active[active_count++] = idx;
                             });
+                            /* Sub-accumulator depends only on the node position (same for all
+                             * moves here), so compute it once when active[] is first filled.
+                             */
+                            nnue::move_accumulate(model.LMOVE_ACC, active, active_count, move_acc);
+                        }
 
-                        nnue::score_move(model.LMOVES, active, active_count, move);
+                        nnue::score_move(model.LMOVES, move_acc, move);
                     }
                     else
                 #endif /* USE_MOVE_PREDICTION */
@@ -1979,7 +2118,9 @@ void cancel_search(CancelReason reason)
         _exit(1);
 
     case CancelReason::PY_ERROR:
+    #if !NATIVE_BUILD
         PyErr_Print();
+    #endif /* !NATIVE_BUILD */
         _exit(2);
     }
 }

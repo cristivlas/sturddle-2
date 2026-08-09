@@ -123,22 +123,26 @@ def main(args):
                 score = np.clip(row[1], -clip, clip)
                 encoded_board = encode(board, args.test).astype(dtype)
 
-                # For old schema: just store board + score
-                out[i, :13] = encoded_board
-                out[i, 13] = score.astype(dtype)
+                # Build the whole row as a single uint64 array and write it in one
+                # assignment. Per-cell np.uint64(...) scalar writes can intermittently
+                # trip HDF5's "no appropriate function for conversion path" under
+                # numpy 2.x / h5py 3.x; a single contiguous row write avoids that path.
+                buf = np.zeros(output_shape[1], dtype=dtype)
+                buf[:13] = encoded_board
+                buf[13] = score.astype(dtype)
 
                 # For new schema: also store outcome and best_move_from/best_move_to
                 if has_new_schema:
                     # Convert outcome from -1,0,1 to 0,1,2 for uint64 compatibility
                     outcome = row[2] if row[2] is not None else 0
-                    outcome_uint = np.uint64(outcome + 1)
-
                     best_move_from = row[3] if row[3] is not None else 0
                     best_move_to = row[4] if row[4] is not None else 0
 
-                    out[i, 14] = outcome_uint
-                    out[i, 15] = np.uint64(best_move_from)
-                    out[i, 16] = np.uint64(best_move_to)
+                    buf[14] = np.uint64(outcome + 1)
+                    buf[15] = np.uint64(best_move_from)
+                    buf[16] = np.uint64(best_move_to)
+
+                out[i] = buf
 
                 if i % 10000 == 0:
                     f.flush()

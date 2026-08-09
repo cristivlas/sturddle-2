@@ -91,6 +91,70 @@ static size_t mem_avail()
 HashTable TranspositionTable::_table(DEFAULT_HASH_TABLE_SIZE);
 
 
+TranspositionTable::TranspositionTable(const TranspositionTable& other)
+    : _countermoves{other._countermoves[BLACK], other._countermoves[WHITE]}
+    , _killer_moves(other._killer_moves)
+    , _hcounters{other._hcounters[BLACK], other._hcounters[WHITE]}
+#if CAPTURE_HISTORY
+    , _capture_hcounters{other._capture_hcounters[BLACK], other._capture_hcounters[WHITE]}
+#endif
+#if CONTINUATION_HISTORY
+    , _cmh{
+        other._cmh[BLACK] ? std::make_unique<ContinuationTable>(*other._cmh[BLACK]) : nullptr,
+        other._cmh[WHITE] ? std::make_unique<ContinuationTable>(*other._cmh[WHITE]) : nullptr}
+    , _followup{
+        other._followup[BLACK] ? std::make_unique<ContinuationTable>(*other._followup[BLACK]) : nullptr,
+        other._followup[WHITE] ? std::make_unique<ContinuationTable>(*other._followup[WHITE]) : nullptr}
+#endif /* CONTINUATION_HISTORY */
+    , _tid(other._tid)
+    , _iteration(other._iteration)
+    , _eval_depth(other._eval_depth)
+    , _ply_history(other._ply_history)
+    , _w_alpha(other._w_alpha)
+    , _w_beta(other._w_beta)
+    , _reset_window(other._reset_window)
+    , _analysis(other._analysis)
+{
+}
+
+
+TranspositionTable& TranspositionTable::operator=(TranspositionTable other) noexcept
+{
+    swap(other);
+    return *this;
+}
+
+
+void TranspositionTable::swap(TranspositionTable& other) noexcept
+{
+    using std::swap;
+
+    swap(_countermoves[BLACK], other._countermoves[BLACK]);
+    swap(_countermoves[WHITE], other._countermoves[WHITE]);
+    swap(_killer_moves, other._killer_moves);
+    swap(_hcounters[BLACK], other._hcounters[BLACK]);
+    swap(_hcounters[WHITE], other._hcounters[WHITE]);
+#if CAPTURE_HISTORY
+    swap(_capture_hcounters[BLACK], other._capture_hcounters[BLACK]);
+    swap(_capture_hcounters[WHITE], other._capture_hcounters[WHITE]);
+#endif /* CAPTURE_HISTORY */
+#if CONTINUATION_HISTORY
+    swap(_cmh[BLACK], other._cmh[BLACK]);
+    swap(_cmh[WHITE], other._cmh[WHITE]);
+    swap(_followup[BLACK], other._followup[BLACK]);
+    swap(_followup[WHITE], other._followup[WHITE]);
+#endif /* CONTINUATION_HISTORY */
+    swap(_tid, other._tid);
+    swap(_iteration, other._iteration);
+    swap(_eval_depth, other._eval_depth);
+    swap(_ply_history, other._ply_history);
+    swap(_w_alpha, other._w_alpha);
+    swap(_w_beta, other._w_beta);
+    swap(_reset_window, other._reset_window);
+    swap(_analysis, other._analysis);
+}
+
+
 /* static */ size_t TranspositionTable::max_hash_size()
 {
     const size_t cur_size = _table.byte_capacity();
@@ -194,9 +258,20 @@ void TranspositionTable::init(bool new_game)
         _killer_moves.fill({});
         _ply_history.fill({});
     #if CAPTURE_HISTORY
-        _capture_hcounters[0] = {};
-        _capture_hcounters[1] = {};
+        _capture_hcounters[BLACK] = {};
+        _capture_hcounters[WHITE] = {};
     #endif /* CAPTURE_HISTORY */
+    #if CONTINUATION_HISTORY
+        ASSERT(_cmh[BLACK]);
+        ASSERT(_cmh[WHITE]);
+        ASSERT(_followup[BLACK]);
+        ASSERT(_followup[WHITE]);
+
+        _cmh[BLACK]->clear();
+        _cmh[WHITE]->clear();
+        _followup[BLACK]->clear();
+        _followup[WHITE]->clear();
+    #endif /* CONTINUATION_HISTORY */
     }
     else
     {
@@ -527,6 +602,9 @@ static bool probe_root(Context& ctxt, TranspositionTable& table)
             board.turn,
             nullptr);
 
+        if (result == TB_RESULT_CHECKMATE || result == TB_RESULT_STALEMATE)
+            return false; /* terminal: normal search scores it correctly */
+
         if (result != TB_RESULT_FAILED)
         {
             ++table._tb_hits;
@@ -537,15 +615,13 @@ static bool probe_root(Context& ctxt, TranspositionTable& table)
             switch (wdl)
             {
                 case TB_LOSS:
-                    ctxt._score = MATE_LOW + dtz;
-                    ctxt._alpha = ctxt._score;
-                    ctxt._beta = SCORE_MAX;
-
-                    table._w_alpha = ctxt._alpha; // keep Context::reset ASSERT from firing
-
-                   /* Do not use move from probe result - search will find the
-                    * move that maximizes resistance (longest mate) among
-                    * equivalent losing moves -- don't make it easy for the opponent.
+                   /* Fall through to normal search. Do not use the move from the
+                    * probe result - search will find the move that maximizes
+                    * resistance (longest mate) among equivalent losing moves --
+                    * don't make it easy for the opponent. Do not impose the TB
+                    * score as a window bound either: WDL probes fail inside the
+                    * tree whenever the halfmove clock is non-zero, so the search
+                    * cannot corroborate the bound and only thrashes against it.
                     */
                     break;
 
@@ -786,7 +862,11 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     ASSERT(move_count > 0);
                     const auto val = futility - next_ctxt->evaluate_material();
 
-                    if (val < ctxt._alpha && next_ctxt->can_prune<true>())
+                    if (val < ctxt._alpha && next_ctxt->can_prune<true>()
+                    #if CONTINUATION_HISTORY
+                        && table.continuation_history_score(ctxt, ctxt.turn(), next_ctxt->_move) <= CONTINUATION_HISTORY_PRUNING
+                    #endif /* CONTINUATION_HISTORY */
+                       )
                     {
                         next_ctxt->_prune_reason = PruneReason::PRUNE_FUTILITY;
                         update_pruned(ctxt, *next_ctxt, table._futility_prune_count);
@@ -867,7 +947,12 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         }
                         else if (ctxt.tt_entry()._value >= ctxt._beta && next_ctxt->can_reduce())
                         {
+                        #if CONTINUATION_HISTORY
+                            const auto cont_score = table.continuation_history_score(ctxt, ctxt.turn(), next_ctxt->_move);
+                            next_ctxt->_max_depth -= (cont_score > CONTINUATION_HISTORY_PRUNING) ? 1 : 2;
+                        #else
                             next_ctxt->_max_depth -= 2;
+                        #endif /* CONTINUATION_HISTORY */
                         }
                     }
                 #endif /* SINGULAR_EXTENSION */
@@ -975,8 +1060,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         if (ctxt._ply < PLY_HISTORY_MAX && abs(move_score) < MATE_HIGH)
                         {
                             auto& h = table._ply_history[ctxt._ply][ctxt.turn()][next_ctxt->_move];
-                            h.first += next_ctxt->improvement<THEM>() / ctxt.depth();
-                            ++h.second;
+                            saturate_history_update(h, next_ctxt->improvement<THEM>() / ctxt.depth());
                         }
 
                         if (ctxt.depth() >= COUNTER_MOVE_MIN_DEPTH)
@@ -987,6 +1071,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                         if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_check())
                             table.history_update_cutoffs(next_ctxt->_move);
+                    #if CONTINUATION_HISTORY
+                        if (next_ctxt->depth() >= CONTINUATION_HISTORY_MIN_DEPTH && !next_ctxt->is_check())
+                            table.continuation_history_update(ctxt, next_ctxt->_move, true);
+                    #endif /* CONTINUATION_HISTORY */
                     }
                 }
                 if constexpr(EXTRA_STATS)
@@ -1003,6 +1091,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_check())
             {
                 table.history_update_non_cutoffs(next_ctxt->_move);
+            #if CONTINUATION_HISTORY
+                if (next_ctxt->_move && next_ctxt->depth() >= CONTINUATION_HISTORY_MIN_DEPTH)
+                    table.continuation_history_update(ctxt, next_ctxt->_move, false);
+            #endif /* CONTINUATION_HISTORY */
             }
 
             /*
@@ -1016,6 +1108,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 && ctxt.is_root()
                 && move_count == 1
                 && move_score < MATE_HIGH
+                && move_score > -MATE_HIGH
                 && move_score < table._w_alpha
                 && ctxt.tid() == 0 /* main thread */
                 && ctxt.evaluate<false>() < table._w_alpha)
@@ -1325,37 +1418,49 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
         ctxt.reset();
 
+        bool cancelled = false;
+
         {   /* SMP scope start */
             SMPTasks tasks(ctxt, table, score);
 
             /* main thread search */
+            const auto completed_best = ctxt._prev;
             const auto iter_score = search_iteration(ctxt, table, score);
 
-            if (ctxt.is_cancelled())
-                break;
+            cancelled = ctxt.is_cancelled();
 
-            score = iter_score; /* retain the score for completed iterations */
-
-            if (table._reset_window)
+            if (cancelled)
             {
-            #if 0 /* debug */
-                std::cout << "WINDOW RESET(" << i << "): " << score << " (";
-                std::cout << table._w_alpha << ", " << table._w_beta << ")\n";
-            #endif
-
-                ctxt.cancel();
-                table._reset_window = false;
-
-                continue;
+                if constexpr(IGNORE_CANCELLED_ITER)
+                    ctxt._best_move = completed_best;
             }
+            else
+            {
+                score = iter_score; /* retain the score for completed iterations */
 
-            tasks.do_report();
+                if (table._reset_window)
+                {
+                #if 0 /* debug */
+                    std::cout << "WINDOW RESET(" << i << "): " << score << " (";
+                    std::cout << table._w_alpha << ", " << table._w_beta << ")\n";
+                #endif
+
+                    ctxt.cancel();
+                    table._reset_window = false;
+
+                    continue;
+                }
+
+                tasks.do_report();
+            }
 
         }   /* SMP scope end */
 
         ASSERT(ctxt.iteration());
 
-        /* post iteration info if there's a registered callback */
+        /* post iteration info if there's a registered callback;
+         * report on cancellation too so that PV stays in sync with bestmove
+        */
         if (Context::_on_iter)
         {
             IterationInfo info = { score, table.nodes(), 0, 0, table.tb_hits() };
@@ -1370,6 +1475,9 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
 
             (*Context::_on_iter)(Context::_engine, &ctxt, &info);
         }
+
+        if (cancelled)
+            break;
 
         if (ctxt._has_singleton && !table._analysis)
             break;

@@ -21,7 +21,7 @@
  */
 #include "common.h"
 #include "chess.h"
-#include <fstream>
+#include <istream>
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
@@ -77,6 +77,10 @@
     #define DEBUG_INCREMENTAL false
 #endif
 
+#ifndef NNUE_SINGLE_BUCKET
+    #define NNUE_SINGLE_BUCKET true
+#endif
+
 namespace nnue
 {
     static const std::string instrset = ARCH ARCH_FMA ARCH_VNNI ARCH_BF16;
@@ -85,20 +89,36 @@ namespace nnue
     using input_t = int16_t;
     using weight_t = float;
 
-    constexpr int ACTIVE_INPUTS = 897;
-    constexpr int ATTN_BUCKETS = 4;
-    constexpr int HIDDEN2_BUCKETS = 4;
+    constexpr int ACTIVE_INPUTS = 769;
     constexpr int EVAL_SCALE = 100;
-    constexpr int MAX_ACTIVE_INPUTS = 65; // 32 pieces + 32 occupancy mask + turn
-    constexpr auto POOL_STRIDE = Vec8s::size();
+    constexpr int MAX_ACTIVE_INPUTS = 33; // 32 pieces + turn
+    constexpr int NUM_BUCKETS = 16;
+    constexpr int PAWN_BUCKETS = 4;
+    constexpr int KING_BUCKETS = 4;
+    constexpr int POOL_STRIDE = 8;
     constexpr int QSCALE = 1024;
+    constexpr int QLOG2 = 10;  /* log2(QSCALE), for shift-based requantization */
+    static_assert((1 << QLOG2) == QSCALE, "QLOG2 must be log2(QSCALE)");
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
 
+    INLINE int pawn_bucket(const State& state)
+    {
+        const int p = chess::popcount(state.pawns);
+        return p <= 4 ? 0 : std::min<int>((p - 1) / 4, 3);
+    }
+
+    INLINE int king_bucket(const State& state)
+    {
+        const int wk_right = square_file(state.king(WHITE)) >= 4;
+        const int bk_right = square_file(state.king(BLACK)) >= 4;
+        return wk_right * 2 + bk_right;
+    }
+
     INLINE int get_bucket(const State& state)
     {
-        return std::min<int>(chess::popcount(state.pawns) / 4, 3);
+        return pawn_bucket(state) * KING_BUCKETS + king_bucket(state);
     }
 
     #if INSTRSET >= 9
@@ -295,9 +315,6 @@ namespace nnue
             }
         }
         encoding[TURN_INDEX] = board.turn;
-
-        for_each_square_r(color_masks[0], [&](Square j) { encoding[832 - j] = 1; });
-        for_each_square_r(color_masks[1], [&](Square j) { encoding[896 - j] = 1; });
     }
 
     template <typename F>
@@ -317,10 +334,6 @@ namespace nnue
 
         if (state.turn)
             func(TURN_INDEX);
-
-        // Occupancy masks
-        for_each_square_r(color_masks[0], [&](Square sq) { func(832 - sq); });
-        for_each_square_r(color_masks[1], [&](Square sq) { func(896 - sq); });
     }
 
     template <typename F>
@@ -345,12 +358,6 @@ namespace nnue
         return (piece_type % 6) * 128 + (64 * color) + 63 - square;
     }
 
-    /** Calculate index into occupancy mask for given color */
-    INLINE constexpr int mask_index(Color color, Square square) noexcept
-    {
-        return (color ? 833 : 769) + 63 - square;
-    }
-
 
     /** Rectified Linear Unit (reLU) activation */
     template <typename V> INLINE V relu(V v) { return max(v, 0); }
@@ -362,6 +369,7 @@ namespace nnue
     INLINE Vec8s relu<Vec8s>(Vec8s v) { return max(v, v8_zero); }
 
 
+#if 0
     template <int N>
     INLINE void activate(const int16_t (&input)[N], float (&output)[N])
     {
@@ -388,6 +396,39 @@ namespace nnue
         for (size_t i = 0; i < N; i += VF::size())
         {
             VF v = to_float(extend(relu(VS().load_a(&input[i]))));
+            (v * v_scale).store_a(&output[i]);
+        }
+#endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
+    }
+#endif /* 0 */
+
+
+    /** Dequantize int16/QSCALE to float, no activation (linear layer). */
+    template <int N>
+    INLINE void dequantize(const int16_t (&input)[N], float (&output)[N])
+    {
+        constexpr float QSCALE_RECIP = 1.0f / QSCALE;
+
+#if __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+        #pragma clang loop vectorize(enable)
+        for (int i = 0; i != N; ++i)
+            output[i] = float(input[i]) * QSCALE_RECIP;
+#else
+    #if INSTRSET < 9
+        using VF = Vec8f;
+        using VS = Vec8s;
+    #else
+        using VF = Vec16f;
+        using VS = Vec16s;
+    #endif /* AVX512 */
+
+        static_assert(N % VF::size() == 0);
+
+        const VF v_scale(QSCALE_RECIP);
+
+        for (size_t i = 0; i < N; i += VF::size())
+        {
+            VF v = to_float(extend(VS().load_a(&input[i])));
             (v * v_scale).store_a(&output[i]);
         }
 #endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
@@ -516,7 +557,7 @@ namespace nnue
             }
         }
 
-        void load_weights(std::ifstream& file)
+        void load_weights(std::istream& file)
         {
             auto w = std::make_unique<float[]>(I * OUTPUTS);
             auto b = std::make_unique<float[]>(OUTPUTS);
@@ -655,44 +696,27 @@ namespace nnue
     {
         static_assert(INPUTS % OUTPUTS == 0);
         static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
+        static_assert(POOL_STRIDE == 8);
 
-    #if INSTRSET < 8
+        constexpr float SCALE_RECIP = 1.0f / POOL_STRIDE / QSCALE;
+
         Vec8s v;
-
         for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
         {
             v.load_a(&in[i]);
-            v = max(v, v8_zero);
-
-            out[j] = float(::horizontal_add(extend(v))) / POOL_STRIDE / QSCALE;
-        }
-    #else
-        /* AVX2 (or better) */
-        static_assert(INPUTS % (2 * POOL_STRIDE) == 0);
-        Vec16s v;
-
-        for (size_t i = 0, j = 0; i + 2 * POOL_STRIDE <= INPUTS; i += 2 * POOL_STRIDE, j += 2)
-        {
-            v.load_a(&in[i]);
-
             ASSERT(j < OUTPUTS);
-            ASSERT(j + 1< OUTPUTS);
-
-            out[j] = float(::horizontal_add(extend(max(v.get_low(), v8_zero)))) / POOL_STRIDE / QSCALE;
-            out[j + 1] = float(::horizontal_add(extend(max(v.get_high(), v8_zero)))) / POOL_STRIDE / QSCALE;
+            out[j] = float(::horizontal_add(extend(max(v, v8_zero)))) * SCALE_RECIP;
         }
-    #endif /* INSTRSET < 8 */
     }
 
 
     template <int M, int N, int O> struct Accumulator
     {
-        static_assert(ACTIVE_INPUTS * 4 == M);
+        static_assert(ACTIVE_INPUTS * NUM_BUCKETS == M);
 
         static constexpr int INPUTS = round_up<INPUT_STRIDE>(M);
         static constexpr int OUTPUTS_A = N;
         static constexpr int OUTPUTS_B = O;
-        static constexpr int NUM_BUCKETS = 4;
 
         struct Bucket
         {
@@ -700,19 +724,47 @@ namespace nnue
             uint64_t hash = 0;
         };
 
-        Bucket _bucket[NUM_BUCKETS];
+        /* Per-thread cache: last accumulator computed in each bucket, plus its
+         * piece bitboards, so bucket changes refresh by diffing pieces against
+         * a same-bucket position instead of rebuilding all active inputs.
+         */
+        struct RefreshEntry
+        {
+            ALIGN int16_t output[OUTPUTS_A];
+            Bitboard pieces[6][2] = { };
+            bool turn = false;
+            bool valid = false;
+        };
+
+        struct RefreshTable
+        {
+            RefreshEntry entry[NUM_BUCKETS];
+        };
+
+        /* Single slot trades the per-bucket output cache for a smaller footprint. */
+        static constexpr int SLOTS = NNUE_SINGLE_BUCKET ? 1 : NUM_BUCKETS;
+
+        Bucket _bucket[SLOTS];
         int _current_bucket = 0;
         ALIGN int16_t _output_b[OUTPUTS_B] = { };
+
+        INLINE Bucket& slot(int bucket) { return _bucket[NNUE_SINGLE_BUCKET ? 0 : bucket]; }
+        INLINE const Bucket& slot(int bucket) const { return _bucket[NNUE_SINGLE_BUCKET ? 0 : bucket]; }
 
     #if DEBUG_INCREMENTAL
         /* remember previous inputs, for debugging */
         ALIGN input_t _input[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { }; /* one-hot encoding */
+
+        /* full-width shadow of the per-bucket hashes, so the bucket-vs-hash
+         * equivalence can be checked even when SLOTS == 1 (single-bucket mode)
+         */
+        uint64_t _ref_hash[NUM_BUCKETS] = { };
     #endif
 
 
         INLINE bool needs_update(const State& state) const
         {
-            return state.hash() != _bucket[_current_bucket].hash;
+            return state.hash() != slot(_current_bucket).hash;
         }
 
 
@@ -729,11 +781,14 @@ namespace nnue
         #endif
             one_hot_encode(state, _input);
 
-            layer_1a.dot(_input, _bucket[bucket].output, base);
+            layer_1a.dot(_input, slot(bucket).output, base);
             layer_1b.dot(_input, _output_b);
 
-            _bucket[bucket].hash = state.hash();
+            slot(bucket).hash = state.hash();
             _current_bucket = bucket;
+        #if DEBUG_INCREMENTAL
+            _ref_hash[bucket] = state.hash();
+        #endif
         }
 
         template <typename LA, typename LB>
@@ -749,7 +804,6 @@ namespace nnue
         static INLINE void delta(int (&d)[MAX_ACTIVE_INPUTS], int& idx, PieceType pt, Color col, Square sq)
         {
             d[idx++] = piece_square_index(pt, col, sq);
-            d[idx++] = mask_index(col, sq);
         }
 
         /** Update 1st layer output incrementally, based on a previous state */
@@ -760,13 +814,31 @@ namespace nnue
             const State& prev,
             const State& state,
             const Move& move,
-            Accumulator& ancestor)
+            Accumulator& ancestor,
+            RefreshTable& refresh)
         {
             ASSERT(needs_update(state));
-            ASSERT(ancestor._bucket[ancestor._current_bucket].hash == prev.hash());
+            ASSERT(ancestor.slot(ancestor._current_bucket).hash == prev.hash());
 
             const int bucket = get_bucket(state);
-            bool incremental_a = (ancestor._bucket[bucket].hash == prev.hash());
+            const int prev_bucket = ancestor._current_bucket;
+            bool incremental_a = (bucket == prev_bucket);
+
+        #if DEBUG_INCREMENTAL
+            /* bucket==prev_bucket must match the per-bucket-hash predicate; _ref_hash shadows it for SLOTS==1 */
+            ASSERT_ALWAYS(incremental_a == (ancestor._ref_hash[bucket] == prev.hash()));
+          #if !NNUE_SINGLE_BUCKET
+            ASSERT_ALWAYS(ancestor._ref_hash[bucket] == ancestor._bucket[bucket].hash);
+          #endif /* !NNUE_SINGLE_BUCKET */
+        #endif /* DEBUG_INCREMENTAL */
+
+        #if DEBUG_INCREMENTAL
+            {
+                static std::atomic<bool> seen[NUM_BUCKETS][NUM_BUCKETS];
+                if (!seen[prev_bucket][bucket].exchange(true))
+                    std::cerr << "[nnue] bucket " << prev_bucket << " -> " << bucket << (bucket == prev_bucket ? " same" : " cross") << std::endl;
+            }
+        #endif /* DEBUG_INCREMENTAL */
 
             /* compute delta based on ancestor state */
             ASSERT(prev.turn != state.turn);
@@ -808,18 +880,52 @@ namespace nnue
 
             const size_t base = bucket * ACTIVE_INPUTS;
 
+            /* Where the delta loops read the prior values from on the
+             * same-bucket path; unused on the bucket-change path, which
+             * refreshes slot(bucket).output from the refresh table.
+             */
+            const int16_t* src_a = ancestor.slot(bucket).output;
+
             if (incremental_a)
             {
-                memcpy(_bucket[bucket].output, ancestor._bucket[bucket].output, sizeof(_bucket[bucket].output));
+                /* fused: incremental_update reads src_a, writes slot(bucket).output */
             }
-            else if (_bucket[bucket].hash != state.hash())
+            else if (slot(bucket).hash != state.hash())
             {
-                const int prev_bucket = ancestor._current_bucket;
-                const size_t base_old = prev_bucket * ACTIVE_INPUTS;
-                const size_t base_new = bucket * ACTIVE_INPUTS;
+                auto& entry = refresh.entry[bucket];
 
-                // Start from ancestor's output (computed with prev_bucket weights for prev position)
-                memcpy(_bucket[bucket].output, ancestor._bucket[prev_bucket].output, sizeof(_bucket[bucket].output));
+                if (!entry.valid)
+                {
+                    /* empty-board entry: the diff below rebuilds from bias + all pieces */
+                    memcpy(entry.output, layer_a._b, sizeof(entry.output));
+                    entry.valid = true;
+                }
+
+                int rem[MAX_ACTIVE_INPUTS], add[MAX_ACTIVE_INPUTS];
+                int nr = 0, na = 0;
+
+                const Bitboard bbs[6] = { state.kings, state.pawns, state.knights, state.bishops, state.rooks, state.queens };
+                int i = 63;
+                for (int t = 0; t != 6; ++t)
+                    for (int c = 0; c != 2; ++c)
+                    {
+                        const Bitboard bb = bbs[t] & state._occupied_co[c];
+                        const Bitboard old = entry.pieces[t][c];
+                        for_each_square_r(old & ~bb, [&](Square sq) { rem[nr++] = i - sq; });
+                        for_each_square_r(bb & ~old, [&](Square sq) { add[na++] = i - sq; });
+                        entry.pieces[t][c] = bb;
+                        i += 64;
+                    }
+
+                if (state.turn != entry.turn)
+                {
+                    if (state.turn)
+                        add[na++] = TURN_INDEX;
+                    else
+                        rem[nr++] = TURN_INDEX;
+                    entry.turn = state.turn;
+                }
+
 
             #if __ARM__
                 using VecShort = Vec16s;
@@ -828,40 +934,41 @@ namespace nnue
             #endif
                 static_assert(OUTPUTS_A % VecShort::size() == 0);
 
-                auto apply_delta = [&](int idx)
+                VecShort vo, vw;
+                for (int j = 0; j != OUTPUTS_A; j += VecShort::size())
                 {
-                    VecShort vo, vw_old, vw_new;
-
-                    for (int j = 0; j < OUTPUTS_A; j += VecShort::size())
+                    vo.load_a(&entry.output[j]);
+                    for (int k = 0; k != nr; ++k)
                     {
-                        vo.load_a(&_bucket[bucket].output[j]);
-                        vw_old.load_a(&layer_a._w[base_old + idx][j]);
-                        vw_new.load_a(&layer_a._w[base_new + idx][j]);
-                        vo = vo - vw_old + vw_new;
-                        vo.store_a(&_bucket[bucket].output[j]);
+                        vw.load_a(&layer_a._w[base + rem[k]][j]);
+                        vo -= vw;
                     }
-                };
-                for_each_active_input(prev, apply_delta);
-
-                // Now _bucket[bucket].output has correct output for prev position with bucket weights
-                // Set flag so move deltas get applied
-                incremental_a = true;
+                    for (int k = 0; k != na; ++k)
+                    {
+                        vw.load_a(&layer_a._w[base + add[k]][j]);
+                        vo += vw;
+                    }
+                    vo.store_a(&entry.output[j]);
+                    vo.store_a(&slot(bucket).output[j]);
+                }
+                /* layer A is final for state; incremental_update handles layer B only */
             }
 
-            /* layer B: update incrementally from ancestor state */
-            memcpy(_output_b, ancestor._output_b, sizeof(_output_b));
-            incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, incremental_a);
+            /* layer B: updated incrementally from the ancestor inside incremental_update */
+            incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, incremental_a, src_a, ancestor._output_b);
 
-            _bucket[bucket].hash = state.hash();
+            slot(bucket).hash = state.hash();
             _current_bucket = bucket;
 
         #if DEBUG_INCREMENTAL
+            _ref_hash[bucket] = state.hash();
+
             // Validate that incremental_update produces same result as full dot products
             // layer A
             ALIGN int16_t output_a[OUTPUTS_A] = { };
             layer_a.dot(temp, output_a, base);
             for (int i = 0; i != OUTPUTS_A; ++i)
-                ASSERT_ALWAYS(abs(output_a[i] - _bucket[bucket].output[i]) < 0.0001);
+                ASSERT_ALWAYS(abs(output_a[i] - slot(bucket).output[i]) < 0.0001);
 
             // layer B
             ALIGN int16_t output_b[OUTPUTS_B] = { };
@@ -871,7 +978,11 @@ namespace nnue
         #endif /* DEBUG_INCREMENTAL */
         }
 
-        /** Recompute incrementally */
+        /** Recompute incrementally.
+         * src_a / src_b: where to read the prior accumulator values from. Reading
+         * the ancestor directly in the delta loops (instead of memcpy-ing it into
+         * this object first) saves a full write+read pass over the outputs.
+         */
         template <typename LA, typename LB>
         INLINE void incremental_update(
             const LA& layer_a,
@@ -882,7 +993,9 @@ namespace nnue
             const int a_idx,
             size_t base,
             int bucket,
-            bool update_layer_a)
+            bool update_layer_a,
+            const int16_t* src_a,
+            const int16_t* src_b)
         {
         #if __ARM__
             using VecShort = Vec16s;
@@ -908,7 +1021,7 @@ namespace nnue
             {
                 for (int j = 0; j != OUTPUTS_A; j += VecShort::size())
                 {
-                    vo.load_a(&_bucket[bucket].output[j]);
+                    vo.load_a(&src_a[j]);
 
                     for (int i = 0; i < r_idx; ++i)
                     {
@@ -925,7 +1038,7 @@ namespace nnue
                         vw.load_a(&layer_a._w[index][j]);
                         vo += vw;
                     }
-                    vo.store_a(&_bucket[bucket].output[j]);
+                    vo.store_a(&slot(bucket).output[j]);
                 }
             }
 
@@ -934,7 +1047,7 @@ namespace nnue
                 /* Layer B */
                 for (int j = 0; j != OUTPUTS_B; j += VecShort::size())
                 {
-                    vo.load_a(&_output_b[j]);
+                    vo.load_a(&src_b[j]);
 
                     for (int i = 0; i < r_idx; ++i)
                     {
@@ -955,6 +1068,10 @@ namespace nnue
                     }
                     vo.store_a(&_output_b[j]);
                 }
+            }
+            else if (src_b != _output_b)
+            {
+                memcpy(_output_b, src_b, sizeof(_output_b));
             }
         }
 
@@ -1008,65 +1125,103 @@ namespace nnue
     };
 
 
-    template <typename A, typename ATTN, typename L2, typename L3, typename OUT>
-    INLINE int eval(const A& a, const ATTN& attn, const L2& l2, const L3& l3, const OUT& out)
+    template <typename A, typename L2, typename L3, typename OUT>
+    INLINE int eval(const A& a, const L2& l2, const L3& l3, const OUT& out)
     {
         constexpr int POOL_OUT = A::OUTPUTS_A / POOL_STRIDE;
-        static_assert(POOL_OUT * HIDDEN2_BUCKETS == L2::INPUTS);
-        static_assert(A::OUTPUTS_B * ATTN_BUCKETS == ATTN::INPUTS);
+        static_assert(POOL_OUT == L2::INPUTS);
+        static_assert(A::OUTPUTS_B == POOL_OUT); /* 1b modulates pooled 1:1 */
+        static_assert(L2::OUTPUTS == L3::INPUTS);
+        static_assert(L3::OUTPUTS == OUT::INPUTS);
 
-        constexpr int ATTN_IN_PER_BUCKET = A::OUTPUTS_B;
-
-        ALIGN float attn_in[ATTN_IN_PER_BUCKET];
-        ALIGN float attn_out[ATTN::OUTPUTS];
         ALIGN float l2_in[POOL_OUT];
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
 
-        pool(a._bucket[a._current_bucket].output, l2_in);
-
-        /* The "spatial attention" layer modulates L2 input. */
-        /* Use bucket offset to select the right weights slice */
-        activate(a._output_b, attn_in);
-        attn.dot(attn_in, attn_out, static_cast<size_t>(a._current_bucket * ATTN_IN_PER_BUCKET));
+        pool(a.slot(a._current_bucket).output, l2_in);
 
         static_assert(POOL_OUT % Vector::size() == 0);
 
-        Vector v1, v2;
+        /* hidden_1b (linear) modulates pooled: l2_in *= (1 + dequant(_output_b)) */
+        const Vector v_one(1.0f);
+
+#if INSTRSET >= 7
+        /* AVX/AVX2/AVX512: short-vector width matches Vector; fuse load+widen+modulate. */
+    #if INSTRSET >= 9
+        using VS = Vec16s;
+    #else
+        using VS = Vec8s;
+    #endif
+        static_assert(VS::size() == Vector::size());
+
+        const Vector v_scale(1.0f / QSCALE);
         for (int i = 0; i != POOL_OUT; i += Vector::size())
         {
+            Vector v1;
             v1.load_a(&l2_in[i]);
-            v2.load_a(&attn_out[i % ATTN::OUTPUTS]);
-
-            mul_add(v1, v2, v1).store_a(&l2_in[i]);
+            const Vector m = to_float(extend(VS().load_a(&a._output_b[i]))) * v_scale + v_one;
+            (v1 * m).store_a(&l2_in[i]);
         }
-        /* end of modulation */
+#else
+        /* SSE2: short width (8) != Vector width (4); dequantize to scratch first. */
+        ALIGN float mod[POOL_OUT];
+        dequantize(a._output_b, mod);
 
-        /* hidden_2: use bucket offset to select the right weights slice */
-        l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); }, static_cast<size_t>(a._current_bucket * POOL_OUT));
+        for (int i = 0; i != POOL_OUT; i += Vector::size())
+        {
+            Vector v1, m;
+            v1.load_a(&l2_in[i]);
+            m.load_a(&mod[i]);
+            (v1 * (m + v_one)).store_a(&l2_in[i]);
+        }
+#endif
+
+        l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); });
         l3.dot(l2_out, l3_out, [](const Vector& v) { return relu(v); });
-
         out.dot(l3_out, output);
         return EVAL_SCALE * output[0];
     }
 
 
-    template <typename LM>
-    INLINE void score_move(const LM& layer_m, const int (&active)[MAX_ACTIVE_INPUTS], int count, Move& move)
+    /* Compute the move head's sub-accumulator once per node: relu(bias + W_acc . active),
+     * kept in the quantized int16 domain (like the eval accumulator, no dequantize). Sparse
+     * gather over active inputs; the result feeds score_move for every move at this node.
+     * LMA is the [ACTIVE_INPUTS x MOVE_ACC] quantized layer.
+     */
+    template <typename LMA, size_t N>
+    INLINE void move_accumulate(
+        const LMA& layer_acc, const int (&active)[MAX_ACTIVE_INPUTS], int count, int16_t (&acc)[N])
+    {
+        for (size_t j = 0; j < N; ++j)
+        {
+            int sum = layer_acc._b[j];  /* int16 weights/bias, accumulate in int32 */
+            for (int k = 0; k < count; ++k)
+                sum += layer_acc._wt[j][active[k]];
+            /* relu; keep at QSCALE scale (like the eval accumulator), clamp to int16 */
+            sum = std::min<int>(std::numeric_limits<int16_t>::max(), std::max(0, sum));
+            acc[j] = int16_t(sum);
+        }
+    }
+
+    /* Per-move logit: bias[index] + acc . W_move[:, index]. LM is the [MOVE_ACC x 4096]
+     * quantized layer, so _wt[index] is the length-MOVE_ACC column for this (from,to) move.
+     * Stays integer: the 256 int16xint16 products need int64 (worst case ~2.7e11), then a
+     * fixed shift back into int16 range. Move scores are compared only against each other
+     * (Phase 4 LATE_MOVES), so the constant scale is irrelevant; only relative order matters.
+     */
+    template <typename LM, size_t N>
+    INLINE void score_move(const LM& layer_m, const int16_t (&acc)[N], Move& move)
     {
         const auto index = move.from_square() * 64 + move.to_square();
 
-        // Start with bias
-        auto score = layer_m._b[index];
+        int64_t score = int64_t(layer_m._b[index]) << QLOG2;  /* match the acc.wt product scale */
+        for (size_t j = 0; j < N; ++j)
+            score += int64_t(acc[j]) * int64_t(layer_m._wt[index][j]);
 
-        // Add contribution from each active feature
-        for (int k = 0; k < count; ++k)
-        {
-            score += layer_m._wt[index][active[k]];
-        }
-
+        score >>= QLOG2;  /* one QSCALE factor out; keep ordering, fit int16 */
         using move_score_t = decltype(move._score);
-        move._score = std::min(std::numeric_limits<move_score_t>::max(), score);
+        score = std::min<int64_t>(std::numeric_limits<move_score_t>::max(), score);
+        move._score = move_score_t(std::max<int64_t>(std::numeric_limits<move_score_t>::lowest(), score));
     }
 } /* namespace nnue */

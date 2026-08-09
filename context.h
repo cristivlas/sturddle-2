@@ -20,6 +20,7 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -27,7 +28,14 @@
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set> /* unordered_multiset */
-#include "Python.h"
+#if NATIVE_BUILD
+  /* Opaque PyObject forward decl so callback signatures still compile.
+   * The pointer is never dereferenced or passed to the Python C API.
+   */
+  using PyObject = struct _object;
+#else
+  #include "Python.h"
+#endif /* NATIVE_BUILD */
 #include "config.h"
 #include "search.h"
 #include "utility.h"
@@ -58,8 +66,17 @@ enum class LogLevel : int
 };
 
 
+
 namespace search
 {
+#if NATIVE_BUILD
+    /* Threshold consumed by native_log_message(). Messages below this
+     * level are dropped unless `force` is set. Toggled by --verbose,
+     * the UCI `debug` startup param, and `setoption name Debug`.
+     * Matches Python's logging.setLevel() semantics on the Cython side. */
+    extern LogLevel native_log_level;
+#endif /* NATIVE_BUILD */
+
     using time = std::chrono::time_point<std::chrono::steady_clock>;
 
     using Bitboard = chess::Bitboard;
@@ -316,6 +333,19 @@ namespace search
         BaseMove    _prev;          /* best move from previous iteration */
         BaseMove    _excluded;      /* singular extension search */
 
+        /* Returns true if this move should be skipped at the current node:
+         * either it's the singular-extension excluded move, or (at root only,
+         * when "go searchmoves" is active) it's not in the user-supplied list.
+         */
+        INLINE bool is_excluded(const BaseMove& m) const
+        {
+            if (m == _excluded)
+                return true;
+            if (!_root_filter.empty() && is_root())
+                return std::find(_root_filter.begin(), _root_filter.end(), m) == _root_filter.end();
+            return false;
+        }
+
         State*      _state = nullptr;
 
         void        cache_scores(bool force_write /* bypass eviction strategy */ = false);
@@ -490,6 +520,11 @@ namespace search
         static size_t       (*_vmem_avail)();
 
         static HistoryPtr   _history;
+
+        /* "go searchmoves" filter — populated by the UCI front-end before each
+         * search starts and read-only thereafter. Empty means no restriction.
+         */
+        static std::vector<chess::BaseMove> _root_filter;
 
     private:
         const Move* get_next_move(score_t);
@@ -811,7 +846,7 @@ namespace search
     {
         auto move = _move_maker.get_next_move(*this, futility);
 
-        if (move && *move == _excluded)
+        while (move && is_excluded(*move))
         {
             move = _move_maker.get_next_move(*this, futility);
         }
@@ -831,8 +866,12 @@ namespace search
         ASSERT(move);
         ASSERT(move != _move);
 
-        const auto score = _tt->history_score(_ply, state(), turn(), move);
-        return score + COUNTER_MOVE_BONUS * is_counter_move(move);
+        auto score = _tt->history_score(_ply, state(), turn(), move);
+        score += COUNTER_MOVE_BONUS * is_counter_move(move);
+    #if CONTINUATION_HISTORY
+        score += _tt->continuation_history_score(*this, turn(), move);
+    #endif /* CONTINUATION_HISTORY */
+        return score;
     }
 
 
@@ -904,7 +943,7 @@ namespace search
            )
             return false;
 
-        return static_eval() >= _beta - NULL_MOVE_DEPTH_WEIGHT * depth() + NULL_MOVE_MARGIN;
+        return static_eval() >= _beta - depth() * NULL_MOVE_DEPTH_WEIGHT_PCT / 100 + NULL_MOVE_MARGIN;
     }
 
 
@@ -972,7 +1011,7 @@ namespace search
     INLINE int null_move_reduction(const Context& ctxt)
     {
         return NULL_MOVE_REDUCTION_BASE /* base reduction */
-            + ctxt.depth() / NULL_MOVE_REDUCTION_DEPTH_DIV
+            + ctxt.depth() * NULL_MOVE_REDUCTION_DEPTH_PCT / 100
             + std::min(ctxt.depth() / 2, std::max(0, (ctxt.static_eval() - ctxt._beta) / NULL_MOVE_REDUCTION_DIV));
     }
 

@@ -1,0 +1,349 @@
+"""
+Configuration dataclasses for the distributed SPSA tuner.
+
+Two config files:
+- Tuning config (tuning.json): shared session config
+- Worker config (worker.json): per-machine settings
+"""
+
+import json
+from dataclasses import dataclass, field, asdict, MISSING
+from typing import Any, Dict, Optional
+
+
+@dataclass
+class Parameter:
+    """A single tunable engine parameter (Lakas-compatible format)."""
+    name: str
+    init: float
+    lower: float
+    upper: float
+    type: str = "int"  # "int" or "float"
+    # Original range for normalized parameters (where lower/upper are [-1, 1])
+    original_lower: Optional[float] = None
+    original_upper: Optional[float] = None
+
+    @property
+    def is_normalized(self) -> bool:
+        return self.original_lower is not None
+
+    def clamp(self, value: float) -> float:
+        return max(self.lower, min(self.upper, value))
+
+    def discretize(self, value: float) -> float:
+        """Round to int if this is an integer parameter."""
+        if self.type == "int":
+            return round(value)
+        return value
+
+    def to_engine_value(self, value: float):
+        """Convert internal float to engine-facing value."""
+        v = self.clamp(value)
+        if self.type == "int":
+            return int(round(v))
+        return v
+
+    def denormalize(self, theta_val: float) -> int:
+        """Convert theta value to engine-space integer.
+
+        For normalized parameters, maps from [-1,1] to [original_lower, original_upper].
+        For non-normalized parameters, rounds to int.
+        """
+        if self.is_normalized:
+            lo, hi = self.original_lower, self.original_upper
+            return int(round((theta_val + 1) * (hi - lo) / 2 + lo))
+        return int(round(theta_val))
+
+
+@dataclass
+class SPSAConfig:
+    """
+    SPSA hyperparameters.
+
+    c is a fraction of each parameter's range (0.05 = perturb by 5% of range).
+    a controls learning rate; effective step = a_k * gradient * range.
+    """
+    budget: int = 10000
+    a: float = 0.5
+    c: float = 0.05
+    A_ratio: float = 0.1
+    alpha: float = 0.602
+    gamma: float = 0.101
+    draw_weight: float = 0.5
+
+    def validate(self):
+        errors = []
+        if self.budget < 1:
+            errors.append("budget must be >= 1")
+        if self.a <= 0:
+            errors.append("a (learning rate) must be > 0")
+        if self.c <= 0:
+            errors.append("c (perturbation) must be > 0")
+        if not (0 < self.A_ratio < 1):
+            errors.append("A_ratio must be in (0, 1)")
+        if self.alpha <= 0:
+            errors.append("alpha must be > 0")
+        if self.gamma <= 0:
+            errors.append("gamma must be > 0")
+        if not (0 <= self.draw_weight <= 0.5):
+            errors.append("draw_weight must be in [0, 0.5]")
+        if errors:
+            raise ValueError("SPSA config: " + "; ".join(errors))
+
+
+@dataclass
+class EngineConfig:
+    """Engine settings (protocol and fixed UCI options)."""
+    protocol: str = "uci"
+    fixed_options: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TuningConfig:
+    """
+    Main tuning session configuration (tuning.json).
+
+    Contains only session-level settings shared across all workers:
+    SPSA hyperparameters, parameter definitions, search control.
+
+    Per-worker settings (engine path, opening book, games dir, logging)
+    live in each worker's own worker.json.
+
+    Search control: if `depth` is set, games use fixed depth search
+    (cutechess-cli -each depth=N). Otherwise `time_control` is used
+    (cutechess-cli -each tc=...).
+    """
+    engine: EngineConfig = field(default_factory=EngineConfig)
+    time_control: str = "1+0.1"
+    depth: Optional[int] = None
+    games_per_iteration: int = 200
+    output_dir: str = "./spsa_output"
+    # Seconds for workers to wait before retrying when no work available
+    retry_after: int = 5
+    # Dashboard auto-refresh interval in seconds
+    dashboard_refresh: int = 60
+    # Max history entries sent to the dashboard (0 = unlimited)
+    dashboard_history: int = 100
+    overdue_factor: float = 1.35
+    worker_idle_timeout: float = 60.0
+    chunk_timeout_factor: float = 2.0
+    min_chunk_timeout: float = 60.0
+    min_chunk_expected_duration: float = 60.0
+    # Cap on total over-assignment past games_per_iteration.  Bounds the maximum
+    # condemned in-flight work at iteration boundary (late results are discarded
+    # as stale). 1.0 = no overflow, 1.15 = up to 15% extra games may be dispatched.
+    overflow_factor: float = 1.15
+    # Number of completed chunks before a worker is trusted with full speed-proportional work.
+    # Until then the bootstrap cap applies to prevent a cold worker from grabbing too much work.
+    ewma_warmup_chunks: int = 3
+    # Directory for static assets (favicon, etc.); empty = disabled
+    static_dir: str = ""
+    # Daily log rotation (keeps rotated files with date suffix)
+    log_rotation: bool = True
+    # Seconds between chunk-validity checks (0 = disabled)
+    validate_interval: int = 5
+    # Max worker reconnects within max_retries * retry_after seconds (0 = unlimited)
+    max_retries: int = 3
+    # Adjudication: auto-resign and draw detection to shorten decided games.
+    auto_resign: bool = True
+    resign_movecount: int = 3
+    resign_score: int = 700
+    draw_movenumber: int = 40
+    draw_movecount: int = 8
+    draw_score: int = 10
+    spsa: SPSAConfig = field(default_factory=SPSAConfig)
+    parameters: Dict[str, Parameter] = field(default_factory=dict)
+
+    def max_iterations(self) -> int:
+        return self.spsa.budget // self.games_per_iteration
+
+    def validate(self):
+        self.spsa.validate()
+        errors = []
+        if self.games_per_iteration < 2:
+            errors.append("games_per_iteration must be >= 2")
+        if self.spsa.budget < self.games_per_iteration:
+            errors.append("budget must be >= games_per_iteration")
+        if self.worker_idle_timeout <= 0:
+            errors.append("worker_idle_timeout must be > 0")
+        if self.overdue_factor < 1:
+            errors.append("overdue_factor must be >= 1")
+        if self.chunk_timeout_factor < 1:
+            errors.append("chunk_timeout_factor must be >= 1")
+        if self.overflow_factor < 1:
+            errors.append("overflow_factor must be >= 1")
+        if self.ewma_warmup_chunks < 0:
+            errors.append("ewma_warmup_chunks must be >= 0")
+        if self.min_chunk_timeout < self.min_chunk_expected_duration:
+            self.min_chunk_timeout = self.min_chunk_expected_duration
+        for name, p in self.parameters.items():
+            if p.lower >= p.upper:
+                errors.append(f"parameter {name}: lower must be < upper")
+            if not (p.lower <= p.init <= p.upper):
+                errors.append(f"parameter {name}: init must be in [lower, upper]")
+        if errors:
+            raise ValueError("Tuning config: " + "; ".join(errors))
+
+    def to_json(self) -> str:
+        def _param_dict(p: Parameter) -> dict:
+            d = {"init": p.init, "lower": p.lower, "upper": p.upper, "type": p.type}
+            if p.original_lower is not None:
+                d["original_lower"] = p.original_lower
+            if p.original_upper is not None:
+                d["original_upper"] = p.original_upper
+            return d
+
+        d = {
+            "engine": asdict(self.engine),
+            "time_control": self.time_control,
+            "depth": self.depth,
+            "games_per_iteration": self.games_per_iteration,
+            "retry_after": self.retry_after,
+            "dashboard_refresh": self.dashboard_refresh,
+            "dashboard_history": self.dashboard_history,
+            "output_dir": self.output_dir,
+            "overdue_factor": self.overdue_factor,
+            "worker_idle_timeout": self.worker_idle_timeout,
+            "chunk_timeout_factor": self.chunk_timeout_factor,
+            "min_chunk_timeout": self.min_chunk_timeout,
+            "min_chunk_expected_duration": self.min_chunk_expected_duration,
+            "overflow_factor": self.overflow_factor,
+            "ewma_warmup_chunks": self.ewma_warmup_chunks,
+            "static_dir": self.static_dir,
+            "validate_interval": self.validate_interval,
+            "max_retries": self.max_retries,
+            "auto_resign": self.auto_resign,
+            "resign_movecount": self.resign_movecount,
+            "resign_score": self.resign_score,
+            "draw_movenumber": self.draw_movenumber,
+            "draw_movecount": self.draw_movecount,
+            "draw_score": self.draw_score,
+            "spsa": asdict(self.spsa),
+            "parameters": { name: _param_dict(p) for name, p in self.parameters.items() },
+        }
+        # Omit None values for cleaner output
+        d = {k: v for k, v in d.items() if v is not None}
+        return json.dumps(d, indent=2)
+
+    @classmethod
+    def from_json(cls, path: str) -> "TuningConfig":
+        with open(path) as f:
+            d = json.load(f)
+
+        engine = EngineConfig(**d.get("engine", {}))
+        spsa = SPSAConfig(**d.get("spsa", {}))
+
+        parameters = {}
+        for name, pdict in d.get("parameters", {}).items():
+            parameters[name] = Parameter(name=name, **pdict)
+
+        # Pull scalar fields from JSON, falling back to dataclass defaults
+        fields = cls.__dataclass_fields__
+        skip = {"engine", "spsa", "parameters"}
+        kwargs = {}
+        for name, f in fields.items():
+            if name in skip:
+                continue
+            default = None if f.default is MISSING else f.default
+            kwargs[name] = d.get(name, default)
+
+        cfg = cls(engine=engine, spsa=spsa, parameters=parameters, **kwargs)
+        cfg.validate()
+        return cfg
+
+
+@dataclass
+class WorkerConfig:
+    """
+    Per-machine worker configuration (worker.json).
+
+    All paths are local to the worker machine:
+    engine binary, opening book, games output, log file.
+    parameter_overrides allows overriding specific engine options per machine
+    (e.g., SyzygyPath for different tablebase locations).
+    """
+    name: str = ""  # worker identity; defaults to hostname if empty
+    coordinator: str = "http://localhost:8080"
+    engine: str = "./sturddle"
+    cutechess_cli: str = "cutechess-cli"
+    concurrency: int = 1
+    opening_book: str = ""
+    book_format: str = ""
+    book_depth: int = 8
+    games_dir: str = "./games"
+    log_file: str = "worker.log"
+    max_chunk_size: int = 0  # hard cap on games per chunk (0 = unlimited)
+    max_rounds_per_chunk: int = 10  # cap = concurrency * this * 2 (0 = unlimited)
+    http_retry_timeout: int = 300  # seconds to retry on connection errors
+    parameter_overrides: dict = field(default_factory=dict)
+    # cutechess-cli overrides: tc, depth, etc. (not UCI options)
+    cutechess_overrides: dict = field(default_factory=dict)
+    # Daily log rotation (keeps rotated files with date suffix)
+    log_rotation: bool = True
+    # Reference engine for 3-way SPSA (theta+/- vs reference instead of vs each other)
+    reference_engine: str = ""
+    # Auto-create RAM disk for PyInstaller extraction at high concurrency.
+    # Finds an unused drive letter (Windows) or tmpfs mount (Linux).
+    # Only needed for PyInstaller --onefile engines; genconfig enables it automatically when detected.
+    ramdisk: bool = False
+    # Override drive letter / mount point for RAM disk (e.g. "R:"). Empty = auto-select.
+    ramdisk_drive: str = ""
+    # Auto-download and install ImDisk on Windows if not found. Set false to manage ImDisk manually.
+    auto_install_imdisk: bool = True
+    ramdisk_size: int = 0
+    ramdisk_decompression: float = 2.6
+    # Max fraction of games that can be forfeits before discarding the chunk (0 = disabled).
+    max_forfeit_pct: float = 0.05
+    # Max consecutive retryable errors before the worker gives up (0 = unlimited).
+    max_retries: int = 3
+
+    @classmethod
+    def from_json(cls, path: str) -> "WorkerConfig":
+        with open(path) as f:
+            d = json.load(f)
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class WorkItem:
+    """A batch of games assigned to a worker."""
+    iteration: int
+    theta_plus: Dict[str, Any]   # param_name -> engine value
+    theta_minus: Dict[str, Any]  # param_name -> engine value
+    num_games: int
+    chunk_id: str = ""           # unique chunk identifier
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "WorkItem":
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class WorkResult:
+    """Results reported by a worker for a batch (game counts, PGNs saved locally)."""
+    iteration: int
+    num_games: int      # actual games completed
+    wins: int = 0       # games won by theta_plus side (standard mode)
+    draws: int = 0      # drawn games (standard mode)
+    losses: int = 0     # games lost by theta_plus side (standard mode)
+    chunk_id: str = ""  # echoed from WorkItem
+    worker: str = ""    # worker name
+    shutting_down: bool = False
+    # Reference mode: separate scores for theta+ and theta- vs reference engine
+    reference_mode: bool = False
+    plus_wins: int = 0
+    plus_draws: int = 0
+    plus_losses: int = 0
+    minus_wins: int = 0
+    minus_draws: int = 0
+    minus_losses: int = 0
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "WorkResult":
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})

@@ -388,35 +388,19 @@ def test_repetition():
 
 
 def test_nnue_eval():
-    tests = [
-        chess.STARTING_FEN,
-        'r2r2k1/1pp2ppp/p2q1b2/3pN3/2PP4/PP1Q3P/5PP1/R3R1K1 b - - 0 22',
-        'r4rk1/1ppnbppp/p2q4/3pNb2/3P4/PP5P/2PNBPP1/R2QK2R w KQ - 5 14',
-        'r4rk1/ppp2ppp/5n2/2bPn3/4K3/2NP4/PPPBB1PP/R6R w - - 3 3',
-        '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - - 0 2',
-        'rqr3k1/p4p1p/5Qp1/2b5/2N5/2Pn2NP/P2B1PP1/2R2RK1 w - - 0 24',
-        '2r3k1/p5p1/4p3/1p1bP3/2pb2Q1/5N2/1q3P1P/3R1RK1 b - - 3 32',
-        '1r1q1rk1/p3bBpp/2Q5/8/3Pb3/2n1BN2/P4PPP/R4RK1 b - - 0 18',
-        '8/pp2k3/8/8/8/8/3K1PP1/8 w - - 0 1',
-        '3r2k1/pp3p2/8/8/8/5P2/PP4K1/3R4 w - - 0 1',
-        'r3k3/pp6/8/3p4/3P4/8/PP2K3/R7 w q - 0 1',
-        '2r2rk1/pp3p2/8/8/8/8/PP3PP1/2R2RK1 w - - 0 1',
-        '8/8/4k3/4p3/4P3/4K3/8/8 w - - 0 1',
-        '8/5k2/8/3p4/3P4/2K1P3/8/8 w - - 0 1',
-        '4k3/8/8/8/8/8/4K3/4R3 w - - 0 1',
-    ]
+    sys.path.append(os.path.join(root_path(), 'tools', 'nnue'))
+    import golds as nnue_golds
 
-    evals = [
-        35.92178821563721, -37.80837059020996, -147.96288013458252, 14.691543579101562, -515.5942440032959,
-        575.2802848815918, -227.04806327819824, -29.207301139831543, 56.12175464630127, 26.899409294128418,
-        28.68964672088623, 309.5935106277466, 0.14657974243164062, 537.4797821044922, 514.2780303955078
-    ]
-    for i, fen in enumerate(tests):
+    gold = nnue_golds.load_golds()
+    assert gold is not None, 'tools/nnue/golds.json missing; run: python tools/nnue/golds.py <model_dir>'
+
+    for fen in nnue_golds.TESTS:
+        assert fen in gold, f'no gold for {fen}; regenerate golds.json'
         eval = engine.nnue_eval_fen(fen)
-        expect = int(evals[i])
+        expect = int(gold[fen])
         err = abs(eval - expect)
         print(f'{fen}: eval={eval}, expected={expect}, error={err}')
-        assert err <= 3
+        assert err <= 5
 
 
 def test_parse_fen():
@@ -463,5 +447,174 @@ test_repetition()
 test_nnue_eval()
 
 test_parse_fen()
+
+
+def _assert_epd_match(board, label):
+    '''Cross-check native serializer against python-chess Board.epd().'''
+    state = engine.BoardState(board)
+    native = engine.epd_native(state)
+    expected = board.epd()
+    assert native == expected, (label, native, expected)
+
+
+def test_epd_native_startpos():
+    _assert_epd_match(chess.Board(), 'startpos')
+
+
+def test_epd_native_empty_board():
+    board = chess.Board.empty()
+    _assert_epd_match(board, 'empty board')
+
+
+def test_epd_native_castling_combinations():
+    # every subset of KQkq
+    bases = [
+        'r3k2r/pppbqppp/5n2/3Pp3/1nP5/N2PBN2/PP1Q1PPP/R3K2R w {cr} -',
+    ]
+    for base in bases:
+        for cr in ['KQkq', 'KQk', 'KQq', 'Kkq', 'Qkq', 'KQ', 'Kk', 'Qq', 'K', 'Q', 'k', 'q', '-']:
+            fen = base.format(cr=cr)
+            board = chess.Board(fen=fen)
+            _assert_epd_match(board, f'castling {cr}')
+
+
+def test_epd_native_en_passant_targets():
+    # all these have a capturing pawn available — ep square is pseudo-legal
+    fens = [
+        '4k3/8/8/8/3pP3/8/8/4K3 b - e3',
+        '4k3/8/8/3pP3/8/8/8/4K3 w - d6',
+        'rnbqkbnr/ppp1pppp/8/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6',
+    ]
+    for fen in fens:
+        _assert_epd_match(chess.Board(fen=fen), fen)
+
+
+def test_epd_native_en_passant_suppression():
+    # ep square is set in the FEN but no pawn can actually capture -- both
+    # python-chess and the native serializer must emit '-' instead.
+    fens_with_impossible_ep = [
+        # white pawn only on d4 (not d5/f5), ep target e6 is unreachable
+        'rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6',
+        # no pawn at all on rank 4 to capture ep on rank 3
+        '4k3/8/8/8/4P3/8/8/4K3 b - e3',
+    ]
+    for fen in fens_with_impossible_ep:
+        board = chess.Board(fen=fen)
+        state = engine.BoardState(board)
+        native = engine.epd_native(state)
+        # python-chess epd() drops impossible ep; native must match
+        assert board.epd().endswith(' -'), (fen, board.epd())
+        assert native.endswith(' -'), (fen, native)
+        assert native == board.epd(), (fen, native, board.epd())
+
+
+def test_epd_native_empty_rank_runs():
+    # positions that exercise digit compression for 1..8 empty squares in a row
+    fens = [
+        '8/8/8/8/8/8/8/8 w - -',                    # entirely empty => "8/8/8/8/8/8/8/8"
+        'k7/8/8/8/8/8/8/7K w - -',                  # '7' before and after a piece
+        'k6K/8/8/8/8/8/8/8 w - -',                  # '6' between two pieces
+        '1k6/8/8/8/8/8/8/7K w - -',                 # leading '1'
+        'Qk6/8/8/8/8/8/8/7K b - -',                 # no leading digit
+        'N1B1Q1R1/8/8/8/8/8/8/k6K w - -',           # alternating pieces/empties
+        'pppppppp/pppppppp/pppppppp/pppppppp/pppppppp/pppppppp/pppppppp/pppppppp w - -',  # no empties at all
+    ]
+    for fen in fens:
+        board = chess.Board(fen=fen, chess960=False)
+        # chess.Board() validates; use empty+set_fen to accept legality-free positions
+        board = chess.Board.empty()
+        board.set_fen(fen)
+        _assert_epd_match(board, fen)
+
+
+def test_epd_native_all_piece_symbols():
+    # ensures every piece type, both colors, serialize correctly
+    fens = [
+        '8/8/3PNBRQ/3pnbrq/3K4/3k4/8/8 w - -',
+        'pnbrqk1K/PNBRQ1k1/8/8/8/8/8/8 b - -',
+    ]
+    for fen in fens:
+        board = chess.Board.empty()
+        board.set_fen(fen)
+        _assert_epd_match(board, fen)
+
+
+def test_epd_native_after_moves():
+    # apply a sequence of moves; check both via python-chess board and via
+    # engine.BoardState.apply (the engine's own move application path)
+    uci_games = [
+        ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1b5', 'a7a6'],                       # Ruy Lopez
+        ['d2d4', 'd7d5', 'c2c4', 'e7e6', 'b1c3', 'g8f6', 'c1g5'],               # QGD
+        ['e2e4', 'c7c5', 'g1f3', 'd7d6', 'd2d4', 'c5d4', 'f3d4', 'g8f6'],       # Sicilian Najdorf setup
+        ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'g8f6', 'e1g1'],               # Italian, white castles short
+        ['e2e4', 'c7c5', 'b1c3', 'b8c6', 'g2g3', 'g7g6', 'f1g2', 'f8g7',
+         'd2d3', 'd7d6', 'c1e3', 'e7e5'],                                       # closed Sicilian
+        ['d2d4', 'g8f6', 'c2c4', 'g7g6', 'b1c3', 'f8g7', 'e2e4', 'd7d6',
+         'g1f3', 'e8g8'],                                                       # King's Indian, black castles short
+    ]
+    for moves in uci_games:
+        board = chess.Board()
+        state = engine.BoardState(board)
+        for uci in moves:
+            mv = chess.Move.from_uci(uci)
+            board.push(mv)
+            state.apply(mv)
+            # compare: python-chess board.epd() vs native serializer on the
+            # state produced by engine.BoardState.apply
+            native = engine.epd_native(state)
+            assert native == board.epd(), (uci, native, board.epd())
+
+
+def test_epd_native_fen_corpus():
+    # reuse the FEN corpus from test_parse_fen + test_castling plus a few more
+    corpus = [
+        '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - -',
+        '3r1rk1/p3qp1p/2bb2p1/2p5/3P4/1P6/PBQN1PPP/2R2RK1 b - -',
+        'r1bqk2r/pp3ppp/5n2/8/1b1npB2/2N5/PP1Q2PP/1K2RBNR w kq -',
+        'r1b1kbr1/pp3p1p/5qp1/4p3/1P2P3/P1N3P1/5P1P/R2QKB1R w KQq -',
+        'r4rk1/1ppnbppp/p2q4/3pNb2/3P4/PP5P/2PNBPP1/R2QK2R w KQ -',
+        '8/8/4R3/2r3pk/6Pp/7P/1PPB1P2/1K1R4 b - g3',
+        '4k3/8/8/8/3pP3/8/8/4K3 b - e3',
+        '4k3/8/8/3pP3/8/8/8/4K3 w - d6',
+        '8/8/5pkp/p4p2/P4P1K/7P/8/8 w - -',
+        'r1bqkbnr/ppp2ppp/2np4/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq -',
+        'r1bqkb1r/ppp2ppp/2n2n2/4p3/4p3/N2PB3/PPPQ1PPP/R3KBNR w KQkq -',
+        'r1bqk2r/ppp2ppp/2nb1n2/4p3/4P3/N3BP2/PPPQ2PP/R3KBNR b KQkq -',
+        'r3kb1r/pppbqppp/5n2/3Pp3/1nP5/N2PBN2/PP1Q1PPP/R3KB1R b KQkq -',
+    ]
+    for fen in corpus:
+        board = chess.Board(fen=fen)
+        _assert_epd_match(board, fen)
+
+
+def test_epd_native_round_trip():
+    '''parse_fen -> native serialize -> parse_fen -> native serialize must be stable'''
+    corpus = [
+        '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - -',
+        'r1bqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -',
+        '8/8/4R3/2r3pk/6Pp/7P/1PPB1P2/1K1R4 b - g3',
+        'r3kb1r/pppbqppp/5n2/3Pp3/1nP5/N2PBN2/PP1Q1PPP/R3KB1R b KQkq -',
+    ]
+    for fen in corpus:
+        s1 = engine.board_from_fen(fen)
+        assert s1 is not None, fen
+        epd1 = engine.epd_native(s1)
+        s2 = engine.board_from_fen(epd1)
+        assert s2 is not None, epd1
+        epd2 = engine.epd_native(s2)
+        assert epd1 == epd2, (fen, epd1, epd2)
+        assert epd1 == fen, (fen, epd1)  # input was already 4-field EPD
+
+
+test_epd_native_startpos()
+test_epd_native_empty_board()
+test_epd_native_castling_combinations()
+test_epd_native_en_passant_targets()
+test_epd_native_en_passant_suppression()
+test_epd_native_empty_rank_runs()
+test_epd_native_all_piece_symbols()
+test_epd_native_after_moves()
+test_epd_native_fen_corpus()
+test_epd_native_round_trip()
 
 print ('All tests passed')

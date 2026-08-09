@@ -205,6 +205,10 @@ cdef extern from 'chess.h' namespace 'chess':
     bool parse_fen[T](const string&, T&)
 
 
+cdef extern from 'chess.h' namespace 'chess::epd':
+    cdef string epd_to_string "chess::epd::to_string" (const State&)
+
+
 cdef extern from 'zobrist.h' namespace 'chess':
     cdef uint64_t zobrist_hash(const State&)
 
@@ -1244,6 +1248,15 @@ def board_from_fen(fen: str):
         return board
 
 
+def epd_native(state: BoardState):
+    '''
+    Serialize a BoardState via the native C++ chess::epd::to_string,
+    bypassing the Python callback used by Context::epd(). For cross-checking
+    against python-chess board.epd() in unit tests.
+    '''
+    return epd_to_string(state._state).decode()
+
+
 def set_syzygy_path(path):
     Context.set_syzygy_path(path.encode())
 
@@ -1258,10 +1271,15 @@ def syzygy_path():
 init_static_callbacks()
 Context.init(os.path.dirname(__file__).encode())
 
-__major__   = 2
-__minor__   = 5
-__patch__   = 0
-__build__   = [str(__major__), f'{int(__minor__):d}', str(__patch__), timestamp().decode()]
+cdef extern from 'version.h':
+    int STURDDLE_VERSION_MAJOR
+    int STURDDLE_VERSION_MINOR
+    const char* STURDDLE_VERSION_PATCH
+
+__major__   = STURDDLE_VERSION_MAJOR
+__minor__   = STURDDLE_VERSION_MINOR
+__patch__   = STURDDLE_VERSION_PATCH.decode()
+__build__   = [str(__major__), str(__minor__), str(__patch__), timestamp().decode()]
 
 
 def version():

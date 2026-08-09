@@ -2,12 +2,15 @@
 import argparse
 
 import chess
+import chess.engine
 import numpy as np
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
 import tensorflow as tf
+
+MATE_SCORE = 3000  # cp value substituted for mate scores
 
 tests = [
     'rnbqkbnr/ppp5/3pp3/5p2/2PP2p1/2NBP1Pp/PP1N1P1P/R1BQK2R b KQkq -',
@@ -24,6 +27,7 @@ tests = [
 ]
 
 # Expected best moves and evaluations for each position
+"""
 expected_moves = [
     'b7b6', 'g3e3', 'b2b4', 'd1d4', 'h5f6',
     'g7g5', 'c5c7', 'd3f2', 'e4e5', 'a8a2',
@@ -34,6 +38,17 @@ expected_evals = [
     0.09, -5.97, 5.62, 4.78, 0.44,
     -4.79, -0.20, 1.82, -0.52, -5.77,
     3.4
+]
+"""
+expected_moves = [
+    'f8g7', 'g3e3', 'd2f1', 'd1d4', 'h5f6',
+    'g7g5', 'c5e5', 'f3f4', 'e4e5', 'a8a2',
+    'c3e4',
+]
+expected_evals = [
+    0.08, -6.95, 5.77, 4.84, 1.11,
+    -6.24, -0.26, 1.95, 0.12, -7.65,
+    -1.0,
 ]
 
 def encode(board):
@@ -57,8 +72,7 @@ def encode(board):
 def load_model(args):
     path = args.input[0]
     return tf.keras.models.load_model(path, custom_objects = {
-            'ACCUMULATOR_SIZE': 1280,
-            'ATTN_FAN_OUT': 32,
+            'ACCUMULATOR_SIZE': 2048,
             'POOL_SIZE': 8,
             'combined_loss': None,
             'scaled_sparse_categorical_crossentropy': None,
@@ -92,11 +106,24 @@ def get_top_moves(move_logits, board, num_moves):
     return moves[:num_moves]
 
 
-def run_tests(args, model):
+def analyse(engine, limit, board):
+    """Return the engine's best move and its score in pawns, from White's POV."""
+    info = engine.analyse(board, limit, game=object())
+    score = info['score'].white().score(mate_score=MATE_SCORE) / 100
+    pv = info.get('pv')
+    return (pv[0] if pv else None), score
+
+
+def run_tests(args, model, engine, limit):
     eval_errors = []
     move_accuracy = 0
     top_3_accuracy = 0
     top_5_accuracy = 0
+    engine_eval_errors = []
+    engine_move_accuracy = 0
+    engine_match_accuracy = 0
+    engine_match_top_3 = 0
+    engine_match_top_5 = 0
 
     for i, (fen, expected_move, expected_eval) in enumerate(zip(tests, expected_moves, expected_evals)):
         board = chess.Board(fen=fen)
@@ -129,6 +156,19 @@ def run_tests(args, model):
 
         print(f"Expected move: {expected_move} ({expected_move_san})")
 
+        engine_move_uci = None
+        if engine:
+            engine_move, engine_eval = analyse(engine, limit, board)
+            engine_error = abs(engine_eval - expected_eval)
+            engine_eval_errors.append(engine_error)
+            engine_move_uci = engine_move.uci() if engine_move else '(none)'
+            engine_move_san = board.san(engine_move) if engine_move else '(none)'
+            if engine_move_uci == expected_move:
+                engine_move_accuracy += 1
+            print(f"Engine eval: {engine_eval:.2f}, Error: {engine_error:.2f}")
+            print(f"Engine move: {engine_move_san} ({engine_move_uci})"
+                  f"{' ✓' if engine_move_uci == expected_move else ''}")
+
         # If model has move prediction capability, show top moves
         if has_move_prediction:
             top_moves = get_top_moves(move_logits, board, args.num_moves)
@@ -137,7 +177,9 @@ def run_tests(args, model):
             for j, (move, prob) in enumerate(top_moves, 1):
                 move_uci = move.uci()
                 is_expected = move_uci == expected_move
-                print(f"{j}. {board.san(move)} ({move_uci}) (score: {prob:.4f}){' ✓' if is_expected else ''}")
+                is_engine = move_uci == engine_move_uci
+                marks = f"{' ✓' if is_expected else ''}{' ⚙' if is_engine else ''}"
+                print(f"{j}. {board.san(move)} ({move_uci}) (score: {prob:.4f}){marks}")
 
                 # Update accuracy metrics
                 if j == 1 and is_expected:
@@ -147,26 +189,64 @@ def run_tests(args, model):
                 if j <= 5 and is_expected:
                     top_5_accuracy += 1
 
+                if j == 1 and is_engine:
+                    engine_match_accuracy += 1
+                if j <= 3 and is_engine:
+                    engine_match_top_3 += 1
+                if j <= 5 and is_engine:
+                    engine_match_top_5 += 1
+
     # Print summary
     print("\n--- Summary ---")
     avg_eval_error = sum(eval_errors) / len(eval_errors)
     print(f"Average evaluation error: {avg_eval_error:.2f}")
+
+    if engine:
+        avg_engine_error = sum(engine_eval_errors) / len(engine_eval_errors)
+        print(f"Average engine evaluation error: {avg_engine_error:.2f}")
+        print(f"Engine move accuracy: {engine_move_accuracy}/{len(tests)}"
+              f" ({engine_move_accuracy/len(tests)*100:.2f}%)")
 
     if has_move_prediction:
         print(f"Top-1 move accuracy: {move_accuracy}/{len(tests)} ({move_accuracy/len(tests)*100:.2f}%)")
         print(f"Top-3 move accuracy: {top_3_accuracy}/{len(tests)} ({top_3_accuracy/len(tests)*100:.2f}%)")
         print(f"Top-5 move accuracy: {top_5_accuracy}/{len(tests)} ({top_5_accuracy/len(tests)*100:.2f}%)")
 
+        if engine:
+            print("\n--- Model vs engine best move ---")
+            for label, count in (('Top-1', engine_match_accuracy),
+                                 ('Top-3', engine_match_top_3),
+                                 ('Top-5', engine_match_top_5)):
+                print(f"{label} agreement with engine: {count}/{len(tests)} ({count/len(tests)*100:.2f}%)")
+
 def main(args):
     model = load_model(args)
     if args.verbose:
         model.summary()
-    run_tests(args, model)
+
+    engine = chess.engine.SimpleEngine.popen_uci(args.engine) if args.engine else None
+    if engine:
+        for name, value in (('Threads', args.threads), ('Hash', args.hash)):
+            try:
+                engine.configure({name: value})
+            except chess.engine.EngineError:
+                pass
+    limit = chess.engine.Limit(depth=args.depth) if args.depth else chess.engine.Limit(nodes=args.nodes)
+    try:
+        run_tests(args, model, engine, limit)
+    finally:
+        if engine:
+            engine.quit()
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('input', nargs=1, help='Path to the model file')
     parser.add_argument('-n', '--num-moves', type=int, default=5)
+    parser.add_argument('-e', '--engine', help='Path to a UCI engine, to compare against the model')
+    parser.add_argument('--depth', type=int, default=20, help='engine search depth (0 to use --nodes)')
+    parser.add_argument('--nodes', type=int, default=100000, help='node limit when --depth 0')
+    parser.add_argument('--threads', type=int, default=1, help='engine Threads option')
+    parser.add_argument('--hash', type=int, default=256, help='engine Hash option, in MB')
     parser.add_argument('-v', '--verbose', action='store_true', help='Show detailed output including model summary')
     main(parser.parse_args())

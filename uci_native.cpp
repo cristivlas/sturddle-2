@@ -11,6 +11,7 @@ namespace fs = std::filesystem;
 using Params = std::unordered_map<std::string, std::string>;
 
 #if NATIVE_UCI /* requires compiler with C++20 support */
+#include <charconv>
 #include <cmath>
 #include <format>
 #include <fstream>
@@ -23,6 +24,7 @@ using Params = std::unordered_map<std::string, std::string>;
 #include <sstream>
 #include <vector>
 #if _WIN32
+  #include <io.h>
   #include <tlhelp32.h>
 #else
   #include <unistd.h>
@@ -250,6 +252,27 @@ namespace
                 _b = true;
             else if (value == "false")
                 _b = false;
+        }
+    };
+
+    /* Sync the native logger threshold with the current _debug flag.
+     * Call after any write to _debug. Cython builds defer to Python's
+     * logging module, so this is a no-op there. */
+    static void sync_native_log_level()
+    {
+#if NATIVE_BUILD
+        search::native_log_level = _debug ? LogLevel::DEBUG : LogLevel::INFO;
+#endif /* NATIVE_BUILD */
+    }
+
+    struct OptionDebug : public OptionBool
+    {
+        OptionDebug(const std::string& name, bool& b) : OptionBool(name, b) {}
+
+        void set(std::string_view value) override
+        {
+            OptionBool::set(value);
+            sync_native_log_level();
         }
     };
 
@@ -534,7 +557,7 @@ public:
         if (params["dev_mode"] == "true")
         {
             _options.emplace("algorithm", std::make_unique<OptionAlgo>(_algorithm));
-            _options.emplace("debug", std::make_unique<OptionBool>("Debug", _debug));
+            _options.emplace("debug", std::make_unique<OptionDebug>("Debug", _debug));
             _options.emplace("weightsfile", std::make_unique<OptionWeights>());
         }
         _options.emplace("bestbookmove", std::make_unique<OptionBool>("BestBookMove", _best_book_move));
@@ -585,10 +608,11 @@ private:
     }
 
     /** position() helper */
-    template <typename T> INLINE void apply_moves(const T &moves)
+    template <typename T> INLINE void apply_moves(const T &moves, int initial_fifty = 0)
     {
         _last_move = chess::BaseMove();
         _ply_count = 0;
+        search::Context::_history->_fifty = initial_fifty;
 
         search::Context::_history->emplace(_buf._state);
 
@@ -1017,6 +1041,9 @@ void UCI::go(const Arguments &args)
 {
     stop();
 
+    /* Clear any "searchmoves" filter from a previous "go" before parsing. */
+    search::Context::_root_filter.clear();
+
     /* Handle "go perft <depth> [pseudo]" */
     if (args.size() >= 3 && args[1] == "perft")
     {
@@ -1033,6 +1060,16 @@ void UCI::go(const Arguments &args)
     auto turn = _buf._state.turn;
 
     _depth = max_depth;
+
+    /* Shape of a UCI move: "<file><rank><file><rank>" with optional promo. */
+    auto looks_like_uci_move = [](std::string_view s) {
+        if (s.size() < 4 || s.size() > 5)
+            return false;
+        return s[0] >= 'a' && s[0] <= 'h'
+            && s[1] >= '1' && s[1] <= '8'
+            && s[2] >= 'a' && s[2] <= 'h'
+            && s[3] >= '1' && s[3] <= '8';
+    };
 
     for (size_t i = 1; i < args.size(); ++i)
     {
@@ -1075,6 +1112,28 @@ void UCI::go(const Arguments &args)
         {
             movetime = -1;
             do_analysis = true;
+        }
+        else if (a == "searchmoves")
+        {
+            /* Consume tokens that look like UCI moves; anything else (next
+             * "go" keyword or end of args) terminates the list.
+             */
+            while (i + 1 < args.size() && looks_like_uci_move(args[i + 1]))
+            {
+                ++i;
+                const auto &m = args[i];
+                chess::Square from, to;
+                if (   chess::parse_square(m, from)
+                    && chess::parse_square(std::string_view(&m[2], 2), to))
+                {
+                    const auto promo = m.size() > 4 ? chess::piece_type(m[4]) : chess::PieceType::NONE;
+                    search::Context::_root_filter.emplace_back(from, to, promo);
+                }
+                else
+                {
+                    log_warning(std::format("searchmoves: ignoring invalid move '{}'", m));
+                }
+            }
         }
     }
     /* initialize search context */
@@ -1307,7 +1366,18 @@ void UCI::position(const Arguments &args)
         raise_value_error("invalid token count {}, expected 4", fen.size());
     }
     _buf._state.rehash();
-    apply_moves(moves);
+
+    /* FEN field 5 is the half-move (fifty-move) clock; default to 0. */
+    int initial_fifty = 0;
+    if (fen.size() >= 5)
+    {
+        const auto &hm = fen[4];
+        int v = 0;
+        if (std::from_chars(hm.data(), hm.data() + hm.size(), v).ec == std::errc{} && v >= 0)
+            initial_fifty = v;
+    }
+
+    apply_moves(moves, initial_fifty);
     LOG_DEBUG(search::Context::epd(_buf._state));
 }
 
@@ -1358,7 +1428,12 @@ void UCI::setoption(const Arguments &args)
     if (iter != _options.end())
         iter->second->set(join(" ", value));
     else
+    {
         log_warning(__func__ + (": \"" + opt_name + "\": not found"));
+#if TUNING_ENABLED || TUNING_PARTIAL
+        throw std::invalid_argument("unknown option: \"" + opt_name + "\"");
+#endif
+    }
 
     if (_ponder)
         ensure_background_thread();
@@ -1477,6 +1552,7 @@ void uci_loop(Params params)
 #endif /* WITH_NNUE */
 
     _debug = (debug == "true");
+    sync_native_log_level();
     std::string err;
     try
     {

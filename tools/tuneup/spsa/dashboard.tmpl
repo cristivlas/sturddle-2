@@ -1,0 +1,2171 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sturddle SPSA Tuner {version}</title>
+    <link rel="icon" href="/static/chess.ico">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        :root {{
+            --accent-start: #667eea;
+            --accent-end: #764ba2;
+            --surface: #ffffff;
+            --surface-alt: #f9f9f9;
+            --surface-hover: #f9f9f9;
+            --table-head-bg: #f0f0f0;
+            --progress-bg: #e0e0e0;
+            --text: #333333;
+            --text-muted: #666666;
+            --text-subtle: #999999;
+            --text-faint: #cccccc;
+            --border: #e0e0e0;
+            --border-subtle: #eeeeee;
+            --shadow: rgba(0,0,0,0.3);
+            --scrollbar: rgba(0,0,0,0.25);
+            --scrollbar-hover: rgba(0,0,0,0.4);
+            --conv-good: #1B8A2A;
+            --conv-ok: #B86800;
+            --conv-bad: #C62828;
+        }}
+        [data-theme="dark"] {{
+            --surface: #1e1f26;
+            --surface-alt: #262832;
+            --surface-hover: #2e313c;
+            --table-head-bg: #2a2c36;
+            --progress-bg: #3a3d49;
+            --text: #e8e8ec;
+            --text-muted: #b0b2bb;
+            --text-subtle: #878993;
+            --text-faint: #52545e;
+            --border: #383b47;
+            --border-subtle: #2d2f39;
+            --shadow: rgba(0,0,0,0.6);
+            --scrollbar: rgba(255,255,255,0.25);
+            --scrollbar-hover: rgba(255,255,255,0.4);
+            --conv-good: #7ed890;
+            --conv-ok: #ffb54c;
+            --conv-bad: #ff7b7b;
+        }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
+            background: linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%);
+            min-height: 100vh;
+            padding: 12px;
+            transition: background 1s ease;
+        }}
+        .container {{
+            max-width: 1400px;
+            height: calc(100vh - 24px);
+            margin: 0 auto;
+            background: var(--surface);
+            border-radius: 10px;
+            box-shadow: 0 20px 60px var(--shadow);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }}
+        .badge-slot {{
+            position: relative;
+            display: inline-flex;
+            min-width: 170px;
+            justify-content: center;
+        }}
+        .badge-slot .status-badge {{
+            width: 100%;
+            text-align: center;
+        }}
+        .toast {{
+            position: absolute;
+            inset: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            letter-spacing: 0.3px;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s;
+        }}
+        .toast.show {{
+            opacity: 1;
+        }}
+        #toastOverdue {{ z-index: 1; background: #b86800; }}
+        #toastTimedOut {{ z-index: 2; background: #c62828; }}
+        .header {{
+            background: linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%);
+            color: white;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.35);
+            padding: 10px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background 1s ease;
+        }}
+        .header h1 {{
+            font-size: 18px;
+            font-weight: 700;
+        }}
+        .theme-toggle {{
+            display: inline-flex;
+            align-items: center;
+            font-size: 0;
+            line-height: 0;
+        }}
+        .theme-toggle > span {{
+            font-size: 11px;
+            padding: 4px 8px;
+            cursor: pointer;
+            border: 1px solid rgba(255,255,255,0.4);
+            border-left-width: 0;
+            color: rgba(255,255,255,0.75);
+            font-weight: 600;
+            letter-spacing: 0;
+            text-transform: none;
+            user-select: none;
+            background: rgba(0,0,0,0.18);
+            line-height: 1;
+        }}
+        .theme-toggle > span:first-child {{
+            border-left-width: 1px;
+            border-radius: 4px 0 0 4px;
+        }}
+        .theme-toggle > span:last-child {{
+            border-radius: 0 4px 4px 0;
+        }}
+        .theme-toggle > span.active {{
+            background: rgba(0,0,0,0.35);
+            color: #fff;
+        }}
+        .header-buttons {{
+            display: flex;
+            gap: 8px;
+        }}
+        .status-badge {{
+            background: rgba(0,0,0,0.25);
+            padding: 6px 16px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: white;
+            text-decoration: none;
+            transition: background 0.2s;
+        }}
+        a.status-badge:hover {{
+            background: rgba(255,255,255,0.3);
+        }}
+        .content {{
+            padding: 8px 16px;
+            flex: 1;
+            overflow-y: auto;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+        }}
+        .grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 10px;
+            margin-bottom: 8px;
+        }}
+        .card {{
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 6px 12px;
+            background: var(--surface-alt);
+        }}
+        .card .chart-wrap {{
+            position: relative;
+            width: 100%;
+            height: 320px;
+            max-height: 380px;
+            overflow: hidden;
+        }}
+        .card h2 {{
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }}
+        .card-value {{
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text);
+            font-family: monospace;
+        }}
+        .card-subtext {{
+            font-size: 12px;
+            color: var(--text-subtle);
+            margin-top: 4px;
+        }}
+        .progress-bar {{
+            width: 100%;
+            height: 14px;
+            background: var(--progress-bg);
+            border-radius: 7px;
+            overflow: hidden;
+            margin-top: 4px;
+        }}
+        .progress-fill {{
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-start) 0%, var(--accent-end) 100%);
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            color: white;
+            font-weight: 600;
+            min-width: 40px;
+        }}
+        .pst-row {{
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            gap: 12px;
+            margin-top: 10px;
+        }}
+        .pst-board {{
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px;
+            background: var(--surface-alt);
+        }}
+        .pst-board h4 {{
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+        }}
+        .pst-board h4 .pst-range {{
+            font-weight: 400;
+            color: var(--text-subtle);
+            text-transform: none;
+            letter-spacing: 0;
+            font-family: monospace;
+        }}
+        .pst-grid {{
+            display: grid;
+            grid-template-columns: repeat(8, 46px);
+            grid-template-rows: repeat(8, 36px);
+            gap: 1px;
+            background: var(--border);
+            border: 1px solid var(--border);
+        }}
+        .pst-cell {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-family: monospace;
+            font-weight: 600;
+            color: var(--text);
+            background: var(--surface-alt);
+            user-select: none;
+        }}
+        .pst-slider-row {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px 4px 8px;
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: monospace;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+        }}
+        .pst-slider-row input[type="range"] {{
+            flex: 1;
+            min-width: 80px;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            outline: none;
+            margin: 0 4px;
+        }}
+        .pst-slider-row input[type="range"]::-webkit-slider-thumb {{
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--accent-start);
+            cursor: pointer;
+            border: 2px solid var(--surface);
+            box-shadow: 0 1px 3px var(--shadow);
+        }}
+        .pst-slider-row input[type="range"]::-moz-range-thumb {{
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--accent-start);
+            cursor: pointer;
+            border: 2px solid var(--surface);
+            box-shadow: 0 1px 3px var(--shadow);
+        }}
+        .pst-slider-row input[type="range"]::-moz-range-track {{
+            background: var(--border);
+            height: 4px;
+            border-radius: 2px;
+        }}
+        .pst-slider-row .pst-slider-iter {{
+            color: var(--text);
+            font-weight: 600;
+            min-width: 70px;
+        }}
+        .pst-slider-row .pst-slider-btn {{
+            cursor: pointer;
+            user-select: none;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            padding: 1px 6px;
+            background: var(--surface-alt);
+            color: var(--text-muted);
+        }}
+        .pst-slider-row .pst-slider-btn:hover {{
+            color: var(--text);
+            border-color: var(--text-subtle);
+        }}
+        .pst-cell.pst-na {{
+            color: var(--text-faint);
+            background: var(--surface-alt);
+        }}
+        .pst-cell.pst-cell-clickable {{
+            cursor: pointer;
+        }}
+        .pst-cell.pst-cell-clickable:hover {{
+            outline: 2px solid var(--accent-start);
+            outline-offset: -2px;
+        }}
+        .section {{
+            margin-top: 10px;
+        }}
+        .section h3 {{
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 6px;
+            color: var(--text);
+            border-bottom: 2px solid var(--accent-start);
+            padding-bottom: 4px;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+        th, td {{
+            padding: 8px 12px;
+        }}
+        th {{
+            background: var(--table-head-bg);
+            font-weight: 600;
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }}
+        th:hover {{
+            background: var(--surface-hover);
+            box-shadow: inset 2px 0 0 var(--border), inset -2px 0 0 var(--border);
+        }}
+        th.th-sortable {{
+            cursor: pointer;
+        }}
+        /* Reserve the arrow's width on every sortable th so the indicator
+           appearing/disappearing never reflows the header text. */
+        th.th-sortable::after {{
+            content: '\2195';
+            font-size: 9px;
+            margin-left: 4px;
+            opacity: 0;
+            color: var(--text-faint);
+        }}
+        th.th-sortable:hover::after {{
+            opacity: 0.5;
+        }}
+        th.th-sortable[aria-sort="ascending"]::after {{
+            content: '\25B2';
+            opacity: 1;
+            color: var(--accent-start);
+        }}
+        th.th-sortable[aria-sort="descending"]::after {{
+            content: '\25BC';
+            opacity: 1;
+            color: var(--accent-start);
+        }}
+        td {{
+            border-bottom: 1px solid var(--border);
+            font-size: 14px;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .solo-link:hover {{
+            text-decoration: underline;
+            text-decoration-style: dotted;
+            text-underline-offset: 3px;
+        }}
+        th:first-child, td:first-child {{
+            text-align: left;
+        }}
+        th:not(:first-child), td:not(:first-child) {{
+            text-align: right;
+        }}
+        tr:hover {{
+            background: var(--surface-hover);
+        }}
+        .stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 8px;
+            margin-bottom: 8px;
+        }}
+        .stat {{
+            background: var(--surface);
+            border-left: 4px solid var(--accent-start);
+            padding: 4px 10px;
+            border-radius: 4px;
+        }}
+        .stat-label {{
+            font-size: 11px;
+            color: var(--text-subtle);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 2px;
+        }}
+        .stat-value {{
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text);
+            font-family: monospace;
+        }}
+        .two-col {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }}
+        .two-col > * {{
+            min-width: 0;
+        }}
+        .params-tbl {{
+            table-layout: fixed;
+            width: 100%;
+        }}
+        @media (max-width: 700px), (max-height: 500px) {{
+            .header {{ flex-wrap: wrap; gap: 6px; justify-content: center; }}
+            .container {{ height: auto; min-height: 100vh; }}
+            .two-col, .two-col[style] {{ grid-template-columns: 1fr !important; }}
+            .stats-grid {{ grid-template-columns: 1fr 1fr; }}
+            a[href="/logs"] {{ display: none; }}
+            th, td {{ padding: 6px 4px; font-size: 13px; }}
+            .params-tbl col:first-child {{ width: 50% !important; }}
+            .params-tbl col:nth-child(2), .params-tbl col:nth-child(3) {{ width: 25% !important; }}
+            .resize-handle {{ display: none !important; }}
+            .col-resize-handle {{ display: none !important; }}
+            .th-grip {{ width: 24px; right: -12px; }}
+            #legendToggle {{ display: none !important; }}
+            .theme-toggle > span {{ font-size: 0; padding: 4px 6px; }}
+            .theme-toggle > span::before {{ font-size: 14px; line-height: 1; }}
+            .theme-toggle > span[data-mode="auto"]::before {{ content: '\25D0'; }}
+            .theme-toggle > span[data-mode="light"]::before {{ content: '\2600'; }}
+            .theme-toggle > span[data-mode="dark"]::before {{ content: '\263E'; }}
+            .section {{ margin-top: 12px !important; }}
+            #chartSection {{ height: auto !important; flex-direction: column !important; }}
+            #chartSection > .card {{ height: auto; flex: unset !important; width: auto !important; min-width: 0 !important; }}
+            #chartSection > .card .chart-wrap {{ flex: none !important; height: 400px !important; }}
+            #chartSection > .section {{ flex: unset !important; width: auto !important; min-width: 0 !important; }}
+            .bottom-panel {{ flex-direction: column !important; }}
+            .bottom-panel > .section {{ flex: unset !important; width: auto !important; min-width: 0 !important; }}
+        }}
+        .bottom-panel {{
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            gap: 0;
+            overflow: hidden;
+        }}
+        .bottom-panel > .section {{
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            min-width: 0;
+            overflow: hidden;
+        }}
+        .bottom-panel > .section > .scroll-wrap {{
+            flex: 1;
+            min-height: 0;
+            max-height: none !important;
+        }}
+        /* Thin scrollbars for all scrollable areas */
+        .content, .content div {{
+            scrollbar-width: thin;
+            scrollbar-color: var(--scrollbar) transparent;
+        }}
+        .content::-webkit-scrollbar, .content div::-webkit-scrollbar {{
+            width: 6px;
+        }}
+        .content::-webkit-scrollbar-track, .content div::-webkit-scrollbar-track {{
+            background: transparent;
+        }}
+        .content::-webkit-scrollbar-thumb, .content div::-webkit-scrollbar-thumb {{
+            background: var(--scrollbar);
+            border-radius: 3px;
+        }}
+        .content::-webkit-scrollbar-thumb:hover, .content div::-webkit-scrollbar-thumb:hover {{
+            background: var(--scrollbar-hover);
+        }}
+        .refresh-info {{
+            padding: 4px 24px;
+            font-size: 12px;
+            color: var(--text-subtle);
+            text-align: center;
+            border-top: 1px solid var(--border-subtle);
+            flex-shrink: 0;
+        }}
+        #chartSection {{
+            height: 340px;
+            flex-shrink: 0;
+            align-items: stretch;
+            display: flex;
+            gap: 0;
+            overflow: hidden;
+        }}
+        #chartSection > .card {{
+            height: 100%;
+            min-height: 0;
+            min-width: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }}
+        #chartSection > .section {{
+            height: 100%;
+            min-height: 0;
+            min-width: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-alt);
+            padding: 6px 12px;
+        }}
+        #chartSection > .card .chart-wrap {{
+            flex: 1;
+            height: 0;
+            min-height: 80px;
+            max-height: none;
+        }}
+        .resize-handle {{
+            flex-shrink: 0;
+            height: 10px;
+            cursor: row-resize;
+            position: relative;
+            z-index: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .resize-handle::before {{
+            content: '';
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 50%;
+            height: 4px;
+            margin-top: -2px;
+            background: var(--accent-start);
+            border-radius: 2px;
+            opacity: 0;
+            transition: opacity 0.15s;
+            pointer-events: none;
+        }}
+        .resize-handle:hover::before, .resize-handle.dragging::before {{
+            opacity: 1;
+        }}
+        .col-resize-handle {{
+            flex-shrink: 0;
+            width: 10px;
+            cursor: col-resize;
+            position: relative;
+            z-index: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }}
+        .col-resize-handle::before {{
+            content: '';
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 50%;
+            width: 4px;
+            margin-left: -2px;
+            background: var(--accent-start);
+            border-radius: 2px;
+            opacity: 0;
+            transition: opacity 0.15s;
+            pointer-events: none;
+        }}
+        .col-resize-handle:hover::before, .col-resize-handle.dragging::before {{
+            opacity: 1;
+        }}
+        .th-grip {{
+            position: absolute;
+            top: 0;
+            right: -4px;
+            bottom: 0;
+            width: 8px;
+            cursor: col-resize;
+            user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: none;
+            z-index: 2;
+        }}
+        .col-drag-line {{
+            position: absolute;
+            width: 2px;
+            margin-left: -1px;
+            background: var(--accent-start);
+            border-radius: 1px;
+            pointer-events: none;
+            z-index: 5;
+        }}
+    </style>
+    <!-- Time-of-day theme (keep in sync across dashboard/charts/logs templates) -->
+    <script>
+        var forceHour = null;
+        function applyTimeTheme() {{
+            var h = (forceHour !== null) ? forceHour : new Date().getHours();
+            var s, e;
+            if      (h >= 6  && h < 12) {{ s = '#5ba0b5'; e = '#82c4d8'; }}
+            else if (h >= 12 && h < 18) {{ s = '#667eea'; e = '#764ba2'; }}
+            else if (h >= 18 && h < 22) {{ s = '#c0766d'; e = '#8e6399'; }}
+            else                        {{ s = '#3d4f7c'; e = '#1a1a2e'; }}
+            document.documentElement.style.setProperty('--accent-start', s);
+            document.documentElement.style.setProperty('--accent-end', e);
+            if (typeof setThetaView === 'function') setThetaView(thetaViewMode);
+            if (typeof updateLegendBtn === 'function') updateLegendBtn();
+        }}
+        applyTimeTheme();
+        setInterval(applyTimeTheme, 3600000);
+        // Debug: Shift+T cycles forced time-of-day theme (auto/morning/afternoon/evening/night)
+        document.addEventListener('keydown', function(ev) {{
+            if (ev.key !== 'T' || ev.ctrlKey || ev.altKey || ev.metaKey) return;
+            var t = ev.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+            var cycle = [null, 6, 12, 18, 0];
+            var i = cycle.indexOf(forceHour);
+            forceHour = cycle[(i + 1) % cycle.length];
+            console.log('[theme] forceHour =', forceHour);
+            applyTimeTheme();
+            ev.preventDefault();
+        }});
+
+        // Dark mode (tri-state: auto/light/dark; user override persisted in localStorage)
+        function currentThemeMode() {{ return localStorage.getItem('themeMode') || 'auto'; }}
+        function resolvedTheme() {{
+            var m = currentThemeMode();
+            if (m === 'light' || m === 'dark') return m;
+            return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+        }}
+        function applyTheme() {{
+            var t = resolvedTheme();
+            if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+            else document.documentElement.removeAttribute('data-theme');
+            var tog = document.getElementById('themeToggle');
+            if (tog) {{
+                var mode = currentThemeMode();
+                tog.querySelectorAll('span').forEach(function(el) {{
+                    el.classList.toggle('active', el.getAttribute('data-mode') === mode);
+                }});
+            }}
+            if (typeof applyChartTheme === 'function') applyChartTheme();
+        }}
+        function setTheme(mode) {{
+            if (mode === 'auto') localStorage.removeItem('themeMode');
+            else localStorage.setItem('themeMode', mode);
+            applyTheme();
+        }}
+        applyTheme();
+        document.addEventListener('DOMContentLoaded', applyTheme);
+        if (window.matchMedia) {{
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {{
+                if (currentThemeMode() === 'auto') applyTheme();
+            }});
+        }}
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Sturddle SPSA Tuner {version}</h1>
+            <div class="header-buttons">
+                <span id="themeToggle" class="theme-toggle">
+                    <span data-mode="auto" onclick="setTheme('auto')">Auto</span><span
+                          data-mode="light" onclick="setTheme('light')">Light</span><span
+                          data-mode="dark" onclick="setTheme('dark')">Dark</span>
+                </span>
+                <a href="/charts" class="status-badge">Charts</a>
+                <a href="/logs" class="status-badge">Logs</a>
+                <span class="badge-slot">
+                    <span class="status-badge" id="statusBadge" style="background:{status_color}">{status_text}</span>
+                    <span id="toastOverdue" class="status-badge toast toast-warn"></span>
+                    <span id="toastTimedOut" class="status-badge toast toast-error"></span>
+                </span>
+            </div>
+        </div>
+
+        <div class="content">
+            <!-- Overall Progress -->
+            <div class="grid">
+                <div class="card">
+                    <h2>Iteration Progress</h2>
+                    <div class="card-value" id="iterValue">{iteration} / {max_iters}</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="iterFill" style="width: {progress}%;">
+                            {progress:.0f}%
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Games This Iteration</h2>
+                    <div class="card-value" id="gamesValue">{games_done} / {games_total}</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="gamesFill" style="width: {iter_progress}%;">
+                            {iter_progress:.0f}%
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Scheduled Games</h2>
+                    <div class="card-value"><span id="pendingValue">{games_pending}</span> / <span id="remainingValue">--</span></div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="schedFill" style="width: 0%;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Advanced Stats -->
+            <div class="stats-grid">
+                <div class="stat">
+                    <div class="stat-label">Learning Rate (a_k)</div>
+                    <div class="stat-value" id="akValue">{a_k:.6f}</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Perturbation (c_k)</div>
+                    <div class="stat-value" id="ckValue">{c_k:.6f}</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label" id="avgIterLabel">Avg / Iteration</div>
+                    <div class="stat-value"><span id="avgIterValue">--</span> <span id="elapsedIter" style="font-size:13px;color:var(--text-subtle);font-weight:normal"></span></div>
+                </div>
+                <div class="stat" id="totalGamesStat">
+                    <div class="stat-label">Total Games</div>
+                    <div class="stat-value" id="totalGamesValue">{total_games}</div>
+                </div>
+            </div>
+
+            <!-- Chart + Current Parameters side by side -->
+            <div class="two-col" id="chartSection" style="grid-template-columns: 3fr 2fr;">
+                <div class="card" id="thetaChartCard" style="position:relative;">
+                    <span id="legendToggle" onclick="toggleLegend()"
+                        style="position:absolute;top:6px;left:8px;z-index:2;font-size:11px;padding:2px 8px;cursor:pointer;border:2px solid var(--text-subtle);border-radius:4px;font-weight:600;background:var(--surface);color:var(--text-muted);letter-spacing:0;text-transform:none;user-select:none;">Legend</span>
+                    <div class="chart-wrap"><canvas id="thetaChart"></canvas></div>
+                    <div id="pstHeatmapsWrap" style="display:none; flex-direction:column; height:100%;">
+                        <div class="pst-slider-row" id="pstSliderRow" style="display:none;">
+                            <span class="pst-slider-btn" id="pstSliderPrev" title="Prev">◀</span>
+                            <input type="range" id="pstSlider" min="0" max="0" value="0" step="1">
+                            <span class="pst-slider-btn" id="pstSliderNext" title="Next">▶</span>
+                            <span class="pst-slider-iter" id="pstSliderIter">iter --</span>
+                        </div>
+                        <div id="pstHeatmapsInline" class="pst-row" style="padding: 6px 4px; overflow-y: auto; flex: 1; min-height: 0;"></div>
+                    </div>
+                </div>
+                <div class="col-resize-handle" id="chartParamsHandle"></div>
+                <div class="section" style="margin-top: 0; display:flex; flex-direction:column; min-height:0;">
+                    <h3 style="display:flex;align-items:baseline;gap:8px;">Current Parameters
+                        <span id="thetaToggle" style="font-size:0;line-height:0;margin-left:auto;">
+                            <span id="togInternal" onclick="setThetaView('internal')"
+                                style="display:none;font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid var(--border);border-radius:4px 0 0 4px;font-weight:600;letter-spacing:0;text-transform:none;">Normal</span><span
+                                id="togEngine" onclick="setThetaView('engine')"
+                                style="display:none;font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid var(--border);border-left:none;border-radius:0;font-weight:600;letter-spacing:0;text-transform:none;">Engine</span><span
+                                id="togConv" onclick="setThetaView('convergence')"
+                                style="font-size:11px;padding:2px 8px;cursor:pointer;border:1px solid var(--border);border-left:none;border-radius:0 4px 4px 0;font-weight:600;letter-spacing:0;text-transform:none;">Conv</span>
+                        </span>
+                    </h3>
+                    <table class="params-tbl">
+                        <colgroup id="thetaHeadCols"><col style="width:60%"><col style="width:20%"><col style="width:20%"></colgroup>
+                        <thead>
+                            <tr id="thetaHeadRow">
+                                <th>Parameter</th>
+                                <th>Initial</th>
+                                <th>Current</th>
+                            </tr>
+                        </thead>
+                    </table>
+                    <div style="flex:1; min-height:0; overflow-y:auto;">
+                    <table class="params-tbl">
+                        <colgroup id="thetaBodyCols"><col style="width:60%"><col style="width:20%"><col style="width:20%"></colgroup>
+                        <tbody id="thetaBody"></tbody>
+                    </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="resize-handle" id="resizeHandle"></div>
+
+            <!-- Workers + Recent History side by side -->
+            <div class="two-col bottom-panel">
+                <div class="section" style="margin-top: 0;">
+                    <h3>Workers</h3>
+                    <table style="table-layout:fixed; width:100%;">
+                        <colgroup id="workersHeadCols"><col style="width:22%"><col style="width:18%"><col style="width:10%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>
+                        <thead><tr id="workersHeadRow"><th>Name</th><th>Seen</th><th style="text-transform:none">vCPU</th><th>Assigned</th><th>Iter</th><th>Session</th></tr></thead>
+                    </table>
+                    <div class="scroll-wrap" style="max-height: 340px; overflow-y: auto;">
+                    <table style="table-layout:fixed; width:100%;">
+                        <colgroup id="workersBodyCols"><col style="width:22%"><col style="width:18%"><col style="width:10%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>
+                        <tbody id="workersBody"></tbody>
+                    </table>
+                    </div>
+                </div>
+                <div class="col-resize-handle" id="workersHistHandle"></div>
+                <div class="section" style="margin-top: 0;">
+                    <h3 id="historyTitle">History (latest {dashboard_history})</h3>
+                    <div style="flex-shrink: 0;">
+                    <table style="table-layout:fixed; width:100%;">
+                        <colgroup id="historyHeadCols"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
+                        <thead><tr id="historyHeadRow"><th>Iter</th><th>Score Diff</th><th>ELO Diff</th><th>a_k</th><th>c_k</th></tr></thead>
+                    </table>
+                    </div>
+                    <div class="scroll-wrap" style="max-height: 340px; overflow-y: auto;">
+                    <table style="table-layout:fixed; width:100%;">
+                        <colgroup id="historyBodyCols"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
+                        <tbody id="historyBody"></tbody>
+                    </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="refresh-info" id="footerInfo">
+            Session created {session_start} &middot; Last started {server_start} &middot; Updated {timestamp}
+        </div>
+    </div>
+
+    <script>{chart_js}</script>
+    <script id="history-data" type="application/json">{history_json}</script>
+    <script id="theta-data" type="application/json">{theta_json}</script>
+    <script id="theta-internal-data" type="application/json">{theta_internal_json}</script>
+    <script id="workers-data" type="application/json">{workers_json}</script>
+    <script>
+        // --- Normalized/internal toggle ---
+        var hasNormalized = {has_normalized};
+        var thetaViewMode = localStorage.getItem('thetaView') || 'engine';
+        if (!hasNormalized && thetaViewMode === 'internal') thetaViewMode = 'engine';
+        var showInternal = thetaViewMode === 'internal';
+        var currentTheta = {{}};
+        var currentThetaInternal = {{}};
+        var initialTheta = {{}};
+        var initialThetaInternal = {{}};
+        var paramColors = {{}};
+        var paramTints = {{}};
+        var hiddenParams = new Set();
+
+        // --- Legend filter persistence ---------------------------------------
+        // Legend clicks hide/show chart series (and, via hiddenParams, the rows
+        // in the params table). Persist that selection so a reload keeps it.
+        //
+        // Keyed by dataset _groupKey (stable id) rather than label: in grouped
+        // mode the label is a display string ('PS_1 (Pawn)') that GROUP_LABELS
+        // can rename, which would orphan saved state. Grouped and ungrouped
+        // modes have different identities for the same chart, so they get
+        // separate keys and never leak into each other.
+        function hiddenStoreKey() {{
+            return groupedMode ? 'dashHiddenGroups' : 'dashHiddenParams';
+        }}
+
+        function loadHiddenFilter() {{
+            try {{
+                var saved = JSON.parse(localStorage.getItem(hiddenStoreKey()) || 'null');
+                return Array.isArray(saved) ? saved : null;
+            }} catch (e) {{ return null; }}
+        }}
+
+        function saveHiddenFilter(keys) {{
+            try {{
+                if (!keys.length) localStorage.removeItem(hiddenStoreKey());
+                else localStorage.setItem(hiddenStoreKey(), JSON.stringify(keys));
+            }} catch (e) {{}}
+        }}
+        var paramRanges = {{}};
+        var paramConfig = {{}};  // name -> param record from /config (has original_lower/upper, type, init, etc.)
+
+        // Shared engine-space denormalizer. Mirrors Python ParamSpec.denormalize().
+        // Returns val unchanged if param record not yet loaded.
+        function denormalizeToEngine(name, val) {{
+            if (typeof val !== 'number') return val;
+            var p = paramConfig[name];
+            if (!p) return val;
+            if (p.original_lower != null && p.original_upper != null) {{
+                return Math.round((val + 1) * (p.original_upper - p.original_lower) / 2 + p.original_lower);
+            }}
+            if (p.type === 'int') return Math.round(val);
+            return val;
+        }}
+        var thetaColResizer = null;
+
+        function fmtVal(v, decimals) {{
+            return (typeof v === 'number' && !Number.isInteger(v)) ? v.toFixed(decimals || 6) : v;
+        }}
+
+        var CONVERGENCE_MIN = 5;
+        var GROUP_THRESHOLD = 16;
+        var groupedMode = false;
+        var groupMap = {{}};  // param name -> group key
+
+        var GROUP_LABELS = {{
+            'PS_1': 'PS_1 (Pawn)', 'PS_2': 'PS_2 (Knight)', 'PS_3': 'PS_3 (Bishop)',
+            'PS_4': 'PS_4 (Rook)', 'PS_5': 'PS_5 (Queen)',  'PS_6': 'PS_6 (King)',
+            'PS_KEG': 'PS_KEG (King EG)'
+        }};
+
+        function paramPrefix(name) {{
+            // Group by first two underscore-separated segments: PS_1_xx -> PS_1, PS_KEG_xx -> PS_KEG
+            var parts = name.split('_');
+            if (parts.length >= 3) return parts[0] + '_' + parts[1];
+            return name;
+        }}
+
+        function groupLabel(key) {{
+            return GROUP_LABELS[key] || key;
+        }}
+
+        function buildGroups(keys) {{
+            // Build groupMap and return sorted unique group keys
+            groupMap = {{}};
+            var groups = {{}};
+            keys.forEach(function(k) {{
+                var g = paramPrefix(k);
+                groupMap[k] = g;
+                groups[g] = true;
+            }});
+            return Object.keys(groups).sort();
+        }}
+
+        function groupMean(theta, groupKey) {{
+            // Average of all params in this group present in theta
+            var sum = 0, count = 0;
+            for (var name in theta) {{
+                if (groupMap[name] === groupKey) {{
+                    sum += theta[name];
+                    count++;
+                }}
+            }}
+            return count > 0 ? sum / count : null;
+        }}
+        var CONV_THRESHOLDS = [2, 5];
+        var CONV_COLORS = ['var(--conv-good)', 'var(--conv-ok)', 'var(--conv-bad)'];
+        function convColor(pct) {{
+            return pct < CONV_THRESHOLDS[0] ? CONV_COLORS[0] : pct < CONV_THRESHOLDS[1] ? CONV_COLORS[1] : CONV_COLORS[2];
+        }}
+        // Theta trajectories are strongly autocorrelated, which inflates the
+        // slope t-stat; use it only as a significance gate and grade the drift
+        // by magnitude (same %-of-range thresholds as the StdDev column).
+        function trendColor(trendPct, t) {{
+            if (Math.abs(t) < 2) return CONV_COLORS[0];
+            return convColor(Math.abs(trendPct));
+        }}
+        function paramConvergence(name) {{
+            var range = paramRanges[name];
+            if (!range) return null;
+            var vals = historyWindow.map(function(h) {{ return h.theta && h.theta[name]; }}).filter(function(v) {{ return v != null; }});
+            if (vals.length < CONVERGENCE_MIN) return null;
+            var n = vals.length;
+            var mean = vals.reduce(function(a, b) {{ return a + b; }}, 0) / n;
+            var variance = vals.reduce(function(a, v) {{ return a + (v - mean) * (v - mean); }}, 0) / n;
+            var stddev = Math.sqrt(variance);
+            // Least-squares slope of theta vs. iteration index over the window:
+            // stddev alone can't tell jitter from a slow one-directional drift
+            // (annealed gains keep it small either way), so report the trend and
+            // its t-statistic against the detrended residuals separately.
+            var xm = (n - 1) / 2;
+            var sxx = 0, sxy = 0;
+            for (var i = 0; i < n; i++) {{
+                sxx += (i - xm) * (i - xm);
+                sxy += (i - xm) * (vals[i] - mean);
+            }}
+            var slope = sxx > 0 ? sxy / sxx : 0;
+            var ssRes = 0;
+            for (var j = 0; j < n; j++) {{
+                var r = vals[j] - mean - slope * (j - xm);
+                ssRes += r * r;
+            }}
+            var se = (n > 2 && sxx > 0) ? Math.sqrt(ssRes / (n - 2) / sxx) : 0;
+            var tstat = se > 0 ? slope / se : 0;
+            var trendPct = range > 0 ? slope * n / range * 100 : 0;  // % of range per window
+            // StdDev/% Range report the detrended residual σ so they measure
+            // jitter only (roughly window-size invariant); the drift component
+            // lives in the Trend column. Raw σ kept for the tooltip.
+            var residSd = Math.sqrt(ssRes / n);
+            return {{ stddev: residSd, range: range, pct: range > 0 ? (residSd / range * 100) : 0,
+                     window: n, trend: trendPct, trendAbs: Math.abs(trendPct), tstat: tstat,
+                     rawSd: stddev }};
+        }}
+
+        // --- Convergence-tab column sort -------------------------------------
+        // Click cycle per column: none -> first -> other -> none, one active
+        // column at a time. Only the Conv view sorts; the Internal/Engine views
+        // keep theta's natural (config) order, so the state is parked whenever
+        // the view isn't 'convergence'.
+        var CONV_SORT_COLS = [
+            {{ key: 'name',     firstDir: 'asc' }},
+            {{ key: 'stddev',   firstDir: 'desc' }},
+            {{ key: 'pct',      firstDir: 'desc' }},
+            {{ key: 'trendAbs', firstDir: 'desc' }}
+        ];
+        var convSort = null;  // {{ key, dir }} | null
+        try {{
+            var savedSort = JSON.parse(localStorage.getItem('dashConvSort') || 'null');
+            if (savedSort && CONV_SORT_COLS.some(function(c) {{ return c.key === savedSort.key; }})
+                && (savedSort.dir === 'asc' || savedSort.dir === 'desc')) {{
+                convSort = savedSort;
+            }}
+        }} catch (e) {{}}
+
+        function nextSortDir(current, firstDir) {{
+            var other = firstDir === 'asc' ? 'desc' : 'asc';
+            if (current === firstDir) return other;
+            if (current === other) return null;
+            return firstDir;
+        }}
+
+        // Params below CONVERGENCE_MIN samples have no stddev/pct ('--'); keep
+        // them pinned last in both directions rather than letting them sort as 0.
+        function sortConvNames(names) {{
+            if (!convSort) return names;
+            var sign = convSort.dir === 'asc' ? 1 : -1;
+            var key = convSort.key;
+            var byName = function(a, b) {{
+                return a.localeCompare(b, undefined, {{ sensitivity: 'base', numeric: true }});
+            }};
+            return names.slice().sort(function(a, b) {{
+                if (key === 'name') return sign * byName(a, b);
+                var ca = paramConvergence(a), cb = paramConvergence(b);
+                if (!ca && !cb) return byName(a, b);
+                if (!ca) return 1;
+                if (!cb) return -1;
+                var d = ca[key] - cb[key];
+                return d !== 0 ? sign * d : byName(a, b);
+            }});
+        }}
+
+        function syncConvSortIndicators() {{
+            var ths = document.getElementById('thetaHeadRow').querySelectorAll('th');
+            ths.forEach(function(th, i) {{
+                var col = CONV_SORT_COLS[i];
+                if (!col) return;
+                th.classList.add('th-sortable');
+                var dir = convSort && convSort.key === col.key ? convSort.dir : null;
+                th.setAttribute('aria-sort',
+                    dir === 'asc' ? 'ascending' : dir === 'desc' ? 'descending' : 'none');
+            }});
+        }}
+
+        function wireConvSort() {{
+            var ths = document.getElementById('thetaHeadRow').querySelectorAll('th');
+            ths.forEach(function(th, i) {{
+                var col = CONV_SORT_COLS[i];
+                if (!col) return;
+                th.addEventListener('click', function(ev) {{
+                    // Ignore clicks on the resize grip so a drag never sorts.
+                    if (ev.target.closest('.th-grip')) return;
+                    var current = convSort && convSort.key === col.key ? convSort.dir : null;
+                    var dir = nextSortDir(current, col.firstDir);
+                    convSort = dir ? {{ key: col.key, dir: dir }} : null;
+                    localStorage.setItem('dashConvSort', JSON.stringify(convSort));
+                    renderTheta(showInternal ? currentThetaInternal : currentTheta,
+                                showInternal ? initialThetaInternal : initialTheta);
+                }});
+            }});
+            syncConvSortIndicators();
+        }}
+
+        function renderTheta(theta, initial) {{
+            var isConv = thetaViewMode === 'convergence';
+            // Update headers
+            var hr = document.getElementById('thetaHeadRow');
+            if (isConv) {{
+                hr.innerHTML = '<th>Parameter</th><th>StdDev</th><th>% Range</th><th>Trend</th>';
+            }} else {{
+                hr.innerHTML = '<th>Parameter</th><th>Initial</th><th>Current</th>';
+            }}
+            if (thetaColResizer) thetaColResizer.reattach();
+            // innerHTML above replaced the th nodes, so re-wire click handlers.
+            if (isConv) wireConvSort();
+            const tbody = document.getElementById('thetaBody');
+            tbody.innerHTML = '';
+            var dec = showInternal ? 5 : 6;
+            var names = Object.keys(theta).filter(function(n) {{ return !hiddenParams.has(n); }});
+            if (isConv) names = sortConvNames(names);
+            for (const name of names) {{
+                const value = theta[name];
+                const tr = document.createElement('tr');
+                var tint = paramTints[name] || (groupedMode && groupMap[name] ? paramTints[groupLabel(groupMap[name])] : '');
+                if (tint) tr.style.background = tint;
+                if (isConv) {{
+                    var conv = paramConvergence(name);
+                    var sdTxt = conv ? conv.stddev.toFixed(4) : '--';
+                    var pctTxt = conv ? conv.pct.toFixed(1) + '%' : '--';
+                    var pctColor = '';
+                    if (conv) pctColor = 'color:' + convColor(conv.pct) + ';font-weight:600;';
+                    var trendTxt = '--', trendStyle = '', trendTip = '';
+                    if (conv) {{
+                        trendTxt = (conv.trend >= 0 ? '+' : '') + conv.trend.toFixed(1) + '%';
+                        trendStyle = 'color:' + trendColor(conv.trend, conv.tstat) + ';font-weight:600;';
+                        trendTip = 'drift over ' + conv.window + '-iter window, % of range (t=' + conv.tstat.toFixed(1)
+                                 + ', raw σ=' + conv.rawSd.toFixed(4) + ')';
+                    }}
+                    var tip = name;
+                    tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" title="' + tip + '"><span class="solo-link">' + name + '</span></td>'
+                                 + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + sdTxt + '</td>'
+                                 + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;' + pctColor + '">' + pctTxt + '</td>'
+                                 + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;' + trendStyle + '" title="' + trendTip + '">' + trendTxt + '</td>';
+                }} else {{
+                    var initVal = initial && initial[name] !== undefined ? fmtVal(initial[name], dec) : '';
+                    // Compact mirror of the Conv tab: jitter dot left of the
+                    // name, trend arrow right of the value.
+                    var conv = paramConvergence(name);
+                    var dot = '';
+                    if (conv) {{
+                        dot = '<span style="font-size:9px;margin-right:4px;color:' + convColor(conv.pct)
+                            + ';" title="jitter (detrended): σ=' + conv.stddev.toFixed(4) + ', '
+                            + conv.pct.toFixed(1) + '% of range">&#9679;</span>';
+                    }}
+                    var arrow = '';
+                    if (conv) {{
+                        var sym = Math.abs(conv.tstat) < 2 ? '&#9644;' : conv.trend > 0 ? '&#9650;' : '&#9660;';
+                        arrow = ' <span style="font-size:11px;color:' + trendColor(conv.trend, conv.tstat)
+                              + ';" title="trend: ' + (conv.trend >= 0 ? '+' : '') + conv.trend.toFixed(1)
+                              + '% of range over ' + conv.window + '-iter window (t=' + conv.tstat.toFixed(1) + ')">' + sym + '</span>';
+                    }}
+                    tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" title="' + name + '">' + dot + '<span class="solo-link">' + name + '</span></td>'
+                                 + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + initVal + '</td>'
+                                 + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + fmtVal(value, dec) + arrow + '</td>';
+                }}
+                tr.querySelector('.solo-link').addEventListener('click', function() {{
+                    localStorage.setItem('chartSolo', JSON.stringify({{p: name, m: 'value'}}));
+                    try {{
+                        var vis = JSON.parse(localStorage.getItem('chartVis')) || {{}};
+                        vis.params = true;
+                        localStorage.setItem('chartVis', JSON.stringify(vis));
+                    }} catch(e) {{}}
+                    location.href = '/charts';
+                }});
+                tbody.appendChild(tr);
+            }}
+        }}
+
+        function setThetaView(mode) {{
+            thetaViewMode = mode;
+            showInternal = mode === 'internal';
+            localStorage.setItem('thetaView', mode);
+            var accent = getComputedStyle(document.documentElement).getPropertyValue('--accent-start').trim();
+            ['togInternal', 'togEngine', 'togConv'].forEach(function(id) {{
+                var el = document.getElementById(id);
+                if (!el) return;
+                var active = (id === 'togInternal' && mode === 'internal') || (id === 'togEngine' && mode === 'engine') || (id === 'togConv' && mode === 'convergence');
+                el.style.background = active ? accent : '';
+                el.style.color = active ? '#fff' : 'var(--text-muted)';
+                el.style.borderColor = active ? accent : 'var(--border)';
+            }});
+            renderTheta(showInternal ? currentThetaInternal : currentTheta, showInternal ? initialThetaInternal : initialTheta);
+        }}
+
+        function initToggle() {{
+            if (hasNormalized) {{
+                document.getElementById('togInternal').style.display = '';
+                document.getElementById('togEngine').style.display = '';
+                document.getElementById('togEngine').style.borderRadius = '0';
+            }} else {{
+                document.getElementById('togEngine').style.display = '';
+                document.getElementById('togEngine').style.borderRadius = '4px 0 0 4px';
+            }}
+            setThetaView(thetaViewMode);
+        }}
+
+        var lastWorkerUpdate = Date.now();
+        var latestWorkers = [];
+
+        function renderWorkers(workers) {{
+            workers.sort((a, b) => b.games_completed - a.games_completed);
+            const tbody = document.getElementById('workersBody');
+            tbody.innerHTML = '';
+            var overdueCount = 0, timedOutCount = 0;
+            workers.forEach(w => {{
+                var style, status;
+                if (w.status === 1) {{ style = 'color:#FF9800;font-weight:bold'; status = 'overdue'; overdueCount++; }}
+                else if (w.status === 2 || !w.alive) {{ style = 'color:#f44336;font-weight:bold'; status = 'timed out'; timedOutCount++; }}
+                else {{ style = 'color:#4CAF50'; status = 'online'; }}
+                var tip = w.name + ' | ' + status;
+                if (w.sec_per_game != null) tip += ' | ' + w.sec_per_game.toFixed(1) + ' sec/game';
+                if (w.chunk_eta > 0) tip += ' | ETA ~' + formatDuration(w.chunk_eta * 1000);
+                const tr = document.createElement('tr');
+                tr.title = tip;
+                var conc = (w.concurrency && w.concurrency > 0) ? w.concurrency : '?';
+                tr.innerHTML = '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;">' + w.name + '</td>'
+                             + '<td class="worker-seen" style="' + style + '">' + Math.round(w.last_seen_ago) + 's ago</td>'
+                             + '<td>' + conc + '</td>'
+                             + '<td>' + w.games_assigned + '</td>'
+                             + '<td>' + w.games_completed_iter + '</td>'
+                             + '<td>' + w.games_completed + '</td>';
+                tbody.appendChild(tr);
+            }});
+            latestWorkers = workers;
+            lastWorkerUpdate = Date.now();
+            updateWorkerToasts(overdueCount, timedOutCount);
+        }}
+
+        function updateWorkerToasts(overdue, timedOut) {{
+            var t = document.getElementById('toastTimedOut');
+            var o = document.getElementById('toastOverdue');
+            if (t) {{
+                t.textContent = timedOut + ' worker' + (timedOut === 1 ? '' : 's') + ' timed out';
+                t.classList.toggle('show', timedOut > 0);
+            }}
+            if (o) {{
+                o.textContent = overdue + ' worker' + (overdue === 1 ? '' : 's') + ' overdue';
+                o.classList.toggle('show', overdue > 0);
+            }}
+        }}
+
+        // Tick last-seen counters client-side between SSE pushes
+        setInterval(function() {{
+            var elapsed = Math.round((Date.now() - lastWorkerUpdate) / 1000);
+            var cells = document.querySelectorAll('.worker-seen');
+            for (var i = 0; i < cells.length && i < latestWorkers.length; i++) {{
+                cells[i].textContent = Math.round(latestWorkers[i].last_seen_ago + elapsed) + 's ago';
+            }}
+        }}, 1000);
+
+        function historyRow(h) {{
+            const sd = (h.score_diff >= 0 ? '+' : '') + h.score_diff.toFixed(4);
+            const ed = (h.elo_diff >= 0 ? '+' : '') + h.elo_diff.toFixed(1);
+            const tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + (h.iteration ?? '?') + '</td>'
+                         + '<td>' + sd + '</td>'
+                         + '<td>' + ed + '</td>'
+                         + '<td>' + h.a_k.toFixed(6) + '</td>'
+                         + '<td>' + h.c_k.toFixed(4) + '</td>';
+            return tr;
+        }}
+
+        function renderHistory(entries) {{
+            var sorted = entries.slice().sort((a, b) => (b.iteration || 0) - (a.iteration || 0));
+            const tbody = document.getElementById('historyBody');
+            tbody.innerHTML = '';
+            sorted.forEach(h => tbody.appendChild(historyRow(h)));
+        }}
+
+        function updateHistoryTitle(total) {{
+            var shown = document.getElementById('historyBody').children.length;
+            var el = document.getElementById('historyTitle');
+            if (el) el.textContent = 'History (' + shown + ' of ' + total + ' iterations)';
+        }}
+
+        // --- Initial render from baked-in data ---
+        const sessionStart = '{session_start}';
+        var totalGamesAtStart = {total_games_at_start};
+        var iterationStartEpoch = {iteration_start};
+        // ETAs computed server-side; client tracks local arrival time so the
+        // displayed countdown is independent of client/server clock skew.
+        var etaIterS = {iter_eta_s};
+        var etaSessionS = {session_eta_s};
+        var avgIterSec = {avg_iter_sec};
+        var etaReceivedAt = Date.now();
+        var lastETA = [{games_done}, {games_total}, {iteration}, {max_iters}];
+        const initTheta = JSON.parse(document.getElementById('theta-data').textContent || '{{}}');
+        const initThetaInternal = JSON.parse(document.getElementById('theta-internal-data').textContent || '{{}}');
+        const initWorkers = JSON.parse(document.getElementById('workers-data').textContent || '[]');
+        const historyWindow = JSON.parse(document.getElementById('history-data').textContent || '[]');
+
+        currentTheta = initTheta;
+        currentThetaInternal = Object.keys(initThetaInternal).length ? initThetaInternal : initTheta;
+        initToggle();
+        renderTheta(hasNormalized ? currentThetaInternal : currentTheta, hasNormalized ? initialThetaInternal : initialTheta);
+        renderPstHeatmaps();
+        renderWorkers(initWorkers);
+        document.getElementById('remainingValue').textContent = {games_total} - {games_done};
+        updateSchedFill({games_pending}, {games_total} - {games_done});
+        renderHistory(historyWindow);
+        updateHistoryTitle({history_total});
+        updateSinceRestart({total_games});
+        updateETA({games_done}, {games_total}, {iteration}, {max_iters});
+        setInterval(function() {{
+            // Elapsed clock always ticks
+            var e = (Date.now() - iterationStartEpoch * 1000) / 1000;
+            document.getElementById('elapsedIter').textContent = '(' + formatDuration(e * 1000) + ')';
+            updateETA.apply(null, lastETA);
+        }}, 1000);
+
+        // --- Fetch initial parameter values from config ---
+        fetch('/config').then(function(r) {{ return r.json(); }}).then(function(cfg) {{
+            var params = cfg.parameters || {{}};
+            for (var name in params) {{
+                var p = params[name];
+                paramConfig[name] = p;
+                paramRanges[name] = p.upper - p.lower;
+                initialThetaInternal[name] = p.init;
+                initialTheta[name] = denormalizeToEngine(name, p.init);
+            }}
+            // Heatmap may have rendered before /config arrived; refresh it now
+            // so PST cells use denormalized engine values.
+            if (typeof renderPstHeatmaps === 'function') renderPstHeatmaps();
+            renderTheta(
+                showInternal ? currentThetaInternal : currentTheta,
+                showInternal ? initialThetaInternal : initialTheta
+            );
+        }});
+
+        // --- Chart theme: keep axis/grid colors readable across light/dark ---
+        function applyChartTheme() {{
+            if (typeof Chart === 'undefined') return;
+            var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+            Chart.defaults.color = dark ? '#b0b2bb' : '#666666';
+            Chart.defaults.borderColor = dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.1)';
+            if (typeof thetaChart !== 'undefined' && thetaChart) thetaChart.update('none');
+        }}
+
+        // --- Chart ---
+        function toRgbTint(cssColor, alpha) {{
+            var tmp = document.createElement('div');
+            tmp.style.color = cssColor;
+            document.body.appendChild(tmp);
+            var rgb = getComputedStyle(tmp).color;
+            document.body.removeChild(tmp);
+            return rgb.replace('rgb(', 'rgba(').replace(')', ',' + alpha + ')');
+        }}
+
+        function syncParamColors() {{
+            if (!thetaChart) return;
+            thetaChart.data.datasets.forEach(function(ds) {{
+                paramColors[ds.label] = ds.borderColor;
+                paramTints[ds.label] = toRgbTint(ds.borderColor, 0.15);
+            }});
+            renderTheta(
+                showInternal ? currentThetaInternal : currentTheta,
+                showInternal ? initialThetaInternal : initialTheta
+            );
+        }}
+
+        var palette = [
+            '#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac',
+            '#a0cbe8','#ffbe7d','#8cd17d','#b6992d','#499894','#86bcb6','#79706e','#d37295','#d4a6c8','#d7b5a6'
+        ];
+
+        var legendUserShown = localStorage.getItem('dashLegendShown') !== 'false';
+
+        function updateLegend() {{
+            if (!thetaChart) return;
+            var show = legendUserShown && window.innerWidth > 700;
+            thetaChart.options.plugins.legend.display = show;
+            thetaChart.update();
+        }}
+
+        function updateLegendBtn() {{
+            var btn = document.getElementById('legendToggle');
+            if (!btn) return;
+            var accent = getComputedStyle(document.documentElement).getPropertyValue('--accent-start').trim();
+            btn.style.background = legendUserShown ? accent : 'var(--surface)';
+            btn.style.color = legendUserShown ? '#fff' : 'var(--text-muted)';
+            btn.style.borderColor = legendUserShown ? 'rgba(0,0,0,0.45)' : 'var(--text-subtle)';
+        }}
+
+        function toggleLegend() {{
+            legendUserShown = !legendUserShown;
+            localStorage.setItem('dashLegendShown', legendUserShown);
+            updateLegendBtn();
+            updateLegend();
+        }}
+
+        // Dots read fine up to ~DOT_LIMIT points; beyond that they merge
+        // into fat ropes, so draw plain thinner lines. Applied as plain
+        // dataset values (cheap, matches charts.tmpl's _pr approach) and
+        // rechecked whenever the data length changes. Length only grows —
+        // the maxHist shift keeps it constant — so this flips at most once.
+        var DOT_LIMIT = 150;
+        function applyChartDensity(chart) {{
+            var dense = chart.data.labels.length > DOT_LIMIT;
+            if (chart._dense === dense) return;
+            chart._dense = dense;
+            chart.data.datasets.forEach(function(ds) {{
+                ds.pointRadius = dense ? 0 : 2;
+                ds.borderWidth = dense ? 1.5 : 2;
+            }});
+            // Self-contained: don't rely on callers updating soon after.
+            // Only runs on an actual flip, so the extra render is rare.
+            chart.update('none');
+        }}
+
+        function createThetaChart(keys, labels, dataFn, labelFn) {{
+            var ctx = document.getElementById('thetaChart').getContext('2d');
+            // Restore the persisted legend filter. Every chart-creation path
+            // funnels through here, so this covers first load and rebuilds.
+            var savedHidden = loadHiddenFilter();
+            var hiddenSet = savedHidden ? new Set(savedHidden) : null;
+            // Never restore a state that hides every series (a blank chart with
+            // no obvious way back); treat it as "show all".
+            if (hiddenSet && keys.every(function(k) {{ return hiddenSet.has(k); }})) hiddenSet = null;
+            hiddenParams.clear();
+            var chart = new Chart(ctx, {{
+                type: 'line',
+                data: {{
+                    labels: labels,
+                    datasets: keys.map(function(k, i) {{
+                        var label = labelFn ? labelFn(k) : k;
+                        var isHidden = hiddenSet ? hiddenSet.has(k) : false;
+                        if (isHidden) hiddenParams.add(label);
+                        return {{
+                            label: label,
+                            _groupKey: k,
+                            hidden: isHidden,
+                            data: dataFn(k),
+                            borderColor: palette[i % palette.length],
+                            backgroundColor: palette[i % palette.length] + '30',
+                            tension: 0.25,
+                            pointRadius: 2,
+                            borderWidth: 2,
+                        }};
+                    }})
+                }},
+                options: {{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    scales: {{
+                        x: {{ ticks: {{ maxRotation: 0, autoSkipPadding: 24 }} }}
+                    }},
+                    plugins: {{ tooltip: {{ enabled: false }}, legend: {{ display: false, position: 'bottom', onClick: legendClick }} }}
+                }}
+            }});
+            applyChartDensity(chart);
+            return chart;
+        }}
+
+        function legendClick(e, item, legend) {{
+            // Default Chart.js toggle
+            Chart.defaults.plugins.legend.onClick.call(this, e, item, legend);
+            // Sync hidden set from chart dataset visibility
+            hiddenParams.clear();
+            var hiddenKeys = [];
+            legend.chart.data.datasets.forEach(function(ds, i) {{
+                if (legend.chart.isDatasetVisible(i)) return;
+                hiddenParams.add(ds.label);
+                hiddenKeys.push(ds._groupKey || ds.label);
+            }});
+            saveHiddenFilter(hiddenKeys);
+            renderTheta(
+                showInternal ? currentThetaInternal : currentTheta,
+                showInternal ? initialThetaInternal : initialTheta
+            );
+        }}
+
+        // --- PST heatmaps (8x8 per piece, auto-detected from PS_<n>_<sq> names) ---
+        function detectPstPieces(theta) {{
+            // Returns map: pieceKey -> (sq -> paramName)
+            var re = /^PS_(\d+|KEG)_(\d+)$/;
+            var pieces = {{}};
+            Object.keys(theta || {{}}).forEach(function(name) {{
+                var m = re.exec(name);
+                if (!m) return;
+                var p = m[1], sq = +m[2];
+                (pieces[p] = pieces[p] || {{}})[sq] = name;
+            }});
+            return pieces;
+        }}
+        var PST_PIECE_NAMES = {{
+            '1': 'Pawn', '2': 'Knight', '3': 'Bishop',
+            '4': 'Rook', '5': 'Queen', '6': 'King', 'KEG': 'King EG'
+        }};
+        function pstCellColor(v, maxAbs) {{
+            // Tableau 10 categorical: orange (#f28e2c) for positive, blue (#4e79a7) for negative.
+            // Alpha encodes |v|/maxAbs. Deeper alt (Orange-Blue Diverging): 200,82,0 / 17,112,170.
+            if (maxAbs <= 0 || v === 0) return '';
+            var t = Math.min(1, Math.abs(v) / maxAbs);
+            var alpha = (0.15 + 0.65 * t).toFixed(3);
+            return v > 0
+                ? 'background: rgba(242, 142, 44, ' + alpha + ');'
+                : 'background: rgba(78, 121, 167, ' + alpha + ');';
+        }}
+        // Slider state: pinned-iteration number (null = follow latest-recorded).
+        // Tracking the iteration (not array index) keeps the pin stable when
+        // historyWindow shifts old entries out. Note: we always render from
+        // historyWindow[].theta (the snapshot at that recorded iter), never from
+        // currentTheta which is the live in-progress state and can differ.
+        var pstPinnedIter = null;
+        var pstSkeletonKey = '';  // detects when DOM skeleton needs rebuild
+
+        function pstHistoryEntries() {{
+            return (typeof historyWindow !== 'undefined' && historyWindow) ? historyWindow : [];
+        }}
+        function pstGetPinnedTheta() {{
+            var hw = pstHistoryEntries();
+            if (!hw.length) return null;
+            if (pstPinnedIter == null) {{
+                // Default: show the latest *recorded* snapshot (not live currentTheta).
+                // This keeps the heatmap consistent with the slider position and
+                // avoids a discontinuity when scrubbing between last and previous.
+                var last = hw[hw.length - 1];
+                return (last && last.theta) ? last.theta : null;
+            }}
+            for (var i = 0; i < hw.length; ++i) {{
+                if (hw[i] && hw[i].iteration === pstPinnedIter) return hw[i].theta || null;
+            }}
+            return null;  // pin scrolled out of window; caller falls back to live
+        }}
+        function updatePstSliderUI() {{
+            var row = document.getElementById('pstSliderRow');
+            if (!row) return;
+            var slider = document.getElementById('pstSlider');
+            var iterLbl = document.getElementById('pstSliderIter');
+            var hw = pstHistoryEntries();
+            var n = hw.length;
+            if (n <= 1) {{ row.style.display = 'none'; return; }}
+            row.style.display = 'flex';
+            slider.max = String(n - 1);
+            var shownIdx = n - 1;  // default: live
+            if (pstPinnedIter != null) {{
+                for (var i = 0; i < n; ++i) {{
+                    if (hw[i] && hw[i].iteration === pstPinnedIter) {{ shownIdx = i; break; }}
+                }}
+            }}
+            slider.value = String(shownIdx);
+            var iter = (hw[shownIdx] && hw[shownIdx].iteration != null) ? hw[shownIdx].iteration : '--';
+            iterLbl.textContent = 'iter ' + iter;
+        }}
+        function renderPstHeatmaps() {{
+            var wrap = document.getElementById('pstHeatmapsWrap');
+            var root = document.getElementById('pstHeatmapsInline');
+            if (!root || !wrap) return;
+            // Show the recorded snapshot at the pinned iter (or the latest recorded
+            // iter when unpinned). Falls back to live normalized theta when history
+            // is empty. Both paths must feed denormalizeToEngine normalized values.
+            var pinnedTheta = pstGetPinnedTheta();
+            var theta = pinnedTheta || currentThetaInternal;
+            var pieces = detectPstPieces(theta);
+            var pieceKeys = Object.keys(pieces).sort(function(a, b) {{
+                if (a === 'KEG') return 1;
+                if (b === 'KEG') return -1;
+                return (+a) - (+b);
+            }});
+            var canvasWrap = document.querySelector('#thetaChartCard .chart-wrap');
+            var legendBtn = document.getElementById('legendToggle');
+            if (!pieceKeys.length) {{
+                wrap.style.display = 'none';
+                if (canvasWrap) canvasWrap.style.display = '';
+                if (legendBtn) legendBtn.style.display = '';
+                return;
+            }}
+            wrap.style.display = 'flex';
+            if (canvasWrap) canvasWrap.style.display = 'none';
+            if (legendBtn) legendBtn.style.display = 'none';
+            updatePstSliderUI();
+
+            // Rebuild skeleton only when piece set changes; on later ticks just
+            // patch cell text + style. Avoids regenerating 400+ DOM nodes per tick.
+            var skeletonKey = pieceKeys.map(function(p) {{
+                return p + ':' + Object.keys(pieces[p]).sort().join(',');
+            }}).join('|');
+            if (skeletonKey !== pstSkeletonKey) {{
+                pstSkeletonKey = skeletonKey;
+                buildPstSkeleton(root, pieceKeys, pieces);
+            }}
+            updatePstCells(pieceKeys, pieces, theta);
+        }}
+
+        function buildPstSkeleton(root, pieceKeys, pieces) {{
+            var html = '';
+            pieceKeys.forEach(function(p) {{
+                var squares = pieces[p];
+                var pieceName = (typeof PST_PIECE_NAMES !== 'undefined' && PST_PIECE_NAMES[p]) || p;
+                var label = 'PS_' + p + ' (' + pieceName + ')';
+                html += '<div class="pst-board" data-piece="' + p + '">'
+                    + '<h4><span>' + label + '</span>'
+                    + '<span class="pst-range" data-range="' + p + '">±0</span></h4>'
+                    + '<div class="pst-grid">';
+                // Rank 8 (top) -> rank 1 (bottom); square index = rank*8 + file, A1=0, H8=63
+                for (var r = 7; r >= 0; --r) {{
+                    for (var f = 0; f < 8; ++f) {{
+                        var sq = r * 8 + f;
+                        var name = squares[sq];
+                        if (name === undefined) {{
+                            html += '<div class="pst-cell pst-na" title="sq ' + sq + ' (not tuned)">–</div>';
+                        }} else {{
+                            html += '<div class="pst-cell pst-cell-clickable" data-cell="' + p + ':' + sq + '" data-pname="' + name + '" title="' + name + '"></div>';
+                        }}
+                    }}
+                }}
+                html += '</div></div>';
+            }});
+            root.innerHTML = html;
+            // Wire click -> charts page solo, same as the params table rows.
+            root.querySelectorAll('.pst-cell-clickable').forEach(function(cell) {{
+                cell.addEventListener('click', function() {{
+                    var pname = cell.getAttribute('data-pname');
+                    if (!pname) return;
+                    localStorage.setItem('chartSolo', JSON.stringify({{p: pname, m: 'value'}}));
+                    try {{
+                        var vis = JSON.parse(localStorage.getItem('chartVis')) || {{}};
+                        vis.params = true;
+                        localStorage.setItem('chartVis', JSON.stringify(vis));
+                    }} catch(e) {{}}
+                    location.href = '/charts';
+                }});
+            }});
+        }}
+
+        function updatePstCells(pieceKeys, pieces, theta) {{
+            pieceKeys.forEach(function(p) {{
+                var squares = pieces[p];
+                // Denormalize to engine cp before computing range and rendering.
+                var engineVals = {{}};
+                Object.keys(squares).forEach(function(sq) {{
+                    var name = squares[sq];
+                    engineVals[sq] = denormalizeToEngine(name, theta[name]);
+                }});
+                var vals = Object.values(engineVals).filter(function(v) {{ return typeof v === 'number'; }});
+                var maxAbs = vals.reduce(function(m, v) {{ return Math.max(m, Math.abs(v)); }}, 0);
+                var rangeEl = document.querySelector('[data-range="' + p + '"]');
+                if (rangeEl) rangeEl.textContent = maxAbs > 0 ? '±' + maxAbs.toFixed(1) : '0';
+                Object.keys(squares).forEach(function(sq) {{
+                    var name = squares[sq];
+                    var cell = document.querySelector('[data-cell="' + p + ':' + sq + '"]');
+                    if (!cell) return;
+                    var v = engineVals[sq];
+                    if (typeof v === 'number') {{
+                        cell.textContent = (Math.abs(v) >= 1 || v === 0) ? Math.round(v) : v.toFixed(1);
+                        cell.style.cssText = pstCellColor(v, maxAbs);
+                        cell.title = name + ' = ' + v;
+                    }} else {{
+                        cell.textContent = '?';
+                        cell.style.cssText = '';
+                        cell.title = name + ' = ?';
+                    }}
+                }});
+            }});
+        }}
+
+        // Wire slider controls once.
+        (function setupPstSlider() {{
+            var slider = document.getElementById('pstSlider');
+            if (!slider) return;
+            function pinByIdx(idx) {{
+                var hw = pstHistoryEntries();
+                if (!hw.length) return;
+                idx = Math.max(0, Math.min(hw.length - 1, idx));
+                pstPinnedIter = (idx === hw.length - 1) ? null : (hw[idx] && hw[idx].iteration);
+                renderPstHeatmaps();
+            }}
+            slider.addEventListener('input', function() {{
+                pinByIdx(parseInt(slider.value, 10));
+            }});
+            document.getElementById('pstSliderPrev').addEventListener('click', function() {{
+                var hw = pstHistoryEntries();
+                if (!hw.length) return;
+                var cur = parseInt(slider.value, 10);
+                if (isNaN(cur)) cur = hw.length - 1;
+                pinByIdx(cur - 1);
+            }});
+            document.getElementById('pstSliderNext').addEventListener('click', function() {{
+                var hw = pstHistoryEntries();
+                if (!hw.length) return;
+                var cur = parseInt(slider.value, 10);
+                if (isNaN(cur)) cur = hw.length - 1;
+                pinByIdx(cur + 1);
+            }});
+        }})();
+
+        var thetaChart = null;
+        (function() {{
+            try {{
+                const history = historyWindow.slice().sort((a,b) => (a.iteration||0) - (b.iteration||0));
+                if (!history.length) return;
+
+                const labels = history.map(h => h.iteration);
+                const thetaKeys = [...new Set(
+                    history.flatMap(h => Object.keys(h.theta || {{}}))
+                )];
+
+                if (thetaKeys.length > GROUP_THRESHOLD) {{
+                    // Grouped mode: aggregate by prefix
+                    groupedMode = true;
+                    var groupKeys = buildGroups(thetaKeys);
+                    thetaChart = createThetaChart(groupKeys, labels, function(g) {{
+                        return history.map(function(h) {{
+                            return h.theta ? groupMean(h.theta, g) : null;
+                        }});
+                    }}, groupLabel);
+                }} else {{
+                    thetaChart = createThetaChart(thetaKeys, labels, function(k) {{
+                        return history.map(h => (h.theta && k in h.theta) ? h.theta[k] : null);
+                    }});
+                }}
+                updateLegend();
+                updateLegendBtn();
+                applyChartTheme();
+                syncParamColors();
+            }} catch (e) {{
+                console.error('Failed to render chart', e);
+            }}
+        }})();
+
+        // --- ETA estimation ---
+        function formatDuration(ms) {{
+            if (ms == null || !isFinite(ms) || ms < 0) return '--';
+            var sec = Math.round(ms / 1000);
+            if (sec < 60) return sec + 's';
+            var min = Math.floor(sec / 60);
+            var rem = sec % 60;
+            if (min < 10) return rem > 0 ? min + 'm ' + rem + 's' : min + 'm';
+            if (min < 120) return min + 'm';
+            var hrs = (min / 60).toFixed(1);
+            if (hrs < 48) return hrs + 'h';
+            return (min / 1440).toFixed(1) + 'd';
+        }}
+        function updateSinceRestart(totalGames) {{
+            var since = totalGames - totalGamesAtStart;
+            var el = document.getElementById('totalGamesStat');
+            if (el) el.title = since > 0 ? since + ' since restart' : '';
+        }}
+        function updateSchedFill(pending, remaining) {{
+            var fill = document.getElementById('schedFill');
+            var rawPct = remaining > 0 ? pending / remaining * 100 : (pending > 0 ? Infinity : 0);
+            fill.style.width = Math.min(100, rawPct) + '%';
+            fill.textContent = rawPct > 0 ? (isFinite(rawPct) ? Math.round(rawPct) + '%' : '∞') : '';
+            // In overschedule mode, drift the gradient's end color toward a
+            // forest green proportional to excess. Excess reaches 1 at 150%
+            // scheduled (rather than 200%) so the shift is more aggressive,
+            // and the green mix peaks at 80%. Target hex is hardcoded -- the
+            // mint --conv-good token is the wrong hue for "deep forest".
+            if (rawPct >= 100) {{
+                var greenPct = (Math.min(1, (rawPct / 100 - 1) * 2) * 80).toFixed(0);
+                fill.style.background = 'linear-gradient(90deg, var(--accent-start) 0%, color-mix(in srgb, var(--accent-end), #1F5C2A ' + greenPct + '%) 100%)';
+            }} else {{
+                fill.style.background = '';
+            }}
+        }}
+        function updateETA(gamesDone, gamesTotal, iteration, maxIters) {{
+            // Interpolate the server's ETAs forward to "now" using the local
+            // arrival time, so the countdown ticks smoothly between SSE events
+            // without depending on server-vs-client clock alignment.
+            var sinceRx = (Date.now() - etaReceivedAt) / 1000;
+            function fmt(s) {{ var f = formatDuration(s * 1000); return f === '--' ? '' : f; }}
+            var etaIter = etaIterS > 0 ? fmt(Math.max(0, etaIterS - sinceRx)) : '';
+            var etaSession = etaSessionS > 0 ? fmt(Math.max(0, etaSessionS - sinceRx)) : '';
+
+            document.getElementById('iterValue').innerHTML = iteration + ' / ' + maxIters
+                + (etaSession ? ' <span style="font-size:14px;color:var(--text-subtle);font-weight:normal">~' + etaSession + ' left</span>' : '');
+            document.getElementById('gamesValue').innerHTML = gamesDone + ' / ' + gamesTotal
+                + (etaIter ? ' <span style="font-size:14px;color:var(--text-subtle);font-weight:normal">~' + etaIter + ' left</span>' : '');
+            document.getElementById('avgIterLabel').textContent = 'Avg / Iteration';
+            document.getElementById('avgIterValue').textContent = avgIterSec > 0
+                ? formatDuration(avgIterSec * 1000)
+                : '--';
+        }}
+
+        // --- SSE live updates ---
+        let knownHistoryLen = {history_total};
+        const maxHist = parseInt('{dashboard_history}', 10) || 0;  // 0 = unlimited
+        const serverStart = '{server_start}';
+
+        const sse = new EventSource('/sse');
+        sse.onmessage = function(event) {{
+            const d = JSON.parse(event.data);
+
+            // Cards
+            document.getElementById('iterFill').style.width = d.progress + '%';
+            document.getElementById('iterFill').textContent = Math.round(d.progress) + '%';
+            document.getElementById('gamesFill').style.width = d.iter_progress + '%';
+            document.getElementById('gamesFill').textContent = Math.round(d.iter_progress) + '%';
+            document.getElementById('pendingValue').textContent = d.games_pending;
+            document.getElementById('remainingValue').textContent = d.games_total - d.games_done;
+            updateSchedFill(d.games_pending, d.games_total - d.games_done);
+
+            // Stats
+            document.getElementById('akValue').textContent = d.a_k.toFixed(6);
+            document.getElementById('ckValue').textContent = d.c_k.toFixed(6);
+            document.getElementById('totalGamesValue').textContent = d.total_games;
+            if (typeof d.total_games_at_start === 'number') totalGamesAtStart = d.total_games_at_start;
+            updateSinceRestart(d.total_games);
+
+            // Status badge
+            const badge = document.getElementById('statusBadge');
+            badge.textContent = d.status_text;
+            badge.style.background = d.status_color;
+
+            // Tables
+            currentTheta = d.theta;
+            if (d.theta_internal) currentThetaInternal = d.theta_internal;
+            renderTheta(showInternal ? currentThetaInternal : currentTheta, showInternal ? initialThetaInternal : initialTheta);
+            renderPstHeatmaps();
+            renderWorkers(d.workers);
+
+            // History: detect reset (--clean) or missed entries, append new
+            if (d.history_len < knownHistoryLen) {{
+                // Server history shrunk (restart with --clean) — resync
+                location.reload();
+                return;
+            }}
+            if (d.history_len > knownHistoryLen) {{
+                if (d.history_len - knownHistoryLen > 1) {{
+                    // Missed entries — full reload to resync
+                    location.reload();
+                    return;
+                }}
+                if (d.last_history) {{
+                    // Prepend to table (newest first)
+                    const tbody = document.getElementById('historyBody');
+                    tbody.insertBefore(historyRow(d.last_history), tbody.firstChild);
+                    // Trim oldest row if over limit
+                    if (maxHist > 0 && tbody.children.length > maxHist)
+                        tbody.removeChild(tbody.lastChild);
+
+                    // Update chart
+                    if (d.last_history.theta) {{
+                        if (!thetaChart) {{
+                            var keys = Object.keys(d.last_history.theta);
+                            if (keys.length > GROUP_THRESHOLD) {{
+                                groupedMode = true;
+                                var gk = buildGroups(keys);
+                                thetaChart = createThetaChart(gk, [], function() {{ return []; }}, groupLabel);
+                            }} else {{
+                                thetaChart = createThetaChart(keys, [], function() {{ return []; }});
+                            }}
+                            updateLegend();
+                            updateLegendBtn();
+                            applyChartTheme();
+                        }}
+                        thetaChart.data.labels.push(d.last_history.iteration);
+                        thetaChart.data.datasets.forEach(ds => {{
+                            var val;
+                            var key = ds._groupKey || ds.label;
+                            if (groupedMode) {{
+                                val = groupMean(d.last_history.theta, key);
+                            }} else {{
+                                val = (d.last_history.theta && key in d.last_history.theta)
+                                    ? d.last_history.theta[key] : null;
+                            }}
+                            ds.data.push(val);
+                        }});
+                        // Trim oldest chart point if over limit
+                        if (maxHist > 0 && thetaChart.data.labels.length > maxHist) {{
+                            thetaChart.data.labels.shift();
+                            thetaChart.data.datasets.forEach(ds => ds.data.shift());
+                        }}
+                        applyChartDensity(thetaChart);
+                        thetaChart.update();
+                        syncParamColors();
+                    }}
+                    // Grow the client-side window backing the convergence metrics
+                    if (d.last_history.theta) {{
+                        historyWindow.push(d.last_history);
+                        if (maxHist > 0 && historyWindow.length > maxHist) historyWindow.shift();
+                    }}
+                }}
+                knownHistoryLen = d.history_len;
+            }}
+
+            updateHistoryTitle(d.history_len);
+
+            // Theme
+            applyTimeTheme();
+
+            // ETA — server computes; client just interpolates from local arrival time.
+            iterationStartEpoch = d.iteration_start;
+            etaIterS = d.iter_eta_s;
+            etaSessionS = d.session_eta_s;
+            avgIterSec = d.avg_iter_sec;
+            etaReceivedAt = Date.now();
+            lastETA = [d.games_done, d.games_total, d.iteration, d.max_iters];
+            updateETA.apply(null, lastETA);
+
+            // Footer
+            document.getElementById('footerInfo').innerHTML =
+                'Session created ' + sessionStart + ' &middot; Last started ' + d.server_start
+                + ' &middot; Updated ' + d.timestamp;
+        }};
+    // Update chart legend visibility on resize
+    var _resizeTimer;
+    window.addEventListener('resize', function() {{
+        clearTimeout(_resizeTimer);
+        _resizeTimer = setTimeout(updateLegend, 200);
+    }});
+
+    // --- Resize handles (horizontal row split + vertical column splitters) ---
+    (function() {{
+        // Shared drag boilerplate: mobile guard, dragging class, move/up listeners, chart resize.
+        // onStart(e) is called on pointerdown and must return {{ move(e), save() }}.
+        function makeDragResize(handle, onStart) {{
+            handle.addEventListener('pointerdown', function(eDown) {{
+                if (eDown.button !== undefined && eDown.button !== 0) return;
+                eDown.preventDefault();
+                try {{ handle.setPointerCapture(eDown.pointerId); }} catch(e) {{}}
+                handle.classList.add('dragging');
+                var h = onStart(eDown);
+                var done = false;
+                function onMove(e) {{ h.move(e); if (thetaChart) thetaChart.resize(); }}
+                function onUp() {{
+                    if (done) return;
+                    done = true;
+                    handle.classList.remove('dragging');
+                    h.save();
+                    handle.removeEventListener('pointermove', onMove);
+                    handle.removeEventListener('pointerup', onUp);
+                    handle.removeEventListener('pointercancel', onUp);
+                    document.removeEventListener('pointerup', onUp);
+                    document.removeEventListener('pointercancel', onUp);
+                }}
+                handle.addEventListener('pointermove', onMove);
+                handle.addEventListener('pointerup', onUp);
+                handle.addEventListener('pointercancel', onUp);
+                document.addEventListener('pointerup', onUp);
+                document.addEventListener('pointercancel', onUp);
+            }});
+        }}
+
+        function makeColResizable(handle, leftEl, rightEl, storageKey, defaultRatio, minLeft, minRight) {{
+            var curRatio = defaultRatio;
+            function applyRatio(r) {{
+                curRatio = r;
+                leftEl.style.flex = 'none';
+                rightEl.style.flex = 'none';
+                leftEl.style.display = '';
+                rightEl.style.display = '';
+                if (r <= 0) {{
+                    leftEl.style.display = 'none';
+                    leftEl.style.width = '0';
+                    rightEl.style.width = 'calc(100% - 10px)';
+                }} else if (r >= 1) {{
+                    leftEl.style.width = 'calc(100% - 10px)';
+                    rightEl.style.display = 'none';
+                    rightEl.style.width = '0';
+                }} else {{
+                    leftEl.style.width = 'calc(' + (r * 100).toFixed(3) + '% - 5px)';
+                    rightEl.style.width = 'calc(' + ((1 - r) * 100).toFixed(3) + '% - 5px)';
+                }}
+            }}
+            function clampRatio(r) {{
+                var w = handle.parentElement.getBoundingClientRect().width || 1000;
+                r = Math.max(minLeft / w, Math.min((w - minRight) / w, r));
+                // Snap to exact edges when near them, so the user can fully
+                // collapse without needing pixel-perfect cursor placement.
+                if (r < 0.02) r = 0;
+                else if (r > 0.98) r = 1;
+                return r;
+            }}
+            var saved = parseFloat(localStorage.getItem(storageKey));
+            applyRatio(clampRatio(isNaN(saved) ? defaultRatio : saved));
+            makeDragResize(handle, function(e) {{
+                var rect = handle.parentElement.getBoundingClientRect();
+                return {{
+                    move: function(e) {{ applyRatio(clampRatio((e.clientX - rect.left) / rect.width)); }},
+                    save: function() {{ localStorage.setItem(storageKey, curRatio.toFixed(4)); }}
+                }};
+            }});
+        }}
+
+        // Horizontal split: chart section height
+        var cs = document.getElementById('chartSection');
+        var rh = document.getElementById('resizeHandle');
+        var savedH = localStorage.getItem('dashSplitH');
+        if (savedH) cs.style.height = parseInt(savedH) + 'px';
+        makeDragResize(rh, function(e) {{
+            var startY = e.clientY, startH = cs.getBoundingClientRect().height;
+            var bp = document.querySelector('.bottom-panel');
+            var maxH = startH + bp.getBoundingClientRect().height;
+            return {{
+                move: function(e) {{ cs.style.height = Math.max(0, Math.min(startH + e.clientY - startY, maxH)) + 'px'; }},
+                save: function() {{ localStorage.setItem('dashSplitH', Math.round(cs.getBoundingClientRect().height)); }}
+            }};
+        }});
+
+        // Vertical column splits
+        makeColResizable(document.getElementById('chartParamsHandle'), cs.querySelector('.card'), cs.querySelector('.section'), 'dashChartParamsRatio', 0.6, 0, 0);
+        var bp = document.querySelector('.bottom-panel');
+        var bpSections = bp.querySelectorAll('.section');
+        makeColResizable(document.getElementById('workersHistHandle'), bpSections[0], bpSections[1], 'dashWorkersHistRatio', 0.5, 0, 0);
+
+        // Per-column resize: drag a grip on the right edge of any <th> to widen
+        // its column at the expense of the next; paired head/body colgroups stay
+        // in sync, widths persist in localStorage.
+        function makeTableColumnsResizable(headCg, bodyCg, headRow, storageKey) {{
+            var headCols = headCg.querySelectorAll('col');
+            var bodyCols = bodyCg.querySelectorAll('col');
+            var nCols = headCols.length;
+            // Views may render a different number of columns (e.g. the Conv
+            // view adds a Trend column); remember the markup's defaults so the
+            // colgroups can be rebuilt to match, with widths saved per count.
+            var baseCols = nCols;
+            var baseWidths = [];
+            headCols.forEach(function(c) {{ baseWidths.push(c.style.width); }});
+            function keyFor(n) {{ return n === baseCols ? storageKey : storageKey + '.' + n; }}
+            function rebuildCols(n) {{
+                [headCg, bodyCg].forEach(function(cg) {{
+                    cg.innerHTML = '';
+                    for (var i = 0; i < n; i++) {{
+                        var c = document.createElement('col');
+                        c.style.width = (n === baseCols && baseWidths[i]) ? baseWidths[i]
+                            : (i === 0 ? 40 : 60 / (n - 1)) + '%';
+                        cg.appendChild(c);
+                    }}
+                }});
+                headCols = headCg.querySelectorAll('col');
+                bodyCols = bodyCg.querySelectorAll('col');
+                nCols = n;
+                try {{
+                    var savedN = JSON.parse(localStorage.getItem(keyFor(n)) || 'null');
+                    if (Array.isArray(savedN) && savedN.length === n) applyWidths(savedN);
+                }} catch (e) {{}}
+            }}
+            var headTbl = headCg.parentElement;
+            var bodyTbl = bodyCg.parentElement;
+            var bodyWrapper = bodyTbl.parentElement;
+            var section = headTbl.closest('.section') || headTbl.parentElement;
+            // Anchor for the full-column drag-indicator overlay
+            var sStyle = getComputedStyle(section);
+            if (sStyle.position === 'static') section.style.position = 'relative';
+            // `left`/`top` for absolute children are measured from the padding-box,
+            // but getBoundingClientRect() returns the border-box; subtract the
+            // section's border to keep the indicator pixel-aligned to the column.
+            var sBorderLeft = parseFloat(sStyle.borderLeftWidth) || 0;
+            var sBorderTop = parseFloat(sStyle.borderTopWidth) || 0;
+            function applyWidths(pcts) {{
+                for (var i = 0; i < nCols; i++) {{
+                    headCols[i].style.width = pcts[i] + '%';
+                    if (bodyCols[i]) bodyCols[i].style.width = pcts[i] + '%';
+                }}
+            }}
+            function readPcts() {{
+                var out = [];
+                for (var i = 0; i < nCols; i++) out.push(parseFloat(headCols[i].style.width) || 0);
+                return out;
+            }}
+            try {{
+                var saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+                if (Array.isArray(saved) && saved.length === nCols) applyWidths(saved);
+            }} catch (e) {{}}
+            function attach() {{
+                var ths = headRow.querySelectorAll('th');
+                if (ths.length < 2) return;
+                if (ths.length !== nCols) rebuildCols(ths.length);
+                for (var i = 0; i < ths.length - 1; i++) {{
+                    (function(idx, th) {{
+                        if (th.querySelector('.th-grip')) return;
+                        th.style.position = 'relative';
+                        var grip = document.createElement('div');
+                        grip.className = 'th-grip';
+                        th.appendChild(grip);
+                        makeDragResize(grip, function(eDown) {{
+                            var pcts = readPcts();
+                            var startX = eDown.clientX;
+                            var startA = pcts[idx], startB = pcts[idx + 1];
+                            var tableW = headTbl.getBoundingClientRect().width || 1;
+                            var minPct = 5;
+                            var moved = false;
+                            var overlay = document.createElement('div');
+                            var leftLine = document.createElement('div');
+                            overlay.className = leftLine.className = 'col-drag-line';
+                            section.appendChild(overlay);
+                            section.appendChild(leftLine);
+                            function placeOverlay() {{
+                                var sRect = section.getBoundingClientRect();
+                                var thRect = headRow.querySelectorAll('th')[idx].getBoundingClientRect();
+                                var headRect = headTbl.getBoundingClientRect();
+                                // End the line at the visible content edge, not the
+                                // section bottom: with flex:1 wrappers the section can
+                                // extend past the last row, otherwise the line draws
+                                // ghost rows below the data.
+                                var bottomY = Math.min(bodyTbl.getBoundingClientRect().bottom,
+                                                       bodyWrapper.getBoundingClientRect().bottom);
+                                var topPx = (headRect.top - sRect.top - sBorderTop) + 'px';
+                                var heightPx = (bottomY - headRect.top) + 'px';
+                                // The -3 px fudge nudges the indicator under the col-resize
+                                // cursor's *visual* center: on the OS theme this was tuned
+                                // against, the cursor's hotspot sits ~3 px right of the
+                                // double-arrow's visual midpoint, so the line at the true
+                                // boundary looked offset. Cosmetic only; safe to drop or
+                                // retune for a different cursor theme.
+                                overlay.style.left = (thRect.right - sRect.left - sBorderLeft - 3) + 'px';
+                                overlay.style.top = topPx;
+                                overlay.style.height = heightPx;
+                                leftLine.style.left = (thRect.left - sRect.left - sBorderLeft - 3) + 'px';
+                                leftLine.style.top = topPx;
+                                leftLine.style.height = heightPx;
+                            }}
+                            placeOverlay();
+                            return {{
+                                move: function(e) {{
+                                    moved = true;
+                                    var dPct = ((e.clientX - startX) / tableW) * 100;
+                                    var a = startA + dPct, b = startB - dPct;
+                                    if (a < minPct) {{ b -= (minPct - a); a = minPct; }}
+                                    if (b < minPct) {{ a -= (minPct - b); b = minPct; }}
+                                    pcts[idx] = a; pcts[idx + 1] = b;
+                                    applyWidths(pcts);
+                                    placeOverlay();
+                                }},
+                                save: function() {{
+                                    overlay.remove();
+                                    leftLine.remove();
+                                    if (moved) localStorage.setItem(keyFor(nCols), JSON.stringify(readPcts()));
+                                }}
+                            }};
+                        }});
+                    }})(i, ths[i]);
+                }}
+            }}
+            attach();
+            return {{ reattach: attach }};
+        }}
+        thetaColResizer = makeTableColumnsResizable(
+            document.getElementById('thetaHeadCols'),
+            document.getElementById('thetaBodyCols'),
+            document.getElementById('thetaHeadRow'),
+            'dashThetaColPcts');
+        makeTableColumnsResizable(
+            document.getElementById('workersHeadCols'),
+            document.getElementById('workersBodyCols'),
+            document.getElementById('workersHeadRow'),
+            'dashWorkersColPcts');
+        makeTableColumnsResizable(
+            document.getElementById('historyHeadCols'),
+            document.getElementById('historyBodyCols'),
+            document.getElementById('historyHeadRow'),
+            'dashHistoryColPcts');
+    }})();
+    </script>
+</body>
+</html>

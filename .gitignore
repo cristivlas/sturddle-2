@@ -1,6 +1,15 @@
 .vscode
-build
+build*
 __pycache__
 __init__.cpp
 *.bin
+*.json
+!tools/nnue/golds.json
+*.log
+*.pdb
+*.pyd
 *.so
+dist/
+models/
+test/old-runs
+tuneup/*/*

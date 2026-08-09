@@ -1,8 +1,10 @@
 import re
 import subprocess
+import sys
 import sysconfig
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from os import environ, pathsep
+from os import cpu_count, environ, path, pathsep
 
 from Cython.Build import cythonize
 from setuptools import Extension, setup
@@ -10,8 +12,70 @@ from setuptools.command.build_ext import build_ext
 
 import armcpu
 
+sys.path.insert(0, path.join(path.dirname(path.abspath(__file__)), 'tools'))
+import fetch_weights
+
+fetch_weights.ensure()
+
 MIN_CLANG_VER = 16
 MIN_GCC_VER = 13
+
+
+def _parallel_build(build_ext_self):
+    compiler = build_ext_self.compiler
+    pool = ThreadPoolExecutor(max_workers=cpu_count() or 4)
+    futures = []
+
+    if cl_exe:
+        # MSVCCompiler.compile() calls spawn() per file and never calls _compile();
+        # patch compile() + spawn() instead.
+        _compiling = False
+        original_spawn = compiler.spawn
+        original_compile = compiler.compile
+
+        def _spawn(cmd):
+            if _compiling:
+                futures.append(pool.submit(original_spawn, cmd))
+            else:
+                original_spawn(cmd)
+
+        def _compile_msvc(*args, **kwargs):
+            nonlocal _compiling
+            _compiling = True
+            try:
+                result = original_compile(*args, **kwargs)
+                for f in futures:
+                    f.result()
+                futures.clear()
+            finally:
+                _compiling = False
+            return result
+
+        compiler.spawn = _spawn
+        compiler.compile = _compile_msvc
+    else:
+        # Unix: _compile() is called per file, link() is called once after.
+        original_compile = compiler._compile
+
+        def _compile(obj, src, ext, cc_args, extra_postargs, pp_opts):
+            futures.append(pool.submit(original_compile, obj, src, ext, cc_args, extra_postargs, pp_opts))
+
+        original_link = compiler.link
+
+        def _link(*args, **kwargs):
+            for f in futures:
+                f.result()
+            futures.clear()
+            original_link(*args, **kwargs)
+
+        compiler._compile = _compile
+        compiler.link = _link
+
+    try:
+        build_ext.build_extensions(build_ext_self)
+    finally:
+        pool.shutdown(wait=False)
+
 
 '''
 Monkey-patch MSVCCompiler to use clang-cl.exe on Windows.
@@ -36,10 +100,11 @@ if cl_exe:
     class BuildExt(build_ext):
         def build_extensions(self):
             self.compiler.__class__.initialize = initialize
-            build_ext.build_extensions(self)
+            _parallel_build(self)
 else:
     class BuildExt(build_ext):
-        pass
+        def build_extensions(self):
+            _parallel_build(self)
 
 
 def get_compiler_major_version(compiler=None):
@@ -149,6 +214,7 @@ if platform.startswith('win'):
         args += [
             '-Wno-deprecated-declarations',
             '-Wno-unused-command-line-argument',
+            '-Wno-unused-label',
             '-Wno-unused-variable',
             '-Wno-nan-infinity-disabled',
         ]
@@ -211,11 +277,12 @@ else:
             if '-arch arm64' in environ.get('ARCHFLAGS', ''):
                 print('ARM64 Target, skipping extra compiler and linker flags.')
             else:
+                triplet = subprocess.check_output([cc, '-dumpmachine'], text=True).strip()
                 args += ['-stdlib=libc++', '-fexperimental-library']
                 link += [
                     '-fuse-ld=lld',
                     f'-L/usr/lib/llvm-{cc_ver}/lib/',
-                    f'-L/usr/lib/llvm-{cc_ver}/lib/x86_64-pc-linux-gnu',
+                    f'-L/usr/lib/llvm-{cc_ver}/lib/{triplet}',
                     '-L/usr/local/opt/llvm/lib/c++',
                     '-lc++',
                     '-lc++experimental',

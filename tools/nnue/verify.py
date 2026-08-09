@@ -1,39 +1,48 @@
 #!/usr/bin/env python3
 """
 Verify NNUE binary weights for proper clipping and rounding.
-Architecture: 1280-accumulator with attention modulation.
+Architecture: 2048-accumulator, hidden_1b (linear) modulates pooled 1:1, 16-way bucketing (4 pawn x 4 king-file).
 """
 import sys
+from pathlib import Path
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import fetch_weights
 
 Q_SCALE = 1024
 
 # Constraint A: for hidden_1a and move layers
-Q_MAX_A = 32767 / Q_SCALE / 66
+Q_MAX_A = 32767 / Q_SCALE / 34
 
 # Constraint B: for hidden_1b layer
 Q_MAX_B = 32767 / Q_SCALE / 19
 
-ACCUMULATOR_SIZE = 1280
+ACTIVE_INPUTS = 769
+ACCUMULATOR_SIZE = 2048
 POOL_SIZE = 8
-ATTN_BUCKETS = 4
-HIDDEN2_BUCKETS = 4
+POOLED = ACCUMULATOR_SIZE // POOL_SIZE  # hidden_1b output width (modulates pooled 1:1)
+MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
+MOVE_ACCUMULATOR_SIZE = 256
+MOVE_OUTPUTS = 4096  # 64x64 (from, to)
 
 # Layer definitions: (name, kernel_shape, bias_shape, constraint_type)
 # constraint_type: 'A', 'B', or None
 # ORDER MATTERS - must match export order from trainer
 
 LAYERS = [
-    ('hidden_1b', (256, 64), (64,), 'B'),
-    ('hidden_1a', (3588, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), 'A'),
-    ('spatial_attn', (64 * ATTN_BUCKETS, 32), (32,), None),  # bucketed: 64 inputs × 4 buckets
-    ('hidden_2', (ACCUMULATOR_SIZE // POOL_SIZE * HIDDEN2_BUCKETS, 16), (16,), None),  # bucketed: 160 inputs × 4 buckets
+    ('hidden_1a', (ACTIVE_INPUTS * MAIN_BUCKETS, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), 'A'),
+    ('hidden_1b', (256, POOLED), (POOLED,), 'B'),
+    ('hidden_2', (POOLED, 16), (16,), None),
     ('hidden_3', (16, 16), (16,), None),
     ('out', (16, 1), (1,), None),
 ]
 
-# Optional move prediction layer
-MOVE_LAYER = ('move', (897, 4096), (4096,), 'A')
+# Optional move prediction head: own sub-accumulator, decoupled from eval
+MOVE_LAYERS = [
+    ('move_acc', (ACTIVE_INPUTS, MOVE_ACCUMULATOR_SIZE), (MOVE_ACCUMULATOR_SIZE,), 'A'),
+    ('move', (MOVE_ACCUMULATOR_SIZE, MOVE_OUTPUTS), (MOVE_OUTPUTS,), 'A'),
+]
 
 
 def get_constraint_params(constraint_type):
@@ -127,11 +136,11 @@ def verify_layers(data, layers, offset=0):
 
 
 def main():
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <weights.bin>")
+    if len(sys.argv) > 2:
+        print(f"Usage: {sys.argv[0]} [weights.bin]")
         sys.exit(1)
-    
-    filepath = sys.argv[1]
+
+    filepath = sys.argv[1] if len(sys.argv) == 2 else str(fetch_weights.ensure())
     print(f"Loading: {filepath}")
     print(f"Q_SCALE = {Q_SCALE}")
     print(f"Q_MAX_A = {Q_MAX_A:.10f} (hidden_1a, move)")
@@ -143,7 +152,7 @@ def main():
     
     # Calculate expected sizes
     base_total = sum(np.prod(k) + np.prod(b) for _, k, b, _ in LAYERS)
-    move_total = np.prod(MOVE_LAYER[1]) + np.prod(MOVE_LAYER[2])
+    move_total = sum(np.prod(k) + np.prod(b) for _, k, b, _ in MOVE_LAYERS)
     
     print(f"Expected (without move): {base_total}")
     print(f"Expected (with move): {base_total + move_total}")
@@ -167,14 +176,14 @@ def main():
         print("ERROR: Unexpected end of data while reading base layers")
         sys.exit(1)
     
-    # Verify move layer if present
+    # Verify move head if present
     if has_move_layer:
-        offset, clip_v, round_v, success = verify_layers(data, [MOVE_LAYER], offset)
+        offset, clip_v, round_v, success = verify_layers(data, MOVE_LAYERS, offset)
         total_clip_violations += clip_v
         total_round_violations += round_v
-        
+
         if not success:
-            print("ERROR: Unexpected end of data while reading move layer")
+            print("ERROR: Unexpected end of data while reading move head")
             sys.exit(1)
     
     # Verify we consumed all data

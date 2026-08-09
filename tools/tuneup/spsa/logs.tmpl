@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sturddle SPSA Tuner {version}</title>
+    <link rel="icon" href="/static/chess.ico">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        :root {{
+            --accent-start: #667eea;
+            --accent-end: #764ba2;
+            --surface: #ffffff;
+            --surface-alt: #f0f0f0;
+            --surface-hover: #e0e0e0;
+            --text: #333333;
+            --text-muted: #666666;
+            --text-subtle: #999999;
+            --border: #e0e0e0;
+            --border-subtle: #eeeeee;
+            --shadow: rgba(0,0,0,0.3);
+            --log-bg: #f5f5f5;
+            --log-num-bg: #eaeaea;
+            --log-num: #666666;
+            --log-text: #000000;
+            --log-hover: rgba(0,0,0,0.06);
+            --log-error: #b71c1c;
+            --log-warning: #8a4500;
+            --log-info: #0a6150;
+            --log-debug: #0d47a1;
+            --scrollbar: rgba(0,0,0,0.25);
+            --scrollbar-hover: rgba(0,0,0,0.4);
+        }}
+        [data-theme="dark"] {{
+            --surface: #1e1f26;
+            --surface-alt: #2a2c36;
+            --surface-hover: #383b47;
+            --text: #e8e8ec;
+            --text-muted: #b0b2bb;
+            --text-subtle: #878993;
+            --border: #383b47;
+            --border-subtle: #2d2f39;
+            --shadow: rgba(0,0,0,0.6);
+            --log-bg: #1e1e1e;
+            --log-num-bg: #252526;
+            --log-num: #858585;
+            --log-text: #d4d4d4;
+            --log-hover: rgba(255,255,255,0.05);
+            --log-error: #f48771;
+            --log-warning: #dcdcaa;
+            --log-info: #4ec9b0;
+            --log-debug: #9cdcfe;
+            --scrollbar: rgba(255,255,255,0.25);
+            --scrollbar-hover: rgba(255,255,255,0.4);
+        }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
+            background: linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%);
+            min-height: 100vh;
+            padding: 12px;
+            transition: background 1s ease;
+            /* App feel: page chrome is not selectable, so Ctrl+A never drags in
+               the header/toolbar. .log-line-content opts back in. */
+            -webkit-user-select: none;
+            user-select: none;
+        }}
+        .container {{
+            max-width: 1400px;
+            height: calc(100vh - 24px);
+            margin: 0 auto;
+            background: var(--surface);
+            border-radius: 10px;
+            box-shadow: 0 20px 60px var(--shadow);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }}
+        .header {{
+            background: linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%);
+            color: white;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.35);
+            padding: 10px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+            transition: background 1s ease;
+        }}
+        .header h1 {{
+            font-size: 18px;
+            font-weight: 700;
+        }}
+        .theme-toggle {{
+            display: inline-flex;
+            align-items: center;
+            font-size: 0;
+            line-height: 0;
+        }}
+        .theme-toggle > span {{
+            font-size: 11px;
+            padding: 4px 8px;
+            cursor: pointer;
+            border: 1px solid rgba(255,255,255,0.4);
+            border-left-width: 0;
+            color: rgba(255,255,255,0.75);
+            font-weight: 600;
+            letter-spacing: 0;
+            text-transform: none;
+            user-select: none;
+            background: rgba(0,0,0,0.18);
+            line-height: 1;
+        }}
+        .theme-toggle > span:first-child {{
+            border-left-width: 1px;
+            border-radius: 4px 0 0 4px;
+        }}
+        .theme-toggle > span:last-child {{
+            border-radius: 0 4px 4px 0;
+        }}
+        .theme-toggle > span.active {{
+            background: rgba(0,0,0,0.35);
+            color: #fff;
+        }}
+        .header-buttons {{
+            display: flex;
+            gap: 8px;
+        }}
+        .status-badge {{
+            background: rgba(0,0,0,0.25);
+            padding: 6px 16px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: white;
+            text-decoration: none;
+            cursor: pointer;
+            border: none;
+            transition: background 0.2s;
+        }}
+        .status-badge:hover {{
+            background: rgba(255,255,255,0.3);
+        }}
+        .content {{
+            padding: 10px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            flex: 1;
+            min-height: 0;
+        }}
+        .search-bar {{
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }}
+        .search-bar form {{
+            flex: 1;
+            display: flex;
+            margin: 0;
+            position: relative;
+        }}
+        .search-input {{
+            flex: 1;
+            padding: 10px 110px 10px 16px;
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: monospace;
+            background: var(--surface);
+            color: var(--text);
+            transition: border-color 0.2s;
+        }}
+        .search-input {{
+            -webkit-user-select: text;
+            user-select: text;
+        }}
+        .search-input:focus {{
+            outline: none;
+            border-color: var(--accent-start);
+        }}
+        .search-stats {{
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 12px;
+            color: var(--text-muted);
+            white-space: nowrap;
+            pointer-events: none;
+        }}
+        .search-nav {{
+            display: flex;
+            gap: 4px;
+        }}
+        .nav-button, .clear-button {{
+            width: 32px;
+            height: 32px;
+            background: var(--surface-alt);
+            color: var(--text);
+            border: 1px solid var(--border);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            transition: all 0.15s;
+        }}
+        .nav-button svg, .clear-button svg {{
+            width: 14px;
+            height: 14px;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 2.5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            pointer-events: none;
+        }}
+        .nav-button {{ border-radius: 4px; }}
+        .clear-button {{ border-radius: 50%; }}
+        .nav-button:hover, .clear-button:hover {{
+            background: var(--accent-start);
+            border-color: var(--accent-start);
+            color: #fff;
+        }}
+        .nav-button:disabled, .clear-button:disabled {{
+            opacity: 0.3;
+            cursor: default;
+        }}
+        .nav-button:disabled:hover, .clear-button:disabled:hover {{
+            background: var(--surface-alt);
+            border-color: var(--border);
+            color: var(--text);
+        }}
+        .log-container {{
+            flex: 1;
+            min-height: 0;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: auto;
+            background: var(--log-bg);
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            scrollbar-width: thin;
+            scrollbar-color: var(--scrollbar) transparent;
+        }}
+        .log-container::-webkit-scrollbar {{
+            width: 6px;
+            height: 6px;
+        }}
+        .log-container::-webkit-scrollbar-track {{
+            background: transparent;
+        }}
+        .log-container::-webkit-scrollbar-thumb {{
+            background: var(--scrollbar);
+            border-radius: 3px;
+        }}
+        .log-container::-webkit-scrollbar-thumb:hover {{
+            background: var(--scrollbar-hover);
+        }}
+        .log-line {{
+            display: flex;
+            align-items: flex-start;
+        }}
+        .log-line:hover {{
+            background: var(--log-hover);
+        }}
+        .log-num {{
+            color: var(--log-num);
+            text-align: right;
+            padding: 0 16px;
+            min-width: 60px;
+            user-select: none;
+            flex-shrink: 0;
+            background: var(--log-num-bg);
+            position: sticky;
+            left: 0;
+        }}
+        .log-line-content {{
+            color: var(--log-text);
+            white-space: pre;
+            flex: 1;
+            padding: 0 16px 0 8px;
+            -webkit-user-select: text;
+            user-select: text;
+        }}
+        .log-line mark {{
+            background: rgba(255, 235, 59, 0.3);
+            color: inherit;
+            padding: 1px 2px;
+            border-radius: 2px;
+        }}
+        .log-line mark.current {{
+            background: rgba(255, 152, 0, 0.5);
+            border: 1px solid #ff9800;
+            padding: 0px 1px;
+        }}
+        .log-line-error .log-line-content {{
+            color: var(--log-error);
+        }}
+        .log-line-warning .log-line-content {{
+            color: var(--log-warning);
+        }}
+        .log-line-info .log-line-content {{
+            color: var(--log-info);
+        }}
+        .log-line-debug .log-line-content {{
+            color: var(--log-debug);
+        }}
+        .refresh-info {{
+            padding: 4px 24px;
+            font-size: 12px;
+            color: var(--text-subtle);
+            text-align: center;
+            border-top: 1px solid var(--border-subtle);
+            flex-shrink: 0;
+        }}
+        @media (max-width: 700px) {{
+            .header {{ flex-wrap: wrap; gap: 6px; justify-content: center; }}
+            .container {{ height: auto; min-height: 100vh; }}
+            .theme-toggle > span {{ font-size: 0; padding: 4px 6px; }}
+            .theme-toggle > span::before {{ font-size: 14px; line-height: 1; }}
+            .theme-toggle > span[data-mode="auto"]::before {{ content: '\25D0'; }}
+            .theme-toggle > span[data-mode="light"]::before {{ content: '\2600'; }}
+            .theme-toggle > span[data-mode="dark"]::before {{ content: '\263E'; }}
+        }}
+    </style>
+    <!-- Time-of-day theme (keep in sync across dashboard/charts/logs templates) -->
+    <script>
+        var forceHour = null;
+        function applyTimeTheme() {{
+            var h = (forceHour !== null) ? forceHour : new Date().getHours();
+            var s, e;
+            if      (h >= 6  && h < 12) {{ s = '#5ba0b5'; e = '#82c4d8'; }}
+            else if (h >= 12 && h < 18) {{ s = '#667eea'; e = '#764ba2'; }}
+            else if (h >= 18 && h < 22) {{ s = '#c0766d'; e = '#8e6399'; }}
+            else                        {{ s = '#3d4f7c'; e = '#1a1a2e'; }}
+            document.documentElement.style.setProperty('--accent-start', s);
+            document.documentElement.style.setProperty('--accent-end', e);
+        }}
+        applyTimeTheme();
+        setInterval(applyTimeTheme, 3600000);
+        // Debug: Shift+T cycles forced time-of-day theme (auto/morning/afternoon/evening/night)
+        document.addEventListener('keydown', function(ev) {{
+            if (ev.key !== 'T' || ev.ctrlKey || ev.altKey || ev.metaKey) return;
+            var t = ev.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+            var cycle = [null, 6, 12, 18, 0];
+            var i = cycle.indexOf(forceHour);
+            forceHour = cycle[(i + 1) % cycle.length];
+            console.log('[theme] forceHour =', forceHour);
+            applyTimeTheme();
+            ev.preventDefault();
+        }});
+
+        // Dark mode (tri-state: auto/light/dark; user override persisted in localStorage)
+        function currentThemeMode() {{ return localStorage.getItem('themeMode') || 'auto'; }}
+        function resolvedTheme() {{
+            var m = currentThemeMode();
+            if (m === 'light' || m === 'dark') return m;
+            return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+        }}
+        function applyTheme() {{
+            var t = resolvedTheme();
+            if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+            else document.documentElement.removeAttribute('data-theme');
+            var tog = document.getElementById('themeToggle');
+            if (tog) {{
+                var mode = currentThemeMode();
+                tog.querySelectorAll('span').forEach(function(el) {{
+                    el.classList.toggle('active', el.getAttribute('data-mode') === mode);
+                }});
+            }}
+        }}
+        function setTheme(mode) {{
+            if (mode === 'auto') localStorage.removeItem('themeMode');
+            else localStorage.setItem('themeMode', mode);
+            applyTheme();
+        }}
+        applyTheme();
+        document.addEventListener('DOMContentLoaded', applyTheme);
+        if (window.matchMedia) {{
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {{
+                if (currentThemeMode() === 'auto') applyTheme();
+            }});
+        }}
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Sturddle SPSA Tuner {version}</h1>
+            <div class="header-buttons">
+                <span id="themeToggle" class="theme-toggle">
+                    <span data-mode="auto" onclick="setTheme('auto')">Auto</span><span
+                          data-mode="light" onclick="setTheme('light')">Light</span><span
+                          data-mode="dark" onclick="setTheme('dark')">Dark</span>
+                </span>
+                <a href="/dashboard" class="status-badge">Dashboard</a>
+                <a href="/charts" class="status-badge">Charts</a>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="search-bar">
+                <form id="searchForm" onsubmit="return false;">
+                <input type="text" id="searchInput" class="search-input" placeholder="Search logs...">
+                <span class="search-stats" id="searchStats"></span>
+                </form>
+                <div class="search-nav">
+                    <button class="nav-button" id="prevButton" onclick="navigatePrev()" title="Previous match (Shift+Enter)" disabled><svg viewBox="0 0 16 16"><polyline points="3,11 8,5 13,11"/></svg></button>
+                    <button class="nav-button" id="nextButton" onclick="navigateNext()" title="Next match (Enter)" disabled><svg viewBox="0 0 16 16"><polyline points="3,5 8,11 13,5"/></svg></button>
+                </div>
+                <button class="clear-button" id="clearButton" onclick="clearSearch()" title="Clear search" disabled><svg viewBox="0 0 16 16"><line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg></button>
+            </div>
+
+            <div class="log-container" id="logContainer"></div>
+        </div>
+
+        <div class="refresh-info">
+            Generated at {timestamp} &middot; <a href="/logs" style="color: var(--accent-start); text-decoration: none;">Refresh</a>
+        </div>
+    </div>
+
+    <script>
+        var LOG_DATA = {log_data_json};
+        var LINE_HEIGHT = Math.round(13 * 1.6);
+        var BUFFER = 30;
+
+        var container = document.getElementById('logContainer');
+        var searchInput = document.getElementById('searchInput');
+        var searchStats = document.getElementById('searchStats');
+        var prevButton = document.getElementById('prevButton');
+        var nextButton = document.getElementById('nextButton');
+        var clearButton = document.getElementById('clearButton');
+
+        var matches = [];
+        var currentMatchIndex = -1;
+        var matchesByLine = {{}};
+        var renderedStart = -1;
+        var renderedEnd = -1;
+        var renderedMatchGen = 0;
+        var matchGen = 0;
+
+        function escapeHtml(s) {{
+            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }}
+
+        function escapeRegex(s) {{
+            return s.replace(/[.*+?^${{}}()|[\]\\]/g, '\\$&');
+        }}
+
+        function renderLines(force) {{
+            var scrollTop = container.scrollTop;
+            var viewHeight = container.clientHeight;
+            var firstVisible = Math.floor(scrollTop / LINE_HEIGHT);
+            var visibleCount = Math.ceil(viewHeight / LINE_HEIGHT);
+            var start = Math.max(0, firstVisible - BUFFER);
+            var end = Math.min(LOG_DATA.length, firstVisible + visibleCount + BUFFER);
+
+            if (!force && start === renderedStart && end === renderedEnd && matchGen === renderedMatchGen) return;
+            renderedStart = start;
+            renderedEnd = end;
+            renderedMatchGen = matchGen;
+
+            var scrollLeft = container.scrollLeft;
+            var padTop = start * LINE_HEIGHT;
+            var padBottom = Math.max(0, (LOG_DATA.length - end) * LINE_HEIGHT);
+            var parts = ['<div style="height:' + padTop + 'px"></div>'];
+
+            for (var i = start; i < end; i++) {{
+                var text = LOG_DATA[i][0];
+                var level = LOG_DATA[i][1];
+                var cls = level ? 'log-line log-line-' + level : 'log-line';
+                var content;
+                var lineMatches = matchesByLine[i];
+
+                if (lineMatches) {{
+                    content = '';
+                    var lastPos = 0;
+                    for (var m = 0; m < lineMatches.length; m++) {{
+                        var mi = lineMatches[m];
+                        content += escapeHtml(text.substring(lastPos, mi.start));
+                        var markCls = mi.globalIndex === currentMatchIndex ? ' current' : '';
+                        content += '<mark class="' + markCls + '">' + escapeHtml(text.substring(mi.start, mi.end)) + '</mark>';
+                        lastPos = mi.end;
+                    }}
+                    content += escapeHtml(text.substring(lastPos));
+                }} else {{
+                    content = escapeHtml(text);
+                }}
+
+                parts.push(
+                    '<div class="' + cls + '" style="height:' + LINE_HEIGHT + 'px">' +
+                    '<span class="log-num">' + (i + 1) + '</span>' +
+                    '<span class="log-line-content">' + content + '</span></div>'
+                );
+            }}
+
+            parts.push('<div style="height:' + padBottom + 'px"></div>');
+            container.innerHTML = parts.join('');
+            container.scrollLeft = scrollLeft;
+            // innerHTML dropped the nodes any select-all range was anchored to;
+            // repaint it over the newly rendered slice so scrolling during a
+            // select-all keeps showing the highlight.
+            if (typeof repaintSelectAll === 'function') repaintSelectAll();
+        }}
+
+        var rafId = 0;
+        container.addEventListener('scroll', function() {{
+            if (rafId) return;
+            rafId = requestAnimationFrame(function() {{
+                rafId = 0;
+                renderLines(false);
+            }});
+        }});
+
+        /* --- Search --- */
+
+        function performSearch() {{
+            var query = searchInput.value;
+            matches = [];
+            matchesByLine = {{}};
+            currentMatchIndex = -1;
+            matchGen++;
+
+            if (query !== '') {{
+                var regex = new RegExp(escapeRegex(query), 'gi');
+                for (var i = 0; i < LOG_DATA.length; i++) {{
+                    var text = LOG_DATA[i][0];
+                    var match;
+                    regex.lastIndex = 0;
+                    while ((match = regex.exec(text)) !== null) {{
+                        var entry = {{ lineIndex: i, start: match.index, end: match.index + match[0].length, globalIndex: matches.length }};
+                        matches.push(entry);
+                        if (!matchesByLine[i]) matchesByLine[i] = [];
+                        matchesByLine[i].push(entry);
+                    }}
+                }}
+            }}
+
+            if (matches.length > 0) {{
+                currentMatchIndex = 0;
+                prevButton.disabled = false;
+                nextButton.disabled = false;
+                searchStats.textContent = '1 of ' + matches.length;
+                scrollToCurrentMatch();
+            }} else {{
+                searchStats.textContent = query ? 'No matches' : '';
+                prevButton.disabled = true;
+                nextButton.disabled = true;
+                renderLines(true);
+            }}
+            clearButton.disabled = query === '';
+        }}
+
+        function scrollToCurrentMatch() {{
+            if (currentMatchIndex < 0 || currentMatchIndex >= matches.length) return;
+            var m = matches[currentMatchIndex];
+            var targetScroll = m.lineIndex * LINE_HEIGHT - container.clientHeight / 2 + LINE_HEIGHT / 2;
+            container.scrollTop = Math.max(0, targetScroll);
+            searchStats.textContent = (currentMatchIndex + 1) + ' of ' + matches.length;
+            renderLines(true);
+        }}
+
+        // Return true if the currently-highlighted match is within the viewport.
+        function currentMatchInView() {{
+            var cur = matches[currentMatchIndex];
+            if (!cur) return false;
+            var firstLine = Math.floor(container.scrollTop / LINE_HEIGHT);
+            var lastLine = Math.ceil((container.scrollTop + container.clientHeight) / LINE_HEIGHT);
+            return cur.lineIndex >= firstLine && cur.lineIndex <= lastLine;
+        }}
+
+        function navigateNext() {{
+            if (matches.length === 0) return;
+            if (currentMatchInView()) {{
+                currentMatchIndex = (currentMatchIndex + 1) % matches.length;
+            }} else {{
+                // User scrolled away -- jump to first match at or below the viewport top.
+                var firstLine = Math.floor(container.scrollTop / LINE_HEIGHT);
+                var found = -1;
+                for (var i = 0; i < matches.length; i++) {{
+                    if (matches[i].lineIndex >= firstLine) {{ found = i; break; }}
+                }}
+                currentMatchIndex = found === -1 ? 0 : found;
+            }}
+            scrollToCurrentMatch();
+        }}
+
+        function navigatePrev() {{
+            if (matches.length === 0) return;
+            if (currentMatchInView()) {{
+                currentMatchIndex = (currentMatchIndex - 1 + matches.length) % matches.length;
+            }} else {{
+                // User scrolled away -- jump to last match at or above the viewport bottom.
+                var lastLine = Math.ceil((container.scrollTop + container.clientHeight) / LINE_HEIGHT);
+                var found = -1;
+                for (var i = matches.length - 1; i >= 0; i--) {{
+                    if (matches[i].lineIndex <= lastLine) {{ found = i; break; }}
+                }}
+                currentMatchIndex = found === -1 ? matches.length - 1 : found;
+            }}
+            scrollToCurrentMatch();
+        }}
+
+        function clearSearch() {{
+            searchInput.value = '';
+            performSearch();
+            container.scrollTop = container.scrollHeight;
+        }}
+
+        searchInput.addEventListener('input', performSearch);
+
+        document.getElementById('searchForm').addEventListener('submit', function(e) {{
+            e.preventDefault();
+            navigateNext();
+        }});
+
+        searchInput.addEventListener('keydown', function(e) {{
+            if (e.key === 'Enter' && e.shiftKey) {{
+                e.preventDefault();
+                navigatePrev();
+            }}
+        }});
+
+        document.addEventListener('keydown', function(e) {{
+            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {{
+                e.preventDefault();
+                searchInput.focus();
+            }} else if (e.key === 'Enter') {{
+                var tag = document.activeElement && document.activeElement.tagName;
+                if (tag === 'BODY' || tag === 'DIV') {{
+                    e.preventDefault();
+                    if (e.shiftKey) navigatePrev();
+                    else navigateNext();
+                }}
+            }} else if (e.key === 'Escape') {{
+                clearSearch();
+            }}
+        }});
+
+        /* --- Ctrl/Cmd+A selects the log text, not the whole page ------------
+           Desktop only: on a touch/coarse-pointer device there is no Ctrl+A,
+           and the native long-press selection UI is left alone.
+
+           The container is virtually scrolled -- only the visible slice of
+           lines exists in the DOM, wrapped in spacer divs -- so selecting its
+           contents would silently yield a fraction of the log (plus blank
+           spacer lines). Instead: paint a selection over the rendered lines so
+           there is visible feedback, mark the selection as "all lines", and
+           serve the full text from LOG_DATA on copy. */
+        var isDesktop = !window.matchMedia || window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+        var selectedAll = false;
+
+        function isEditableTarget(el) {{
+            return !!el && (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
+        }}
+
+        // Paint a selection across every currently rendered log line.
+        function repaintSelectAll() {{
+            if (!selectedAll) return;
+            var lines = container.querySelectorAll('.log-line-content');
+            if (!lines.length) return;
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            var range = document.createRange();
+            range.setStartBefore(lines[0]);
+            range.setEndAfter(lines[lines.length - 1]);
+            sel.addRange(range);
+        }}
+
+        if (isDesktop) {{
+            document.addEventListener('keydown', function(e) {{
+                if (!((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A'))) return;
+                // Leave the search field's own select-all alone.
+                if (isEditableTarget(document.activeElement)) return;
+                e.preventDefault();
+                selectedAll = true;
+                repaintSelectAll();
+            }});
+
+            // Escape drops the select-all highlight (it also clears search).
+            document.addEventListener('keydown', function(e) {{
+                if (e.key !== 'Escape' || !selectedAll) return;
+                selectedAll = false;
+                window.getSelection().removeAllRanges();
+            }});
+
+            // Any fresh selection gesture invalidates the select-all state, so a
+            // later copy serializes what the user actually dragged over.
+            container.addEventListener('mousedown', function() {{ selectedAll = false; }});
+
+            document.addEventListener('copy', function(e) {{
+                if (!selectedAll) return;
+                var sel = window.getSelection();
+                if (!sel || sel.isCollapsed) {{ selectedAll = false; return; }}
+                e.clipboardData.setData('text/plain',
+                    LOG_DATA.map(function(l) {{ return l[0]; }}).join('\n'));
+                e.preventDefault();
+            }});
+        }}
+
+        /* --- Initial render, scrolled to bottom --- */
+        container.innerHTML = '<div style="height:' + (LOG_DATA.length * LINE_HEIGHT) + 'px"></div>';
+        container.scrollTop = container.scrollHeight;
+        renderLines(true);
+    </script>
+</body>
+</html>

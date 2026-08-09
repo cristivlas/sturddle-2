@@ -233,6 +233,7 @@ def main():
     parser.add_argument('test_suites', nargs='+')
     parser.add_argument('-a', '--algo', choices=ALGORITHM.keys(), default='mtdf')
     parser.add_argument('-c', '--config', default='sturddle.cfg')
+    parser.add_argument('-d', '--depth', type=int, help='fixed depth, no time limit (deterministic)')
     parser.add_argument('-l', '--logfile', default='test_suite.log')
     parser.add_argument('-p', '--perft', action='store_true')
     parser.add_argument('-s', '--stats', help='stats output filename')
@@ -248,10 +249,14 @@ def main():
         with open(args.stats, 'w'):
             pass
 
+    kwargs = dict(time_limit_ms=args.time, stats=args.stats)
+    if args.depth:
+        kwargs.update(depth=args.depth, time_limit_ms=-1)
+
     for suite in args.test_suites:
         with open(suite) as f:
             epd = f.read()
-            test_epd(args, suite, epd, ALGORITHM[args.algo], time_limit_ms=args.time, stats=args.stats)
+            test_epd(args, suite, epd, ALGORITHM[args.algo], **kwargs)
 
     if args.perft:
         rate = perft_total[0] / (perft_total[1] * 1000000)
