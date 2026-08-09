@@ -691,22 +691,55 @@ namespace nnue
     };
 
 
+    /* Learned pooling weights, one set per side to move; defaults to average pooling. */
+    template <int N>
+    struct PoolLayer
+    {
+        ALIGN float _w[2][N];
+
+        PoolLayer()
+        {
+            for (auto& w : _w)
+                std::fill(std::begin(w), std::end(w), 1.0f / POOL_STRIDE);
+        }
+
+        static constexpr size_t param_count() { return 2 * N; }
+
+        void load_weights(std::istream& file)
+        {
+            file.read(reinterpret_cast<char*>(_w), sizeof(_w));
+        }
+    };
+
     template <size_t INPUTS, size_t OUTPUTS>
-    INLINE void pool(const int16_t (&in)[INPUTS], float (&out)[OUTPUTS])
+    INLINE void pool(const int16_t (&in)[INPUTS], const float (&w)[INPUTS], float (&out)[OUTPUTS])
     {
         static_assert(INPUTS % OUTPUTS == 0);
         static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
         static_assert(POOL_STRIDE == 8);
 
-        constexpr float SCALE_RECIP = 1.0f / POOL_STRIDE / QSCALE;
+        constexpr float SCALE_RECIP = 1.0f / QSCALE;
 
+#if __ARM__
+        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
+        {
+            float sum = 0;
+            #pragma clang loop vectorize(enable)
+            for (int k = 0; k != POOL_STRIDE; ++k)
+                sum += float(std::max<int16_t>(0, in[i + k])) * w[i + k];
+            out[j] = sum * SCALE_RECIP;
+        }
+#else
         Vec8s v;
+        Vec8f vw;
         for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
         {
             v.load_a(&in[i]);
+            vw.load_a(&w[i]);
             ASSERT(j < OUTPUTS);
-            out[j] = float(::horizontal_add(extend(max(v, v8_zero)))) * SCALE_RECIP;
+            out[j] = ::horizontal_add(to_float(extend(max(v, v8_zero))) * vw) * SCALE_RECIP;
         }
+#endif /* __ARM__ */
     }
 
 
@@ -1125,10 +1158,11 @@ namespace nnue
     };
 
 
-    template <typename A, typename L2, typename L3, typename OUT>
-    INLINE int eval(const A& a, const L2& l2, const L3& l3, const OUT& out)
+    template <typename A, typename P, typename L2, typename L3, typename OUT>
+    INLINE int eval(const A& a, const P& pw, const L2& l2, const L3& l3, const OUT& out, bool turn)
     {
         constexpr int POOL_OUT = A::OUTPUTS_A / POOL_STRIDE;
+        static_assert(P::param_count() == 2 * A::OUTPUTS_A);
         static_assert(POOL_OUT == L2::INPUTS);
         static_assert(A::OUTPUTS_B == POOL_OUT); /* 1b modulates pooled 1:1 */
         static_assert(L2::OUTPUTS == L3::INPUTS);
@@ -1139,7 +1173,7 @@ namespace nnue
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
 
-        pool(a.slot(a._current_bucket).output, l2_in);
+        pool(a.slot(a._current_bucket).output, pw._w[turn], l2_in);
 
         static_assert(POOL_OUT % Vector::size() == 0);
 
