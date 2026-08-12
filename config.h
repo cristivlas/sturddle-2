@@ -122,19 +122,20 @@ constexpr bool normalize_weights = true;
 Config::Namespace Config::_namespace = {
 #if WEIGHT_TUNING_ENABLED
     /* Piece weights */
-    { "PAWN", Config::Param{ &WEIGHT[PieceType::PAWN], 41, 81, "Eval", normalize_weights} },
-    { "KNIGHT", Config::Param{ &WEIGHT[PieceType::KNIGHT], 299, 359, "Eval", normalize_weights } },
-    { "BISHOP", Config::Param{ &WEIGHT[PieceType::BISHOP], 321, 381, "Eval", normalize_weights } },
-    { "ROOK", Config::Param{ &WEIGHT[PieceType::ROOK], 469, 529, "Eval", normalize_weights } },
-    { "QUEEN", Config::Param{ &WEIGHT[PieceType::QUEEN], 1032, 1132, "Eval", normalize_weights } },
+    /* PAWN pinned as numeraire -- tuning all five weights leaves the overall
+     * material scale unidentified (a flat ridge SPSA wanders along). */
+    { "KNIGHT", Config::Param{ &WEIGHT[PieceType::KNIGHT], 309, 369, "Eval", normalize_weights } },
+    { "BISHOP", Config::Param{ &WEIGHT[PieceType::BISHOP], 318, 378, "Eval", normalize_weights } },
+    { "ROOK", Config::Param{ &WEIGHT[PieceType::ROOK], 496, 556, "Eval", normalize_weights } },
+    { "QUEEN", Config::Param{ &WEIGHT[PieceType::QUEEN], 1068, 1168, "Eval", normalize_weights } },
 
 #if EVAL_PIECE_GRADING
     /* Endgame adjustments */
-    { "ENDGAME_PAWN_ADJUST", Config::Param{ &ADJUST[PieceType::PAWN], -2, 38, "Eval", normalize_weights} },
-    { "ENDGAME_KNIGHT_ADJUST", Config::Param{ &ADJUST[PieceType::KNIGHT], -20, 20, "Eval", normalize_weights } },
-    { "ENDGAME_BISHOP_ADJUST", Config::Param{ &ADJUST[PieceType::BISHOP], -22, 18, "Eval", normalize_weights } },
-    { "ENDGAME_ROOK_ADJUST", Config::Param{ &ADJUST[PieceType::ROOK], -16, 24, "Eval", normalize_weights } },
-    { "ENDGAME_QUEEN_ADJUST", Config::Param{ &ADJUST[PieceType::QUEEN], -38, 2, "Eval", normalize_weights } },
+    { "ENDGAME_PAWN_ADJUST", Config::Param{ &ADJUST[PieceType::PAWN], 9, 49, "Eval", normalize_weights} },
+    { "ENDGAME_KNIGHT_ADJUST", Config::Param{ &ADJUST[PieceType::KNIGHT], -5, 35, "Eval", normalize_weights } },
+    { "ENDGAME_BISHOP_ADJUST", Config::Param{ &ADJUST[PieceType::BISHOP], -16, 24, "Eval", normalize_weights } },
+    { "ENDGAME_ROOK_ADJUST", Config::Param{ &ADJUST[PieceType::ROOK], -9, 31, "Eval", normalize_weights } },
+    { "ENDGAME_QUEEN_ADJUST", Config::Param{ &ADJUST[PieceType::QUEEN], -32, 8, "Eval", normalize_weights } },
 #endif /* EVAL_PIECE_GRADING */
 
 #endif /* WEIGHT_TUNING_ENABLED */
