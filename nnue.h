@@ -691,7 +691,10 @@ namespace nnue
     };
 
 
-    /* Learned pooling weights, one set per side to move; defaults to average pooling. */
+    /* Learned pooling weights, one set per side to move; defaults to average pooling.
+     * Weights are stored pre-multiplied by 1/QSCALE (exact, power of two), so pool()
+     * dequantizes for free -- in-memory values differ from the file by that factor.
+     */
     template <int N>
     struct PoolLayer
     {
@@ -700,7 +703,7 @@ namespace nnue
         PoolLayer()
         {
             for (auto& w : _w)
-                std::fill(std::begin(w), std::end(w), 1.0f / POOL_STRIDE);
+                std::fill(std::begin(w), std::end(w), 1.0f / POOL_STRIDE / QSCALE);
         }
 
         static constexpr size_t param_count() { return 2 * N; }
@@ -708,6 +711,10 @@ namespace nnue
         void load_weights(std::istream& file)
         {
             file.read(reinterpret_cast<char*>(_w), sizeof(_w));
+
+            for (auto& w : _w)
+                for (auto& v : w)
+                    v /= QSCALE;
         }
     };
 
@@ -718,8 +725,7 @@ namespace nnue
         static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
         static_assert(POOL_STRIDE == 8);
 
-        constexpr float SCALE_RECIP = 1.0f / QSCALE;
-
+        /* w carries the 1/QSCALE factor, see PoolLayer */
 #if __ARM__
         for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
         {
@@ -727,7 +733,7 @@ namespace nnue
             #pragma clang loop vectorize(enable)
             for (int k = 0; k != POOL_STRIDE; ++k)
                 sum += float(std::max<int16_t>(0, in[i + k])) * w[i + k];
-            out[j] = sum * SCALE_RECIP;
+            out[j] = sum;
         }
 #else
         Vec8s v;
@@ -737,7 +743,7 @@ namespace nnue
             v.load_a(&in[i]);
             vw.load_a(&w[i]);
             ASSERT(j < OUTPUTS);
-            out[j] = ::horizontal_add(to_float(extend(max(v, v8_zero))) * vw) * SCALE_RECIP;
+            out[j] = ::horizontal_add(to_float(extend(max(v, v8_zero))) * vw);
         }
 #endif /* __ARM__ */
     }
@@ -792,7 +798,7 @@ namespace nnue
          * equivalence can be checked even when SLOTS == 1 (single-bucket mode)
          */
         uint64_t _ref_hash[NUM_BUCKETS] = { };
-    #endif
+    #endif /* DEBUG_INCREMENTAL */
 
 
         INLINE bool needs_update(const State& state) const
@@ -1209,7 +1215,7 @@ namespace nnue
             m.load_a(&mod[i]);
             (v1 * (m + v_one)).store_a(&l2_in[i]);
         }
-#endif
+#endif /* INSTRSET >= 7 */
 
         l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); });
         l3.dot(l2_out, l3_out, [](const Vector& v) { return relu(v); });
