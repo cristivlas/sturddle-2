@@ -302,6 +302,7 @@ constexpr int HIDDEN_3 = 16;
 
 using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
 using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
+using PoolType = nnue::PoolLayer<HIDDEN_1A>;
 #if USE_BF16
   using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, __bf16>;
 #else
@@ -341,6 +342,7 @@ static struct Model
         constexpr auto param_count =
             L1AType::param_count()
             + L1BType::param_count()
+            + PoolType::param_count()
             + L2Type::param_count()
             + L3Type::param_count()
             + EVALType::param_count()
@@ -370,6 +372,7 @@ static struct Model
             /* Load layers in the same order that the trainer exports them. */
             L1A.load_weights(file);
             L1B.load_weights(file);
+            POOL.load_weights(file);
             L2.load_weights(file);
             L3.load_weights(file);
             EVAL.load_weights(file);
@@ -390,6 +393,7 @@ static struct Model
 
     L1AType L1A;
     L1BType L1B;
+    PoolType POOL;
     L2Type L2;
     L3Type L3;
     EVALType EVAL;
@@ -409,6 +413,7 @@ static struct Model
 
 void Model::init()
 {
+    /* POOL not in legacy weights.h; constructor default (1/8 == avg pool) applies */
     INIT_LAYER(L1A, hidden_1a);
     INIT_LAYER(L1B, hidden_1b);
     INIT_LAYER(L2, hidden_2);
@@ -461,6 +466,7 @@ void Model::init()
     /* Same order as Model::load_weights file-based path */
     L1A.load_weights(file);
     L1B.load_weights(file);
+    POOL.load_weights(file);
     L2.load_weights(file);
     L3.load_weights(file);
     EVAL.load_weights(file);
@@ -570,7 +576,7 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     auto& acc = NNUE_data[tid()][_ply];
     ASSERT(!acc.needs_update(state()));
 
-    _eval_raw = nnue::eval(acc, model.L2, model.L3, model.EVAL);
+    _eval_raw = nnue::eval(acc, model.POOL, model.L2, model.L3, model.EVAL, state().turn);
 
     if (stm_perspective)
     {

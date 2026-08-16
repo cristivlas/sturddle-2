@@ -150,6 +150,33 @@ def configure_logging(args):
     return log_level
 
 
+_stm_pool_cls = None
+
+def stm_pool_class():
+    """StmPool, defined lazily (the tensorflow import is deferred); cached so save and reload see one class."""
+    global _stm_pool_cls
+    if _stm_pool_cls is None:
+        @tf.keras.utils.register_keras_serializable(package='sturddle')
+        class StmPool(tf.keras.layers.Layer):
+            """Learned pooling, one weight set per side to move; init 1/POOL_SIZE == average pooling."""
+            def build(self, input_shape):
+                self.pool = self.add_weight(
+                    name='pool',
+                    shape=(2, ACCUMULATOR_SIZE // POOL_SIZE, POOL_SIZE),
+                    initializer=tf.keras.initializers.Constant(1.0 / POOL_SIZE),
+                )
+
+            def call(self, inputs):
+                x, turn = inputs
+                stm = tf.cast(tf.reshape(turn, [-1]), tf.int32)  # 0 = black to move, 1 = white
+                w = tf.gather(self.pool, stm)  # (batch, POOLED, POOL_SIZE)
+                reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
+                return tf.reduce_sum(reshaped * tf.cast(w, x.dtype), axis=-1)
+
+        _stm_pool_cls = StmPool
+    return _stm_pool_cls
+
+
 def make_model(args, strategy):
     class QConstraint(tf.keras.constraints.Constraint):
         def __init__(self, qmin, qmax, quantize_round=args.quantize_round):
@@ -338,12 +365,8 @@ def make_model(args, strategy):
             trainable=not args.freeze_eval,
         )(input_1b)
 
-        def custom_pooling(x):
-            reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
-            # Take the mean over the last dimension
-            return tf.reduce_mean(reshaped, axis=-1)
-
-        pooled = Lambda(custom_pooling, name='pool')(hidden_1a)
+        turn = Lambda(lambda x: x[:, -1:], name='turn')(unpack_layer)
+        pooled = stm_pool_class()(name='pool', trainable=not args.freeze_eval)([hidden_1a, turn])
 
         # Modulate pooled by 1b: pooled * (1 + h1b)
         modulation = Multiply(name='modulation')([pooled, hidden_1b])
@@ -561,6 +584,9 @@ def write_weigths(args, model, indent=2):
     for layer in model.layers:
         params = get_layer_weights(args, layer)
         if not params:
+            if layer.name == 'pool':
+                print('WARNING: pool weights not exported to weights.h; '
+                      'the engine INIT_LAYER path defaults to average pooling', file=sys.stderr)
             continue
         weights, biases = params
         rows, cols = weights.shape
@@ -600,9 +626,14 @@ def write_weigths(args, model, indent=2):
 def write_binary_weights(args, model, file):
     # Fixed engine load order (context.cpp): eval layers, then move head.
     # model.layers is graph-depth ordered and interleaves the head into the eval layers.
-    order = ['hidden_1a', 'hidden_1b', 'hidden_2', 'hidden_3', 'out', 'move_acc', 'move']
+    order = ['hidden_1a', 'hidden_1b', 'pool', 'hidden_2', 'hidden_3', 'out', 'move_acc', 'move']
     layers = [model.get_layer(n) for n in order if any(l.name == n for l in model.layers)]
     for layer in layers:
+        if layer.name == 'pool':
+            kernel = layer.get_weights()[0]  # (2, POOLED, POOL_SIZE), kernel-only; flattens stm-major
+            print(layer.name, kernel.shape)
+            kernel.astype(np.float32).tofile(file)
+            continue
         params = get_layer_weights(args, layer)
         if params:
             kernel, bias = params
@@ -638,12 +669,11 @@ def load_binary_weights(args, model, file):
     NOT in the file (eval-only export), so it is skipped by name — importing an
     eval-only weights.bin into a --predict-moves graph leaves the head untouched.
     """
-    eval_order = ['hidden_1a', 'hidden_1b', 'hidden_2', 'hidden_3', 'out']
+    eval_order = ['hidden_1a', 'hidden_1b', 'pool', 'hidden_2', 'hidden_3', 'out']
     by_name = {l.name: l for l in model.layers}
 
     payload = np.fromfile(file, dtype=np.float32)
-    expected = sum(int(np.prod(by_name[n].get_weights()[0].shape)) + by_name[n].get_weights()[1].shape[0]
-                   for n in eval_order if n in by_name)
+    expected = sum(int(np.prod(w.shape)) for n in eval_order if n in by_name for w in by_name[n].get_weights())
     if payload.size != expected:
         raise ValueError(f'{args.import_file}: expected {expected} float32, got {payload.size}')
 
@@ -652,12 +682,12 @@ def load_binary_weights(args, model, file):
         layer = by_name.get(name)
         if layer is None:
             continue
-        kernel, bias = layer.get_weights()
-        ksize, bsize = int(np.prod(kernel.shape)), bias.shape[0]
-        k = payload[off:off + ksize].reshape(kernel.shape); off += ksize
-        b = payload[off:off + bsize].reshape(bias.shape); off += bsize
-        print(f'Loading {name}: kernel {kernel.shape}, bias {bias.shape}')
-        layer.set_weights([k, b])
+        new_weights = []
+        for w in layer.get_weights():  # kernel [, bias]; pool is kernel-only
+            size = int(np.prod(w.shape))
+            new_weights.append(payload[off:off + size].reshape(w.shape)); off += size
+        print(f'Loading {name}: {[w.shape for w in new_weights]}')
+        layer.set_weights(new_weights)
 
 
 def tf_unpack_bits(bitboards):
@@ -1117,11 +1147,13 @@ def load_model(path, pool_size=None):
         'top': None,
         'top_3': None,
         'top_5': None,
+        'StmPool': stm_pool_class(),
     }
 
-    # The 'pool' Lambda binds the module-global POOL_SIZE at load time. When the
-    # source model was trained with a different POOL_SIZE, temporarily restore it
-    # so the saved graph reconstructs with the correct pooled width.
+    # Older saved models bind the module-global POOL_SIZE in their 'pool' Lambda;
+    # newer ones use it in StmPool.build and for hidden_1b's width. Either way,
+    # temporarily restore the source model's POOL_SIZE so the saved graph
+    # reconstructs with the correct pooled width.
     global POOL_SIZE
     saved = POOL_SIZE
     if pool_size is not None:

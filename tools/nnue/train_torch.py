@@ -8,8 +8,10 @@ Loads / exports the same flat float32 weights.bin layout as the TF trainer so a
 TF-trained net can be continued here and the result consumed by the C++ engine.
 
 Layer export order (must match C++ context.cpp load order):
-    hidden_1a, hidden_1b, hidden_2, hidden_3, out
+    hidden_1a, hidden_1b, pool, hidden_2, hidden_3, out
 Each layer: kernel (in, out) float32 row-major, then bias (out,) float32.
+pool is kernel-only (no bias): 2 x ACCUMULATOR_SIZE floats, side-to-move
+major (black-to-move block first), init 1/POOL_SIZE == average pooling.
 """
 
 import argparse
@@ -121,6 +123,8 @@ class NNUE(nn.Module):
         super().__init__()
         self.hidden_1a = BucketedDense(MAIN_BUCKETS, ACTIVE_INPUTS, ACCUMULATOR_SIZE)
         self.hidden_1b = nn.Linear(INPUTS_B, POOLED)  # linear (no activation)
+        # learned pooling, one weight set per side to move; init == average pooling
+        self.pool = nn.Parameter(torch.full((2, POOLED, POOL_SIZE), 1.0 / POOL_SIZE))
         self.hidden_2 = nn.Linear(POOLED, HIDDEN_2)
         self.hidden_3 = nn.Linear(HIDDEN_2, HIDDEN_3)
         self.out = nn.Linear(HIDDEN_3, 1)
@@ -133,7 +137,9 @@ class NNUE(nn.Module):
         kp = feats[:, :INPUTS_B]
         mod = self.hidden_1b(kp)  # (B, 256) linear
 
-        pooled = acc.view(acc.shape[0], POOLED, POOL_SIZE).mean(dim=-1)  # (B, 256)
+        stm = packed[:, 12].long()  # 0 = black to move, 1 = white
+        w = self.pool[stm]  # (B, 256, 8)
+        pooled = (acc.view(acc.shape[0], POOLED, POOL_SIZE) * w).sum(dim=-1)  # (B, 256)
         residual = pooled + pooled * mod  # pooled * (1 + mod)
 
         x = F.relu(self.hidden_2(residual))
@@ -169,20 +175,25 @@ def apply_constraints(model, quantize_round):
 # ---------------------------------------------------------------------------
 # Flat weights.bin load / save (C++-compatible: kernel (in, out) then bias)
 # ---------------------------------------------------------------------------
-# (name, in, out); BucketedDense uses num_buckets*in as the stored row count.
+# (name, in, out, bias count); BucketedDense uses num_buckets*in as the stored row count.
+# pool is kernel-only: (2 * ACCUMULATOR_SIZE, 1), stm-major, no bias.
 _EXPORT = [
-    ("hidden_1a", MAIN_BUCKETS * ACTIVE_INPUTS, ACCUMULATOR_SIZE),
-    ("hidden_1b", INPUTS_B, POOLED),
-    ("hidden_2", POOLED, HIDDEN_2),
-    ("hidden_3", HIDDEN_2, HIDDEN_3),
-    ("out", HIDDEN_3, 1),
+    ("hidden_1a", MAIN_BUCKETS * ACTIVE_INPUTS, ACCUMULATOR_SIZE, ACCUMULATOR_SIZE),
+    ("hidden_1b", INPUTS_B, POOLED, POOLED),
+    ("pool", 2 * ACCUMULATOR_SIZE, 1, 0),
+    ("hidden_2", POOLED, HIDDEN_2, HIDDEN_2),
+    ("hidden_3", HIDDEN_2, HIDDEN_3, HIDDEN_3),
+    ("out", HIDDEN_3, 1, 1),
 ]
 
 
 def _layer_kernel_bias(model, name):
     """Return (kernel (in,out) np.float32, bias (out,) np.float32) for export."""
     model = _core(model)
-    if name == "hidden_1a":
+    if name == "pool":
+        k = model.pool.detach().cpu().numpy().reshape(-1, 1)  # (2*2048, 1), stm-major
+        b = np.zeros(0, dtype=np.float32)
+    elif name == "hidden_1a":
         k = model.hidden_1a.weight.detach().cpu().numpy()  # already (in, out)
         b = model.hidden_1a.bias.detach().cpu().numpy()
     else:
@@ -203,7 +214,7 @@ def save_bin(model, path, quantize_round=False):
     qmax = {"hidden_1a": Q_MAX_A, "hidden_1b": Q_MAX_B}
     tmp = path + ".tmp"
     with open(tmp, "wb") as f:
-        for name, _, _ in _EXPORT:
+        for name, _, _, _ in _EXPORT:
             k, b = _layer_kernel_bias(model, name)
             m = qmax.get(name)
             if m is not None:
@@ -220,16 +231,18 @@ def save_bin(model, path, quantize_round=False):
 def load_bin(model, path):
     model = _core(model)
     data = np.fromfile(path, dtype=np.float32)
-    expected = sum(i * o + o for _, i, o in _EXPORT)
+    expected = sum(i * o + bn for _, i, o, bn in _EXPORT)
     if data.size != expected:
         raise ValueError(f"{path}: expected {expected} floats, got {data.size}")
     off = 0
-    for name, i, o in _EXPORT:
+    for name, i, o, bn in _EXPORT:
         k = data[off : off + i * o].reshape(i, o)
         off += i * o
-        b = data[off : off + o]
-        off += o
-        if name == "hidden_1a":
+        b = data[off : off + bn]
+        off += bn
+        if name == "pool":
+            model.pool.copy_(torch.from_numpy(k.reshape(2, POOLED, POOL_SIZE).copy()))
+        elif name == "hidden_1a":
             model.hidden_1a.weight.copy_(torch.from_numpy(k.copy()))
             model.hidden_1a.bias.copy_(torch.from_numpy(b.copy()))
         else:
@@ -539,7 +552,7 @@ def summary(model):
     print(f'{"layer":<12}{"shape (in, out)":<22}{"params":>12}')
     print("-" * 46)
     total = 0
-    for name, _, _ in _EXPORT:
+    for name, _, _, _ in _EXPORT:
         k, b = _layer_kernel_bias(model, name)
         n = k.size + b.size
         total += n
