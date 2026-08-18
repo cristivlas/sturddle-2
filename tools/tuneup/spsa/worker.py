@@ -423,6 +423,12 @@ def build_cutechess_command(worker_config: WorkerConfig,
         cmd += ["-resign", f"movecount={tuning_config.get('resign_movecount', 3)}", f"score={tuning_config.get('resign_score', 700)}"]
         cmd += ["-draw", f"movenumber={tuning_config.get('draw_movenumber', 40)}", f"movecount={tuning_config.get('draw_movecount', 8)}", f"score={tuning_config.get('draw_score', 10)}"]
 
+    # Tablebase adjudication: reuse the engines' SyzygyPath override.
+    # fastchess only -- cutechess-cli's TB options are not cmdline-compatible.
+    syzygy_path = param_overrides.get("SyzygyPath")
+    if is_fastchess and syzygy_path:
+        cmd += ["-tb", str(syzygy_path)]
+
     # Debug: log all engine I/O
     if _cutechess_debug:
         if is_fastchess:
