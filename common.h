@@ -80,13 +80,6 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 /* Experimental */
 #define EVAL_PIECE_GRADING                  true
 
-/* Grading PIECE_VALUES / GRADING_ADJUST are fit against the NNUE eval; HCE terms
-   (e.g. king-attack scaling) assume the classic values, so force grading off. */
-#if EVAL_PIECE_GRADING && !WITH_NNUE
-  #undef EVAL_PIECE_GRADING
-  #define EVAL_PIECE_GRADING                false
-#endif
-
 /* Collect extra stats for troubleshooting */
 #define EXTRA_STATS                         false
 
