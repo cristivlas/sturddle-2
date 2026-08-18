@@ -581,8 +581,9 @@ namespace search
     {
         ASSERT(next_state.is_capture());
         const auto state_eval = state.eval_lazy();
+        /* The captured piece's grading is mover-POV: add after the sign flip. */
         const auto adjust = next_state.piece_value_adjustment(next_state.capture_type);
-        return (next_state.eval_apply_delta(move, state) - state_eval + adjust) * SIGN[state.turn];
+        return (next_state.eval_apply_delta(move, state) - state_eval) * SIGN[state.turn] + adjust;
     }
 
 
