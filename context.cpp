@@ -762,7 +762,7 @@ namespace search
     #if EVAL_PIECE_GRADING
 
         /* eval_piece_grading applies adjustments from white's perspective */
-        eval += eval_piece_grading(state, state.piece_count());
+        eval += eval_piece_grading(state);
 
     #endif /* EVAL_PIECE_GRADING */
 
@@ -982,7 +982,7 @@ namespace search
 
 
     template<bool Debug>
-    int do_exchanges(const State& state, Bitboard mask, int tid, int ply)
+    int do_exchanges(const State& state, Bitboard mask, int tid, int ply, int bucket)
     {
         ASSERT(popcount(mask) == 1); /* same square exchanges */
         ASSERT(ply >= PLY_MAX); /* use top half of moves stacks */
@@ -991,6 +991,10 @@ namespace search
 
         ASSERT(ply < Context::MAX_MOVE);
 
+        /* Price the whole exchange sequence in the root bucket */
+        if (bucket < 0)
+            bucket = state.grading_bucket();
+
         auto& moves = Context::moves(tid, ply);
         state.generate_pseudo_legal_moves(moves, mask);
 
@@ -998,7 +1002,7 @@ namespace search
         for (auto& move : moves)
         {
             ASSERT(state.piece_type_at(move.from_square()));
-            move._score = state.piece_value_at(move.from_square(), state.turn);
+            move._score = state.piece_value_at(move.from_square(), state.turn, PieceType::NONE, bucket);
         }
         /* sort lowest value attackers first */
         insertion_sort(moves.begin(), moves.end(),
@@ -1026,7 +1030,7 @@ namespace search
 
             apply_capture(state, next_state, move, false /* defer legality check */);
 
-            const auto our_gain = capture_gain(state, next_state, move);
+            const auto our_gain = capture_gain(state, next_state, move, bucket);
 
             if constexpr(Debug)
                 Context::log_message(LogLevel::DEBUG, "\t>>> " + move.uci() + ": " + std::to_string(our_gain));
@@ -1040,13 +1044,14 @@ namespace search
 
             if (ply + 1 >= PLY_MAX + EXCHANGES_MAX_DEPTH)
             {
-                const auto their_best = estimate_static_exchanges(next_state, next_state.turn, move.to_square());
+                const auto their_best =
+                    estimate_static_exchanges(next_state, next_state.turn, move.to_square(), PieceType::NONE, bucket);
                 score = std::max(score, our_gain - their_best);
             }
             else
             {
                 next_state.castling_rights = 0;  /* castling moves do not capture */
-                const auto their_best = do_exchanges<Debug>(next_state, mask, tid, ply + 1);
+                const auto their_best = do_exchanges<Debug>(next_state, mask, tid, ply + 1, bucket);
 
                 if constexpr(Debug)
                 {
@@ -1076,6 +1081,8 @@ namespace search
         ASSERT(!state.is_check(!state.turn)); /* expect legal position */
 
         static constexpr auto ply = FIRST_EXCHANGE_PLY;
+
+        const auto bucket = state.grading_bucket();
 
         auto mask = state.occupied_co(!state.turn);
         if (state.en_passant_square != Square::UNDEFINED)
@@ -1108,16 +1115,17 @@ namespace search
             }
             else
             {
-                move._score = state.piece_value_at(move.to_square(), !state.turn); /* victim value */
+                /* victim value */
+                move._score = state.piece_value_at(move.to_square(), !state.turn, PieceType::NONE, bucket);
             }
 
             if (const auto promo = move.promotion())
             {
                 /* Take piece squares and piece grading (dynamic value) into account for the promo */
-                const auto promo_val = state.piece_value_at(move.to_square(), state.turn, promo);
+                const auto promo_val = state.piece_value_at(move.to_square(), state.turn, promo, bucket);
                 ASSERT(USE_PIECE_SQUARE_TABLES || EVAL_PIECE_GRADING || WEIGHT[promo] == promo_val);
 
-                move._score += promo_val - state.piece_value_at(move.from_square(), state.turn);
+                move._score += promo_val - state.piece_value_at(move.from_square(), state.turn, PieceType::NONE, bucket);
             }
 
             if (move._score + STANDPAT_MARGIN >= standpat_threshold)
@@ -1174,7 +1182,7 @@ namespace search
             if (!apply_capture(state, next_state, move))
                 continue;
 
-            const auto our_gain = capture_gain(state, next_state, move);
+            const auto our_gain = capture_gain(state, next_state, move, bucket);
 
             ASSERT(USE_PIECE_SQUARE_TABLES || EVAL_PIECE_GRADING || our_gain > score);
 
@@ -1182,7 +1190,7 @@ namespace search
             /* "play through" same square exchanges                         */
             next_state.castling_rights = 0; /* castling moves can't capture */
             const auto mask_to = BB_SQUARES[move.to_square()];
-            const auto their_best = do_exchanges<DEBUG_CAPTURES>(next_state, mask_to, tid, ply + 1);
+            const auto their_best = do_exchanges<DEBUG_CAPTURES>(next_state, mask_to, tid, ply + 1, bucket);
 
             const auto value = our_gain - their_best;
 

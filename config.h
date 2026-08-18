@@ -122,23 +122,51 @@ constexpr bool normalize_weights = true;
 Config::Namespace Config::_namespace = {
 #if WEIGHT_TUNING_ENABLED
     /* Piece weights */
+#if EVAL_PIECE_GRADING
+    { "PAWN", Config::Param{ &WEIGHT[PieceType::PAWN], 80, 130, "Eval", normalize_weights} },
+    { "KNIGHT", Config::Param{ &WEIGHT[PieceType::KNIGHT], 290, 390, "Eval", normalize_weights } },
+    { "BISHOP", Config::Param{ &WEIGHT[PieceType::BISHOP], 310, 415, "Eval", normalize_weights } },
+    { "ROOK", Config::Param{ &WEIGHT[PieceType::ROOK], 450, 605, "Eval", normalize_weights } },
+    { "QUEEN", Config::Param{ &WEIGHT[PieceType::QUEEN], 880, 1190, "Eval", normalize_weights } },
+#else
     { "PAWN", Config::Param{ &WEIGHT[PieceType::PAWN], 70, 110, "Eval", normalize_weights} },
     { "KNIGHT", Config::Param{ &WEIGHT[PieceType::KNIGHT], 280, 380, "Eval", normalize_weights } },
     { "BISHOP", Config::Param{ &WEIGHT[PieceType::BISHOP], 320, 400, "Eval", normalize_weights } },
     { "ROOK", Config::Param{ &WEIGHT[PieceType::ROOK], 455, 625, "Eval", normalize_weights } },
     { "QUEEN", Config::Param{ &WEIGHT[PieceType::QUEEN], 900, 1200, "Eval", normalize_weights } },
-
-#if EVAL_PIECE_GRADING
-    /* Endgame adjustments */
-    { "ENDGAME_PAWN_ADJUST", Config::Param{ &ADJUST[PieceType::PAWN], 0, 35, "Eval", normalize_weights} },
-    { "ENDGAME_KNIGHT_ADJUST", Config::Param{ &ADJUST[PieceType::KNIGHT], -35, 0, "Eval", normalize_weights } },
-    { "ENDGAME_BISHOP_ADJUST", Config::Param{ &ADJUST[PieceType::BISHOP], -50, 0, "Eval", normalize_weights } },
-    { "ENDGAME_ROOK_ADJUST", Config::Param{ &ADJUST[PieceType::ROOK], 0, 70, "Eval", normalize_weights } },
-    { "ENDGAME_QUEEN_ADJUST", Config::Param{ &ADJUST[PieceType::QUEEN], -75, 0, "Eval", normalize_weights } },
 #endif /* EVAL_PIECE_GRADING */
-
 #endif /* WEIGHT_TUNING_ENABLED */
 };
+
+
+#if WEIGHT_TUNING_ENABLED && EVAL_PIECE_GRADING
+/* Per pawn-bucket grading adjustments: ADJUST_<bucket>_<piece>.
+ * Reading ADJUST here is safe: it is constant-initialized (chess.cpp), and
+ * _namespace precedes this instance in the same TU -- do not "fix" the order. */
+struct AdjustTuningEnabler
+{
+    AdjustTuningEnabler()
+    {
+        static constexpr const char* piece_names[] = { "", "PAWN", "KNIGHT", "BISHOP", "ROOK", "QUEEN" };
+
+        /* Wide ranges: the fitted defaults are data-dependent, give SPSA room */
+        static constexpr int half_range[] = { 0, 40, 80, 80, 100, 150 };
+
+        for (int b = 0; b != PAWN_BUCKETS; ++b)
+            for (const auto pt : { PAWN, KNIGHT, BISHOP, ROOK, QUEEN })
+            {
+                const auto name = "ADJUST_" + std::to_string(b) + "_" + piece_names[pt];
+                const auto val = ADJUST[b][pt];
+                const auto range = half_range[pt];
+
+                Config::_namespace.emplace(
+                    name, Config::Param{ &ADJUST[b][pt], val - range, val + range, "Eval", normalize_weights });
+            }
+    }
+};
+
+AdjustTuningEnabler tune_adjust;
+#endif /* WEIGHT_TUNING_ENABLED && EVAL_PIECE_GRADING */
 
 
 #if USE_PIECE_SQUARE_TABLES && PST_TUNING_ENABLED

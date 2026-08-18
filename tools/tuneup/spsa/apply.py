@@ -25,11 +25,8 @@ PIECE_INDEX = {
     'PAWN': 1, 'KNIGHT': 2, 'BISHOP': 3, 'ROOK': 4, 'QUEEN': 5,
 }
 
-# Endgame adjust param names -> index in ENDGAME_ADJUST array
-ENDGAME_ADJUST_INDEX = {
-    'ENDGAME_PAWN_ADJUST': 1, 'ENDGAME_KNIGHT_ADJUST': 2, 'ENDGAME_BISHOP_ADJUST': 3,
-    'ENDGAME_ROOK_ADJUST': 4, 'ENDGAME_QUEEN_ADJUST': 5,
-}
+# Grading adjust param names: ADJUST_<pawn bucket>_<piece> -> (row, column) in GRADING_ADJUST
+GRADING_ADJUST_RE = re.compile(r'ADJUST_(\d+)_(PAWN|KNIGHT|BISHOP|ROOK|QUEEN)$')
 
 
 def denormalize(param, theta_val):
@@ -240,12 +237,13 @@ def _read_eval_piece_grading(header_dir):
 
 
 def update_piece_values(header_file, engine_values):
-    """Patch PIECE_VALUES and ENDGAME_ADJUST array macros in chess.h.
+    """Patch PIECE_VALUES and GRADING_ADJUST array macros in chess.h.
 
-    Recognises piece weight names (PAWN, KNIGHT, ...) and endgame adjustment
-    names (ENDGAME_PAWN_ADJUST, ...) and updates the corresponding element
-    inside the ``#define PIECE_VALUES { ... }`` or ``#define ENDGAME_ADJUST { ... }``
-    line that matches the active build configuration.
+    Recognises piece weight names (PAWN, KNIGHT, ...) and grading adjustment
+    names (ADJUST_<bucket>_<piece>) and updates the corresponding element of
+    the ``#define PIECE_VALUES { ... }`` line or the ``#define GRADING_ADJUST``
+    multi-line macro (one pawn-bucket row per line) matching the active build
+    configuration.
 
     When PIECE_VALUES has conditional definitions guarded by
     ``#if EVAL_PIECE_GRADING``, only the branch matching the current
@@ -254,13 +252,15 @@ def update_piece_values(header_file, engine_values):
     Returns (updated, found) sets of parameter names.
     """
     piece_updates = {}   # array index -> (name, value)
-    adjust_updates = {}
+    adjust_updates = {}  # (bucket, column) -> (name, value)
 
     for name, value in engine_values.items():
         if name in PIECE_INDEX:
             piece_updates[PIECE_INDEX[name]] = (name, value)
-        elif name in ENDGAME_ADJUST_INDEX:
-            adjust_updates[ENDGAME_ADJUST_INDEX[name]] = (name, value)
+        else:
+            m = GRADING_ADJUST_RE.match(name)
+            if m:
+                adjust_updates[(int(m.group(1)), PIECE_INDEX[m.group(2)])] = (name, value)
 
     if not piece_updates and not adjust_updates:
         return set(), set()
@@ -280,15 +280,10 @@ def update_piece_values(header_file, engine_values):
         r'([^}]+)'
         r'(\s*\})'
     )
-    adjust_re = re.compile(
-        r'(#define\s+ENDGAME_ADJUST\s*\{\s*)'
-        r'([^}]+)'
-        r'(\s*\})'
-    )
-
     # Track preprocessor context to identify which branch we're in
     in_grading_if = False   # inside #if EVAL_PIECE_GRADING block
     in_else = False         # inside the #else branch
+    adjust_row = -1         # current GRADING_ADJUST row, -1 when outside the macro
 
     result_lines = []
     for line in lines:
@@ -318,10 +313,17 @@ def update_piece_values(header_file, engine_values):
                 line = _patch_array_line(define_re, line, 'PIECE_VALUES',
                                          piece_updates, found, updated)
 
-        # Patch ENDGAME_ADJUST (unconditional -- only one definition)
-        if adjust_updates and adjust_re.search(line):
-            line = _patch_array_line(adjust_re, line, 'ENDGAME_ADJUST',
-                                     adjust_updates, found, updated)
+        # Patch GRADING_ADJUST (multi-line macro, one pawn-bucket row per line)
+        if adjust_updates:
+            if re.match(r'#define\s+GRADING_ADJUST\b', stripped_line):
+                adjust_row = 0
+            elif adjust_row >= 0:
+                m = re.search(r'\{([^}]*)\}', line)
+                if m:
+                    line = _patch_adjust_row(line, m, adjust_row, adjust_updates, found, updated)
+                    adjust_row += 1
+                else:
+                    adjust_row = -1  # closing brace or unexpected line ends the macro
 
         result_lines.append(line)
 
@@ -333,6 +335,24 @@ def update_piece_values(header_file, engine_values):
         logging.info(f"No piece-value changes in {header_file}")
 
     return updated, found
+
+
+def _patch_adjust_row(line, m, row, updates, found, updated):
+    """Patch elements of one ``{ ... }`` row of the GRADING_ADJUST macro."""
+    values = m.group(1).split(',')
+    for (bucket, col), (name, val) in updates.items():
+        if bucket != row:
+            continue
+        found.add(name)
+        if col < len(values):
+            old_tok = values[col]
+            stripped = old_tok.strip()
+            new_val = str(val)
+            if stripped != new_val:
+                values[col] = old_tok.replace(stripped, new_val, 1)
+                updated.add(name)
+                logging.info(f"Updated {name}: {stripped} -> {new_val} in GRADING_ADJUST row {row}")
+    return line[:m.start(1)] + ','.join(values) + line[m.end(1):]
 
 
 def _patch_array_line(pattern, line, macro_name, updates, found, updated):

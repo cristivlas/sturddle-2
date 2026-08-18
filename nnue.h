@@ -93,8 +93,9 @@ namespace nnue
     constexpr int EVAL_SCALE = 100;
     constexpr int MAX_ACTIVE_INPUTS = 33; // 32 pieces + turn
     constexpr int NUM_BUCKETS = 16;
-    constexpr int PAWN_BUCKETS = 4;
+    constexpr int PAWN_BUCKETS = chess::PAWN_BUCKETS;
     constexpr int KING_BUCKETS = 4;
+    static_assert(NUM_BUCKETS == PAWN_BUCKETS * KING_BUCKETS, "bucket grid mismatch");
     constexpr int POOL_STRIDE = 8;
     constexpr int QSCALE = 1024;
     constexpr int QLOG2 = 10;  /* log2(QSCALE), for shift-based requantization */
@@ -105,8 +106,7 @@ namespace nnue
 
     INLINE int pawn_bucket(const State& state)
     {
-        const int p = chess::popcount(state.pawns);
-        return p <= 4 ? 0 : std::min<int>((p - 1) / 4, 3);
+        return chess::pawn_bucket(state.pawns);
     }
 
     INLINE int king_bucket(const State& state)

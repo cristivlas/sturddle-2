@@ -433,21 +433,28 @@ namespace chess
 
 
 #if EVAL_PIECE_GRADING
-#define PIECE_VALUES { 0, 73, 305, 367, 528, 1083, 20000 }
+#define PIECE_VALUES { 0, 106, 340, 363, 527, 1036, 20000 }
 #else
 #define PIECE_VALUES { 0, 87, 339, 365, 545, 1046, 20000 }
 #endif /* EVAL_PIECE_GRADING */
 
-#define ENDGAME_ADJUST { 0, 21, -12, -16, 65, -24, 0 }
+    constexpr int PAWN_BUCKETS = 4;
 
+/* GRADING_ADJUST[PAWN_BUCKETS][7], indexed by pawn_bucket() (fit by tools/nnue/piece_values.py) */
+#define GRADING_ADJUST { \
+    { 0,  22, -102, -105, -106, -317, 0 }, /*   0-4 pawns: 128, 238, 258, 421,  719 */ \
+    { 0,  29,   56,   63,  113,  159, 0 }, /*   5-8 pawns: 135, 396, 426, 640, 1195 */ \
+    { 0,   4,   62,   64,   81,  187, 0 }, /*  9-12 pawns: 110, 402, 427, 608, 1223 */ \
+    { 0, -42,  -40,  -46, -102, -107, 0 }, /* 13-16 pawns:  64, 300, 317, 425,  929 */ \
+}
 
     /* Piece values */
 #if WEIGHT_TUNING_ENABLED
     extern int WEIGHT[7];
-    extern int ADJUST[7];
+    extern int ADJUST[PAWN_BUCKETS][7];
 #else
     constexpr int WEIGHT[7] = PIECE_VALUES;
-    constexpr int ADJUST[7] = ENDGAME_ADJUST;
+    constexpr int ADJUST[PAWN_BUCKETS][7] = GRADING_ADJUST;
 #endif /* WEIGHT_TUNING_ENABLED */
 
 
@@ -466,6 +473,14 @@ namespace chess
         static_assert(std::is_same<decltype(__builtin_popcount(0)), int>::value);
         return __builtin_popcountll(u);
     #endif
+    }
+
+
+    /* Pawn-count bucket, shared with the NNUE bucketing (nnue.h get_bucket) */
+    INLINE int pawn_bucket(Bitboard pawns)
+    {
+        const int p = popcount(pawns);
+        return p <= 4 ? 0 : std::min<int>((p - 1) / 4, PAWN_BUCKETS - 1);
     }
 
 
@@ -1212,12 +1227,8 @@ namespace chess
 
 
         /*
-         * Indirection point for future ideas (dynamic piece weights).
-         * Ideas:
-         * - use different weights for midgame / endgame and interpolate;
-         * - use tables for game phases, use number of pawns to determine phase;
-         * Since the above make incremental eval difficult:
-         * - leave weights alone and alter material eval (see eval_piece_grading).
+         * Weights are static (incremental eval depends on it); dynamic grading is
+         * layered on top via piece_value_adjustment / eval_piece_grading.
          */
         INLINE int weight(PieceType piece_type) const
         {
@@ -1232,28 +1243,37 @@ namespace chess
             return _piece_count;
         }
 
-        INLINE int piece_value_adjustment(PieceType piece_type) const
+        /*
+         * Exchange evaluations price whole capture sequences in the bucket of the
+         * exchange-root position: bucket < 0 means "this state's own bucket".
+         */
+        INLINE int grading_bucket() const
         {
     #if EVAL_PIECE_GRADING
-            switch (piece_type)
-            {
-            case PAWN: return interpolate(piece_count(), 0, ADJUST[PAWN]);
-            case KNIGHT: return interpolate(piece_count(), 0, ADJUST[KNIGHT]);
-            case BISHOP: return interpolate(piece_count(), 0, ADJUST[BISHOP]);
-            case ROOK: return interpolate(piece_count(), 0, ADJUST[ROOK]);
-            case QUEEN: return interpolate(piece_count(), 0, ADJUST[QUEEN]);
-            case KING:
-            case NONE:
-                break;
-            }
+            return pawn_bucket(pawns);
+    #else
+            return -1;
     #endif /* EVAL_PIECE_GRADING */
-
-            return 0;
         }
 
-        INLINE int piece_value_at(Square square, Color color, PieceType piece_type) const
+        INLINE int piece_value_adjustment(PieceType piece_type, int bucket = -1) const
         {
-            auto value = WEIGHT[piece_type] + piece_value_adjustment(piece_type);
+    #if EVAL_PIECE_GRADING
+            return ADJUST[bucket < 0 ? pawn_bucket(pawns) : bucket][piece_type];
+    #else
+            (void) piece_type;
+            (void) bucket;
+            return 0;
+    #endif /* EVAL_PIECE_GRADING */
+        }
+
+        /* piece_type == NONE looks up the board; bucket < 0 uses this state's bucket */
+        INLINE int piece_value_at(Square square, Color color, PieceType piece_type = NONE, int bucket = -1) const
+        {
+            if (piece_type == NONE)
+                piece_type = piece_type_at(square);
+
+            auto value = WEIGHT[piece_type] + piece_value_adjustment(piece_type, bucket);
 
         #if USE_PIECE_SQUARE_TABLES
             if (piece_type)
@@ -1264,12 +1284,6 @@ namespace chess
         #endif /* USE_PIECE_SQUARE_TABLES */
 
             return value;
-        }
-
-        INLINE int piece_value_at(Square square, Color color) const
-        {
-            const auto piece_type = piece_type_at(square);
-            return piece_value_at(square, color, piece_type);
         }
 
         void set_piece_at(Square, PieceType, Color, PieceType promotion = PieceType::NONE);
@@ -1941,9 +1955,13 @@ namespace chess
 
 
     /* https://www.chessprogramming.org/SEE_-_The_Swap_Algorithm */
-    INLINE score_t estimate_static_exchanges(const State& board, Color side, Square square, PieceType target = NONE)
+    INLINE score_t estimate_static_exchanges(
+        const State& board, Color side, Square square, PieceType target = NONE, int bucket = -1)
     {
         static constexpr int MAX_DEPTH = 8;
+
+        if (bucket < 0)
+            bucket = board.grading_bucket();
 
         if (target == NONE)
         {
@@ -1962,14 +1980,14 @@ namespace chess
             return 0;
 
         score_t gain[MAX_DEPTH];
-        gain[0] = board.piece_value_at(square, !side, target);
+        gain[0] = board.piece_value_at(square, !side, target, bucket);
         int d = 0;
 
         while (from != Square::UNDEFINED && d < MAX_DEPTH - 1)
         {
             ++d;
 
-            score_t attacker_value = board.piece_value_at(from, side);
+            score_t attacker_value = board.piece_value_at(from, side, NONE, bucket);
 
             /* Check for promotion */
             if (board.piece_type_at(from) == PAWN)
@@ -1979,7 +1997,8 @@ namespace chess
                 if ((side == WHITE && target_rank == 7) || (side == BLACK && target_rank == 0))
                 {
                     /* Assume promotion to queen (most common case). Subtract pawn value, add queen value */
-                    attacker_value = board.piece_value_at(from, side, QUEEN) - board.piece_value_at(from, side, PAWN);
+                    attacker_value = board.piece_value_at(from, side, QUEEN, bucket)
+                                   - board.piece_value_at(from, side, PAWN, bucket);
                 }
             }
 

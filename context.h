@@ -572,17 +572,18 @@ namespace search
 
 
     template<bool Debug = false>
-    int do_exchanges(const State&, Bitboard, int tid, int ply = FIRST_EXCHANGE_PLY);
+    int do_exchanges(const State&, Bitboard, int tid, int ply = FIRST_EXCHANGE_PLY, int bucket = -1);
 
     extern score_t eval_captures(Context& ctxt, score_t);
 
 
-    static int INLINE capture_gain(const State& state, const State& next_state, const BaseMove& move)
+    static int INLINE capture_gain(const State& state, const State& next_state, const BaseMove& move, int bucket = -1)
     {
         ASSERT(next_state.is_capture());
         const auto state_eval = state.eval_lazy();
-        const auto adjust = next_state.piece_value_adjustment(next_state.capture_type);
-        return (next_state.eval_apply_delta(move, state) - state_eval + adjust) * SIGN[state.turn];
+        /* Grade the captured piece in the exchange-root bucket; add mover-POV, after the sign flip. */
+        const auto adjust = state.piece_value_adjustment(next_state.capture_type, bucket);
+        return (next_state.eval_apply_delta(move, state) - state_eval) * SIGN[state.turn] + adjust;
     }
 
 
@@ -590,7 +591,7 @@ namespace search
      * Evaluate same square exchanges. Called by make_captures.
      */
     template<bool StaticExchangeEvaluation>
-    INLINE score_t eval_exchanges(int tid, const Move& move)
+    INLINE score_t eval_exchanges(int tid, const Move& move, int bucket = -1)
     {
         score_t val = 0;
 
@@ -602,12 +603,13 @@ namespace search
             if constexpr(StaticExchangeEvaluation)
             {
                 /* Approximate without playing the moves. */
-                val = estimate_static_exchanges(*move._state, move._state->turn, move.to_square());
+                val = estimate_static_exchanges(
+                    *move._state, move._state->turn, move.to_square(), chess::PieceType::NONE, bucket);
             }
             else
             {
                 auto mask = chess::BB_SQUARES[move.to_square()];
-                val = do_exchanges<DEBUG_CAPTURES != 0>(*move._state, mask, tid);
+                val = do_exchanges<DEBUG_CAPTURES != 0>(*move._state, mask, tid, FIRST_EXCHANGE_PLY, bucket);
             }
         }
         return val;
@@ -1464,7 +1466,10 @@ namespace search
         {
             ASSERT(move._state->is_capture());
 
-            const auto gain = capture_gain(ctxt.state(), *move._state, move) - eval_exchanges<true>(ctxt.tid(), move);
+            /* Price the capture and the exchange continuation in the same bucket */
+            const auto bucket = ctxt.state().grading_bucket();
+            const auto gain = capture_gain(ctxt.state(), *move._state, move, bucket)
+                            - eval_exchanges<true>(ctxt.tid(), move, bucket);
 
             if (SEE_PRUNING
                 && gain < SEE_PRUNING_MARGIN

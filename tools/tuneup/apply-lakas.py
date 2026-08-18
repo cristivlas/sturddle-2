@@ -108,31 +108,49 @@ def update_header(header_file, best_params):
         logging.info(f"Unmodified: {header_file}")
 
 
-def get_endgame_adjustments(best_params):
-    m_sym = {
-        'ENDGAME_PAWN_ADJUST': 1,
-        'ENDGAME_KNIGHT_ADJUST': 2,
-        'ENDGAME_BISHOP_ADJUST': 3,
-        'ENDGAME_ROOK_ADJUST': 4,
-        'ENDGAME_QUEEN_ADJUST': 5,
-        'ENDGAME_KING_ADJUST': 6
-    }
-    m_map = { k:0 for k in range(0, 7) }
+# Grading adjust param names: ADJUST_<pawn bucket>_<piece> -> (row, column) in GRADING_ADJUST
+GRADING_ADJUST_RE = re.compile(r'ADJUST_(\d+)_(PAWN|KNIGHT|BISHOP|ROOK|QUEEN)$')
+GRADING_COLUMN = { 'PAWN': 1, 'KNIGHT': 2, 'BISHOP': 3, 'ROOK': 4, 'QUEEN': 5 }
 
-    for k in m_sym:
-        if k in best_params:
-            val = scale_param(k, best_params[k])
-        elif k in params:
-            val = params[k][0]
-        else:
-            val = 0
-        m_map[m_sym[k]] = val
 
-    if all([v == 0 for v in m_map.values()]):
-        return None
+def get_grading_adjustments(best_params):
+    """Collect tuned ADJUST_<bucket>_<piece> values as {(bucket, column): value}."""
+    updates = {}
+    for k, v in best_params.items():
+        m = GRADING_ADJUST_RE.match(k)
+        if m:
+            updates[(int(m.group(1)), GRADING_COLUMN[m.group(2)])] = scale_param(k, v)
+    return updates
 
-    weights = ', '.join(map(str, m_map.values()))
-    return (f'#define ENDGAME_ADJUST {{ {weights} }}')
+
+def patch_grading_adjust(text, updates):
+    """Patch elements of the multi-line GRADING_ADJUST macro (one bucket row per line)."""
+    lines = text.splitlines(keepends=True)
+    row = -1
+    applied = set()
+    for i, line in enumerate(lines):
+        if re.match(r'\s*#define\s+GRADING_ADJUST\b', line):
+            row = 0
+            continue
+        if row < 0:
+            continue
+        m = re.search(r'\{([^}]*)\}', line)
+        if not m:
+            break
+        values = m.group(1).split(',')
+        for (bucket, col), val in updates.items():
+            if bucket == row and col < len(values):
+                applied.add((bucket, col))
+                old = values[col].strip()
+                if old != str(val):
+                    values[col] = values[col].replace(old, str(val), 1)
+                    logging.info(f'GRADING_ADJUST[{bucket}][{col}]: {old} -> {val}')
+        lines[i] = line[:m.start(1)] + ','.join(values) + line[m.end(1):]
+        row += 1
+
+    for key in sorted(set(updates) - applied):
+        logging.warning(f'GRADING_ADJUST{list(key)}: no matching macro row, update dropped')
+    return ''.join(lines)
 
 
 def get_weights(best_params):
@@ -177,9 +195,9 @@ def patch_header(header_file, best_params):
 
     new_text = re.sub(r"#define PIECE_VALUES .*", weights, text)
 
-    adjust = get_endgame_adjustments(best_params)
+    adjust = get_grading_adjustments(best_params)
     if adjust:
-        new_text = re.sub(r"#define ENDGAME_ADJUST .*", adjust, new_text)
+        new_text = patch_grading_adjust(new_text, adjust)
 
     if new_text == text:
         logging.info(f'Unmodified: {header_file}')
