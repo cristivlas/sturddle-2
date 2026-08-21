@@ -123,8 +123,63 @@ def get_grading_adjustments(best_params):
     return updates
 
 
-def patch_grading_adjust(text, updates):
-    """Patch elements of the multi-line GRADING_ADJUST macro (one bucket row per line)."""
+def read_eval_piece_grading(header_dir):
+    """Read EVAL_PIECE_GRADING from common.h next to the patched header; None if unknown."""
+    try:
+        with open(os.path.join(header_dir or '.', 'common.h'), 'r', encoding='utf-8') as f:
+            for line in f:
+                m = re.match(r'#define\s+EVAL_PIECE_GRADING\s+(\w+)', line.strip())
+                if m:
+                    return m.group(1) == 'true'
+    except OSError:
+        pass
+    return None
+
+
+def parse_piece_values(text, grading):
+    """PIECE_VALUES of the active EVAL_PIECE_GRADING branch as a list of 7 ints."""
+    in_if = in_else = False
+    fallback = None
+    for line in text.splitlines():
+        s = line.lstrip()
+        if re.match(r'#if\s+EVAL_PIECE_GRADING\b', s):
+            in_if, in_else = True, False
+        elif in_if and s.startswith('#else'):
+            in_else = True
+        elif in_if and s.startswith('#endif'):
+            in_if = in_else = False
+        m = re.match(r'#define\s+PIECE_VALUES\s*\{([^}]+)\}', s)
+        if m:
+            vals = [int(x) for x in m.group(1).split(',')]
+            if in_if and not in_else and grading is not False:
+                return vals
+            if (in_else and grading is False) or not in_if:
+                fallback = vals
+    return fallback
+
+
+def patch_piece_values(text, weights, grading):
+    """Replace the PIECE_VALUES define of the active EVAL_PIECE_GRADING branch only."""
+    lines = text.splitlines(keepends=True)
+    in_if = in_else = False
+    for i, line in enumerate(lines):
+        s = line.lstrip()
+        if re.match(r'#if\s+EVAL_PIECE_GRADING\b', s):
+            in_if, in_else = True, False
+        elif in_if and s.startswith('#else'):
+            in_else = True
+        elif in_if and s.startswith('#endif'):
+            in_if = in_else = False
+        if re.match(r'#define\s+PIECE_VALUES\b', s):
+            wrong_branch = grading is not None and in_if and (in_else == grading)
+            if not wrong_branch:
+                lines[i] = re.sub(r'\{[^}]*\}', '{ ' + ', '.join(map(str, weights)) + ' }', line)
+    return ''.join(lines)
+
+
+def patch_grading_adjust(text, updates, weights):
+    """Patch the multi-line GRADING_ADJUST macro (one bucket row per line): update
+    elements, normalize column widths, refresh the effective-piece-value comment."""
     lines = text.splitlines(keepends=True)
     row = -1
     applied = set()
@@ -137,15 +192,18 @@ def patch_grading_adjust(text, updates):
         m = re.search(r'\{([^}]*)\}', line)
         if not m:
             break
-        values = m.group(1).split(',')
+        values = [int(tok) for tok in m.group(1).split(',')]
         for (bucket, col), val in updates.items():
             if bucket == row and col < len(values):
                 applied.add((bucket, col))
-                old = values[col].strip()
-                if old != str(val):
-                    values[col] = values[col].replace(old, str(val), 1)
-                    logging.info(f'GRADING_ADJUST[{bucket}][{col}]: {old} -> {val}')
-        lines[i] = line[:m.start(1)] + ','.join(values) + line[m.end(1):]
+                if values[col] != int(val):
+                    logging.info(f'GRADING_ADJUST[{bucket}][{col}]: {values[col]} -> {val}')
+                    values[col] = int(val)
+        indent = line[:len(line) - len(line.lstrip())]
+        vals_txt = ', '.join([str(values[0])] + [f"{v:>4}" for v in values[1:6]] + [str(values[6])])
+        label = '0-4' if row == 0 else f"{4 * row + 1}-{4 * row + 4}"
+        comment = f" /* {label:>5} pawns: " + ', '.join(f"{values[c] + weights[c]:>4}" for c in range(1, 6)) + " */" if weights else ""
+        lines[i] = f"{indent}{{ {vals_txt} }},{comment} \\\n"
         row += 1
 
     for key in sorted(set(updates) - applied):
@@ -177,27 +235,28 @@ def get_weights(best_params):
 
         m_map[m_sym[k]] = val
 
-    weights = ', '.join(map(str, m_map.values()))
-    return f'#define PIECE_VALUES {{ {weights} }}'
+    return [m_map[k] for k in range(0, 7)]
 
 
 def patch_header(header_file, best_params):
-
-    weights = get_weights(best_params)
-
-    if weights is None:
-        logging.warning('Piece weights not tuned')
-        return
-
     logging.info(f"Reading header file: {header_file}")
     with open(header_file, 'r', encoding='utf-8') as f:
         text = f.read()
 
-    new_text = re.sub(r"#define PIECE_VALUES .*", weights, text)
+    grading = read_eval_piece_grading(os.path.dirname(header_file))
+    weights = get_weights(best_params)
+
+    new_text = text
+    if weights is None:
+        logging.warning('Piece weights not tuned')
+    else:
+        new_text = patch_piece_values(new_text, weights, grading)
 
     adjust = get_grading_adjustments(best_params)
     if adjust:
-        new_text = patch_grading_adjust(new_text, adjust)
+        if weights is None:
+            weights = parse_piece_values(new_text, grading)
+        new_text = patch_grading_adjust(new_text, adjust, weights)
 
     if new_text == text:
         logging.info(f'Unmodified: {header_file}')

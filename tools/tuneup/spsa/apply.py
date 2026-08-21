@@ -273,6 +273,13 @@ def update_piece_values(header_file, engine_values):
     if grading is not None:
         logging.info(f"EVAL_PIECE_GRADING = {grading}")
 
+    # Weights for the GRADING_ADJUST effective-value comments, post-patch
+    adjust_weights = _parse_piece_values(lines, grading)
+    if adjust_weights:
+        for idx, (name, val) in piece_updates.items():
+            if idx < len(adjust_weights):
+                adjust_weights[idx] = int(val)
+
     found = set()
     updated = set()
     define_re = re.compile(
@@ -320,7 +327,7 @@ def update_piece_values(header_file, engine_values):
             elif adjust_row >= 0:
                 m = re.search(r'\{([^}]*)\}', line)
                 if m:
-                    line = _patch_adjust_row(line, m, adjust_row, adjust_updates, found, updated)
+                    line = _patch_adjust_row(line, m, adjust_row, adjust_updates, found, updated, adjust_weights)
                     adjust_row += 1
                 else:
                     adjust_row = -1  # closing brace or unexpected line ends the macro
@@ -337,22 +344,45 @@ def update_piece_values(header_file, engine_values):
     return updated, found
 
 
-def _patch_adjust_row(line, m, row, updates, found, updated):
-    """Patch elements of one ``{ ... }`` row of the GRADING_ADJUST macro."""
-    values = m.group(1).split(',')
+def _parse_piece_values(lines, grading):
+    """Graded-branch PIECE_VALUES as a list of 7 ints (for the effective-value comments)."""
+    in_if = in_else = False
+    fallback = None
+    for line in lines:
+        s = line.lstrip()
+        if re.match(r'#if\s+EVAL_PIECE_GRADING\b', s):
+            in_if, in_else = True, False
+        elif in_if and s.startswith('#else'):
+            in_else = True
+        elif in_if and s.startswith('#endif'):
+            in_if = in_else = False
+        m = re.match(r'#define\s+PIECE_VALUES\s*\{([^}]+)\}', s)
+        if m:
+            vals = [int(x) for x in m.group(1).split(',')]
+            if in_if and not in_else and grading is not False:
+                return vals
+            if (in_else and grading is False) or not in_if:
+                fallback = vals
+    return fallback
+
+
+def _patch_adjust_row(line, m, row, updates, found, updated, weights):
+    """Regenerate one ``{ ... }`` row of GRADING_ADJUST: patch updated elements,
+    normalize column widths, refresh the effective-piece-value comment (WEIGHT + adjust)."""
+    values = [int(tok) for tok in m.group(1).split(',')]
     for (bucket, col), (name, val) in updates.items():
         if bucket != row:
             continue
         found.add(name)
-        if col < len(values):
-            old_tok = values[col]
-            stripped = old_tok.strip()
-            new_val = str(val)
-            if stripped != new_val:
-                values[col] = old_tok.replace(stripped, new_val, 1)
-                updated.add(name)
-                logging.info(f"Updated {name}: {stripped} -> {new_val} in GRADING_ADJUST row {row}")
-    return line[:m.start(1)] + ','.join(values) + line[m.end(1):]
+        if col < len(values) and values[col] != int(val):
+            logging.info(f"Updated {name}: {values[col]} -> {val} in GRADING_ADJUST row {row}")
+            values[col] = int(val)
+            updated.add(name)
+    indent = line[:len(line) - len(line.lstrip())]
+    vals_txt = ', '.join([str(values[0])] + [f"{v:>4}" for v in values[1:6]] + [str(values[6])])
+    label = '0-4' if row == 0 else f"{4 * row + 1}-{4 * row + 4}"
+    comment = f" /* {label:>5} pawns: " + ', '.join(f"{values[i] + weights[i]:>4}" for i in range(1, 6)) + " */" if weights else ""
+    return f"{indent}{{ {vals_txt} }},{comment} \\\n"
 
 
 def _patch_array_line(pattern, line, macro_name, updates, found, updated):
@@ -756,8 +786,7 @@ def main():
 
     # Patch piece values in chess.h (PIECE_VALUES / ENDGAME_ADJUST macros)
     not_in_config = {n: v for n, v in engine_values.items() if n not in found}
-    piece_candidates = {n: v for n, v in not_in_config.items()
-                        if n in PIECE_INDEX or n in ENDGAME_ADJUST_INDEX}
+    piece_candidates = {n: v for n, v in not_in_config.items() if n in PIECE_INDEX or GRADING_ADJUST_RE.match(n)}
 
     if piece_candidates:
         header_path = args.header or os.path.join(os.path.dirname(args.config) or '.', 'chess.h')
