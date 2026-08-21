@@ -440,7 +440,6 @@ namespace chess
 
     constexpr int PAWN_BUCKETS = 4;
 
-/* GRADING_ADJUST[PAWN_BUCKETS][7], indexed by pawn_bucket() (fit by tools/nnue/piece_values.py) */
 #define GRADING_ADJUST { \
     { 0,   29, -178,  -32, -102, -172, 0 }, /*   0-4 pawns:  135,  162,  331,  424,  863 */ \
     { 0,   -9,   14,   22,   54,  252, 0 }, /*   5-8 pawns:   97,  354,  385,  580, 1287 */ \
