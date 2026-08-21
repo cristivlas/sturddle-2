@@ -173,7 +173,10 @@ def patch_piece_values(text, weights, grading):
         if re.match(r'#define\s+PIECE_VALUES\b', s):
             wrong_branch = grading is not None and in_if and (in_else == grading)
             if not wrong_branch:
-                lines[i] = re.sub(r'\{[^}]*\}', '{ ' + ', '.join(map(str, weights)) + ' }', line)
+                m2 = re.search(r'\{([^}]*)\}', line)
+                toks = m2.group(1).split(',')
+                new_toks = [f"{v:>{len(t.rstrip())}}" + t[len(t.rstrip()):] for t, v in zip(toks, weights)]
+                lines[i] = line[:m2.start(1)] + ','.join(new_toks) + line[m2.end(1):]
     return ''.join(lines)
 
 
@@ -202,7 +205,7 @@ def patch_grading_adjust(text, updates, weights):
         indent = line[:len(line) - len(line.lstrip())]
         vals_txt = ', '.join([str(values[0])] + [f"{v:>4}" for v in values[1:6]] + [str(values[6])])
         label = '0-4' if row == 0 else f"{4 * row + 1}-{4 * row + 4}"
-        comment = f" /* {label:>5} pawns: " + ', '.join(f"{values[c] + weights[c]:>4}" for c in range(1, 6)) + " */" if weights else ""
+        comment = f" /* {label:>5}: " + ', '.join(f"{values[c] + weights[c]:>4}" for c in range(1, 6)) + " */" if weights else ""
         lines[i] = f"{indent}{{ {vals_txt} }},{comment} \\\n"
         row += 1
 

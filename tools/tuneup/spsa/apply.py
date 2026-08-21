@@ -381,7 +381,7 @@ def _patch_adjust_row(line, m, row, updates, found, updated, weights):
     indent = line[:len(line) - len(line.lstrip())]
     vals_txt = ', '.join([str(values[0])] + [f"{v:>4}" for v in values[1:6]] + [str(values[6])])
     label = '0-4' if row == 0 else f"{4 * row + 1}-{4 * row + 4}"
-    comment = f" /* {label:>5} pawns: " + ', '.join(f"{values[i] + weights[i]:>4}" for i in range(1, 6)) + " */" if weights else ""
+    comment = f" /* {label:>5}: " + ', '.join(f"{values[i] + weights[i]:>4}" for i in range(1, 6)) + " */" if weights else ""
     return f"{indent}{{ {vals_txt} }},{comment} \\\n"
 
 
