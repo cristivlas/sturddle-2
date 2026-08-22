@@ -142,25 +142,38 @@ Config::Namespace Config::_namespace = {
 #if WEIGHT_TUNING_ENABLED && EVAL_PIECE_GRADING
 /* Per pawn-bucket grading adjustments: ADJUST_<bucket>_<piece>.
  * Reading ADJUST here is safe: it is constant-initialized (chess.cpp), and
- * _namespace precedes this instance in the same TU -- do not "fix" the order. */
+ * _namespace precedes this instance in the same TU -- do not "fix" the order.
+ */
 struct AdjustTuningEnabler
 {
     AdjustTuningEnabler()
     {
         static constexpr const char* piece_names[] = { "", "PAWN", "KNIGHT", "BISHOP", "ROOK", "QUEEN" };
 
-        /* Wide ranges: the fitted defaults are data-dependent, give SPSA room */
-        static constexpr int half_range[] = { 0, 40, 80, 80, 100, 150 };
+        /* Per-bucket ranges: fitted defaults are data-dependent, give SPSA room.
+         * Pegged pawn adjusts (buckets 2-3) get no downward room.
+         */
+        static constexpr int range_down[PAWN_BUCKETS][7] = {
+            { 0, 40, 80, 80, 100, 150, 0 },
+            { 0, 40, 80, 80, 100, 150, 0 },
+            { 0,  0, 80, 80, 100, 150, 0 },
+            { 0,  0, 80, 80, 100, 150, 0 },
+        };
+        static constexpr int range_up[PAWN_BUCKETS][7] = {
+            { 0, 40, 80, 80, 100, 150, 0 },
+            { 0, 40, 80, 80, 100, 150, 0 },
+            { 0, 40, 80, 80, 100, 150, 0 },
+            { 0, 40, 80, 80, 100, 150, 0 },
+        };
 
         for (int b = 0; b != PAWN_BUCKETS; ++b)
             for (const auto pt : { PAWN, KNIGHT, BISHOP, ROOK, QUEEN })
             {
                 const auto name = "ADJUST_" + std::to_string(b) + "_" + piece_names[pt];
                 const auto val = ADJUST[b][pt];
-                const auto range = half_range[pt];
 
                 Config::_namespace.emplace(
-                    name, Config::Param{ &ADJUST[b][pt], val - range, val + range, "Eval", normalize_weights });
+                    name, Config::Param{ &ADJUST[b][pt], val - range_down[b][pt], val + range_up[b][pt], "Eval", normalize_weights });
             }
     }
 };
