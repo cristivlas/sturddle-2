@@ -577,7 +577,7 @@ namespace search
     extern score_t eval_captures(Context& ctxt, score_t);
 
 
-    static int INLINE capture_gain(const State& state, const State& next_state, const BaseMove& move, int bucket = -1)
+    static int INLINE capture_gain(const State& state, const State& next_state, const BaseMove& move, int bucket)
     {
         ASSERT(next_state.is_capture());
         const auto state_eval = state.eval_lazy();
@@ -591,7 +591,7 @@ namespace search
      * Evaluate same square exchanges. Called by make_captures.
      */
     template<bool StaticExchangeEvaluation>
-    INLINE score_t eval_exchanges(int tid, const Move& move, int bucket = -1)
+    INLINE score_t eval_exchanges(int tid, const Move& move, int bucket)
     {
         score_t val = 0;
 

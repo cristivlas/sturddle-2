@@ -1255,7 +1255,7 @@ namespace chess
     #endif /* EVAL_PIECE_GRADING */
         }
 
-        INLINE int piece_value_adjustment(PieceType piece_type, int bucket = -1) const
+        INLINE int piece_value_adjustment(PieceType piece_type, int bucket) const
         {
     #if EVAL_PIECE_GRADING
             return ADJUST[bucket < 0 ? pawn_bucket(pawns) : bucket][piece_type];
