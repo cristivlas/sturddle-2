@@ -10,7 +10,7 @@ namespace
 
 
 #if EVAL_PIECE_GRADING
-    static INLINE int eval_piece_grading(const State& state)
+    static INLINE int eval_piece_grading_raw(const State& state)
     {
         int score = 0;
 
@@ -30,6 +30,17 @@ namespace
         }
 
         return score;
+    }
+
+
+    static INLINE int eval_piece_grading(const State& state)
+    {
+        if (state.grading_score == State::UNKNOWN_SCORE)
+            state.grading_score = eval_piece_grading_raw(state);
+        else
+            ASSERT(state.grading_score == eval_piece_grading_raw(state));
+
+        return state.grading_score;
     }
 #endif /* EVAL_PIECE_GRADING */
 

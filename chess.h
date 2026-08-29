@@ -441,8 +441,8 @@ namespace chess
     constexpr int PAWN_BUCKETS = 4;
 
 #define GRADING_ADJUST { \
-    { 0,   66, -139, -125,   32,    0, 0 }, /*   0-4:  172,  201,  238,  558, 1035 */ \
-    { 0,  -16,  -84,   26,  -73,  294, 0 }, /*   5-8:   90,  256,  389,  453, 1329 */ \
+    { 0,   65, -128, -100,   10,  -86, 0 }, /*   0-4:  171,  212,  263,  536,  949 */ \
+    { 0,  -21,  -95,   33,    5,  256, 0 }, /*   5-8:   85,  245,  396,  531, 1291 */ \
     { 0,  -35,   44,   37,   43,  352, 0 }, /*  9-12:   71,  384,  400,  569, 1387 */ \
     { 0,  -40,  -67,   12,  -82,    5, 0 }, /* 13-16:   66,  273,  375,  444, 1040 */ \
 }
@@ -1051,6 +1051,9 @@ namespace chess
         static constexpr auto UNKNOWN_SCORE = std::numeric_limits<int16_t>::min();
         mutable score_t simple_score = UNKNOWN_SCORE;
 
+        /* eval_piece_grading memo, white's POV; inherited via clone_into, survives quiet moves */
+        mutable score_t grading_score = UNKNOWN_SCORE;
+
         void apply_move(const BaseMove&);
 
         State clone() const
@@ -1354,6 +1357,8 @@ namespace chess
 
         if ((this->is_castle = is_castling(move)) == true)
         {
+            /* Polyglot may encode castling as king-takes-own-rook (e.g. E8H8) */
+            this->capture_type = PieceType::NONE;
         #if 0
             const auto king_to_file = square_file(move.to_square());
             ASSERT(king_to_file == 2 || king_to_file == 6);
@@ -1428,6 +1433,17 @@ namespace chess
         _endgame = ENDGAME_UNKNOWN; /* recalculate lazily */
         _hash = 0; /* invalidate */
         has_tt_result = false;
+
+    #if EVAL_PIECE_GRADING
+        if (grading_score != UNKNOWN_SCORE)
+        {
+            if (capture_type == PAWN || move.promotion())
+                grading_score = UNKNOWN_SCORE; /* pawn count changed, bucket may shift */
+            else if (capture_type != PieceType::NONE)
+                /* same bucket: subtract the captured piece's adjustment */
+                grading_score -= SIGN[!color] * ADJUST[pawn_bucket(pawns)][capture_type];
+        }
+    #endif /* EVAL_PIECE_GRADING */
     }
 
 
