@@ -97,11 +97,17 @@ def _generate(model_path):
         [(l.name, [w.shape for w in l.get_weights()]) for l in model.layers if l.get_weights()],
     )
 
+    import threat_planes
+
+    threats = int(model.inputs[0].shape[-1]) == threat_planes.PACKED_INPUTS
+
     golds = {}
     for fen in TESTS:
         board = chess.Board(fen=fen)
         assert board.is_valid(), f"Invalid position: {fen}"
         encoding = encode(board).T.reshape((1, 13))
+        if threats:
+            encoding = threat_planes.append_planes(encoding)
         out = model.predict(encoding, verbose=0)
         res = out[0][0][0] if len(out) > 1 else out[0][0]
         golds[fen] = float(res) * 100
@@ -134,7 +140,20 @@ def _generate_bin(bin_path):
         array = np.asarray([bitboards], dtype=np.uint64).ravel()
         return np.append(array, np.uint64(board.turn))
 
-    model = tt.NNUE()
+    # Infer hidden_1c width from the file size (0 = no threat planes)
+    def total(layout):
+        return sum(i * o + b for _, i, o, b in layout)
+
+    size = os.path.getsize(bin_path) // 4
+    base = total(tt._export_layout(0))
+    per_unit = total(tt._export_layout(1)) - base
+    ts, rem = divmod(size - base, per_unit)
+    if size < base or rem:
+        raise ValueError(f"{bin_path}: {size} floats does not match any known layout (move-head bins unsupported)")
+    if ts:
+        from threat_planes import append_planes
+
+    model = tt.NNUE(threats_size=ts)
     tt.load_bin(model, bin_path)
     model.eval()
 
@@ -143,7 +162,10 @@ def _generate_bin(bin_path):
         for fen in TESTS:
             board = chess.Board(fen=fen)
             assert board.is_valid(), f"Invalid position: {fen}"
-            x = torch.from_numpy(encode(board).astype(np.int64)).reshape(1, 13)
+            x = encode(board).reshape(1, 13)
+            if ts:
+                x = append_planes(x)
+            x = torch.from_numpy(x.astype(np.int64))
             res = model(x)[0, 0].item()
             golds[fen] = res * 100
 

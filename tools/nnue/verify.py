@@ -18,6 +18,9 @@ Q_MAX_A = 32767 / Q_SCALE / 34
 # Constraint B: for hidden_1b layer
 Q_MAX_B = 32767 / Q_SCALE / 19
 
+# Constraint C: hidden_1c, int16 storage range only (int32 accumulation in the engine)
+Q_MAX_C = 32767 / Q_SCALE
+
 ACTIVE_INPUTS = 769
 ACCUMULATOR_SIZE = 2048
 POOL_SIZE = 8
@@ -30,14 +33,23 @@ MOVE_OUTPUTS = 4096  # 64x64 (from, to)
 # constraint_type: 'A', 'B', or None
 # ORDER MATTERS - must match export order from trainer
 
-LAYERS = [
-    ('hidden_1a', (ACTIVE_INPUTS * MAIN_BUCKETS, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), 'A'),
-    ('hidden_1b', (256, POOLED), (POOLED,), 'B'),
-    ('pool', (2 * ACCUMULATOR_SIZE, 1), (0,), None),  # stm-major, kernel-only, float; (0,) -> np.prod == 0, no bias read
-    ('hidden_2', (POOLED, 16), (16,), None),
-    ('hidden_3', (16, 16), (16,), None),
-    ('out', (16, 1), (1,), None),
-]
+THREAT_INPUTS = 768  # 12 attack planes
+
+
+def layers_for(threats_size):
+    layers = [
+        ('hidden_1a', (ACTIVE_INPUTS * MAIN_BUCKETS, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), 'A'),
+        ('hidden_1b', (256, POOLED), (POOLED,), 'B'),
+    ]
+    if threats_size:
+        layers.append(('hidden_1c', (THREAT_INPUTS, threats_size), (threats_size,), 'C'))
+    layers += [
+        ('pool', (2 * ACCUMULATOR_SIZE, 1), (0,), None),  # stm-major, kernel-only, float; (0,) -> np.prod == 0, no bias read
+        ('hidden_2', (POOLED + threats_size, 16), (16,), None),
+        ('hidden_3', (16, 16), (16,), None),
+        ('out', (16, 1), (1,), None),
+    ]
+    return layers
 
 # Optional move prediction head: own sub-accumulator, decoupled from eval
 MOVE_LAYERS = [
@@ -51,6 +63,8 @@ def get_constraint_params(constraint_type):
         return Q_MAX_A, Q_SCALE
     elif constraint_type == 'B':
         return Q_MAX_B, Q_SCALE
+    elif constraint_type == 'C':
+        return Q_MAX_C, Q_SCALE
     else:
         return None, None
 
@@ -150,28 +164,39 @@ def main():
     
     data = np.fromfile(filepath, dtype=np.float32)
     print(f"Total values: {len(data)}")
-    
-    # Calculate expected sizes
-    base_total = sum(np.prod(k) + np.prod(b) for _, k, b, _ in LAYERS)
-    move_total = sum(np.prod(k) + np.prod(b) for _, k, b, _ in MOVE_LAYERS)
-    
+
+    def total(layers):
+        return sum(np.prod(k) + np.prod(b) for _, k, b, _ in layers)
+
+    base_total = total(layers_for(0))
+    move_total = total(MOVE_LAYERS)
+    per_unit = total(layers_for(1)) - base_total  # hidden_1c kernel row + bias + hidden_2 row
+
     print(f"Expected (without move): {base_total}")
     print(f"Expected (with move): {base_total + move_total}")
-    
-    has_move_layer = len(data) == base_total + move_total
-    
-    if len(data) == base_total:
-        print("Detected: model WITHOUT move prediction")
-    elif has_move_layer:
-        print("Detected: model WITH move prediction")
-    else:
+
+    MAX_THREATS_SIZE = 1024
+
+    def infer_threats_size(remainder):
+        """Return the hidden_1c width the remainder accounts for, or None."""
+        ts, rem = divmod(remainder, per_unit)
+        return ts if remainder >= 0 and rem == 0 and ts <= MAX_THREATS_SIZE else None
+
+    # Test the move-head hypothesis first so its total can never be misread as threat units
+    threats_size = infer_threats_size(len(data) - base_total - move_total)
+    has_move_layer = threats_size is not None
+    if not has_move_layer:
+        threats_size = infer_threats_size(len(data) - base_total)
+    if threats_size is None:
         print(f"ERROR: Size mismatch! Got {len(data)}, expected {base_total} or {base_total + move_total}")
         sys.exit(1)
-    
+
+    print(f"Detected: model {'WITH' if has_move_layer else 'WITHOUT'} move prediction, "
+          f"hidden_1c size {threats_size}")
     print()
-    
+
     # Verify base layers
-    offset, total_clip_violations, total_round_violations, success = verify_layers(data, LAYERS)
+    offset, total_clip_violations, total_round_violations, success = verify_layers(data, layers_for(threats_size))
     
     if not success:
         print("ERROR: Unexpected end of data while reading base layers")

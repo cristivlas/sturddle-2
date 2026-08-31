@@ -28,6 +28,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from threat_planes import append_planes
+
 # ---- architecture constants (keep in sync with nnue.h / context.cpp) ----
 ACTIVE_INPUTS = 769
 ACCUMULATOR_SIZE = 2048
@@ -35,6 +37,7 @@ POOL_SIZE = 8
 POOLED = ACCUMULATOR_SIZE // POOL_SIZE  # 256
 MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
 INPUTS_B = 256  # kings + pawns
+THREAT_INPUTS = 768  # 12 attack planes (--threats)
 HIDDEN_2 = 16
 HIDDEN_3 = 16
 
@@ -43,6 +46,8 @@ Q_SCALE = 1024
 Q_MAX_A = 32767 / Q_SCALE / 34
 # (8 pawns + 1 king) x 2 + bias == 19
 Q_MAX_B = 32767 / Q_SCALE / 19
+# hidden_1c: int16 storage range only (engine accumulates in int32)
+Q_MAX_C = 32767 / Q_SCALE
 
 SCALE = 100.0
 
@@ -51,15 +56,15 @@ SCALE = 100.0
 # Feature unpacking and bucketing (mirror tools/nnue/train.py exactly)
 # ---------------------------------------------------------------------------
 def unpack_bits(packed):
-    """packed: (B, 13) uint64 [12 bitboards + turn] -> (B, 769) float32 features.
+    """packed: (B, N+1) uint64 [N bitboards + turn] -> (B, N*64+1) float32 features.
 
     Feature index idx within a 64-block holds bitboard bit (63 - idx)."""
-    bitboards = packed[:, :12]  # (B, 12) int64
-    turn = packed[:, 12:13]  # (B, 1)
+    bitboards = packed[:, :-1]  # (B, N) int64
+    turn = packed[:, -1:]  # (B, 1)
     shifts = torch.arange(63, -1, -1, device=packed.device, dtype=torch.int64)
-    bits = (bitboards.unsqueeze(-1) >> shifts) & 1  # (B, 12, 64)
-    feats = bits.reshape(bits.shape[0], 12 * 64)  # (B, 768)
-    return torch.cat([feats, turn], dim=1).float()  # (B, 769)
+    bits = (bitboards.unsqueeze(-1) >> shifts) & 1  # (B, N, 64)
+    feats = bits.reshape(bits.shape[0], bitboards.shape[1] * 64)  # (B, N*64)
+    return torch.cat([feats, turn], dim=1).float()
 
 
 # right half = files e-h: feature idx where (63 - idx) % 8 >= 4
@@ -119,29 +124,40 @@ class BucketedDense(nn.Module):
 
 
 class NNUE(nn.Module):
-    def __init__(self):
+    def __init__(self, threats_size=0):
         super().__init__()
+        self.threats_size = threats_size
         self.hidden_1a = BucketedDense(MAIN_BUCKETS, ACTIVE_INPUTS, ACCUMULATOR_SIZE)
         self.hidden_1b = nn.Linear(INPUTS_B, POOLED)  # linear (no activation)
         # learned pooling, one weight set per side to move; init == average pooling
         self.pool = nn.Parameter(torch.full((2, POOLED, POOL_SIZE), 1.0 / POOL_SIZE))
-        self.hidden_2 = nn.Linear(POOLED, HIDDEN_2)
+        self.hidden_2 = nn.Linear(POOLED + threats_size, HIDDEN_2)
         self.hidden_3 = nn.Linear(HIDDEN_2, HIDDEN_3)
         self.out = nn.Linear(HIDDEN_3, 1)
-        for m in (self.hidden_1b, self.hidden_2, self.hidden_3):
+        layers = [self.hidden_1b, self.hidden_2, self.hidden_3]
+        if threats_size:
+            # constrained to int16 storage range only (Q_MAX_C); engine accumulates in int32
+            self.hidden_1c = nn.Linear(THREAT_INPUTS, threats_size)
+            layers.append(self.hidden_1c)
+        for m in layers:
             nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
 
     def forward(self, packed):
-        feats = unpack_bits(packed)  # (B, 769)
+        feats = unpack_bits(packed)  # (B, 769) or (B, 1537) with threat planes
+        if self.threats_size:
+            threats = feats[:, 768:1536]
+            feats = torch.cat([feats[:, :768], feats[:, -1:]], dim=1)  # piece features + turn
         acc = self.hidden_1a(feats)  # (B, 2048) relu'd
         kp = feats[:, :INPUTS_B]
         mod = self.hidden_1b(kp)  # (B, 256) linear
 
-        stm = packed[:, 12].long()  # 0 = black to move, 1 = white
+        stm = packed[:, -1].long()  # 0 = black to move, 1 = white
         w = self.pool[stm]  # (B, 256, 8)
         pooled = (acc.view(acc.shape[0], POOLED, POOL_SIZE) * w).sum(dim=-1)  # (B, 256)
         residual = pooled + pooled * mod  # pooled * (1 + mod)
 
+        if self.threats_size:
+            residual = torch.cat([residual, F.relu(self.hidden_1c(threats))], dim=1)
         x = F.relu(self.hidden_2(residual))
         x = F.relu(self.hidden_3(x))
         return self.out(x)  # (B, 1)
@@ -169,6 +185,9 @@ def apply_constraints(model, quantize_round):
     clamp(model.hidden_1a.bias, Q_MAX_A)
     clamp(model.hidden_1b.weight, Q_MAX_B)
     clamp(model.hidden_1b.bias, Q_MAX_B)
+    if model.threats_size:
+        clamp(model.hidden_1c.weight, Q_MAX_C)
+        clamp(model.hidden_1c.bias, Q_MAX_C)
     # hidden_2 / hidden_3 / out are unconstrained (float in C++)
 
 
@@ -177,14 +196,20 @@ def apply_constraints(model, quantize_round):
 # ---------------------------------------------------------------------------
 # (name, in, out, bias count); BucketedDense uses num_buckets*in as the stored row count.
 # pool is kernel-only: (2 * ACCUMULATOR_SIZE, 1), stm-major, no bias.
-_EXPORT = [
-    ("hidden_1a", MAIN_BUCKETS * ACTIVE_INPUTS, ACCUMULATOR_SIZE, ACCUMULATOR_SIZE),
-    ("hidden_1b", INPUTS_B, POOLED, POOLED),
-    ("pool", 2 * ACCUMULATOR_SIZE, 1, 0),
-    ("hidden_2", POOLED, HIDDEN_2, HIDDEN_2),
-    ("hidden_3", HIDDEN_2, HIDDEN_3, HIDDEN_3),
-    ("out", HIDDEN_3, 1, 1),
-]
+def _export_layout(threats_size):
+    layout = [
+        ("hidden_1a", MAIN_BUCKETS * ACTIVE_INPUTS, ACCUMULATOR_SIZE, ACCUMULATOR_SIZE),
+        ("hidden_1b", INPUTS_B, POOLED, POOLED),
+    ]
+    if threats_size:
+        layout.append(("hidden_1c", THREAT_INPUTS, threats_size, threats_size))
+    layout += [
+        ("pool", 2 * ACCUMULATOR_SIZE, 1, 0),
+        ("hidden_2", POOLED + threats_size, HIDDEN_2, HIDDEN_2),
+        ("hidden_3", HIDDEN_2, HIDDEN_3, HIDDEN_3),
+        ("out", HIDDEN_3, 1, 1),
+    ]
+    return layout
 
 
 def _layer_kernel_bias(model, name):
@@ -211,10 +236,10 @@ def save_bin(model, path, quantize_round=False):
             a = np.clip(a, -qmax, qmax)
         return a.astype(np.float32)
 
-    qmax = {"hidden_1a": Q_MAX_A, "hidden_1b": Q_MAX_B}
+    qmax = {"hidden_1a": Q_MAX_A, "hidden_1b": Q_MAX_B, "hidden_1c": Q_MAX_C}
     tmp = path + ".tmp"
     with open(tmp, "wb") as f:
-        for name, _, _, _ in _EXPORT:
+        for name, _, _, _ in _export_layout(_core(model).threats_size):
             k, b = _layer_kernel_bias(model, name)
             m = qmax.get(name)
             if m is not None:
@@ -230,12 +255,13 @@ def save_bin(model, path, quantize_round=False):
 @torch.no_grad()
 def load_bin(model, path):
     model = _core(model)
+    layout = _export_layout(model.threats_size)
     data = np.fromfile(path, dtype=np.float32)
-    expected = sum(i * o + bn for _, i, o, bn in _EXPORT)
+    expected = sum(i * o + bn for _, i, o, bn in layout)
     if data.size != expected:
         raise ValueError(f"{path}: expected {expected} floats, got {data.size}")
     off = 0
-    for name, i, o, bn in _EXPORT:
+    for name, i, o, bn in layout:
         k = data[off : off + i * o].reshape(i, o)
         off += i * o
         b = data[off : off + bn]
@@ -316,6 +342,7 @@ class H5Batches(torch.utils.data.Dataset):
         balance=False,
         profile_ratios=None,
         outcome_scale=400.0,
+        threats=False,
     ):
         self.path = path
         self.batch_size = batch_size
@@ -324,6 +351,7 @@ class H5Batches(torch.utils.data.Dataset):
         self.filter = filter
         self.no_capture = no_capture
         self.balance = balance
+        self.threats = threats
         print(f"Loading dataset {path}")
         with h5py.File(path, "r") as hf:
             n = hf["data"].shape[0]
@@ -410,6 +438,10 @@ class H5Batches(torch.utils.data.Dataset):
             y_out = np.concatenate([y_out, 1.0 - y_out], axis=0)  # swap win/loss, keep draws
             label_scale = np.concatenate([label_scale, label_scale])
             outcome_scale = np.concatenate([outcome_scale, outcome_scale])
+
+        # Attack planes go after any position flips, before the turn column
+        if self.threats:
+            x = append_planes(x)
 
         y = np.stack([y_eval, y_out, label_scale, outcome_scale], axis=1).astype(np.float32)
         return torch.from_numpy(x), torch.from_numpy(y)
@@ -552,7 +584,7 @@ def summary(model):
     print(f'{"layer":<12}{"shape (in, out)":<22}{"params":>12}')
     print("-" * 46)
     total = 0
-    for name, _, _, _ in _EXPORT:
+    for name, _, _, _ in _export_layout(_core(model).threats_size):
         k, b = _layer_kernel_bias(model, name)
         n = k.size + b.size
         total += n
@@ -585,7 +617,7 @@ def main(args):
             total = torch.cuda.get_device_properties(i).total_memory
             torch.cuda.set_per_process_memory_fraction(min(1.0, args.mem_limit * 1024 * 1024 / total), device=i)
 
-    model = NNUE().to(device)
+    model = NNUE(threats_size=args.threats_size if args.threats else 0).to(device)
     src = args.import_file or (args.model if args.model and os.path.exists(args.model) else None)
     if src:
         load_bin(model, src)
@@ -654,6 +686,7 @@ def main(args):
         balance=args.balance,
         profile_ratios=profile_ratios,
         outcome_scale=args.outcome_scale,
+        threats=args.threats,
     )
     pin = device.type == "cuda"
     loader = torch.utils.data.DataLoader(ds, batch_size=None, num_workers=args.workers, shuffle=False, pin_memory=pin)
@@ -784,6 +817,14 @@ if __name__ == "__main__":
     p.add_argument("--huber-delta", type=float, default=1.5)
     p.add_argument("--focal-gamma", type=float, default=0.0, help="focal modulation of the outcome loss term (0 = off)")
     p.add_argument("--profile", help="JSON dataset profile with per-bucket label scale ratios")
+    p.add_argument(
+        "--threats",
+        action="store_true",
+        default=False,
+        help="add attack-plane inputs feeding hidden_1c, concatenated into hidden_2",
+    )
+    p.add_argument("--no-threats", dest="threats", action="store_false")
+    p.add_argument("--threats-size", type=int, default=32, help="hidden_1c output width")
     p.add_argument("--sample", type=float)
     p.add_argument("-F", "--filter", type=int, help="drop positions with |eval| >= this (centipawns)")
     p.add_argument("--balance", action="store_true", help="augment each batch with color-mirrored positions")

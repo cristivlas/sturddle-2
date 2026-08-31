@@ -43,6 +43,9 @@ def load_model(args):
 
 
 def run_tests(args, model):
+    import threat_planes
+
+    threats = int(model.inputs[0].shape[-1]) == threat_planes.PACKED_INPUTS
     evals = []
     for fen in tests:
         board = chess.Board(fen=fen)
@@ -58,6 +61,8 @@ def run_tests(args, model):
 
         encoding = encode(board)
         encoding = encoding.T.reshape((1, 13))
+        if threats:
+            encoding = threat_planes.append_planes(encoding)
         eval = model.predict(encoding)
         print(board.epd(), *eval)
         res = eval[0][0][0] if len(eval) > 1 else eval[0][0]
