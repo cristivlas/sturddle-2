@@ -42,6 +42,9 @@
 
 #if WITH_NNUE
   #include "nnue.h"
+  #if ATTACK_MASKS
+    #include "attack_masks.h"
+  #endif
   #if !SHARED_WEIGHTS && defined(USE_WEIGHTS_H)
     #include "weights.h"
   #endif
@@ -333,6 +336,21 @@ static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
 /* Per-thread bucket-refresh caches */
 static std::vector<Accumulator::RefreshTable> NNUE_refresh(SMP_CORES);
 
+#if ATTACK_MASKS
+using AttackMaskStack = std::array<chess::AttackMaskSet, PLY_MAX>;
+static std::vector<AttackMaskStack> ATTACK_data(SMP_CORES);
+static std::vector<uint64_t> ATTACK_checksum(SMP_CORES);
+
+/* External-linkage consumer, keeps the mask computation from being optimized away */
+uint64_t chess::attack_masks_checksum()
+{
+    uint64_t sum = 0;
+    for (auto c : ATTACK_checksum)
+        sum += c;
+    return sum;
+}
+#endif /* ATTACK_MASKS */
+
 static struct Model
 {
     void init();
@@ -536,7 +554,11 @@ void search::Context::update_accumulators()
     for (auto ctxt = this; ctxt; ctxt = ctxt->_parent)
     {
         auto& accumulator = NNUE_data[t][ctxt->_ply];
-        if (!accumulator.needs_update(ctxt->state()))
+        if (!accumulator.needs_update(ctxt->state())
+    #if ATTACK_MASKS
+            && !ATTACK_data[t][ctxt->_ply].needs_update(ctxt->state())
+    #endif
+            )
             break;
 
         ASSERT(chain_length < PLY_MAX);
@@ -553,13 +575,29 @@ void search::Context::update_accumulators()
         {
             ASSERT(ctxt->_parent == nullptr);
             update(accumulator, ctxt);
+
+        #if ATTACK_MASKS
+            auto& masks = ATTACK_data[t][ctxt->_ply];
+            if (masks.needs_update(ctxt->state()))
+                masks.full_rebuild(ctxt->state());
+        #endif
         }
         else
         {
             auto& prev_acc = NNUE_data[t][ctxt->_ply - ctxt->_nnue_prev_offs];
             ASSERT(!prev_acc.needs_update(ctxt->_parent->state()));
 
-            update(accumulator, ctxt, prev_acc);
+            if (accumulator.needs_update(ctxt->state()))
+                update(accumulator, ctxt, prev_acc);
+
+        #if ATTACK_MASKS
+            auto& masks = ATTACK_data[t][ctxt->_ply];
+            if (masks.needs_update(ctxt->state()))
+            {
+                const auto& prev_masks = ATTACK_data[t][ctxt->_ply - ctxt->_nnue_prev_offs];
+                masks.update(prev_masks, ctxt->_parent->state(), ctxt->state(), ctxt->_move);
+            }
+        #endif /* ATTACK_MASKS */
         }
 
         ctxt->_eval_raw = SCORE_MIN;
@@ -575,6 +613,12 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
 
     auto& acc = NNUE_data[tid()][_ply];
     ASSERT(!acc.needs_update(state()));
+
+#if ATTACK_MASKS
+    const auto& masks = ATTACK_data[tid()][_ply];
+    ASSERT(!masks.needs_update(state()));
+    ATTACK_checksum[tid()] += popcount(masks._by_side[0] | masks._by_side[1]);
+#endif /* ATTACK_MASKS */
 
     _eval_raw = nnue::eval(acc, model.POOL, model.L2, model.L3, model.EVAL, state().turn);
 
@@ -649,6 +693,9 @@ void search::Context::update_root_accumulators()
     for (int i = 1; i != SMP_CORES; ++i)
     {
         NNUE_data[i][0] = root;
+    #if ATTACK_MASKS
+        ATTACK_data[i][0] = ATTACK_data[0][0];
+    #endif
     }
 }
 
@@ -878,7 +925,11 @@ namespace search
         #if WITH_NNUE
             NNUE_data.resize(n_threads);
             NNUE_refresh.resize(n_threads);
-        #endif
+          #if ATTACK_MASKS
+            ATTACK_data.resize(n_threads);
+            ATTACK_checksum.resize(n_threads);
+          #endif /* ATTACK_MASKS */
+        #endif /* WITH_NNUE */
         }
     }
 
