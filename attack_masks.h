@@ -30,21 +30,32 @@ namespace chess
         void full_rebuild(const State& state)
         {
             const auto occupied = state.occupied();
-            rebuild(state, [&](Square sq, PieceType, Color) {
-                return state.attacks_mask(sq, occupied);
-            });
+            for (auto c : { BLACK, WHITE })
+            {
+                const auto ours = state.occupied_co(c);
+                _by_side[c] = BB_EMPTY;
+                for (auto t : PIECES)
+                {
+                    auto mask = BB_EMPTY;
+                    for_each_square(state.pieces(t) & ours, [&](Square sq) {
+                        mask |= _piece[sq] = state.attacks_mask(sq, occupied);
+                    });
+                    _by_side[c] |= _by_type[c][t] = mask;
+                }
+            }
+            _hash = state.hash();
         }
 
         void update(const AttackMaskSet& prev, const State& prev_state, const State& state, const Move& move)
         {
             ASSERT(this != &prev);
-            ASSERT(needs_update(state));
             ASSERT(prev._hash == prev_state.hash());
+
+            *this = prev;
+            _hash = state.hash();
 
             if (!move) /* null move: board unchanged */
             {
-                *this = prev;
-                _hash = state.hash();
                 debug_validate(state);
                 return;
             }
@@ -55,54 +66,72 @@ namespace chess
                 return;
             }
 
-            const auto to_mask = BB_SQUARES[move.to_square()];
-            const auto touched = BB_SQUARES[move.from_square()] | to_mask;
+            const auto from = move.from_square();
+            const auto to = move.to_square();
+            const auto to_mask = BB_SQUARES[to];
+            const auto touched = BB_SQUARES[from] | to_mask;
             const auto occupied = state.occupied();
+            const auto color = prev_state.turn;
+            const auto piece_type = prev_state.piece_type_at(from);
+            const auto capture_type = prev_state.piece_type_at(to);
 
-            /* Non-sliders are plain table lookups; sliders reuse the previous
-             * mask unless they moved or a ray reaches the changed squares.
-             */
-            rebuild(state, [&](Square sq, PieceType piece_type, Color color) {
-                switch (piece_type)
+            bool dirty[2][7] = { };
+            dirty[color][piece_type] = true;
+            if (capture_type)
+                dirty[!color][capture_type] = true;
+
+            _piece[from] = BB_EMPTY;
+            _piece[to] = state.attacks_mask(to, occupied);
+
+            /* only sliders with rays through the touched squares see the occupancy change */
+            for_each_square((state.bishops | state.rooks | state.queens) & ~to_mask, [&](Square sq) {
+                if (_piece[sq] & touched)
                 {
-                case PAWN:
-                    return BB_PAWN_ATTACKS[color][sq];
-                case KNIGHT:
-                    return BB_KNIGHT_ATTACKS[sq];
-                case KING:
-                    return BB_KING_ATTACKS[sq];
-                default:
-                    {
-                        const auto mask = prev._piece[sq];
-                        if ((BB_SQUARES[sq] & to_mask) || (mask & touched))
-                            return state.attacks_mask(sq, occupied);
-                        return mask;
-                    }
+                    _piece[sq] = state.attacks_mask(sq, occupied);
+                    dirty[state.piece_color_at(sq)][state.piece_type_at(sq)] = true;
                 }
             });
+
+            for (auto c : { BLACK, WHITE })
+            {
+                bool dirty_side = false;
+                for (auto t : PIECES)
+                    if (dirty[c][t])
+                    {
+                        _by_type[c][t] = plane(state, t, c);
+                        dirty_side = true;
+                    }
+                if (dirty_side)
+                    _by_side[c] = _by_type[c][PAWN] | _by_type[c][KNIGHT] | _by_type[c][BISHOP]
+                        | _by_type[c][ROOK] | _by_type[c][QUEEN] | _by_type[c][KING];
+            }
             debug_validate(state);
         }
 
     private:
-        /* Single fused pass: write per-piece masks and build all aggregate
-         * planes, visiting only occupied squares.
+        /* Aggregate one (type, color) plane; pawns via whole-board shifts,
+         * knights/kings via tables, sliders from the per-piece masks.
          */
-        template <typename F> INLINE void rebuild(const State& state, F mask_of)
+        INLINE Bitboard plane(const State& state, PieceType t, Color c) const
         {
-            for (auto c : { BLACK, WHITE })
+            const auto bb = state.pieces_mask(t, c);
+            auto mask = BB_EMPTY;
+            switch (t)
             {
-                const auto ours = state.occupied_co(c);
-                _by_side[c] = BB_EMPTY;
-                for (auto t : PIECES)
-                {
-                    auto plane = BB_EMPTY;
-                    for_each_square(state.pieces(t) & ours, [&](Square sq) {
-                        plane |= _piece[sq] = mask_of(sq, t, c);
-                    });
-                    _by_side[c] |= _by_type[c][t] = plane;
-                }
+            case PAWN:
+                return c == WHITE
+                    ? (((bb << 7) & ~BB_FILES[7]) | ((bb << 9) & ~BB_FILE_A))
+                    : (((bb >> 7) & ~BB_FILE_A) | ((bb >> 9) & ~BB_FILES[7]));
+            case KNIGHT:
+                for_each_square(bb, [&](Square sq) { mask |= BB_KNIGHT_ATTACKS[sq]; });
+                return mask;
+            case KING:
+                for_each_square(bb, [&](Square sq) { mask |= BB_KING_ATTACKS[sq]; });
+                return mask;
+            default:
+                for_each_square(bb, [&](Square sq) { mask |= _piece[sq]; });
+                return mask;
             }
-            _hash = state.hash();
         }
 
         INLINE void debug_validate(const State& state) const

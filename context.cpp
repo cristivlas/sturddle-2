@@ -554,11 +554,7 @@ void search::Context::update_accumulators()
     for (auto ctxt = this; ctxt; ctxt = ctxt->_parent)
     {
         auto& accumulator = NNUE_data[t][ctxt->_ply];
-        if (!accumulator.needs_update(ctxt->state())
-    #if ATTACK_MASKS
-            && !ATTACK_data[t][ctxt->_ply].needs_update(ctxt->state())
-    #endif
-            )
+        if (!accumulator.needs_update(ctxt->state()))
             break;
 
         ASSERT(chain_length < PLY_MAX);
@@ -587,16 +583,16 @@ void search::Context::update_accumulators()
             auto& prev_acc = NNUE_data[t][ctxt->_ply - ctxt->_nnue_prev_offs];
             ASSERT(!prev_acc.needs_update(ctxt->_parent->state()));
 
-            if (accumulator.needs_update(ctxt->state()))
-                update(accumulator, ctxt, prev_acc);
+            update(accumulator, ctxt, prev_acc);
 
         #if ATTACK_MASKS
+            /* masks ride the accumulator's staleness; rebuild if the prev slot diverged */
             auto& masks = ATTACK_data[t][ctxt->_ply];
-            if (masks.needs_update(ctxt->state()))
-            {
-                const auto& prev_masks = ATTACK_data[t][ctxt->_ply - ctxt->_nnue_prev_offs];
+            const auto& prev_masks = ATTACK_data[t][ctxt->_ply - ctxt->_nnue_prev_offs];
+            if (prev_masks._hash == ctxt->_parent->state().hash())
                 masks.update(prev_masks, ctxt->_parent->state(), ctxt->state(), ctxt->_move);
-            }
+            else
+                masks.full_rebuild(ctxt->state());
         #endif /* ATTACK_MASKS */
         }
 
