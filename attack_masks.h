@@ -13,8 +13,6 @@
 
 namespace chess
 {
-    uint64_t attack_masks_checksum();
-
     struct AttackMaskSet
     {
         Bitboard _piece[64] = { }; /* valid only where occupied */

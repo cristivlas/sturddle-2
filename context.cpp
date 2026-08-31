@@ -303,13 +303,21 @@ constexpr int HIDDEN_1B = HIDDEN_1A_POOLED; /* 1b modulates pooled 1:1 */
 constexpr int HIDDEN_2 = 16;
 constexpr int HIDDEN_3 = 16;
 
+#if ATTACK_MASKS
+constexpr int THREAT_CONCAT = nnue::THREATS_OUT; /* hidden_1c concats into L2's input */
+/* Row-major _w only (no transposed copy), for the input-major gather in eval */
+using L1CType = nnue::Layer<nnue::THREAT_INPUTS, nnue::THREATS_OUT, int16_t, nnue::QSCALE, true, false>;
+#else
+constexpr int THREAT_CONCAT = 0;
+#endif /* ATTACK_MASKS */
+
 using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
 using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
 using PoolType = nnue::PoolLayer<HIDDEN_1A>;
 #if USE_BF16
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, __bf16>;
+  using L2Type = nnue::Layer<HIDDEN_1A_POOLED + THREAT_CONCAT, HIDDEN_2, __bf16>;
 #else
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, float>;
+  using L2Type = nnue::Layer<HIDDEN_1A_POOLED + THREAT_CONCAT, HIDDEN_2, float>;
 #endif
 using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
 using EVALType = nnue::Layer<HIDDEN_3, 1>;
@@ -339,16 +347,6 @@ static std::vector<Accumulator::RefreshTable> NNUE_refresh(SMP_CORES);
 #if ATTACK_MASKS
 using AttackMaskStack = std::array<chess::AttackMaskSet, PLY_MAX>;
 static std::vector<AttackMaskStack> ATTACK_data(SMP_CORES);
-static std::vector<uint64_t> ATTACK_checksum(SMP_CORES);
-
-/* External-linkage consumer, keeps the mask computation from being optimized away */
-uint64_t chess::attack_masks_checksum()
-{
-    uint64_t sum = 0;
-    for (auto c : ATTACK_checksum)
-        sum += c;
-    return sum;
-}
 #endif /* ATTACK_MASKS */
 
 static struct Model
@@ -360,6 +358,9 @@ static struct Model
         constexpr auto param_count =
             L1AType::param_count()
             + L1BType::param_count()
+        #if ATTACK_MASKS
+            + L1CType::param_count()
+        #endif
             + PoolType::param_count()
             + L2Type::param_count()
             + L3Type::param_count()
@@ -390,6 +391,9 @@ static struct Model
             /* Load layers in the same order that the trainer exports them. */
             L1A.load_weights(file);
             L1B.load_weights(file);
+        #if ATTACK_MASKS
+            L1C.load_weights(file);
+        #endif
             POOL.load_weights(file);
             L2.load_weights(file);
             L3.load_weights(file);
@@ -411,6 +415,9 @@ static struct Model
 
     L1AType L1A;
     L1BType L1B;
+#if ATTACK_MASKS
+    L1CType L1C;
+#endif
     PoolType POOL;
     L2Type L2;
     L3Type L3;
@@ -484,6 +491,9 @@ void Model::init()
     /* Same order as Model::load_weights file-based path */
     L1A.load_weights(file);
     L1B.load_weights(file);
+#if ATTACK_MASKS
+    L1C.load_weights(file);
+#endif
     POOL.load_weights(file);
     L2.load_weights(file);
     L3.load_weights(file);
@@ -611,12 +621,17 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     ASSERT(!acc.needs_update(state()));
 
 #if ATTACK_MASKS
-    const auto& masks = ATTACK_data[tid()][_ply];
+    auto& masks = ATTACK_data[tid()][_ply];
     ASSERT(!masks.needs_update(state()));
-    ATTACK_checksum[tid()] += popcount(masks._by_side[0] | masks._by_side[1]);
+    if (masks.needs_update(state())) /* release-only desync safety net */
+        masks.full_rebuild(state());
 #endif /* ATTACK_MASKS */
 
-    _eval_raw = nnue::eval(acc, model.POOL, model.L2, model.L3, model.EVAL, state().turn);
+    _eval_raw = nnue::eval(acc, model.POOL, model.L2, model.L3, model.EVAL, state().turn
+#if ATTACK_MASKS
+        , model.L1C, masks._by_type
+#endif
+    );
 
     if (stm_perspective)
     {
@@ -923,7 +938,6 @@ namespace search
             NNUE_refresh.resize(n_threads);
           #if ATTACK_MASKS
             ATTACK_data.resize(n_threads);
-            ATTACK_checksum.resize(n_threads);
           #endif /* ATTACK_MASKS */
         #endif /* WITH_NNUE */
         }

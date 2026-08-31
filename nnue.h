@@ -104,6 +104,13 @@ namespace nnue
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
 
+#if ATTACK_MASKS
+    /* threat planes feeding hidden_1c: (king,pawn,knight,bishop,rook,queen) x (black,white) */
+    constexpr int THREAT_PLANES = 12;
+    constexpr int THREAT_INPUTS = THREAT_PLANES * 64;
+    constexpr int THREATS_OUT = 32; /* hidden_1c width, must match the trained net */
+#endif /* ATTACK_MASKS */
+
     INLINE int pawn_bucket(const State& state)
     {
         return chess::pawn_bucket(state.pawns);
@@ -475,9 +482,11 @@ namespace nnue
 #endif /* INSTRSET >= 9 */
 
 
-    template <int I, int O, typename T, int Scale, bool Incremental>
+    template <int I, int O, typename T, int Scale, bool Incremental, bool Transposed>
     struct BaseLayer
     {
+        static_assert(Incremental && Transposed, "unsupported storage combination");
+
         static constexpr int ROWS = I;
         static constexpr int COLS = O;
         /* Round up to INPUT_STRIDE to deal with odd inputs. */
@@ -491,7 +500,7 @@ namespace nnue
 
 
     template <int I, int O, typename T, int Scale>
-    struct BaseLayer<I, O, T, Scale, false>
+    struct BaseLayer<I, O, T, Scale, false, true>
     {
         static constexpr int ROWS = I;
         static constexpr int COLS = O;
@@ -503,14 +512,27 @@ namespace nnue
     };
 
 
-    template <int I, int O, typename T=weight_t, int Scale=1, bool Incremental=false>
-    struct Layer : BaseLayer<I, O, T, Scale, Incremental>
+    /* Row-major weights only, for sparse input-major gather (hidden_1c) */
+    template <int I, int O, typename T, int Scale>
+    struct BaseLayer<I, O, T, Scale, true, false>
     {
-        using Base = BaseLayer<I, O, T, Scale, Incremental>;
+        static constexpr int ROWS = I;
+        static constexpr int COLS = O;
+        static constexpr int INPUTS = round_up<INPUT_STRIDE>(I);
+        static constexpr int OUTPUTS = O;
+
+        ALIGN T _b[OUTPUTS]; /* biases */
+        ALIGN T _w[INPUTS][OUTPUTS]; /* weights */
+    };
+
+
+    template <int I, int O, typename T=weight_t, int Scale=1, bool Incremental=false, bool Transposed=true>
+    struct Layer : BaseLayer<I, O, T, Scale, Incremental, Transposed>
+    {
+        using Base = BaseLayer<I, O, T, Scale, Incremental, Transposed>;
         using Base::INPUTS;
         using Base::OUTPUTS;
         using Base::_b;
-        using Base::_wt;
 
         Layer() = default;
 
@@ -536,13 +558,16 @@ namespace nnue
             {
                 for (int j = 0; j != OUTPUTS; ++j)
                 {
+                    T v;
                     if constexpr (Scale == 1)
-                        _wt[j][i] = w[i][j];
+                        v = w[i][j];
                     else
-                        _wt[j][i] = std::round(w[i][j] * Scale);
+                        v = std::round(w[i][j] * Scale);
 
+                    if constexpr (Transposed)
+                        this->_wt[j][i] = v;
                     if constexpr (Incremental)
-                        this->_w[i][j] = _wt[j][i];
+                        this->_w[i][j] = v;
                 }
             }
             /* padding, if needed */
@@ -550,9 +575,10 @@ namespace nnue
             {
                 for (int j = 0; j != OUTPUTS; ++j)
                 {
+                    if constexpr (Transposed)
+                        this->_wt[j][i] = 0;
                     if constexpr (Incremental)
                         this->_w[i][j] = 0;
-                    _wt[j][i] = 0;
                 }
             }
         }
@@ -607,7 +633,7 @@ namespace nnue
 
                     for (int k = 0; k != N; ++k)
                     {
-                        vw.load(&_wt[j + k][i + base]);
+                        vw.load(&this->_wt[j + k][i + base]);
                         sum[k] = mul_add(in, vw, sum[k]);
                     }
                 }
@@ -668,25 +694,25 @@ namespace nnue
         template <size_t N, typename U, typename V>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS]) const
         {
-            dot(input, output, _b, _wt, [](const Vector& v) { return v; }, 0);
+            dot(input, output, _b, this->_wt, [](const Vector& v) { return v; }, 0);
         }
 
         template <size_t N, typename U, typename V>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], size_t base) const
         {
-            dot(input, output, _b, _wt, [](const Vector& v) { return v; }, base);
+            dot(input, output, _b, this->_wt, [](const Vector& v) { return v; }, base);
         }
 
         template <size_t N, typename U, typename V, typename ACTIVATION>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], ACTIVATION activate) const
         {
-            dot(input, output, _b, _wt, activate, 0);
+            dot(input, output, _b, this->_wt, activate, 0);
         }
 
         template <size_t N, typename U, typename V, typename ACTIVATION>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], ACTIVATION activate, size_t base) const
         {
-            dot(input, output, _b, _wt, activate, base);
+            dot(input, output, _b, this->_wt, activate, base);
         }
     };
 
@@ -1164,22 +1190,36 @@ namespace nnue
     };
 
 
-    template <typename A, typename P, typename L2, typename L3, typename OUT>
-    INLINE int eval(const A& a, const P& pw, const L2& l2, const L3& l3, const OUT& out, bool turn)
+    template <typename A, typename P, typename L2, typename L3, typename OUT
+#if ATTACK_MASKS
+        , typename L1C
+#endif
+    >
+    INLINE int eval(const A& a, const P& pw, const L2& l2, const L3& l3, const OUT& out, bool turn
+#if ATTACK_MASKS
+        , const L1C& l1c, const Bitboard (&planes)[2][7]
+#endif
+    )
     {
         constexpr int POOL_OUT = A::OUTPUTS_A / POOL_STRIDE;
         static_assert(P::param_count() == 2 * A::OUTPUTS_A);
+#if ATTACK_MASKS
+        static_assert(POOL_OUT + THREATS_OUT == L2::INPUTS); /* hidden_1c concats into L2 */
+        static_assert(L1C::OUTPUTS == THREATS_OUT);
+#else
         static_assert(POOL_OUT == L2::INPUTS);
+#endif
         static_assert(A::OUTPUTS_B == POOL_OUT); /* 1b modulates pooled 1:1 */
         static_assert(L2::OUTPUTS == L3::INPUTS);
         static_assert(L3::OUTPUTS == OUT::INPUTS);
 
-        ALIGN float l2_in[POOL_OUT];
+        ALIGN float l2_in[L2::INPUTS];
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
 
-        pool(a.slot(a._current_bucket).output, pw._w[turn], l2_in);
+        /* pooled + modulation fill the first POOL_OUT entries of l2_in */
+        pool(a.slot(a._current_bucket).output, pw._w[turn], reinterpret_cast<float(&)[POOL_OUT]>(l2_in));
 
         static_assert(POOL_OUT % Vector::size() == 0);
 
@@ -1216,6 +1256,32 @@ namespace nnue
             (v1 * (m + v_one)).store_a(&l2_in[i]);
         }
 #endif /* INSTRSET >= 7 */
+
+#if ATTACK_MASKS
+        /* hidden_1c: gather active threat bits, accumulate int32, relu, dequantize into the L2 tail */
+        const Bitboard cols[THREAT_PLANES] = {
+            planes[0][KING], planes[1][KING], planes[0][PAWN], planes[1][PAWN],
+            planes[0][KNIGHT], planes[1][KNIGHT], planes[0][BISHOP], planes[1][BISHOP],
+            planes[0][ROOK], planes[1][ROOK], planes[0][QUEEN], planes[1][QUEEN],
+        };
+        int active[THREAT_INPUTS];
+        int count = 0;
+        for (int p = 0; p != THREAT_PLANES; ++p)
+            for_each_square(cols[p], [&](Square sq) { active[count++] = p * 64 + 63 - sq; });
+
+        int sum[THREATS_OUT];
+        for (int j = 0; j != THREATS_OUT; ++j)
+            sum[j] = l1c._b[j];
+        /* input-major over contiguous rows of _w; the fixed-width inner loop vectorizes */
+        for (int k = 0; k != count; ++k)
+        {
+            const auto& row = l1c._w[active[k]];
+            for (int j = 0; j != THREATS_OUT; ++j)
+                sum[j] += row[j];
+        }
+        for (int j = 0; j != THREATS_OUT; ++j)
+            l2_in[POOL_OUT + j] = std::max(0, sum[j]) * (1.0f / QSCALE);
+#endif /* ATTACK_MASKS */
 
         l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); });
         l3.dot(l2_out, l3_out, [](const Vector& v) { return relu(v); });
