@@ -203,9 +203,68 @@ INLINE Vec8s max(Vec8s a, Vec8s b)
     return _mm_max_epi16(a, b);
 }
 
-INLINE __m256i extend(Vec8s a)
+class Vec8i /* Emulate with SIMDE */
+{
+    __m256i ymm;
+
+public:
+    static constexpr size_t size() { return 8; }
+
+    Vec8i() = default;
+
+    Vec8i(__m256i x) : ymm(x) {}
+
+    Vec8i(int i) { ymm = _mm256_set1_epi32(i); }
+
+    INLINE operator __m256i() const { return ymm; }
+
+    INLINE Vec8i & load_a(void const * p)
+    {
+        ymm = _mm256_load_si256((__m256i const*)p);
+        return *this;
+    }
+
+    INLINE void store_a(int32_t* p) const { _mm256_store_si256((__m256i*)p, ymm); }
+};
+
+INLINE Vec8i operator + (Vec8i a, Vec8i b)
+{
+    return _mm256_add_epi32(a, b);
+}
+
+INLINE Vec8i max(Vec8i a, Vec8i b)
+{
+    return _mm256_max_epi32(a, b);
+}
+
+INLINE Vec8i extend(Vec8s a)
 {
     return _mm256_cvtepi16_epi32(a);
+}
+
+class Vec8f32 /* full-precision floats, unlike the fp16 Vec8f */
+{
+    __m256 ymm;
+
+public:
+    static constexpr size_t size() { return 8; }
+
+    Vec8f32() = default;
+
+    Vec8f32(__m256 x) : ymm(x) {}
+
+    Vec8f32(float f) { ymm = _mm256_set1_ps(f); }
+
+    explicit Vec8f32(Vec8i a) : ymm(_mm256_cvtepi32_ps(a)) {}
+
+    INLINE operator __m256() const { return ymm; }
+
+    INLINE void store_a(float* p) const { _mm256_store_ps(p, ymm); }
+};
+
+INLINE Vec8f32 operator * (Vec8f32 a, Vec8f32 b)
+{
+    return _mm256_mul_ps(a, b);
 }
 
 INLINE int32_t horizontal_add (__m256i a)

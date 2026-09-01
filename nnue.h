@@ -417,13 +417,14 @@ namespace nnue
         constexpr float QSCALE_RECIP = 1.0f / QSCALE;
 
 #if __ARM__
-        /* SIMDE full-precision path; relu is unbounded so avoid the half-precision Vec8f */
-        static_assert(N % 8 == 0);
-        const __m256 v_scale = _mm256_set1_ps(QSCALE_RECIP);
-        for (int i = 0; i != N; i += 8)
+        /* Vec8f32, not the fp16 Vec8f: the unbounded relu needs full float precision */
+        static_assert(N % Vec8i::size() == 0);
+        const Vec8i vi_zero(0);
+        for (int i = 0; i != N; i += Vec8i::size())
         {
-            const __m256i v = _mm256_max_epi32(_mm256_load_si256((const __m256i*)&input[i]), _mm256_setzero_si256());
-            _mm256_store_ps(&output[i], _mm256_mul_ps(_mm256_cvtepi32_ps(v), v_scale));
+            Vec8i v;
+            v.load_a(&input[i]);
+            (Vec8f32(max(v, vi_zero)) * QSCALE_RECIP).store_a(&output[i]);
         }
 #else
     #if INSTRSET < 9
@@ -1306,34 +1307,27 @@ namespace nnue
             for_each_square(cols[p], [&](Square sq) { active[count++] = p * 64 + 63 - sq; });
 
         ALIGN int32_t sum[THREATS_OUT];
-    #if __ARM__
-        static_assert(THREATS_OUT % 8 == 0);
-        __m256i vsum[THREATS_OUT / 8];
-        for (int j = 0; j != THREATS_OUT / 8; ++j)
-            vsum[j] = extend(Vec8s().load_a(&l1c._b[j * 8]));
-        for (int k = 0; k != count; ++k)
-        {
-            const auto& row = l1c._w[active[k]];
-            for (int j = 0; j != THREATS_OUT / 8; ++j)
-                vsum[j] = _mm256_add_epi32(vsum[j], extend(Vec8s().load_a(&row[j * 8])));
-        }
-        for (int j = 0; j != THREATS_OUT / 8; ++j)
-            _mm256_store_si256((__m256i*)&sum[j * 8], vsum[j]);
+    #if INSTRSET < 9
+        using VTS = Vec8s;
+        using VTI = Vec8i;
     #else
-        static_assert(THREATS_OUT % Vec16s::size() == 0);
-        Vec16i vsum[THREATS_OUT / 16];
-        for (int j = 0; j != THREATS_OUT / 16; ++j)
-            vsum[j] = extend(Vec16s().load_a(&l1c._b[j * 16]));
+        using VTS = Vec16s;
+        using VTI = Vec16i;
+    #endif /* AVX512 */
+        constexpr int NT = int(VTS::size());
+        static_assert(THREATS_OUT % NT == 0);
+        VTI vsum[THREATS_OUT / NT];
+        for (int j = 0; j != THREATS_OUT / NT; ++j)
+            vsum[j] = extend(VTS().load_a(&l1c._b[j * NT]));
         /* input-major: each _w row is a contiguous, 64-byte aligned int16[THREATS_OUT] */
         for (int k = 0; k != count; ++k)
         {
             const auto& row = l1c._w[active[k]];
-            for (int j = 0; j != THREATS_OUT / 16; ++j)
-                vsum[j] += extend(Vec16s().load_a(&row[j * 16]));
+            for (int j = 0; j != THREATS_OUT / NT; ++j)
+                vsum[j] += extend(VTS().load_a(&row[j * NT]));
         }
-        for (int j = 0; j != THREATS_OUT / 16; ++j)
-            vsum[j].store_a(&sum[j * 16]);
-    #endif /* __ARM__ */
+        for (int j = 0; j != THREATS_OUT / NT; ++j)
+            vsum[j].store_a(&sum[j * NT]);
         activate(sum, reinterpret_cast<float(&)[THREATS_OUT]>(l2_in[POOL_OUT]));
 #endif /* ATTACK_MASKS */
 
