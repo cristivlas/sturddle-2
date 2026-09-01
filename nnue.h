@@ -410,6 +410,42 @@ namespace nnue
 #endif /* 0 */
 
 
+    /** ReLU + dequantize int32/QSCALE sums to float. */
+    template <int N>
+    INLINE void activate(const int32_t (&input)[N], float (&output)[N])
+    {
+        constexpr float QSCALE_RECIP = 1.0f / QSCALE;
+
+#if __ARM__
+        /* SIMDE full-precision path; relu is unbounded so avoid the half-precision Vec8f */
+        static_assert(N % 8 == 0);
+        const __m256 v_scale = _mm256_set1_ps(QSCALE_RECIP);
+        for (int i = 0; i != N; i += 8)
+        {
+            const __m256i v = _mm256_max_epi32(_mm256_load_si256((const __m256i*)&input[i]), _mm256_setzero_si256());
+            _mm256_store_ps(&output[i], _mm256_mul_ps(_mm256_cvtepi32_ps(v), v_scale));
+        }
+#else
+    #if INSTRSET < 9
+        using VF = Vec8f;
+        using VI = Vec8i;
+    #else
+        using VF = Vec16f;
+        using VI = Vec16i;
+    #endif /* AVX512 */
+        static_assert(N % VF::size() == 0);
+        const VF v_scale(QSCALE_RECIP);
+        const VI v_izero(0);
+        for (int i = 0; i != N; i += VF::size())
+        {
+            VI v;
+            v.load_a(&input[i]);
+            (to_float(max(v, v_izero)) * v_scale).store_a(&output[i]);
+        }
+#endif /* __ARM__ */
+    }
+
+
     /** Dequantize int16/QSCALE to float, no activation (linear layer). */
     template <int N>
     INLINE void dequantize(const int16_t (&input)[N], float (&output)[N])
@@ -1258,7 +1294,7 @@ namespace nnue
 #endif /* INSTRSET >= 7 */
 
 #if ATTACK_MASKS
-        /* hidden_1c: gather active threat bits, accumulate int32, relu, dequantize into the L2 tail */
+        /* hidden_1c: gather active threat bits, accumulate int32, activate into the L2 tail */
         const Bitboard cols[THREAT_PLANES] = {
             planes[0][KING], planes[1][KING], planes[0][PAWN], planes[1][PAWN],
             planes[0][KNIGHT], planes[1][KNIGHT], planes[0][BISHOP], planes[1][BISHOP],
@@ -1269,18 +1305,36 @@ namespace nnue
         for (int p = 0; p != THREAT_PLANES; ++p)
             for_each_square(cols[p], [&](Square sq) { active[count++] = p * 64 + 63 - sq; });
 
-        int sum[THREATS_OUT];
-        for (int j = 0; j != THREATS_OUT; ++j)
-            sum[j] = l1c._b[j];
-        /* input-major over contiguous rows of _w; the fixed-width inner loop vectorizes */
+        ALIGN int32_t sum[THREATS_OUT];
+    #if __ARM__
+        static_assert(THREATS_OUT % 8 == 0);
+        __m256i vsum[THREATS_OUT / 8];
+        for (int j = 0; j != THREATS_OUT / 8; ++j)
+            vsum[j] = extend(Vec8s().load_a(&l1c._b[j * 8]));
         for (int k = 0; k != count; ++k)
         {
             const auto& row = l1c._w[active[k]];
-            for (int j = 0; j != THREATS_OUT; ++j)
-                sum[j] += row[j];
+            for (int j = 0; j != THREATS_OUT / 8; ++j)
+                vsum[j] = _mm256_add_epi32(vsum[j], extend(Vec8s().load_a(&row[j * 8])));
         }
-        for (int j = 0; j != THREATS_OUT; ++j)
-            l2_in[POOL_OUT + j] = std::max(0, sum[j]) * (1.0f / QSCALE);
+        for (int j = 0; j != THREATS_OUT / 8; ++j)
+            _mm256_store_si256((__m256i*)&sum[j * 8], vsum[j]);
+    #else
+        static_assert(THREATS_OUT % Vec16s::size() == 0);
+        Vec16i vsum[THREATS_OUT / 16];
+        for (int j = 0; j != THREATS_OUT / 16; ++j)
+            vsum[j] = extend(Vec16s().load_a(&l1c._b[j * 16]));
+        /* input-major: each _w row is a contiguous, 64-byte aligned int16[THREATS_OUT] */
+        for (int k = 0; k != count; ++k)
+        {
+            const auto& row = l1c._w[active[k]];
+            for (int j = 0; j != THREATS_OUT / 16; ++j)
+                vsum[j] += extend(Vec16s().load_a(&row[j * 16]));
+        }
+        for (int j = 0; j != THREATS_OUT / 16; ++j)
+            vsum[j].store_a(&sum[j * 16]);
+    #endif /* __ARM__ */
+        activate(sum, reinterpret_cast<float(&)[THREATS_OUT]>(l2_in[POOL_OUT]));
 #endif /* ATTACK_MASKS */
 
         l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); });
