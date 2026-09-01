@@ -1227,14 +1227,101 @@ namespace nnue
     };
 
 
-    template <typename A, typename P, typename L2, typename L3, typename OUT
 #if ATTACK_MASKS
-        , typename L1C
-#endif
-    >
+    #if INSTRSET < 9
+        using VTS = Vec8s;
+        using VTI = Vec8i;
+    #else
+        using VTS = Vec16s;
+        using VTI = Vec16i;
+    #endif /* AVX512 */
+
+    constexpr int THREAT_LANES = int(VTS::size());
+    constexpr int THREAT_VECS = THREATS_OUT / THREAT_LANES;
+    static_assert(THREATS_OUT % THREAT_LANES == 0);
+
+    /* threat planes in H5 column order: (king,pawn,knight,bishop,rook,queen) x (black,white) */
+    INLINE void threat_cols(const Bitboard (&planes)[2][7], Bitboard (&cols)[THREAT_PLANES])
+    {
+        int p = 0;
+        for (auto t : { KING, PAWN, KNIGHT, BISHOP, ROOK, QUEEN })
+            for (auto c : { BLACK, WHITE })
+                cols[p++] = planes[c][t];
+    }
+
+    /* apply one plane's rows for the given bits: op(vsum[j], extended weight row chunk) */
+    template <typename LC, typename OP>
+    INLINE void threat_plane_rows(const LC& l1c, Bitboard bits, int plane, VTI (&vsum)[THREAT_VECS], OP op)
+    {
+        for_each_square(bits, [&](Square sq) {
+            /* input-major: each _w row is a contiguous, 64-byte aligned int16[THREATS_OUT] */
+            const auto& row = l1c._w[plane * 64 + 63 - sq];
+            for (int j = 0; j != THREAT_VECS; ++j)
+                op(vsum[j], extend(VTS().load_a(&row[j * THREAT_LANES])));
+        });
+    }
+
+    /* full recompute of the hidden_1c pre-activation sums (bias + all active rows) */
+    template <typename LC>
+    INLINE void threat_refresh(const LC& l1c, const Bitboard (&planes)[2][7], int32_t (&sums)[THREATS_OUT])
+    {
+        Bitboard cols[THREAT_PLANES];
+        threat_cols(planes, cols);
+
+        VTI vsum[THREAT_VECS];
+        for (int j = 0; j != THREAT_VECS; ++j)
+            vsum[j] = extend(VTS().load_a(&l1c._b[j * THREAT_LANES]));
+
+        for (int p = 0; p != THREAT_PLANES; ++p)
+            threat_plane_rows(l1c, cols[p], p, vsum, [](VTI& a, VTI b) { a += b; });
+
+        for (int j = 0; j != THREAT_VECS; ++j)
+            vsum[j].store_a(&sums[j * THREAT_LANES]);
+    }
+
+    /* patch prev sums with only the changed plane bits (add new, subtract gone) */
+    template <typename LC>
+    INLINE void threat_update(
+        const LC& l1c,
+        const Bitboard (&prev_planes)[2][7],
+        const Bitboard (&planes)[2][7],
+        const int32_t (&prev_sums)[THREATS_OUT],
+        int32_t (&sums)[THREATS_OUT])
+    {
+        Bitboard prev_cols[THREAT_PLANES], cols[THREAT_PLANES];
+        threat_cols(prev_planes, prev_cols);
+        threat_cols(planes, cols);
+
+        VTI vsum[THREAT_VECS];
+        for (int j = 0; j != THREAT_VECS; ++j)
+            vsum[j].load_a(&prev_sums[j * THREAT_LANES]);
+
+        for (int p = 0; p != THREAT_PLANES; ++p)
+        {
+            const auto changed = prev_cols[p] ^ cols[p];
+            if (!changed)
+                continue;
+            threat_plane_rows(l1c, changed & cols[p], p, vsum, [](VTI& a, VTI b) { a += b; });
+            threat_plane_rows(l1c, changed & prev_cols[p], p, vsum, [](VTI& a, VTI b) { a -= b; });
+        }
+
+        for (int j = 0; j != THREAT_VECS; ++j)
+            vsum[j].store_a(&sums[j * THREAT_LANES]);
+
+    #if DEBUG_INCREMENTAL
+        int32_t check[THREATS_OUT];
+        threat_refresh(l1c, planes, check);
+        for (int i = 0; i != THREATS_OUT; ++i)
+            ASSERT_ALWAYS(check[i] == sums[i]);
+    #endif /* DEBUG_INCREMENTAL */
+    }
+#endif /* ATTACK_MASKS */
+
+
+    template <typename A, typename P, typename L2, typename L3, typename OUT>
     INLINE int eval(const A& a, const P& pw, const L2& l2, const L3& l3, const OUT& out, bool turn
 #if ATTACK_MASKS
-        , const L1C& l1c, const Bitboard (&planes)[2][7]
+        , const int32_t (&threat_sums)[THREATS_OUT]
 #endif
     )
     {
@@ -1242,7 +1329,6 @@ namespace nnue
         static_assert(P::param_count() == 2 * A::OUTPUTS_A);
 #if ATTACK_MASKS
         static_assert(POOL_OUT + THREATS_OUT == L2::INPUTS); /* hidden_1c concats into L2 */
-        static_assert(L1C::OUTPUTS == THREATS_OUT);
 #else
         static_assert(POOL_OUT == L2::INPUTS);
 #endif
@@ -1295,40 +1381,8 @@ namespace nnue
 #endif /* INSTRSET >= 7 */
 
 #if ATTACK_MASKS
-        /* hidden_1c: gather active threat bits, accumulate int32, activate into the L2 tail */
-        const Bitboard cols[THREAT_PLANES] = {
-            planes[0][KING], planes[1][KING], planes[0][PAWN], planes[1][PAWN],
-            planes[0][KNIGHT], planes[1][KNIGHT], planes[0][BISHOP], planes[1][BISHOP],
-            planes[0][ROOK], planes[1][ROOK], planes[0][QUEEN], planes[1][QUEEN],
-        };
-        int active[THREAT_INPUTS];
-        int count = 0;
-        for (int p = 0; p != THREAT_PLANES; ++p)
-            for_each_square(cols[p], [&](Square sq) { active[count++] = p * 64 + 63 - sq; });
-
-        ALIGN int32_t sum[THREATS_OUT];
-    #if INSTRSET < 9
-        using VTS = Vec8s;
-        using VTI = Vec8i;
-    #else
-        using VTS = Vec16s;
-        using VTI = Vec16i;
-    #endif /* AVX512 */
-        constexpr int NT = int(VTS::size());
-        static_assert(THREATS_OUT % NT == 0);
-        VTI vsum[THREATS_OUT / NT];
-        for (int j = 0; j != THREATS_OUT / NT; ++j)
-            vsum[j] = extend(VTS().load_a(&l1c._b[j * NT]));
-        /* input-major: each _w row is a contiguous, 64-byte aligned int16[THREATS_OUT] */
-        for (int k = 0; k != count; ++k)
-        {
-            const auto& row = l1c._w[active[k]];
-            for (int j = 0; j != THREATS_OUT / NT; ++j)
-                vsum[j] += extend(VTS().load_a(&row[j * NT]));
-        }
-        for (int j = 0; j != THREATS_OUT / NT; ++j)
-            vsum[j].store_a(&sum[j * NT]);
-        activate(sum, reinterpret_cast<float(&)[THREATS_OUT]>(l2_in[POOL_OUT]));
+        /* hidden_1c: activate the incrementally maintained sums into the L2 tail */
+        activate(threat_sums, reinterpret_cast<float(&)[THREATS_OUT]>(l2_in[POOL_OUT]));
 #endif /* ATTACK_MASKS */
 
         l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); });

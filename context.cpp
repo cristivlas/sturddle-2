@@ -345,7 +345,13 @@ static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
 static std::vector<Accumulator::RefreshTable> NNUE_refresh(SMP_CORES);
 
 #if ATTACK_MASKS
-using AttackMaskStack = std::array<chess::AttackMaskSet, PLY_MAX>;
+/* attack masks + the hidden_1c pre-activation sums they feed, kept in lockstep */
+struct ThreatState
+{
+    chess::AttackMaskSet masks;
+    ALIGN int32_t sums[nnue::THREATS_OUT] = { };
+};
+using AttackMaskStack = std::array<ThreatState, PLY_MAX>;
 static std::vector<AttackMaskStack> ATTACK_data(SMP_CORES);
 #endif /* ATTACK_MASKS */
 
@@ -583,10 +589,13 @@ void search::Context::update_accumulators()
             update(accumulator, ctxt);
 
         #if ATTACK_MASKS
-            auto& masks = ATTACK_data[t][ctxt->_ply];
-            if (masks.needs_update(ctxt->state()))
-                masks.full_rebuild(ctxt->state());
-        #endif
+            auto& ts = ATTACK_data[t][ctxt->_ply];
+            if (ts.masks.needs_update(ctxt->state()))
+            {
+                ts.masks.full_rebuild(ctxt->state());
+                nnue::threat_refresh(model.L1C, ts.masks._by_type, ts.sums);
+            }
+        #endif /* ATTACK_MASKS */
         }
         else
         {
@@ -597,12 +606,18 @@ void search::Context::update_accumulators()
 
         #if ATTACK_MASKS
             /* masks ride the accumulator's staleness; rebuild if the prev slot diverged */
-            auto& masks = ATTACK_data[t][ctxt->_ply];
-            const auto& prev_masks = ATTACK_data[t][ctxt->_ply - ctxt->_nnue_prev_offs];
-            if (prev_masks._hash == ctxt->_parent->state().hash())
-                masks.update(prev_masks, ctxt->_parent->state(), ctxt->state(), ctxt->_move);
+            auto& ts = ATTACK_data[t][ctxt->_ply];
+            const auto& prev_ts = ATTACK_data[t][ctxt->_ply - ctxt->_nnue_prev_offs];
+            if (prev_ts.masks._hash == ctxt->_parent->state().hash())
+            {
+                ts.masks.update(prev_ts.masks, ctxt->_parent->state(), ctxt->state(), ctxt->_move);
+                nnue::threat_update(model.L1C, prev_ts.masks._by_type, ts.masks._by_type, prev_ts.sums, ts.sums);
+            }
             else
-                masks.full_rebuild(ctxt->state());
+            {
+                ts.masks.full_rebuild(ctxt->state());
+                nnue::threat_refresh(model.L1C, ts.masks._by_type, ts.sums);
+            }
         #endif /* ATTACK_MASKS */
         }
 
@@ -621,15 +636,18 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     ASSERT(!acc.needs_update(state()));
 
 #if ATTACK_MASKS
-    auto& masks = ATTACK_data[tid()][_ply];
-    ASSERT(!masks.needs_update(state()));
-    if (masks.needs_update(state())) /* release-only desync safety net */
-        masks.full_rebuild(state());
+    auto& ts = ATTACK_data[tid()][_ply];
+    ASSERT(!ts.masks.needs_update(state()));
+    if (ts.masks.needs_update(state())) /* release-only desync safety net */
+    {
+        ts.masks.full_rebuild(state());
+        nnue::threat_refresh(model.L1C, ts.masks._by_type, ts.sums);
+    }
 #endif /* ATTACK_MASKS */
 
     _eval_raw = nnue::eval(acc, model.POOL, model.L2, model.L3, model.EVAL, state().turn
 #if ATTACK_MASKS
-        , model.L1C, masks._by_type
+        , ts.sums
 #endif
     );
 

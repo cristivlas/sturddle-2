@@ -232,6 +232,11 @@ INLINE Vec8i operator + (Vec8i a, Vec8i b)
     return _mm256_add_epi32(a, b);
 }
 
+INLINE Vec8i operator - (Vec8i a, Vec8i b)
+{
+    return _mm256_sub_epi32(a, b);
+}
+
 INLINE Vec8i max(Vec8i a, Vec8i b)
 {
     return _mm256_max_epi32(a, b);
