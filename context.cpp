@@ -345,10 +345,14 @@ static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
 static std::vector<Accumulator::RefreshTable> NNUE_refresh(SMP_CORES);
 
 #if ATTACK_MASKS
-/* attack masks + the hidden_1c pre-activation sums they feed, kept in lockstep */
+/*
+ * Attack masks + the hidden_1c pre-activation sums they feed; masks are maintained
+ * eagerly in the accumulator chain walk, sums lazily at eval (sums_hash marks validity).
+ */
 struct ThreatState
 {
     chess::AttackMaskSet masks;
+    uint64_t sums_hash = 0;
     ALIGN int32_t sums[nnue::THREATS_OUT] = { };
 };
 using AttackMaskStack = std::array<ThreatState, PLY_MAX>;
@@ -591,10 +595,7 @@ void search::Context::update_accumulators()
         #if ATTACK_MASKS
             auto& ts = ATTACK_data[t][ctxt->_ply];
             if (ts.masks.needs_update(ctxt->state()))
-            {
                 ts.masks.full_rebuild(ctxt->state());
-                nnue::threat_refresh(model.L1C, ts.masks._by_type, ts.sums);
-            }
         #endif /* ATTACK_MASKS */
         }
         else
@@ -609,15 +610,9 @@ void search::Context::update_accumulators()
             auto& ts = ATTACK_data[t][ctxt->_ply];
             const auto& prev_ts = ATTACK_data[t][ctxt->_ply - ctxt->_nnue_prev_offs];
             if (prev_ts.masks._hash == ctxt->_parent->state().hash())
-            {
                 ts.masks.update(prev_ts.masks, ctxt->_parent->state(), ctxt->state(), ctxt->_move);
-                nnue::threat_update(model.L1C, prev_ts.masks._by_type, ts.masks._by_type, prev_ts.sums, ts.sums);
-            }
             else
-            {
                 ts.masks.full_rebuild(ctxt->state());
-                nnue::threat_refresh(model.L1C, ts.masks._by_type, ts.sums);
-            }
         #endif /* ATTACK_MASKS */
         }
 
@@ -639,9 +634,28 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     auto& ts = ATTACK_data[tid()][_ply];
     ASSERT(!ts.masks.needs_update(state()));
     if (ts.masks.needs_update(state())) /* release-only desync safety net */
-    {
         ts.masks.full_rebuild(state());
-        nnue::threat_refresh(model.L1C, ts.masks._by_type, ts.sums);
+
+    if (ts.sums_hash != ts.masks._hash)
+    {
+        /* nearest ancestor with valid sums; one XOR-span patch covers all moves between */
+        const ThreatState* donor = nullptr;
+        for (auto ancestor = _parent; ancestor; ancestor = ancestor->_parent)
+        {
+            const auto& prev_ts = ATTACK_data[tid()][ancestor->_ply];
+            if (prev_ts.masks._hash == ancestor->state().hash() && prev_ts.sums_hash == prev_ts.masks._hash)
+            {
+                donor = &prev_ts;
+                break;
+            }
+        }
+
+        if (donor)
+            nnue::threat_update(model.L1C, donor->masks._by_type, ts.masks._by_type, donor->sums, ts.sums);
+        else
+            nnue::threat_refresh(model.L1C, ts.masks._by_type, ts.sums);
+
+        ts.sums_hash = ts.masks._hash;
     }
 #endif /* ATTACK_MASKS */
 
