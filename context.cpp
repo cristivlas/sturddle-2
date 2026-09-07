@@ -346,8 +346,8 @@ static std::vector<Accumulator::RefreshTable> NNUE_refresh(SMP_CORES);
 
 #if ATTACK_MASKS
 /*
- * Attack masks + the hidden_1c pre-activation sums they feed; masks are maintained
- * eagerly in the accumulator chain walk, sums lazily at eval (sums_hash marks validity).
+ * Attack masks + the hidden_1c pre-activation sums they feed; both are resolved
+ * lazily at eval (masks by move replay, sums by XOR-span patch from a donor).
  */
 struct ThreatState
 {
@@ -592,11 +592,6 @@ void search::Context::update_accumulators()
             ASSERT(ctxt->_parent == nullptr);
             update(accumulator, ctxt);
 
-        #if ATTACK_MASKS
-            auto& ts = ATTACK_data[t][ctxt->_ply];
-            if (ts.masks.needs_update(ctxt->state()))
-                ts.masks.full_rebuild(ctxt->state());
-        #endif /* ATTACK_MASKS */
         }
         else
         {
@@ -605,15 +600,6 @@ void search::Context::update_accumulators()
 
             update(accumulator, ctxt, prev_acc);
 
-        #if ATTACK_MASKS
-            /* masks ride the accumulator's staleness; rebuild if the prev slot diverged */
-            auto& ts = ATTACK_data[t][ctxt->_ply];
-            const auto& prev_ts = ATTACK_data[t][ctxt->_ply - ctxt->_nnue_prev_offs];
-            if (prev_ts.masks._hash == ctxt->_parent->state().hash())
-                ts.masks.update(prev_ts.masks, ctxt->_parent->state(), ctxt->state(), ctxt->_move);
-            else
-                ts.masks.full_rebuild(ctxt->state());
-        #endif /* ATTACK_MASKS */
         }
 
         ctxt->_eval_raw = SCORE_MIN;
@@ -632,24 +618,41 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
 
 #if ATTACK_MASKS
     auto& ts = ATTACK_data[tid()][_ply];
-    ASSERT(!ts.masks.needs_update(state()));
-    if (ts.masks.needs_update(state())) /* release-only desync safety net */
-        ts.masks.full_rebuild(state());
-
-    if (ts.sums_hash != ts.masks._hash)
+    if (ts.sums_hash != state().hash() || ts.masks.needs_update(state()))
     {
-        /* nearest ancestor with valid sums; one XOR-span patch covers all moves between */
+        /* one walk finds the donor: nearest ancestor with valid masks + sums */
+        const Context* chain[PLY_MAX];
+        size_t len = 0;
         const ThreatState* donor = nullptr;
-        for (auto ancestor = _parent; ancestor; ancestor = ancestor->_parent)
+
+        for (auto ctxt = this; ctxt->_parent; ctxt = ctxt->_parent)
         {
-            const auto& prev_ts = ATTACK_data[tid()][ancestor->_ply];
-            if (prev_ts.masks._hash == ancestor->state().hash() && prev_ts.sums_hash == prev_ts.masks._hash)
+            ASSERT(len < PLY_MAX);
+            chain[len++] = ctxt;
+            const auto& prev_ts = ATTACK_data[tid()][ctxt->_parent->_ply];
+            if (prev_ts.masks._hash == ctxt->_parent->state().hash() && prev_ts.sums_hash == prev_ts.masks._hash)
             {
                 donor = &prev_ts;
                 break;
             }
         }
 
+        if (ts.masks.needs_update(state()))
+        {
+            if (donor)
+            {
+                /* replay moves from the donor position; special moves rebuild internally */
+                ts.masks = donor->masks;
+                for (auto i = len; i > 0; --i)
+                    ts.masks.update(chain[i - 1]->_parent->state(), chain[i - 1]->state(), chain[i - 1]->_move);
+            }
+            else
+            {
+                ts.masks.full_rebuild(state());
+            }
+        }
+
+        /* one XOR-span patch covers all moves between donor and here */
         if (donor)
             nnue::threat_update(model.L1C, donor->masks._by_type, ts.masks._by_type, donor->sums, ts.sums);
         else

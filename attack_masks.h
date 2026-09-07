@@ -44,12 +44,11 @@ namespace chess
             _hash = state.hash();
         }
 
-        void update(const AttackMaskSet& prev, const State& prev_state, const State& state, const Move& move)
+        /* in-place: *this must hold prev_state's masks */
+        void update(const State& prev_state, const State& state, const Move& move)
         {
-            ASSERT(this != &prev);
-            ASSERT(prev._hash == prev_state.hash());
+            ASSERT(_hash == prev_state.hash());
 
-            *this = prev;
             _hash = state.hash();
 
             if (!move) /* null move: board unchanged */
