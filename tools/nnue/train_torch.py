@@ -252,12 +252,43 @@ def save_bin(model, path, quantize_round=False):
     print(f"Wrote weights to {path}")
 
 
+def _strip_threats(data, path):
+    """Downgrade a --threats flat weight vector to the base layout."""
+
+    def total(layout):
+        return sum(i * o + bn for _, i, o, bn in layout)
+
+    base = total(_export_layout(0))
+    per_unit = total(_export_layout(1)) - base
+    ts, rem = divmod(data.size - base, per_unit)
+    if ts <= 0 or rem:
+        return data  # not a threats layout; let the caller report the size mismatch
+
+    out = []
+    off = 0
+    for name, i, o, bn in _export_layout(ts):
+        k = data[off : off + i * o].reshape(i, o)
+        off += i * o
+        b = data[off : off + bn]
+        off += bn
+        if name == "hidden_1c":
+            continue
+        if name == "hidden_2":
+            k = k[:POOLED]
+        out.append(k.reshape(-1))
+        out.append(b)
+    print(f"REMOVED threats from {path}: hidden_1c ({THREAT_INPUTS}x{ts}) and {ts} hidden_2 input rows")
+    return np.concatenate(out)
+
+
 @torch.no_grad()
 def load_bin(model, path):
     model = _core(model)
     layout = _export_layout(model.threats_size)
     data = np.fromfile(path, dtype=np.float32)
     expected = sum(i * o + bn for _, i, o, bn in layout)
+    if data.size != expected and model.threats_size == 0:
+        data = _strip_threats(data, path)
     if data.size != expected:
         raise ValueError(f"{path}: expected {expected} floats, got {data.size}")
     off = 0

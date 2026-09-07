@@ -692,6 +692,33 @@ def export_weights(args, model):
                 write_weigths(args, model)
 
 
+def strip_threats_payload(payload, by_name, path, expected):
+    """Downgrade a --threats bin payload: drop hidden_1c and the threat rows of hidden_2."""
+    pooled, h2_units = by_name['hidden_2'].get_weights()[0].shape
+    threat_inputs = 12 * 64
+    per_unit = threat_inputs + 1 + h2_units  # hidden_1c kernel column + bias + one hidden_2 row
+    ts, rem = divmod(payload.size - expected, per_unit)
+    if ts <= 0 or rem:
+        return payload  # not a threats layout; let the caller report the size mismatch
+
+    out = []
+    off = 0
+    for name in ['hidden_1a', 'hidden_1b']:
+        for w in by_name[name].get_weights():
+            size = int(np.prod(w.shape))
+            out.append(payload[off:off + size]); off += size
+    off += threat_inputs * ts + ts  # skip hidden_1c kernel + bias
+    for w in by_name['pool'].get_weights():
+        size = int(np.prod(w.shape))
+        out.append(payload[off:off + size]); off += size
+    kernel = payload[off:off + (pooled + ts) * h2_units].reshape(pooled + ts, h2_units)
+    off += (pooled + ts) * h2_units
+    out.append(kernel[:pooled].reshape(-1))
+    out.append(payload[off:])  # hidden_2 bias onward unchanged
+    print(f'REMOVED threats from {path}: hidden_1c ({threat_inputs}x{ts}) and {ts} hidden_2 input rows')
+    return np.concatenate(out)
+
+
 def load_binary_weights(args, model, file):
     """Load weights from a flat .bin into the eval layers, in C++/torch export order.
 
@@ -704,6 +731,8 @@ def load_binary_weights(args, model, file):
 
     payload = np.fromfile(file, dtype=np.float32)
     expected = sum(int(np.prod(w.shape)) for n in eval_order if n in by_name for w in by_name[n].get_weights())
+    if payload.size != expected and 'hidden_1c' not in by_name:
+        payload = strip_threats_payload(payload, by_name, args.import_file, expected)
     if payload.size != expected:
         raise ValueError(f'{args.import_file}: expected {expected} float32, got {payload.size}')
 

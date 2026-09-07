@@ -1,16 +1,4 @@
 #! /usr/bin/env python3
-"""
-Canonical NNUE test positions and golden evals.
-
-TESTS is the single source of truth for the FEN list shared by test-model.py
-and test/unit_test.py, so the two can never drift out of order again.
-
-Golds are stored in golds.json keyed by FEN (order-independent). Regenerate
-after retraining:
-
-    python tools/nnue/golds.py models\\KP44
-"""
-
 import json
 import os
 
