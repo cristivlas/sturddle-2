@@ -1,7 +1,6 @@
 #pragma once
 /*
- * Incrementally maintained per-piece attack masks, with per-type and per-side
- * aggregate planes.
+ * Incrementally maintained per-piece attack masks, with per-type aggregate planes.
  */
 #include "chess.h"
 
@@ -17,7 +16,6 @@ namespace chess
     {
         Bitboard _piece[64] = { }; /* valid only where occupied */
         Bitboard _by_type[2][7] = { }; /* [color][PieceType] */
-        Bitboard _by_side[2] = { };
         uint64_t _hash = 0;
 
         INLINE bool needs_update(const State& state) const
@@ -31,14 +29,13 @@ namespace chess
             for (auto c : { BLACK, WHITE })
             {
                 const auto ours = state.occupied_co(c);
-                _by_side[c] = BB_EMPTY;
                 for (auto t : PIECES)
                 {
                     auto mask = BB_EMPTY;
                     for_each_square(state.pieces(t) & ours, [&](Square sq) {
                         mask |= _piece[sq] = state.attacks_mask(sq, occupied);
                     });
-                    _by_side[c] |= _by_type[c][t] = mask;
+                    _by_type[c][t] = mask;
                 }
             }
             _hash = state.hash();
@@ -90,18 +87,10 @@ namespace chess
             });
 
             for (auto c : { BLACK, WHITE })
-            {
-                bool dirty_side = false;
                 for (auto t : PIECES)
                     if (dirty[c][t])
-                    {
                         _by_type[c][t] = plane(state, t, c);
-                        dirty_side = true;
-                    }
-                if (dirty_side)
-                    _by_side[c] = _by_type[c][PAWN] | _by_type[c][KNIGHT] | _by_type[c][BISHOP]
-                        | _by_type[c][ROOK] | _by_type[c][QUEEN] | _by_type[c][KING];
-            }
+
             debug_validate(state);
         }
 
@@ -141,11 +130,8 @@ namespace chess
                 ASSERT_ALWAYS(_piece[sq] == temp._piece[sq]);
             });
             for (auto c : { BLACK, WHITE })
-            {
-                ASSERT_ALWAYS(_by_side[c] == temp._by_side[c]);
                 for (auto t : PIECES)
                     ASSERT_ALWAYS(_by_type[c][t] == temp._by_type[c][t]);
-            }
         #endif /* DEBUG_INCREMENTAL */
         }
     };
