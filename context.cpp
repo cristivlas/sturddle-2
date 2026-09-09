@@ -1124,9 +1124,8 @@ namespace search
 
             ASSERT(score >= 0);
 
-            /* no profit possible with this attacker; later ones may still gain (PST square deltas differ) */
             if (our_gain <= score)
-                continue;
+                break;
 
             if (next_state.is_check(state.turn))
                 continue; /* not a legal move */
