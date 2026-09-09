@@ -333,7 +333,8 @@ using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
 
 /* Move-prediction head (experimental): own 256-wide sub-accumulator off raw inputs
  * (decoupled from eval), then a bilinear map to the 4096 (from,to) logits scored
- * per-move by column. Full recompute per node — only used at early iterations. */
+ * per-move by column. Full recompute per node -- only used at early iterations.
+ */
 constexpr int MOVE_ACC = 256;
 using LMOVEAccType = nnue::Layer<INPUTS_A / nnue::NUM_BUCKETS, MOVE_ACC, int16_t, nnue::QSCALE>;
 using LMOVEType = nnue::Layer<MOVE_ACC, 4096, int16_t, nnue::QSCALE>;
@@ -660,13 +661,11 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
 
         ts.sums_hash = ts.masks._hash;
     }
-#endif /* ATTACK_MASKS */
 
-    _eval_raw = nnue::eval(acc, model.POOL, model.L2, model.L3, model.EVAL, state().turn
-#if ATTACK_MASKS
-        , ts.sums
-#endif
-    );
+    _eval_raw = nnue::eval(acc, model.POOL, model.L2, model.L3, model.EVAL, state().turn, ts.sums);
+#else
+    _eval_raw = nnue::eval(acc, model.POOL, model.L2, model.L3, model.EVAL, state().turn);
+#endif /* ATTACK_MASKS */
 
     if (stm_perspective)
     {
@@ -722,14 +721,6 @@ void search::Context::eval_with_nnue()
         _eval = eval + eval_fuzz();
     }
 }
-
-
-#if WITH_NNUE
-int search::Context::get_bucket() const
-{
-    return nnue::get_bucket(state());
-}
-#endif
 
 
 void search::Context::update_root_accumulators()

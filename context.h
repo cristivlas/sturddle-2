@@ -387,8 +387,6 @@ namespace search
         score_t     eval_nnue_raw(bool side_to_move_pov);
         void        eval_with_nnue();
 
-        int         get_bucket() const;
-
         static void update_root_accumulators();
 
         score_t     static_eval() const { return is_valid(_eval) ? _eval : tt_entry()._eval; }
