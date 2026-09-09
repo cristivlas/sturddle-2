@@ -1122,9 +1122,11 @@ namespace search
             if constexpr(Debug)
                 Context::log_message(LogLevel::DEBUG, "\t>>> " + move.uci() + ": " + std::to_string(our_gain));
 
-            ASSERT(our_gain > 0);
+            ASSERT(score >= 0);
+
+            /* no profit possible with this attacker; later ones may still gain (PST square deltas differ) */
             if (our_gain <= score)
-                break;
+                continue;
 
             if (next_state.is_check(state.turn))
                 continue; /* not a legal move */
