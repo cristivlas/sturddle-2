@@ -297,7 +297,7 @@ std::map<std::string, int> _get_params()
 /* Define the network architecture */
 constexpr int INPUTS_A = nnue::ACTIVE_INPUTS * nnue::NUM_BUCKETS;
 constexpr int INPUTS_B = 256;
-constexpr int HIDDEN_1A = 2048;
+constexpr int HIDDEN_1A = 1280;
 constexpr int HIDDEN_1A_POOLED = HIDDEN_1A / nnue::POOL_STRIDE;
 constexpr int HIDDEN_1B = HIDDEN_1A_POOLED; /* 1b modulates pooled 1:1 */
 constexpr int HIDDEN_2 = 16;

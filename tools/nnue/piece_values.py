@@ -149,7 +149,7 @@ class TFBackend:
         self.model = tf.keras.models.load_model(
             model_path,
             custom_objects={
-                "ACCUMULATOR_SIZE": 2048,
+                "ACCUMULATOR_SIZE": 1280,
                 "POOL_SIZE": 8,
                 "combined_loss": None,
                 "scaled_sparse_categorical_crossentropy": None,

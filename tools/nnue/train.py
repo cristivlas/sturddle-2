@@ -24,7 +24,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # uncomment (or set in environment) for newer TF versions (> 2.15.1 ?) that use Keras 3
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
-ACCUMULATOR_SIZE = 2048
+ACCUMULATOR_SIZE = 1280
 POOL_SIZE = 8
 MAIN_BUCKETS = 16  # Number of buckets for hidden_1a / BucketShift (4 pawn x 4 king-file)
 MOVE_ACCUMULATOR_SIZE = 256  # move-prediction sub-accumulator width (own path, decoupled from eval)

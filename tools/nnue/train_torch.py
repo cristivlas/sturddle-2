@@ -32,9 +32,9 @@ from threat_planes import append_planes
 
 # ---- architecture constants (keep in sync with nnue.h / context.cpp) ----
 ACTIVE_INPUTS = 769
-ACCUMULATOR_SIZE = 2048
+ACCUMULATOR_SIZE = 1280
 POOL_SIZE = 8
-POOLED = ACCUMULATOR_SIZE // POOL_SIZE  # 256
+POOLED = ACCUMULATOR_SIZE // POOL_SIZE  # 160
 MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
 INPUTS_B = 256  # kings + pawns
 THREAT_INPUTS = 768  # 12 attack planes (--threats)
@@ -147,13 +147,13 @@ class NNUE(nn.Module):
         if self.threats_size:
             threats = feats[:, 768:1536]
             feats = torch.cat([feats[:, :768], feats[:, -1:]], dim=1)  # piece features + turn
-        acc = self.hidden_1a(feats)  # (B, 2048) relu'd
+        acc = self.hidden_1a(feats)  # (B, 1280) relu'd
         kp = feats[:, :INPUTS_B]
-        mod = self.hidden_1b(kp)  # (B, 256) linear
+        mod = self.hidden_1b(kp)  # (B, 160) linear
 
         stm = packed[:, -1].long()  # 0 = black to move, 1 = white
-        w = self.pool[stm]  # (B, 256, 8)
-        pooled = (acc.view(acc.shape[0], POOLED, POOL_SIZE) * w).sum(dim=-1)  # (B, 256)
+        w = self.pool[stm]  # (B, 160, 8)
+        pooled = (acc.view(acc.shape[0], POOLED, POOL_SIZE) * w).sum(dim=-1)  # (B, 160)
         residual = pooled + pooled * mod  # pooled * (1 + mod)
 
         if self.threats_size:
@@ -216,7 +216,7 @@ def _layer_kernel_bias(model, name):
     """Return (kernel (in,out) np.float32, bias (out,) np.float32) for export."""
     model = _core(model)
     if name == "pool":
-        k = model.pool.detach().cpu().numpy().reshape(-1, 1)  # (2*2048, 1), stm-major
+        k = model.pool.detach().cpu().numpy().reshape(-1, 1)  # (2*1280, 1), stm-major
         b = np.zeros(0, dtype=np.float32)
     elif name == "hidden_1a":
         k = model.hidden_1a.weight.detach().cpu().numpy()  # already (in, out)
