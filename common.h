@@ -68,7 +68,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define ADAPTIVE_NULL_MOVE                  true
 
 /* Incrementally maintained attack masks */
-#define ATTACK_MASKS                        false
+#define ATTACK_MASKS                        true
 
 #define CAPTURE_HISTORY                     false
 
