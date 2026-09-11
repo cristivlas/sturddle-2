@@ -1122,6 +1122,9 @@ namespace search
             if constexpr(Debug)
                 Context::log_message(LogLevel::DEBUG, "\t>>> " + move.uci() + ": " + std::to_string(our_gain));
 
+            if (our_gain < 0 && score == 0 && WEIGHT[state.piece_type_at(move.from_square())] <= WEIGHT[next_state.capture_type])
+                continue;
+
             ASSERT(score >= 0);
 
             if (our_gain <= score)
