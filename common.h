@@ -68,7 +68,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define ADAPTIVE_NULL_MOVE                  true
 
 /* Incrementally maintained attack masks */
-#define ATTACK_MASKS                        false
+#define ATTACK_MASKS                        true
 
 #define CAPTURE_HISTORY                     false
 
@@ -81,7 +81,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define COUNT_VALID_MOVES_AS_NODES          true
 
 /* Experimental */
-#define EVAL_PIECE_GRADING                  true
+#define EVAL_PIECE_GRADING                  false
 
 /* Collect extra stats for troubleshooting */
 #define EXTRA_STATS                         false
