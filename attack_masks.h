@@ -1,6 +1,6 @@
 #pragma once
 /*
- * Incrementally maintained per-piece attack masks, with per-type aggregate planes.
+ * Incrementally maintained per-(color, type) attack planes.
  */
 #include "chess.h"
 
@@ -14,7 +14,6 @@ namespace chess
 {
     struct AttackMaskSet
     {
-        Bitboard _piece[64] = { }; /* valid only where occupied */
         Bitboard _by_type[2][7] = { }; /* [color][PieceType] */
         uint64_t _hash = 0;
 
@@ -25,23 +24,13 @@ namespace chess
 
         void full_rebuild(const State& state)
         {
-            const auto occupied = state.occupied();
             for (auto c : { BLACK, WHITE })
-            {
-                const auto ours = state.occupied_co(c);
                 for (auto t : PIECES)
-                {
-                    auto mask = BB_EMPTY;
-                    for_each_square(state.pieces(t) & ours, [&](Square sq) {
-                        mask |= _piece[sq] = state.attacks_mask(sq, occupied);
-                    });
-                    _by_type[c][t] = mask;
-                }
-            }
+                    _by_type[c][t] = plane(state, t, c);
             _hash = state.hash();
         }
 
-        /* in-place: *this must hold prev_state's masks */
+        /* in-place: *this must hold prev_state's planes */
         void update(const State& prev_state, const State& state, const Move& move)
         {
             ASSERT(_hash == prev_state.hash());
@@ -54,53 +43,36 @@ namespace chess
                 return;
             }
 
-            if (move.promotion() || prev_state.is_castling(move) || prev_state.is_en_passant(move))
-            {
-                full_rebuild(state);
-                return;
-            }
-
-            const auto from = move.from_square();
-            const auto to = move.to_square();
-            const auto to_mask = BB_SQUARES[to];
-            const auto touched = BB_SQUARES[from] | to_mask;
             const auto occupied = state.occupied();
-            const auto color = prev_state.turn;
-            const auto piece_type = prev_state.piece_type_at(from);
-            const auto capture_type = prev_state.piece_type_at(to);
+            /* captures leave `to` occupied on both sides of the diff */
+            const auto touched = (prev_state.occupied() ^ occupied) | BB_SQUARES[move.to_square()];
 
-            bool dirty[2][7] = { };
-            dirty[color][piece_type] = true;
-            if (capture_type)
-                dirty[!color][capture_type] = true;
-
-            _piece[from] = BB_EMPTY;
-            _piece[to] = state.attacks_mask(to, occupied);
-
-            /* only sliders with rays through the touched squares see the occupancy change */
-            for_each_square((state.bishops | state.rooks | state.queens) & ~to_mask, [&](Square sq) {
-                if (_piece[sq] & touched)
-                {
-                    _piece[sq] = state.attacks_mask(sq, occupied);
-                    dirty[state.piece_color_at(sq)][state.piece_type_at(sq)] = true;
-                }
+            /* sliders whose rays cross a touched square are exactly those seen from the touched squares */
+            auto orth = BB_EMPTY, diag = BB_EMPTY;
+            for_each_square(touched, [&](Square sq) {
+                orth |= rank_and_file_attacks(occupied, sq);
+                diag |= diagonal_attacks(occupied, sq);
             });
+            const auto affected =
+                ((orth & (state.rooks | state.queens)) | (diag & (state.bishops | state.queens))) & ~touched;
 
             for (auto c : { BLACK, WHITE })
                 for (auto t : PIECES)
-                    if (dirty[c][t])
+                {
+                    const auto mask = state.pieces_mask(t, c);
+                    if (mask != prev_state.pieces_mask(t, c) || (affected & mask) != BB_EMPTY)
                         _by_type[c][t] = plane(state, t, c);
+                }
 
             debug_validate(state);
         }
 
     private:
-        /* Aggregate one (type, color) plane; pawns via whole-board shifts,
-         * knights/kings via tables, sliders from the per-piece masks.
-         */
+        /* Aggregate one (type, color) plane: pawns via shifts, knights/kings via tables, sliders via magics. */
         INLINE Bitboard plane(const State& state, PieceType t, Color c) const
         {
             const auto bb = state.pieces_mask(t, c);
+            const auto occupied = state.occupied();
             auto mask = BB_EMPTY;
             switch (t)
             {
@@ -114,8 +86,16 @@ namespace chess
             case KING:
                 for_each_square(bb, [&](Square sq) { mask |= BB_KING_ATTACKS[sq]; });
                 return mask;
-            default:
-                for_each_square(bb, [&](Square sq) { mask |= _piece[sq]; });
+            case BISHOP:
+                for_each_square(bb, [&](Square sq) { mask |= diagonal_attacks(occupied, sq); });
+                return mask;
+            case ROOK:
+                for_each_square(bb, [&](Square sq) { mask |= rank_and_file_attacks(occupied, sq); });
+                return mask;
+            default: /* QUEEN */
+                for_each_square(bb, [&](Square sq) {
+                    mask |= diagonal_attacks(occupied, sq) | rank_and_file_attacks(occupied, sq);
+                });
                 return mask;
             }
         }
@@ -126,9 +106,6 @@ namespace chess
             AttackMaskSet temp;
             temp.full_rebuild(state);
 
-            for_each_square(state.occupied(), [&](Square sq) {
-                ASSERT_ALWAYS(_piece[sq] == temp._piece[sq]);
-            });
             for (auto c : { BLACK, WHITE })
                 for (auto t : PIECES)
                     ASSERT_ALWAYS(_by_type[c][t] == temp._by_type[c][t]);

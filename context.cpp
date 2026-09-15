@@ -642,7 +642,7 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
         {
             if (donor)
             {
-                /* replay moves from the donor position; special moves rebuild internally */
+                /* replay moves from the donor position */
                 ts.masks = donor->masks;
                 for (auto i = len; i > 0; --i)
                     ts.masks.update(chain[i - 1]->_parent->state(), chain[i - 1]->state(), chain[i - 1]->_move);
