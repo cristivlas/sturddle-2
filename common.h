@@ -70,6 +70,8 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 /* Incrementally maintained attack masks */
 #define ATTACK_MASKS                        true
 
+#define THREAT_SUMS_INT16                   true
+
 #define CAPTURE_HISTORY                     false
 
 #define CONTINUATION_HISTORY                false

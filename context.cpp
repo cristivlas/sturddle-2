@@ -306,7 +306,7 @@ constexpr int HIDDEN_3 = 16;
 #if ATTACK_MASKS
 constexpr int THREAT_CONCAT = nnue::THREATS_OUT; /* hidden_1c concats into L2's input */
 /* Row-major _w only (no transposed copy), for the input-major gather in eval */
-using L1CType = nnue::Layer<nnue::THREAT_INPUTS, nnue::THREATS_OUT, int16_t, nnue::QSCALE, true, false>;
+using L1CType = nnue::Layer<nnue::THREAT_INPUTS, nnue::THREATS_OUT, int16_t, nnue::THREAT_QSCALE, true, false>;
 #else
 constexpr int THREAT_CONCAT = 0;
 #endif /* ATTACK_MASKS */
@@ -354,7 +354,7 @@ struct ThreatState
 {
     chess::AttackMaskSet masks;
     uint64_t sums_hash = 0;
-    ALIGN int32_t sums[nnue::THREATS_OUT] = { };
+    ALIGN nnue::threat_sum_t sums[nnue::THREATS_OUT] = { };
 };
 using AttackMaskStack = std::array<ThreatState, PLY_MAX>;
 static std::vector<AttackMaskStack> ATTACK_data(SMP_CORES);
@@ -404,7 +404,7 @@ static struct Model
             L1B.load_weights(file);
         #if ATTACK_MASKS
             L1C.load_weights(file);
-            L1C_chunk = nnue::threat_chunk_rows(L1C);
+            init_L1C();
         #endif
             POOL.load_weights(file);
             L2.load_weights(file);
@@ -429,7 +429,12 @@ static struct Model
     L1BType L1B;
 #if ATTACK_MASKS
     L1CType L1C;
+  #if THREAT_SUMS_INT16
+    void init_L1C() { nnue::threat_check_bounds(L1C); }
+  #else
     int L1C_chunk = 0;
+    void init_L1C() { L1C_chunk = nnue::threat_chunk_rows(L1C); }
+  #endif /* THREAT_SUMS_INT16 */
 #endif
     PoolType POOL;
     L2Type L2;
@@ -506,7 +511,7 @@ void Model::init()
     L1B.load_weights(file);
 #if ATTACK_MASKS
     L1C.load_weights(file);
-    L1C_chunk = nnue::threat_chunk_rows(L1C);
+    init_L1C();
 #endif
     POOL.load_weights(file);
     L2.load_weights(file);
@@ -616,6 +621,27 @@ void search::Context::update_accumulators()
 }
 
 
+#if ATTACK_MASKS
+static INLINE void threat_update(const ThreatState& base, ThreatState& ts)
+{
+#if THREAT_SUMS_INT16
+    nnue::threat_update(model.L1C, base.masks._cols, ts.masks._cols, base.sums, ts.sums);
+#else
+    nnue::threat_update(model.L1C, model.L1C_chunk, base.masks._cols, ts.masks._cols, base.sums, ts.sums);
+#endif /* THREAT_SUMS_INT16 */
+}
+
+static INLINE void threat_refresh(ThreatState& ts)
+{
+#if THREAT_SUMS_INT16
+    nnue::threat_refresh(model.L1C, ts.masks._cols, ts.sums);
+#else
+    nnue::threat_refresh(model.L1C, model.L1C_chunk, ts.masks._cols, ts.sums);
+#endif /* THREAT_SUMS_INT16 */
+}
+#endif /* ATTACK_MASKS */
+
+
 score_t search::Context::eval_nnue_raw(bool stm_perspective)
 {
     ASSERT(!is_valid(_eval_raw));
@@ -639,18 +665,18 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
 
         if (base == &ts)
         {
-            /* rare: keep the old planes; threat_update reads prev sums before storing, so ts.sums may alias */
-            const chess::AttackMaskSet prev = ts.masks;
+            /* rare: this slot is its own base, snapshot it first */
+            const ThreatState prev = ts;
             ts.masks.compute(state());
-            nnue::threat_update(model.L1C, model.L1C_chunk, prev._cols, ts.masks._cols, ts.sums, ts.sums);
+            threat_update(prev, ts);
         }
         else
         {
             ts.masks.compute(state());
             if (base)
-                nnue::threat_update(model.L1C, model.L1C_chunk, base->masks._cols, ts.masks._cols, base->sums, ts.sums);
+                threat_update(*base, ts);
             else
-                nnue::threat_refresh(model.L1C, model.L1C_chunk, ts.masks._cols, ts.sums);
+                threat_refresh(ts);
         }
         ts.sums_hash = hash;
     }
@@ -875,22 +901,22 @@ namespace search
         _init(); /* Init attack masks and other magic bitboards in chess.cpp */
 
     #if WITH_NNUE
-    #if SHARED_WEIGHTS
         try
         {
+        #if SHARED_WEIGHTS
             const auto weights_path = std::filesystem::absolute(std::filesystem::path(exe_dir) / "weights.bin");
 
             model.load_weights(weights_path);
             model.default_weights_path = weights_path.string();
+        #else
+            model.init();
+        #endif /* SHARED_WEIGHTS */
         }
         catch(const std::exception& e)
         {
             std::cerr << e.what() << std::endl;
             _exit(-1);
         }
-    #else
-        model.init();
-    #endif /* SHARED_WEIGHTS */
     #endif /* WITH_NNUE */
     }
 

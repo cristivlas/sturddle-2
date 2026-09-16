@@ -21,6 +21,10 @@ Q_MAX_B = 32767 / Q_SCALE / 19
 # Constraint C: hidden_1c, int16 storage range only (int32 accumulation in the engine)
 Q_MAX_C = 32767 / Q_SCALE
 
+# --threats-int16: hidden_1c at Q_SCALE / 4, int16 sums; bias + same-sign column sums must fit int16
+THREATS_INT16_SCALE = Q_SCALE // 4
+Q_MAX_C16 = 32767 / THREATS_INT16_SCALE
+
 ACTIVE_INPUTS = 769
 ACCUMULATOR_SIZE = 2048
 POOL_SIZE = 8
@@ -58,15 +62,26 @@ MOVE_LAYERS = [
 ]
 
 
-def get_constraint_params(constraint_type):
+def get_constraint_params(constraint_type, threats_int16=False):
     if constraint_type == 'A':
         return Q_MAX_A, Q_SCALE
     elif constraint_type == 'B':
         return Q_MAX_B, Q_SCALE
     elif constraint_type == 'C':
-        return Q_MAX_C, Q_SCALE
+        return (Q_MAX_C16, THREATS_INT16_SCALE) if threats_int16 else (Q_MAX_C, Q_SCALE)
     else:
         return None, None
+
+
+def check_column_sums(kernel, bias, bound, layer_name):
+    """Check bias + positive column sum <= bound and bias + negative column sum >= -bound (engine int16 sums)."""
+    hi = bias + np.maximum(kernel, 0).sum(axis=0)
+    lo = bias + np.minimum(kernel, 0).sum(axis=0)
+    bad = np.flatnonzero((hi > bound) | (lo < -bound))
+    for j in bad:
+        print(f"  COLUMN SUM VIOLATION in {layer_name} column {j}: [{lo[j]:.4f}, {hi[j]:.4f}] outside ±{bound:.4f}")
+    print(f"  column sums: [{lo.min():.4f}, {hi.max():.4f}], bound ±{bound:.4f}")
+    return len(bad)
 
 
 def check_clipping(weights, qmax, layer_name, weight_type):
@@ -111,7 +126,7 @@ def check_rounding(weights, qscale, qmax, layer_name, weight_type):
     return 0
 
 
-def verify_layers(data, layers, offset=0):
+def verify_layers(data, layers, offset=0, threats_int16=False):
     """Verify a list of layers starting at given offset. Returns new offset and violation counts."""
     total_clip_violations = 0
     total_round_violations = 0
@@ -137,29 +152,36 @@ def verify_layers(data, layers, offset=0):
             print(f"  (no constraint)")
             continue
         
-        qmax, qscale = get_constraint_params(constraint_type)
-        
+        qmax, qscale = get_constraint_params(constraint_type, threats_int16)
+
         # Check clipping
         total_clip_violations += check_clipping(kernel, qmax, layer_name, "kernel")
         total_clip_violations += check_clipping(bias, qmax, layer_name, "bias")
-        
+
         # Check rounding (pass qmax to exclude boundary values)
         total_round_violations += check_rounding(kernel, qscale, qmax, layer_name, "kernel")
         total_round_violations += check_rounding(bias, qscale, qmax, layer_name, "bias")
-    
+
+        if constraint_type == 'C' and threats_int16:
+            total_clip_violations += check_column_sums(kernel, bias, Q_MAX_C16, layer_name)
+
     return offset, total_clip_violations, total_round_violations, True
 
 
 def main():
-    if len(sys.argv) > 2:
-        print(f"Usage: {sys.argv[0]} [weights.bin]")
+    threats_int16 = '--threats-int16' in sys.argv
+    argv = [a for a in sys.argv[1:] if a != '--threats-int16']
+    if len(argv) > 1:
+        print(f"Usage: {sys.argv[0]} [--threats-int16] [weights.bin]")
         sys.exit(1)
 
-    filepath = sys.argv[1] if len(sys.argv) == 2 else str(fetch_weights.ensure())
+    filepath = argv[0] if argv else str(fetch_weights.ensure())
     print(f"Loading: {filepath}")
     print(f"Q_SCALE = {Q_SCALE}")
     print(f"Q_MAX_A = {Q_MAX_A:.10f} (hidden_1a, move)")
     print(f"Q_MAX_B = {Q_MAX_B:.10f} (hidden_1b)")
+    if threats_int16:
+        print(f"Q_MAX_C16 = {Q_MAX_C16:.10f} (hidden_1c at 1/{THREATS_INT16_SCALE}, column sums)")
     print()
     
     data = np.fromfile(filepath, dtype=np.float32)
@@ -196,7 +218,8 @@ def main():
     print()
 
     # Verify base layers
-    offset, total_clip_violations, total_round_violations, success = verify_layers(data, layers_for(threats_size))
+    offset, total_clip_violations, total_round_violations, success = verify_layers(
+        data, layers_for(threats_size), threats_int16=threats_int16)
     
     if not success:
         print("ERROR: Unexpected end of data while reading base layers")

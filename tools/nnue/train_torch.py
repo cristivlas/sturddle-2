@@ -48,6 +48,11 @@ Q_MAX_A = 32767 / Q_SCALE / 34
 Q_MAX_B = 32767 / Q_SCALE / 19
 # hidden_1c: int16 storage range only (engine accumulates in int32)
 Q_MAX_C = 32767 / Q_SCALE
+# --threats-int16: hidden_1c at Q_SCALE / 4 with int16 sums in the engine (THREAT_SUMS_INT16), so
+# bias + the same-sign column sum must fit int16; split the budget, keep 2.0 for rounding overshoot
+THREATS_INT16_SCALE = Q_SCALE // 4
+Q_MAX_C16_BIAS = 8.0
+Q_MAX_C16_COL = 32767 / THREATS_INT16_SCALE - Q_MAX_C16_BIAS - 2.0
 
 SCALE = 100.0
 
@@ -173,21 +178,32 @@ def _core(model):
 
 
 @torch.no_grad()
-def apply_constraints(model, quantize_round):
+def apply_constraints(model, quantize_round, threats_int16=False):
     model = _core(model)
 
-    def clamp(p, qmax):
+    def clamp(p, qmax, scale=Q_SCALE):
         if quantize_round:
-            p.copy_(torch.round(p * Q_SCALE) / Q_SCALE)
+            p.copy_(torch.round(p * scale) / scale)
         p.clamp_(-qmax, qmax)
+
+    def bound_columns(w, col_max):
+        """scale down same-sign weights so each output's positive and negative sums stay within col_max"""
+        pos = w.clamp(min=0).sum(dim=1, keepdim=True).clamp(min=1e-9)
+        neg = (-w.clamp(max=0)).sum(dim=1, keepdim=True).clamp(min=1e-9)
+        w.copy_(torch.where(w > 0, w * (col_max / pos).clamp(max=1.0), w * (col_max / neg).clamp(max=1.0)))
 
     clamp(model.hidden_1a.weight, Q_MAX_A)
     clamp(model.hidden_1a.bias, Q_MAX_A)
     clamp(model.hidden_1b.weight, Q_MAX_B)
     clamp(model.hidden_1b.bias, Q_MAX_B)
     if model.threats_size:
-        clamp(model.hidden_1c.weight, Q_MAX_C)
-        clamp(model.hidden_1c.bias, Q_MAX_C)
+        if threats_int16:
+            bound_columns(model.hidden_1c.weight, Q_MAX_C16_COL)
+            clamp(model.hidden_1c.weight, Q_MAX_C16_COL, THREATS_INT16_SCALE)
+            clamp(model.hidden_1c.bias, Q_MAX_C16_BIAS, THREATS_INT16_SCALE)
+        else:
+            clamp(model.hidden_1c.weight, Q_MAX_C)
+            clamp(model.hidden_1c.bias, Q_MAX_C)
     # hidden_2 / hidden_3 / out are unconstrained (float in C++)
 
 
@@ -229,21 +245,29 @@ def _layer_kernel_bias(model, name):
 
 
 @torch.no_grad()
-def save_bin(model, path, quantize_round=False):
-    def q(a, qmax):
+def save_bin(model, path, quantize_round=False, threats_int16=False):
+    if threats_int16:
+        apply_constraints(model, quantize_round, threats_int16)  # the column bound must hold on export too
+
+    def q(a, qmax, scale):
         if quantize_round:
-            a = np.round(a * Q_SCALE) / Q_SCALE
+            a = np.round(a * scale) / scale
             a = np.clip(a, -qmax, qmax)
         return a.astype(np.float32)
 
-    qmax = {"hidden_1a": Q_MAX_A, "hidden_1b": Q_MAX_B, "hidden_1c": Q_MAX_C}
+    # name -> (kernel max, bias max, scale)
+    qparams = {"hidden_1a": (Q_MAX_A, Q_MAX_A, Q_SCALE), "hidden_1b": (Q_MAX_B, Q_MAX_B, Q_SCALE)}
+    if threats_int16:
+        qparams["hidden_1c"] = (Q_MAX_C16_COL, Q_MAX_C16_BIAS, THREATS_INT16_SCALE)
+    else:
+        qparams["hidden_1c"] = (Q_MAX_C, Q_MAX_C, Q_SCALE)
     tmp = path + ".tmp"
     with open(tmp, "wb") as f:
         for name, _, _, _ in _export_layout(_core(model).threats_size):
             k, b = _layer_kernel_bias(model, name)
-            m = qmax.get(name)
-            if m is not None:
-                k, b = q(k, m), q(b, m)
+            p = qparams.get(name)
+            if p is not None:
+                k, b = q(k, p[0], p[2]), q(b, p[1], p[2])
             k.tofile(f)
             b.tofile(f)
         f.flush()
@@ -654,7 +678,7 @@ def main(args):
         load_bin(model, src)
 
     if args.export:
-        save_bin(model, args.export, quantize_round=args.quant_round)
+        save_bin(model, args.export, quantize_round=args.quant_round, threats_int16=args.threats_int16)
         return
 
     # Multi-GPU: split each global batch across all visible GPUs (like TF MirroredStrategy).
@@ -765,7 +789,7 @@ def main(args):
                     nn.utils.clip_grad_norm_(model.parameters(), args.clip_norm)
                 scaler.step(opt)
                 scaler.update()
-                apply_constraints(model, args.quant_round)
+                apply_constraints(model, args.quant_round, args.threats_int16)
                 total += loss.item()
                 count += 1
                 acc, mae = metrics(pred, y, args.outcome_scale)
@@ -802,7 +826,7 @@ def main(args):
             logging.info(f"epoch={epoch} mae={avg_mae:.6f}")
             if args.model and (args.sample or avg < best):  # sampling: loss not comparable across epochs
                 best = avg
-                save_bin(model, args.model)
+                save_bin(model, args.model, threats_int16=args.threats_int16)
     except KeyboardInterrupt:
         if tqdm and bar is not None:
             bar.close()
@@ -856,6 +880,11 @@ if __name__ == "__main__":
     )
     p.add_argument("--no-threats", dest="threats", action="store_false")
     p.add_argument("--threats-size", type=int, default=32, help="hidden_1c output width")
+    p.add_argument(
+        "--threats-int16",
+        action="store_true",
+        help="train hidden_1c for the engine THREAT_SUMS_INT16 mode: quantize at Q_SCALE/4, bound column sums to int16",
+    )
     p.add_argument("--sample", type=float)
     p.add_argument("-F", "--filter", type=int, help="drop positions with |eval| >= this (centipawns)")
     p.add_argument("--balance", action="store_true", help="augment each batch with color-mirrored positions")
