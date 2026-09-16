@@ -347,8 +347,8 @@ static std::vector<Accumulator::RefreshTable> NNUE_refresh(SMP_CORES);
 
 #if ATTACK_MASKS
 /*
- * Attack masks + the hidden_1c pre-activation sums they feed; both are resolved
- * lazily at eval (masks by move replay, sums by XOR-span patch from a donor).
+ * Attack planes + the hidden_1c pre-activation sums they feed, resolved lazily at
+ * eval: planes from scratch, sums by XOR-span patch from the nearest consistent slot.
  */
 struct ThreatState
 {
@@ -404,6 +404,7 @@ static struct Model
             L1B.load_weights(file);
         #if ATTACK_MASKS
             L1C.load_weights(file);
+            L1C_chunk = nnue::threat_chunk_rows(L1C);
         #endif
             POOL.load_weights(file);
             L2.load_weights(file);
@@ -428,6 +429,7 @@ static struct Model
     L1BType L1B;
 #if ATTACK_MASKS
     L1CType L1C;
+    int L1C_chunk = 0;
 #endif
     PoolType POOL;
     L2Type L2;
@@ -504,6 +506,7 @@ void Model::init()
     L1B.load_weights(file);
 #if ATTACK_MASKS
     L1C.load_weights(file);
+    L1C_chunk = nnue::threat_chunk_rows(L1C);
 #endif
     POOL.load_weights(file);
     L2.load_weights(file);
@@ -542,6 +545,11 @@ static void _load_weights(const std::string& file_path)
     /* cached outputs are only valid for the weights they were computed with */
     for (auto& table : NNUE_refresh)
         table = {};
+#if ATTACK_MASKS
+    for (auto& stack : ATTACK_data)
+        for (auto& ts : stack)
+            ts.sums_hash = 0;
+#endif /* ATTACK_MASKS */
 }
 
 
@@ -619,47 +627,32 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
 
 #if ATTACK_MASKS
     auto& ts = ATTACK_data[tid()][_ply];
-    if (ts.sums_hash != state().hash() || ts.masks.needs_update(state()))
+    const auto hash = state().hash();
+    if (ts.sums_hash != hash)
     {
-        /* one walk finds the donor: nearest ancestor with valid masks + sums */
-        const Context* chain[PLY_MAX];
-        size_t len = 0;
-        const ThreatState* donor = nullptr;
+        /* any slot ever written is a valid patch base (planes and sums are stored together); the parent's is usually one move away */
+        const ThreatState* base = nullptr;
+        if (_parent && ATTACK_data[tid()][_parent->_ply].sums_hash)
+            base = &ATTACK_data[tid()][_parent->_ply];
+        else if (ts.sums_hash)
+            base = &ts;
 
-        for (auto ctxt = this; ctxt->_parent; ctxt = ctxt->_parent)
+        if (base == &ts)
         {
-            ASSERT(len < PLY_MAX);
-            chain[len++] = ctxt;
-            const auto& prev_ts = ATTACK_data[tid()][ctxt->_parent->_ply];
-            if (prev_ts.masks._hash == ctxt->_parent->state().hash() && prev_ts.sums_hash == prev_ts.masks._hash)
-            {
-                donor = &prev_ts;
-                break;
-            }
+            /* rare: keep the old planes; threat_update reads prev sums before storing, so ts.sums may alias */
+            const chess::AttackMaskSet prev = ts.masks;
+            ts.masks.compute(state());
+            nnue::threat_update(model.L1C, model.L1C_chunk, prev._cols, ts.masks._cols, ts.sums, ts.sums);
         }
-
-        if (ts.masks.needs_update(state()))
-        {
-            if (donor)
-            {
-                /* replay moves from the donor position */
-                ts.masks = donor->masks;
-                for (auto i = len; i > 0; --i)
-                    ts.masks.update(chain[i - 1]->_parent->state(), chain[i - 1]->state(), chain[i - 1]->_move);
-            }
-            else
-            {
-                ts.masks.full_rebuild(state());
-            }
-        }
-
-        /* one XOR-span patch covers all moves between donor and here */
-        if (donor)
-            nnue::threat_update(model.L1C, donor->masks._by_type, ts.masks._by_type, donor->sums, ts.sums);
         else
-            nnue::threat_refresh(model.L1C, ts.masks._by_type, ts.sums);
-
-        ts.sums_hash = ts.masks._hash;
+        {
+            ts.masks.compute(state());
+            if (base)
+                nnue::threat_update(model.L1C, model.L1C_chunk, base->masks._cols, ts.masks._cols, base->sums, ts.sums);
+            else
+                nnue::threat_refresh(model.L1C, model.L1C_chunk, ts.masks._cols, ts.sums);
+        }
+        ts.sums_hash = hash;
     }
 
     _eval_raw = nnue::eval(acc, model.POOL, model.L2, model.L3, model.EVAL, state().turn, ts.sums);

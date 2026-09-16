@@ -1,12 +1,8 @@
 #pragma once
 /*
- * Incrementally maintained per-(color, type) attack planes.
+ * Attack planes in hidden_1c column order, computed from scratch at eval.
  */
 #include "chess.h"
-
-#ifndef DEBUG_INCREMENTAL
-    #define DEBUG_INCREMENTAL false
-#endif /* DEBUG_INCREMENTAL */
 
 #if ATTACK_MASKS
 
@@ -14,102 +10,60 @@ namespace chess
 {
     struct AttackMaskSet
     {
-        Bitboard _by_type[2][7] = { }; /* [color][PieceType] */
-        uint64_t _hash = 0;
+        Bitboard _cols[12] = { }; /* (king, pawn, knight, bishop, rook, queen) x (black, white) */
 
-        INLINE bool needs_update(const State& state) const
+        void compute(const State& state)
         {
-            return state.hash() != _hash;
-        }
-
-        void full_rebuild(const State& state)
-        {
-            for (auto c : { BLACK, WHITE })
-                for (auto t : PIECES)
-                    _by_type[c][t] = plane(state, t, c);
-            _hash = state.hash();
-        }
-
-        /* in-place: *this must hold prev_state's planes */
-        void update(const State& prev_state, const State& state, const Move& move)
-        {
-            ASSERT(_hash == prev_state.hash());
-
-            _hash = state.hash();
-
-            if (!move) /* null move: board unchanged */
-            {
-                debug_validate(state);
-                return;
-            }
-
             const auto occupied = state.occupied();
-            /* captures leave `to` occupied on both sides of the diff */
-            const auto touched = (prev_state.occupied() ^ occupied) | BB_SQUARES[move.to_square()];
-
-            /* sliders whose rays cross a touched square are exactly those seen from the touched squares */
-            auto orth = BB_EMPTY, diag = BB_EMPTY;
-            for_each_square(touched, [&](Square sq) {
-                orth |= rank_and_file_attacks(occupied, sq);
-                diag |= diagonal_attacks(occupied, sq);
-            });
-            const auto affected =
-                ((orth & (state.rooks | state.queens)) | (diag & (state.bishops | state.queens))) & ~touched;
-
-            for (auto c : { BLACK, WHITE })
-                for (auto t : PIECES)
-                {
-                    const auto mask = state.pieces_mask(t, c);
-                    if (mask != prev_state.pieces_mask(t, c) || (affected & mask) != BB_EMPTY)
-                        _by_type[c][t] = plane(state, t, c);
-                }
-
-            debug_validate(state);
+            _cols[0] = king(state, BLACK);
+            _cols[1] = king(state, WHITE);
+            _cols[2] = pawns<BLACK>(state);
+            _cols[3] = pawns<WHITE>(state);
+            _cols[4] = knights(state, BLACK);
+            _cols[5] = knights(state, WHITE);
+            _cols[6] = sliders<BISHOP>(state, BLACK, occupied);
+            _cols[7] = sliders<BISHOP>(state, WHITE, occupied);
+            _cols[8] = sliders<ROOK>(state, BLACK, occupied);
+            _cols[9] = sliders<ROOK>(state, WHITE, occupied);
+            _cols[10] = sliders<QUEEN>(state, BLACK, occupied);
+            _cols[11] = sliders<QUEEN>(state, WHITE, occupied);
         }
 
     private:
-        /* Aggregate one (type, color) plane: pawns via shifts, knights/kings via tables, sliders via magics. */
-        INLINE Bitboard plane(const State& state, PieceType t, Color c) const
+        static INLINE Bitboard king(const State& state, Color c)
         {
-            const auto bb = state.pieces_mask(t, c);
-            const auto occupied = state.occupied();
-            auto mask = BB_EMPTY;
-            switch (t)
-            {
-            case PAWN:
-                return c == WHITE
-                    ? (((bb << 7) & ~BB_FILES[7]) | ((bb << 9) & ~BB_FILE_A))
-                    : (((bb >> 7) & ~BB_FILE_A) | ((bb >> 9) & ~BB_FILES[7]));
-            case KNIGHT:
-                for_each_square(bb, [&](Square sq) { mask |= BB_KNIGHT_ATTACKS[sq]; });
-                return mask;
-            case KING:
-                for_each_square(bb, [&](Square sq) { mask |= BB_KING_ATTACKS[sq]; });
-                return mask;
-            case BISHOP:
-                for_each_square(bb, [&](Square sq) { mask |= diagonal_attacks(occupied, sq); });
-                return mask;
-            case ROOK:
-                for_each_square(bb, [&](Square sq) { mask |= rank_and_file_attacks(occupied, sq); });
-                return mask;
-            default: /* QUEEN */
-                for_each_square(bb, [&](Square sq) {
-                    mask |= diagonal_attacks(occupied, sq) | rank_and_file_attacks(occupied, sq);
-                });
-                return mask;
-            }
+            const auto bb = state.pieces_mask(KING, c);
+            return bb ? BB_KING_ATTACKS[lsb(bb)] : BB_EMPTY;
         }
 
-        INLINE void debug_validate(const State& state) const
+        template <Color C>
+        static INLINE Bitboard pawns(const State& state)
         {
-        #if DEBUG_INCREMENTAL
-            AttackMaskSet temp;
-            temp.full_rebuild(state);
+            const auto bb = state.pieces_mask(PAWN, C);
+            if constexpr (C == WHITE)
+                return ((bb << 7) & ~BB_FILES[7]) | ((bb << 9) & ~BB_FILE_A);
+            else
+                return ((bb >> 7) & ~BB_FILE_A) | ((bb >> 9) & ~BB_FILES[7]);
+        }
 
-            for (auto c : { BLACK, WHITE })
-                for (auto t : PIECES)
-                    ASSERT_ALWAYS(_by_type[c][t] == temp._by_type[c][t]);
-        #endif /* DEBUG_INCREMENTAL */
+        static INLINE Bitboard knights(const State& state, Color c)
+        {
+            auto mask = BB_EMPTY;
+            for_each_square_r(state.pieces_mask(KNIGHT, c), [&](Square sq) { mask |= BB_KNIGHT_ATTACKS[sq]; });
+            return mask;
+        }
+
+        template <PieceType T>
+        static INLINE Bitboard sliders(const State& state, Color c, Bitboard occupied)
+        {
+            auto mask = BB_EMPTY;
+            for_each_square_r(state.pieces_mask(T, c), [&](Square sq) {
+                if constexpr (T != ROOK)
+                    mask |= diagonal_attacks(occupied, sq);
+                if constexpr (T != BISHOP)
+                    mask |= rank_and_file_attacks(occupied, sq);
+            });
+            return mask;
         }
     };
 }
