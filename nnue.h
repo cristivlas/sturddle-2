@@ -378,77 +378,6 @@ namespace nnue
     INLINE Vec8s relu<Vec8s>(Vec8s v) { return max(v, v8_zero); }
 
 
-#if 0
-    template <int N>
-    INLINE void activate(const int16_t (&input)[N], float (&output)[N])
-    {
-        constexpr float QSCALE_RECIP = 1.0f / QSCALE;
-
-#if __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC
-        /* Vec8f supported only on FP16 (half-precision) Neon */
-        #pragma clang loop vectorize(enable)
-        for (int i = 0; i != N; ++i)
-            output[i] = std::max<float>(0, float(input[i]) * QSCALE_RECIP);
-#else
-    #if INSTRSET < 9
-        using VF = Vec8f;
-        using VS = Vec8s;
-    #else
-        using VF = Vec16f;
-        using VS = Vec16s;
-    #endif /* AVX512 */
-
-        static_assert(N % VF::size() == 0);
-
-        const VF v_scale(QSCALE_RECIP);
-
-        for (size_t i = 0; i < N; i += VF::size())
-        {
-            VF v = to_float(extend(relu(VS().load_a(&input[i]))));
-            (v * v_scale).store_a(&output[i]);
-        }
-#endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
-    }
-#endif /* 0 */
-
-
-    /** ReLU + dequantize int32/QSCALE sums to float. */
-    template <int N>
-    INLINE void activate(const int32_t (&input)[N], float (&output)[N])
-    {
-        constexpr float QSCALE_RECIP = 1.0f / QSCALE;
-
-#if __ARM__
-        /* Vec8f32, not the fp16 Vec8f: the unbounded relu needs full float precision */
-        static_assert(N % Vec8i::size() == 0);
-        const Vec8i vi_zero(0);
-        for (int i = 0; i != N; i += Vec8i::size())
-        {
-            Vec8i v;
-            v.load_a(&input[i]);
-            (Vec8f32(max(v, vi_zero)) * QSCALE_RECIP).store_a(&output[i]);
-        }
-#else
-    #if INSTRSET < 9
-        using VF = Vec8f;
-        using VI = Vec8i;
-    #else
-        using VF = Vec16f;
-        using VI = Vec16i;
-    #endif /* AVX512 */
-        static_assert(N % VF::size() == 0);
-        const VF v_scale(QSCALE_RECIP);
-        const VI v_izero(0);
-        for (int i = 0; i != N; i += VF::size())
-        {
-            VI v;
-            v.load_a(&input[i]);
-            (to_float(max(v, v_izero)) * v_scale).store_a(&output[i]);
-        }
-#endif /* __ARM__ */
-    }
-
-
     /** Dequantize int16/QSCALE to float, no activation (linear layer). */
     template <int N>
     INLINE void dequantize(const int16_t (&input)[N], float (&output)[N])
@@ -1230,32 +1159,23 @@ namespace nnue
 
 
 #if ATTACK_MASKS
+    /* hidden_1c: int16 rows and int16 sums at QSCALE / 4; threat_check_bounds proves the sums cannot overflow */
     #if INSTRSET < 9
-        using VTI = Vec8i;  /* int32 sums */
-        using VAS = Vec16s; /* int16 row accumulator */
+        using VTS = Vec16s;
     #else
-        using VTI = Vec16i;
-        using VAS = Vec32s;
+        using VTS = Vec32s;
     #endif /* AVX512 */
 
-    constexpr int THREAT_LANES = int(VTI::size());
+    constexpr int THREAT_LANES = int(VTS::size());
     constexpr int THREAT_VECS = THREATS_OUT / THREAT_LANES;
-    constexpr int THREAT_ACC_LANES = int(VAS::size());
-    constexpr int THREAT_ACC_VECS = THREATS_OUT / THREAT_ACC_LANES;
-    static_assert(THREATS_OUT % THREAT_ACC_LANES == 0 && THREAT_VECS == 2 * THREAT_ACC_VECS);
+    static_assert(THREATS_OUT % THREAT_LANES == 0);
 
-    #if THREAT_SUMS_INT16
-        constexpr int THREAT_QSCALE = QSCALE / 4;
-        using threat_sum_t = int16_t;
-    #else
-        constexpr int THREAT_QSCALE = QSCALE;
-        using threat_sum_t = int32_t;
-    #endif /* THREAT_SUMS_INT16 */
+    constexpr int THREAT_QSCALE = QSCALE / 4;
 
     #if DEBUG_INCREMENTAL
     /* scalar int32 reference */
-    template <typename LC, typename S>
-    void threat_check(const LC& l1c, const Bitboard (&cols)[THREAT_PLANES], const S (&sums)[THREATS_OUT])
+    template <typename LC>
+    void threat_check(const LC& l1c, const Bitboard (&cols)[THREAT_PLANES], const int16_t (&sums)[THREATS_OUT])
     {
         int32_t check[THREATS_OUT];
         for (int i = 0; i != THREATS_OUT; ++i)
@@ -1271,29 +1191,23 @@ namespace nnue
     #endif /* DEBUG_INCREMENTAL */
 
     /* ReLU + dequantize the hidden_1c sums into the L2 input tail */
-    INLINE void threat_activate(const threat_sum_t (&sums)[THREATS_OUT], float (&out)[THREATS_OUT])
+    INLINE void threat_activate(const int16_t (&sums)[THREATS_OUT], float (&out)[THREATS_OUT])
     {
-    #if THREAT_SUMS_INT16
         constexpr float scale = 1.0f / THREAT_QSCALE;
-        #if __ARM__
+    #if __ARM__
         for (int i = 0; i != THREATS_OUT; ++i)
             out[i] = std::max<float>(0, float(sums[i]) * scale);
-        #else
-        const VAS v_zero(0);
-        for (int k = 0; k != THREAT_ACC_VECS; ++k)
-        {
-            const auto v = max(VAS().load_a(&sums[k * THREAT_ACC_LANES]), v_zero);
-            (to_float(extend_low(v)) * scale).store_a(&out[k * THREAT_ACC_LANES]);
-            (to_float(extend_high(v)) * scale).store_a(&out[k * THREAT_ACC_LANES + THREAT_LANES]);
-        }
-        #endif /* __ARM__ */
     #else
-        static_assert(THREAT_QSCALE == QSCALE);
-        activate(sums, out);
-    #endif /* THREAT_SUMS_INT16 */
+        const VTS v_zero(0);
+        for (int k = 0; k != THREAT_VECS; ++k)
+        {
+            const auto v = max(VTS().load_a(&sums[k * THREAT_LANES]), v_zero);
+            (to_float(extend_low(v)) * scale).store_a(&out[k * THREAT_LANES]);
+            (to_float(extend_high(v)) * scale).store_a(&out[k * THREAT_LANES + THREAT_LANES / 2]);
+        }
+    #endif /* __ARM__ */
     }
 
-    #if THREAT_SUMS_INT16
     /* int16 sums are exact only if no column can leave int16 for any input set */
     template <typename LC>
     void threat_check_bounds(const LC& l1c)
@@ -1311,13 +1225,13 @@ namespace nnue
 
     /* apply one plane's rows for the given bits: op(acc, weight row chunk) */
     template <typename LC, typename OP>
-    INLINE void threat_plane_rows(const LC& l1c, Bitboard bits, int plane, VAS (&acc)[THREAT_ACC_VECS], OP op)
+    INLINE void threat_plane_rows(const LC& l1c, Bitboard bits, int plane, VTS (&acc)[THREAT_VECS], OP op)
     {
         for_each_square_r(bits, [&](Square sq) {
             /* input-major: each _w row is a contiguous, 64-byte aligned int16[THREATS_OUT] */
             const auto& row = l1c._w[plane * 64 + 63 - sq];
-            for (int k = 0; k != THREAT_ACC_VECS; ++k)
-                op(acc[k], VAS().load_a(&row[k * THREAT_ACC_LANES]));
+            for (int k = 0; k != THREAT_VECS; ++k)
+                op(acc[k], VTS().load_a(&row[k * THREAT_LANES]));
         });
     }
 
@@ -1325,129 +1239,15 @@ namespace nnue
     template <typename LC>
     INLINE void threat_refresh(const LC& l1c, const Bitboard (&cols)[THREAT_PLANES], int16_t (&sums)[THREATS_OUT])
     {
-        VAS acc[THREAT_ACC_VECS];
-        for (int k = 0; k != THREAT_ACC_VECS; ++k)
-            acc[k].load_a(&l1c._b[k * THREAT_ACC_LANES]);
+        VTS acc[THREAT_VECS];
+        for (int k = 0; k != THREAT_VECS; ++k)
+            acc[k].load_a(&l1c._b[k * THREAT_LANES]);
 
         for (int p = 0; p != THREAT_PLANES; ++p)
-            threat_plane_rows(l1c, cols[p], p, acc, [](VAS& a, VAS b) { a += b; });
+            threat_plane_rows(l1c, cols[p], p, acc, [](VTS& a, VTS b) { a += b; });
 
-        for (int k = 0; k != THREAT_ACC_VECS; ++k)
-            acc[k].store_a(&sums[k * THREAT_ACC_LANES]);
-
-    #if DEBUG_INCREMENTAL
-        threat_check(l1c, cols, sums);
-    #endif /* DEBUG_INCREMENTAL */
-    }
-
-    /* patch prev sums with only the changed plane bits (add new, subtract gone); no chunking, see threat_check_bounds */
-    template <typename LC>
-    INLINE void threat_update(
-        const LC& l1c,
-        const Bitboard (&prev_cols)[THREAT_PLANES],
-        const Bitboard (&cols)[THREAT_PLANES],
-        const int16_t (&prev_sums)[THREATS_OUT],
-        int16_t (&sums)[THREATS_OUT])
-    {
-        VAS acc[THREAT_ACC_VECS];
-        for (int k = 0; k != THREAT_ACC_VECS; ++k)
-            acc[k].load_a(&prev_sums[k * THREAT_ACC_LANES]);
-
-        for (int p = 0; p != THREAT_PLANES; ++p)
-        {
-            const auto changed = prev_cols[p] ^ cols[p];
-            if (!changed)
-                continue;
-            threat_plane_rows(l1c, changed & cols[p], p, acc, [](VAS& a, VAS b) { a += b; });
-            threat_plane_rows(l1c, changed & prev_cols[p], p, acc, [](VAS& a, VAS b) { a -= b; });
-        }
-
-        for (int k = 0; k != THREAT_ACC_VECS; ++k)
-            acc[k].store_a(&sums[k * THREAT_ACC_LANES]);
-
-    #if DEBUG_INCREMENTAL
-        threat_check(l1c, cols, sums);
-    #endif /* DEBUG_INCREMENTAL */
-    }
-    #else /* !THREAT_SUMS_INT16 */
-
-    /* rows per flush so that no int16 partial sum can overflow: chunk * max|w, b| <= 32767 */
-    template <typename LC>
-    int threat_chunk_rows(const LC& l1c)
-    {
-        int m = 1;
-        for (auto v : l1c._b)
-            m = std::max(m, std::abs(int(v)));
-        for (const auto& row : l1c._w)
-            for (auto v : row)
-                m = std::max(m, std::abs(int(v)));
-        return 32767 / m;
-    }
-
-    /* int16 row accumulator, flushed into the int32 sums every `chunk` rows */
-    struct ThreatAcc
-    {
-        VTI sums[THREAT_VECS];
-        VAS acc[THREAT_ACC_VECS];
-        int rows = 0;
-
-        INLINE void flush()
-        {
-            for (int k = 0; k != THREAT_ACC_VECS; ++k)
-            {
-                sums[2 * k] += extend_low(acc[k]);
-                sums[2 * k + 1] += extend_high(acc[k]);
-                acc[k] = 0;
-            }
-            rows = 0;
-        }
-    };
-
-    /* apply one plane's rows for the given bits: op(acc, weight row chunk) */
-    template <typename LC, typename OP>
-    INLINE void threat_plane_rows(const LC& l1c, Bitboard bits, int plane, ThreatAcc& t, int chunk, OP op)
-    {
-        const auto apply = [&](Square sq) {
-            /* input-major: each _w row is a contiguous, 64-byte aligned int16[THREATS_OUT] */
-            const auto& row = l1c._w[plane * 64 + 63 - sq];
-            for (int k = 0; k != THREAT_ACC_VECS; ++k)
-                op(t.acc[k], VAS().load_a(&row[k * THREAT_ACC_LANES]));
-        };
-
-        const int n = popcount(bits);
-        if (t.rows + n <= chunk) /* common case: whole set fits the current chunk, no per-row counting */
-        {
-            for_each_square_r(bits, apply);
-            t.rows += n;
-        }
-        else
-        {
-            for_each_square_r(bits, [&](Square sq) {
-                if (t.rows >= chunk) /* before, not after: the fast path may leave exactly `chunk` rows pending */
-                    t.flush();
-                apply(sq);
-                ++t.rows;
-            });
-        }
-    }
-
-    /* full recompute of the hidden_1c pre-activation sums (bias + all active rows) */
-    template <typename LC>
-    INLINE void threat_refresh(const LC& l1c, int chunk, const Bitboard (&cols)[THREAT_PLANES], int32_t (&sums)[THREATS_OUT])
-    {
-        ThreatAcc t;
-        for (int j = 0; j != THREAT_VECS; ++j)
-            t.sums[j] = 0;
-        for (int k = 0; k != THREAT_ACC_VECS; ++k)
-            t.acc[k].load_a(&l1c._b[k * THREAT_ACC_LANES]);
-        t.rows = 1; /* the bias counts as a row */
-
-        for (int p = 0; p != THREAT_PLANES; ++p)
-            threat_plane_rows(l1c, cols[p], p, t, chunk, [](VAS& a, VAS b) { a += b; });
-
-        t.flush();
-        for (int j = 0; j != THREAT_VECS; ++j)
-            t.sums[j].store_a(&sums[j * THREAT_LANES]);
+        for (int k = 0; k != THREAT_VECS; ++k)
+            acc[k].store_a(&sums[k * THREAT_LANES]);
 
     #if DEBUG_INCREMENTAL
         threat_check(l1c, cols, sums);
@@ -1458,44 +1258,38 @@ namespace nnue
     template <typename LC>
     INLINE void threat_update(
         const LC& l1c,
-        int chunk,
         const Bitboard (&prev_cols)[THREAT_PLANES],
         const Bitboard (&cols)[THREAT_PLANES],
-        const int32_t (&prev_sums)[THREATS_OUT],
-        int32_t (&sums)[THREATS_OUT])
+        const int16_t (&prev_sums)[THREATS_OUT],
+        int16_t (&sums)[THREATS_OUT])
     {
-        ThreatAcc t;
-        for (int j = 0; j != THREAT_VECS; ++j)
-            t.sums[j].load_a(&prev_sums[j * THREAT_LANES]);
-        for (int k = 0; k != THREAT_ACC_VECS; ++k)
-            t.acc[k] = 0;
+        VTS acc[THREAT_VECS];
+        for (int k = 0; k != THREAT_VECS; ++k)
+            acc[k].load_a(&prev_sums[k * THREAT_LANES]);
 
         for (int p = 0; p != THREAT_PLANES; ++p)
         {
             const auto changed = prev_cols[p] ^ cols[p];
             if (!changed)
                 continue;
-            threat_plane_rows(l1c, changed & cols[p], p, t, chunk, [](VAS& a, VAS b) { a += b; });
-            threat_plane_rows(l1c, changed & prev_cols[p], p, t, chunk, [](VAS& a, VAS b) { a -= b; });
+            threat_plane_rows(l1c, changed & cols[p], p, acc, [](VTS& a, VTS b) { a += b; });
+            threat_plane_rows(l1c, changed & prev_cols[p], p, acc, [](VTS& a, VTS b) { a -= b; });
         }
 
-        if (t.rows) /* null moves and repeated positions change nothing */
-            t.flush();
-        for (int j = 0; j != THREAT_VECS; ++j)
-            t.sums[j].store_a(&sums[j * THREAT_LANES]);
+        for (int k = 0; k != THREAT_VECS; ++k)
+            acc[k].store_a(&sums[k * THREAT_LANES]);
 
     #if DEBUG_INCREMENTAL
         threat_check(l1c, cols, sums);
     #endif /* DEBUG_INCREMENTAL */
     }
-    #endif /* !THREAT_SUMS_INT16 */
 #endif /* ATTACK_MASKS */
 
 
     template <typename A, typename P, typename L2, typename L3, typename OUT>
     INLINE int eval(const A& a, const P& pw, const L2& l2, const L3& l3, const OUT& out, bool turn
 #if ATTACK_MASKS
-        , const threat_sum_t (&threat_sums)[THREATS_OUT]
+        , const int16_t (&threat_sums)[THREATS_OUT]
 #endif
     )
     {

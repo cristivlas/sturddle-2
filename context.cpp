@@ -354,7 +354,7 @@ struct ThreatState
 {
     chess::AttackMaskSet masks;
     uint64_t sums_hash = 0;
-    ALIGN nnue::threat_sum_t sums[nnue::THREATS_OUT] = { };
+    ALIGN int16_t sums[nnue::THREATS_OUT] = { };
 };
 using AttackMaskStack = std::array<ThreatState, PLY_MAX>;
 static std::vector<AttackMaskStack> ATTACK_data(SMP_CORES);
@@ -404,7 +404,7 @@ static struct Model
             L1B.load_weights(file);
         #if ATTACK_MASKS
             L1C.load_weights(file);
-            init_L1C();
+            nnue::threat_check_bounds(L1C);
         #endif
             POOL.load_weights(file);
             L2.load_weights(file);
@@ -429,12 +429,6 @@ static struct Model
     L1BType L1B;
 #if ATTACK_MASKS
     L1CType L1C;
-  #if THREAT_SUMS_INT16
-    void init_L1C() { nnue::threat_check_bounds(L1C); }
-  #else
-    int L1C_chunk = 0;
-    void init_L1C() { L1C_chunk = nnue::threat_chunk_rows(L1C); }
-  #endif /* THREAT_SUMS_INT16 */
 #endif
     PoolType POOL;
     L2Type L2;
@@ -511,7 +505,7 @@ void Model::init()
     L1B.load_weights(file);
 #if ATTACK_MASKS
     L1C.load_weights(file);
-    init_L1C();
+    nnue::threat_check_bounds(L1C);
 #endif
     POOL.load_weights(file);
     L2.load_weights(file);
@@ -621,27 +615,6 @@ void search::Context::update_accumulators()
 }
 
 
-#if ATTACK_MASKS
-static INLINE void threat_update(const ThreatState& base, ThreatState& ts)
-{
-#if THREAT_SUMS_INT16
-    nnue::threat_update(model.L1C, base.masks._cols, ts.masks._cols, base.sums, ts.sums);
-#else
-    nnue::threat_update(model.L1C, model.L1C_chunk, base.masks._cols, ts.masks._cols, base.sums, ts.sums);
-#endif /* THREAT_SUMS_INT16 */
-}
-
-static INLINE void threat_refresh(ThreatState& ts)
-{
-#if THREAT_SUMS_INT16
-    nnue::threat_refresh(model.L1C, ts.masks._cols, ts.sums);
-#else
-    nnue::threat_refresh(model.L1C, model.L1C_chunk, ts.masks._cols, ts.sums);
-#endif /* THREAT_SUMS_INT16 */
-}
-#endif /* ATTACK_MASKS */
-
-
 score_t search::Context::eval_nnue_raw(bool stm_perspective)
 {
     ASSERT(!is_valid(_eval_raw));
@@ -668,15 +641,15 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
             /* rare: this slot is its own base, snapshot it first */
             const ThreatState prev = ts;
             ts.masks.compute(state());
-            threat_update(prev, ts);
+            nnue::threat_update(model.L1C, prev.masks._cols, ts.masks._cols, prev.sums, ts.sums);
         }
         else
         {
             ts.masks.compute(state());
             if (base)
-                threat_update(*base, ts);
+                nnue::threat_update(model.L1C, base->masks._cols, ts.masks._cols, base->sums, ts.sums);
             else
-                threat_refresh(ts);
+                nnue::threat_refresh(model.L1C, ts.masks._cols, ts.sums);
         }
         ts.sums_hash = hash;
     }

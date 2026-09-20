@@ -40,15 +40,11 @@ Q_MIN_A = -Q_MAX_A
 Q_MAX_B = 32767  / Q_SCALE / 19
 Q_MIN_B = -Q_MAX_B
 
-# hidden_1c: int16 storage range only (engine accumulates in int32, no overflow headroom needed)
-Q_MAX_C = 32767 / Q_SCALE
-Q_MIN_C = -Q_MAX_C
-
-# --threats-int16: hidden_1c at Q_SCALE / 4 with int16 sums in the engine (THREAT_SUMS_INT16), so
-# bias + the same-sign column sum must fit int16; split the budget, keep 2.0 for rounding overshoot
-THREATS_INT16_SCALE = Q_SCALE // 4
-Q_MAX_C16_BIAS = 8.0
-Q_MAX_C16_COL = 32767 / THREATS_INT16_SCALE - Q_MAX_C16_BIAS - 2.0
+# hidden_1c: quantized at Q_SCALE / 4 with int16 sums in the engine, so bias + the same-sign
+# column sum must fit int16; split the budget, keep 2.0 for rounding overshoot
+Q_SCALE_C = Q_SCALE // 4
+Q_MAX_C_BIAS = 8.0
+Q_MAX_C_COL = 32767 / Q_SCALE_C - Q_MAX_C_BIAS - 2.0
 
 SCALE = 100.0
 
@@ -413,19 +409,13 @@ def make_model(args, strategy):
         if args.threats:
             input_1c = Lambda(lambda x: x[:, 768:1536], name='threat_planes')(unpack_layer)
             # Linear-in-inputs before relu so the engine can update it incrementally.
-            if args.threats_int16:
-                kernel_constr_c = QColumnConstraint(Q_MAX_C16_COL, THREATS_INT16_SCALE)
-                bias_constr_c = QConstraint(-Q_MAX_C16_BIAS, Q_MAX_C16_BIAS, scale=THREATS_INT16_SCALE)
-            else:
-                # int16-storage range only; the engine accumulates in int32
-                kernel_constr_c = bias_constr_c = QConstraint(Q_MIN_C, Q_MAX_C)
             hidden_1c = Dense(
                 args.threats_size,
                 activation=ACTIVATION,
                 name='hidden_1c',
                 kernel_initializer=K_INIT,
-                kernel_constraint=kernel_constr_c,
-                bias_constraint=bias_constr_c,
+                kernel_constraint=QColumnConstraint(Q_MAX_C_COL, Q_SCALE_C),
+                bias_constraint=QConstraint(-Q_MAX_C_BIAS, Q_MAX_C_BIAS, scale=Q_SCALE_C),
                 trainable=not args.freeze_eval,
             )(input_1c)
             hidden_2_input = Concatenate(name='concat_threats')([residual, hidden_1c])
@@ -621,17 +611,16 @@ def make_model(args, strategy):
     return model
 
 
-def get_layer_weights(args, layer):
-    """Get layer weights, applying constraints if present."""
+def get_layer_weights(layer):
+    """Get layer weights with the layer's constraints applied, so an imported model exports the same as a trained one."""
     params = layer.get_weights()
     if len(params) != 2:
         return None
     weights, biases = params
-    if args.quantize_round:
-        if layer.kernel_constraint:
-            weights = layer.kernel_constraint(weights).numpy()
-        if layer.bias_constraint:
-            biases = layer.bias_constraint(biases).numpy()
+    if layer.kernel_constraint:
+        weights = layer.kernel_constraint(weights).numpy()
+    if layer.bias_constraint:
+        biases = layer.bias_constraint(biases).numpy()
     return weights, biases
 
 
@@ -640,7 +629,7 @@ Export weights as C++ code snippet.
 '''
 def write_weigths(args, model, indent=2):
     for layer in model.layers:
-        params = get_layer_weights(args, layer)
+        params = get_layer_weights(layer)
         if not params:
             if layer.name == 'pool':
                 print('WARNING: pool weights not exported to weights.h; '
@@ -692,7 +681,7 @@ def write_binary_weights(args, model, file):
             print(layer.name, kernel.shape)
             kernel.astype(np.float32).tofile(file)
             continue
-        params = get_layer_weights(args, layer)
+        params = get_layer_weights(layer)
         if params:
             kernel, bias = params
             print(layer.name, kernel.shape, bias.shape)
@@ -1460,8 +1449,6 @@ if __name__ == '__main__':
                             help='add attack-plane inputs feeding hidden_1c, concatenated into hidden_2')
         parser.add_argument('--no-threats', dest='threats', action='store_false')
         parser.add_argument('--threats-size', type=int, default=32, help='hidden_1c output width')
-        parser.add_argument('--threats-int16', action='store_true',
-                            help='train hidden_1c for the engine THREAT_SUMS_INT16 mode: quantize at Q_SCALE/4, bound column sums to int16')
 
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')
