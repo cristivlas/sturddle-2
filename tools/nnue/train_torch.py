@@ -198,7 +198,7 @@ def apply_constraints(model, quantize_round):
         bound_columns(model.hidden_1c.weight, Q_MAX_C_COL)
         clamp(model.hidden_1c.weight, Q_MAX_C_COL, Q_SCALE_C)
         clamp(model.hidden_1c.bias, Q_MAX_C_BIAS, Q_SCALE_C)
-    # hidden_2 / hidden_3 / out are unconstrained (float in C++)
+    # hidden_2 / hidden_3 / out are unconstrained (hidden_2 is int16 at 4096 in C++ under NNUE_L2_INT16, see tools/nnue/l2_int16_check.py)
 
 
 # ---------------------------------------------------------------------------

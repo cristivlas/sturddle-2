@@ -103,6 +103,14 @@ namespace nnue
     constexpr int QLOG2 = 10;  /* log2(QSCALE), for shift-based requantization */
     static_assert((1 << QLOG2) == QSCALE, "QLOG2 must be log2(QSCALE)");
 
+#if NNUE_L2_INT16
+    /* hidden_2 input (pooled*(1+mod), threats) and its weights: finer int16 scales than the accumulator */
+    constexpr int AQLOG2 = QLOG2 + 2;
+    constexpr int AQSCALE = 1 << AQLOG2;
+    constexpr int WQLOG2 = QLOG2 + 2;
+    constexpr int WQSCALE = 1 << WQLOG2;
+#endif /* NNUE_L2_INT16 */
+
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
 
@@ -502,6 +510,8 @@ namespace nnue
         using Base::OUTPUTS;
         using Base::_b;
 
+        static constexpr int SCALE = Scale;
+
         Layer() = default;
 
         Layer(const float(&w)[I][OUTPUTS], const float(&b)[OUTPUTS])
@@ -530,7 +540,12 @@ namespace nnue
                     if constexpr (Scale == 1)
                         v = w[i][j];
                     else
-                        v = std::round(w[i][j] * Scale);
+                    {
+                        const auto q = std::round(w[i][j] * Scale);
+                        if (q > std::numeric_limits<T>::max() || q < std::numeric_limits<T>::lowest())
+                            throw std::runtime_error("weight " + std::to_string(w[i][j]) + " exceeds range at scale " + std::to_string(Scale));
+                        v = q;
+                    }
 
                     if constexpr (Transposed)
                         this->_wt[j][i] = v;
@@ -685,13 +700,48 @@ namespace nnue
     };
 
 
-    /* Learned pooling weights, one set per side to move; defaults to average pooling.
-     * Weights are stored pre-multiplied by 1/QSCALE (exact, power of two), so pool()
-     * dequantizes for free -- in-memory values differ from the file by that factor.
-     */
+    /* Learned pooling weights, one set per side to move; defaults to average pooling. */
     template <int N>
     struct PoolLayer
     {
+        static constexpr size_t param_count() { return 2 * N; }
+
+#if NNUE_L2_INT16
+        ALIGN int16_t _wq[2][N]; /* weights at WQSCALE */
+
+        PoolLayer()
+        {
+            for (auto& w : _wq)
+                std::fill(std::begin(w), std::end(w), int16_t(WQSCALE / POOL_STRIDE));
+        }
+
+        void load_weights(std::istream& file)
+        {
+            float w[2][N];
+            file.read(reinterpret_cast<char*>(w), sizeof(w));
+
+            for (int s = 0; s != 2; ++s)
+                for (int i = 0; i != N; ++i)
+                {
+                    const auto q = std::round(w[s][i] * WQSCALE);
+                    if (q > INT16_MAX || q < INT16_MIN)
+                        throw std::runtime_error("pool weight " + std::to_string(w[s][i]) + " exceeds int16 at scale " + std::to_string(WQSCALE));
+                    _wq[s][i] = int16_t(q);
+                }
+
+            /* int32 group sums must hold for any int16 accumulator values */
+            for (const auto& wq : _wq)
+                for (int i = 0; i != N; i += POOL_STRIDE)
+                {
+                    int64_t sum = 0;
+                    for (int k = 0; k != POOL_STRIDE; ++k)
+                        sum += std::abs(wq[i + k]);
+                    if (sum * INT16_MAX > INT32_MAX)
+                        throw std::runtime_error("pool group " + std::to_string(i / POOL_STRIDE) + " can overflow int32");
+                }
+        }
+#else
+        /* Stored pre-multiplied by 1/QSCALE (exact, power of two), so pool() dequantizes for free */
         ALIGN float _w[2][N];
 
         PoolLayer()
@@ -699,8 +749,6 @@ namespace nnue
             for (auto& w : _w)
                 std::fill(std::begin(w), std::end(w), 1.0f / POOL_STRIDE / QSCALE);
         }
-
-        static constexpr size_t param_count() { return 2 * N; }
 
         void load_weights(std::istream& file)
         {
@@ -710,6 +758,7 @@ namespace nnue
                 for (auto& v : w)
                     v /= QSCALE;
         }
+#endif /* NNUE_L2_INT16 */
     };
 
     template <size_t INPUTS, size_t OUTPUTS>
@@ -741,6 +790,124 @@ namespace nnue
         }
 #endif /* __ARM__ */
     }
+
+
+#if NNUE_L2_INT16
+    constexpr int QROUND = QSCALE / 2; /* round-half-up before >> QLOG2 */
+    constexpr int AQROUND = AQSCALE / 2;
+    constexpr int POOL_SHIFT = QLOG2 + WQLOG2 - AQLOG2; /* acc at QSCALE times pool at WQSCALE, down to AQSCALE */
+    constexpr int POOL_ROUND = 1 << (POOL_SHIFT - 1);
+
+    /* Integer pool + hidden_1b modulation: relu(acc) . w >> POOL_SHIFT, times (QSCALE + mod) >> QLOG2, saturate to int16 */
+    template <size_t INPUTS, size_t OUTPUTS>
+    INLINE void pool_modulate_q(
+        const int16_t (&in)[INPUTS],
+        const int16_t (&w)[INPUTS],
+        const int16_t (&mod)[OUTPUTS],
+        int16_t (&out)[OUTPUTS])
+    {
+        static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
+        static_assert(POOL_STRIDE == 8);
+        static_assert(OUTPUTS % 16 == 0);
+
+        ALIGN int32_t pooled[OUTPUTS];
+#if __ARM__
+        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
+        {
+            int32_t sum = 0;
+            #pragma clang loop vectorize(enable)
+            for (int k = 0; k != POOL_STRIDE; ++k)
+                sum += int32_t(std::max<int16_t>(0, in[i + k])) * w[i + k];
+            pooled[j] = (sum + POOL_ROUND) >> POOL_SHIFT;
+        }
+        for (size_t j = 0; j != OUTPUTS; ++j)
+        {
+            const int32_t v = (pooled[j] * (QSCALE + mod[j]) + QROUND) >> QLOG2;
+            out[j] = int16_t(std::max<int32_t>(INT16_MIN, std::min<int32_t>(INT16_MAX, v)));
+        }
+#else
+        Vec8s v, vw;
+        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
+        {
+            v.load_a(&in[i]);
+            vw.load_a(&w[i]);
+            pooled[j] = (::horizontal_add(Vec4i(_mm_madd_epi16(max(v, v8_zero), vw))) + POOL_ROUND) >> POOL_SHIFT;
+        }
+        const Vec8i v_q(QSCALE), v_round(QROUND);
+        for (size_t j = 0; j != OUTPUTS; j += 16)
+        {
+            const Vec8i lo = (Vec8i().load_a(&pooled[j]) * (extend(Vec8s().load_a(&mod[j])) + v_q) + v_round) >> QLOG2;
+            const Vec8i hi = (Vec8i().load_a(&pooled[j + 8]) * (extend(Vec8s().load_a(&mod[j + 8])) + v_q) + v_round) >> QLOG2;
+            compress_saturated(lo, hi).store_a(&out[j]);
+        }
+#endif /* __ARM__ */
+    }
+
+
+    /* hidden_2 in int16: input at AQSCALE, weights at L::SCALE; int32 sums >> AQLOG2, + bias, relu, to float for hidden_3 */
+    template <typename L, size_t INPUT_SIZE>
+    INLINE void dot_q(const L& layer, const int16_t (&input)[INPUT_SIZE], float (&output)[L::OUTPUTS])
+    {
+        constexpr int OUTPUTS = L::OUTPUTS;
+        static_assert(INPUT_SIZE == L::INPUTS);
+        constexpr float out_scale = 1.0f / L::SCALE;
+
+        ALIGN int32_t sums[OUTPUTS];
+#if __ARM__
+        for (int j = 0; j != OUTPUTS; ++j)
+        {
+            int32_t sum = 0;
+            #pragma clang loop vectorize(enable)
+            for (size_t i = 0; i != INPUT_SIZE; ++i)
+                sum += int32_t(input[i]) * layer._wt[j][i];
+            sums[j] = ((sum + AQROUND) >> AQLOG2) + layer._b[j];
+        }
+        for (int j = 0; j != OUTPUTS; ++j)
+            output[j] = std::max<int32_t>(0, sums[j]) * out_scale;
+#else
+    #if INSTRSET >= 9
+        using VS = Vec32s;
+        using VI = Vec16i;
+        using VF = Vec16f;
+    #else
+        using VS = Vec16s;
+        using VI = Vec8i;
+        using VF = Vec8f;
+    #endif /* AVX512 */
+        static_assert(INPUT_SIZE % VS::size() == 0);
+        constexpr int JB = 8;
+        static_assert(OUTPUTS % JB == 0);
+        static_assert(OUTPUTS % VI::size() == 0);
+
+        VS in, vw;
+        for (int j = 0; j != OUTPUTS; j += JB)
+        {
+            VI acc[JB];
+            #pragma unroll JB
+            for (int k = 0; k != JB; ++k)
+                acc[k] = VI(0);
+
+            for (size_t i = 0; i != INPUT_SIZE; i += VS::size())
+            {
+                in.load_a(&input[i]);
+                #pragma unroll JB
+                for (int k = 0; k != JB; ++k)
+                {
+                    vw.load_a(&layer._wt[j + k][i]);
+                    acc[k] = mul_add(in, vw, acc[k]);
+                }
+            }
+            #pragma unroll JB
+            for (int k = 0; k != JB; ++k)
+                sums[j + k] = ((::horizontal_add(acc[k]) + AQROUND) >> AQLOG2) + layer._b[j + k];
+        }
+
+        const VF v_scale(out_scale);
+        for (int j = 0; j != OUTPUTS; j += VI::size())
+            (to_float(max(VI().load_a(&sums[j]), VI(0))) * v_scale).store_a(&output[j]);
+#endif /* __ARM__ */
+    }
+#endif /* NNUE_L2_INT16 */
 
 
     template <int M, int N, int O> struct Accumulator
@@ -1190,6 +1357,28 @@ namespace nnue
     }
     #endif /* DEBUG_INCREMENTAL */
 
+#if NNUE_L2_INT16
+    constexpr int THREAT_SHIFT = AQLOG2 - (QLOG2 - 2);
+    static_assert(THREAT_QSCALE << THREAT_SHIFT == AQSCALE);
+
+    /* ReLU + rescale the hidden_1c sums from THREAT_QSCALE to AQSCALE, saturating */
+    INLINE void threat_activate_q(const int16_t (&sums)[THREATS_OUT], int16_t (&out)[THREATS_OUT])
+    {
+        constexpr int16_t cap = INT16_MAX >> THREAT_SHIFT;
+    #if __ARM__
+        for (int i = 0; i != THREATS_OUT; ++i)
+            out[i] = int16_t(std::min<int16_t>(std::max<int16_t>(sums[i], 0), cap) << THREAT_SHIFT);
+    #else
+        const VTS v_zero(0), v_cap(cap);
+        for (int k = 0; k != THREAT_VECS; ++k)
+        {
+            const auto v = min(max(VTS().load_a(&sums[k * THREAT_LANES]), v_zero), v_cap);
+            (v << THREAT_SHIFT).store_a(&out[k * THREAT_LANES]);
+        }
+    #endif /* __ARM__ */
+    }
+#endif /* NNUE_L2_INT16 */
+
     /* ReLU + dequantize the hidden_1c sums into the L2 input tail */
     INLINE void threat_activate(const int16_t (&sums)[THREATS_OUT], float (&out)[THREATS_OUT])
     {
@@ -1304,10 +1493,20 @@ namespace nnue
         static_assert(L2::OUTPUTS == L3::INPUTS);
         static_assert(L3::OUTPUTS == OUT::INPUTS);
 
-        ALIGN float l2_in[L2::INPUTS];
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
+
+#if NNUE_L2_INT16
+        ALIGN int16_t l2_in[L2::INPUTS];
+
+        pool_modulate_q(a.slot(a._current_bucket).output, pw._wq[turn], a._output_b, reinterpret_cast<int16_t(&)[POOL_OUT]>(l2_in));
+    #if ATTACK_MASKS
+        threat_activate_q(threat_sums, reinterpret_cast<int16_t(&)[THREATS_OUT]>(l2_in[POOL_OUT]));
+    #endif /* ATTACK_MASKS */
+        dot_q(l2, l2_in, l2_out);
+#else
+        ALIGN float l2_in[L2::INPUTS];
 
         /* pooled + modulation fill the first POOL_OUT entries of l2_in */
         pool(a.slot(a._current_bucket).output, pw._w[turn], reinterpret_cast<float(&)[POOL_OUT]>(l2_in));
@@ -1354,6 +1553,7 @@ namespace nnue
 #endif /* ATTACK_MASKS */
 
         l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); });
+#endif /* NNUE_L2_INT16 */
         l3.dot(l2_out, l3_out, [](const Vector& v) { return relu(v); });
         out.dot(l3_out, output);
         return EVAL_SCALE * output[0];

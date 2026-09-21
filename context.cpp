@@ -314,7 +314,9 @@ constexpr int THREAT_CONCAT = 0;
 using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
 using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
 using PoolType = nnue::PoolLayer<HIDDEN_1A>;
-#if USE_BF16
+#if NNUE_L2_INT16
+  using L2Type = nnue::Layer<HIDDEN_1A_POOLED + THREAT_CONCAT, HIDDEN_2, int16_t, nnue::WQSCALE>;
+#elif USE_BF16
   using L2Type = nnue::Layer<HIDDEN_1A_POOLED + THREAT_CONCAT, HIDDEN_2, __bf16>;
 #else
   using L2Type = nnue::Layer<HIDDEN_1A_POOLED + THREAT_CONCAT, HIDDEN_2, float>;

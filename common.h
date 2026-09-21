@@ -111,6 +111,9 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
   #define NATIVE_UCI                        true
 #endif /* NATIVE_UCI */
 
+/* hidden_2 in int16 at QSCALE (madd_epi16), float from hidden_3 on */
+#define NNUE_L2_INT16                       true
+
 #define RAZORING                            true
 
 #define REPORT_CURRENT_MOVE                 false
