@@ -1332,6 +1332,7 @@ public:
 
             threads->push_task([t_ctxt, tt, score]() mutable {
                 tt->_tid = ThreadPool::thread_id();
+                cpu::update_thread_binding();
                 search_iteration(*t_ctxt, *tt, score);
             });
         }
