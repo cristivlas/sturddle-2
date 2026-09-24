@@ -299,10 +299,10 @@ def _strip_threats(data, path):
 
 
 @torch.no_grad()
-def load_bin(model, path):
+def load_bin(model, path, count=-1):
     model = _core(model)
     layout = _export_layout(model.threats_size)
-    data = np.fromfile(path, dtype=np.float32)
+    data = np.fromfile(path, dtype=np.float32, count=count)
     expected = sum(i * o + bn for _, i, o, bn in layout)
     if data.size != expected and model.threats_size == 0:
         data = _strip_threats(data, path)

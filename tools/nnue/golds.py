@@ -135,14 +135,19 @@ def _generate_bin(bin_path):
     size = os.path.getsize(bin_path) // 4
     base = total(tt._export_layout(0))
     per_unit = total(tt._export_layout(1)) - base
-    ts, rem = divmod(size - base, per_unit)
-    if size < base or rem:
-        raise ValueError(f"{bin_path}: {size} floats does not match any known layout (move-head bins unsupported)")
+    # --predict-moves bins append move_acc (769x256) and move (256x4096) after the eval layers
+    move_head = tt.ACTIVE_INPUTS * 256 + 256 + 256 * 4096 + 4096
+    for head in (0, move_head):
+        ts, rem = divmod(size - head - base, per_unit)
+        if size - head >= base and not rem:
+            break
+    else:
+        raise ValueError(f"{bin_path}: {size} floats does not match any known layout")
     if ts:
         from threat_planes import append_planes
 
     model = tt.NNUE(threats_size=ts)
-    tt.load_bin(model, bin_path)
+    tt.load_bin(model, bin_path, count=size - head)
     model.eval()
 
     golds = {}
