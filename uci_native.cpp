@@ -13,6 +13,7 @@ using Params = std::unordered_map<std::string, std::string>;
 #if NATIVE_UCI /* requires compiler with C++20 support */
 #include <charconv>
 #include <cmath>
+#include <cstdlib>
 #include <format>
 #include <fstream>
 #include <iostream>
@@ -570,6 +571,9 @@ public:
 
         if (can_change_priority())
             _options.emplace("highpriority", std::make_unique<OptionBool>("HighPriority", _high_priority));
+
+        if (cpu::is_hybrid())
+            _options.emplace("allowecores", std::make_unique<OptionBool>("AllowECores", _allow_e_cores));
     }
 
     static bool output_expected() { return _output_expected.load(std::memory_order_relaxed); }
@@ -591,6 +595,7 @@ private:
     void newgame();
 
     void set_high_priority(bool);
+    void update_cpu_binding();
     void show_settings();
 
     /** Context callbacks */
@@ -776,6 +781,7 @@ private:
     bool _best_book_move = true;
     bool _current_priority = false; /* not high */
     bool _high_priority = DEFAULT_HIGH_PRIORITY;
+    bool _allow_e_cores = false; /* true: do not bind search threads to P cores */
     chess::BaseMove _last_move;
 #if NATIVE_BOOK
     PolyglotBook _opening_book = {};
@@ -1264,6 +1270,26 @@ void UCI::set_high_priority(bool high_priority)
     }
 }
 
+void UCI::update_cpu_binding()
+{
+    /* AllowECores: leave scheduling to the OS (unbind if previously bound) */
+    if (!cpu::is_hybrid() || (_allow_e_cores && !cpu::bound))
+        return;
+
+    const bool bind = !_allow_e_cores;
+    std::string err;
+    if (cpu::bind_to_performance_cores(bind, err))
+        return;
+
+    const auto msg = std::format("{} performance cores failed: {}", bind ? "bind to" : "unbind from", err);
+    log_error(msg);
+    std::cout << "info string " << msg << std::endl;
+#if !NATIVE_BUILD
+    std::fprintf(stderr, "%s\n", msg.c_str()); /* Python logging may not flush before _Exit */
+#endif
+    std::_Exit(EXIT_FAILURE);
+}
+
 void UCI::show_settings()
 {
     std::cout << "*** Current Settings ***\n";
@@ -1398,6 +1424,8 @@ INLINE score_t UCI::search(F set_time_limit)
 
     set_high_priority(_high_priority);
     auto restore_priority = on_scope_exit([this] { set_high_priority(false); });
+
+    update_cpu_binding();
 
     set_time_limit();
 
