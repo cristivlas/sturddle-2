@@ -42,9 +42,6 @@
 
 #if WITH_NNUE
   #include "nnue.h"
-  #if ATTACK_MASKS
-    #include "attack_masks.h"
-  #endif
   #if !SHARED_WEIGHTS && defined(USE_WEIGHTS_H)
     #include "weights.h"
   #endif
@@ -303,23 +300,15 @@ constexpr int HIDDEN_1B = HIDDEN_1A_POOLED; /* 1b modulates pooled 1:1 */
 constexpr int HIDDEN_2 = 16;
 constexpr int HIDDEN_3 = 16;
 
-#if ATTACK_MASKS
-constexpr int THREAT_CONCAT = nnue::THREATS_OUT; /* hidden_1c concats into L2's input */
-/* Row-major _w only (no transposed copy), for the input-major gather in eval */
-using L1CType = nnue::Layer<nnue::THREAT_INPUTS, nnue::THREATS_OUT, int16_t, nnue::THREAT_QSCALE, true, false>;
-#else
-constexpr int THREAT_CONCAT = 0;
-#endif /* ATTACK_MASKS */
-
 using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
 using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
 using PoolType = nnue::PoolLayer<HIDDEN_1A>;
 #if NNUE_L2_INT16
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED + THREAT_CONCAT, HIDDEN_2, int16_t, nnue::WQSCALE>;
+  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, int16_t, nnue::WQSCALE>;
 #elif USE_BF16
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED + THREAT_CONCAT, HIDDEN_2, __bf16>;
+  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, __bf16>;
 #else
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED + THREAT_CONCAT, HIDDEN_2, float>;
+  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, float>;
 #endif
 using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
 using EVALType = nnue::Layer<HIDDEN_3, 1>;
@@ -347,21 +336,6 @@ static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
 /* Per-thread bucket-refresh caches */
 static std::vector<Accumulator::RefreshTable> NNUE_refresh(SMP_CORES);
 
-#if ATTACK_MASKS
-/*
- * Attack planes + the hidden_1c pre-activation sums they feed, resolved lazily at
- * eval: planes from scratch, sums by XOR-span patch from the nearest consistent slot.
- */
-struct ThreatState
-{
-    chess::AttackMaskSet masks;
-    uint64_t sums_hash = 0;
-    ALIGN int16_t sums[nnue::THREATS_OUT] = { };
-};
-using AttackMaskStack = std::array<ThreatState, PLY_MAX>;
-static std::vector<AttackMaskStack> ATTACK_data(SMP_CORES);
-#endif /* ATTACK_MASKS */
-
 static struct Model
 {
     void init();
@@ -371,9 +345,6 @@ static struct Model
         constexpr auto param_count =
             L1AType::param_count()
             + L1BType::param_count()
-        #if ATTACK_MASKS
-            + L1CType::param_count()
-        #endif
             + PoolType::param_count()
             + L2Type::param_count()
             + L3Type::param_count()
@@ -404,10 +375,6 @@ static struct Model
             /* Load layers in the same order that the trainer exports them. */
             L1A.load_weights(file);
             L1B.load_weights(file);
-        #if ATTACK_MASKS
-            L1C.load_weights(file);
-            nnue::threat_check_bounds(L1C);
-        #endif
             POOL.load_weights(file);
             L2.load_weights(file);
             L3.load_weights(file);
@@ -429,9 +396,6 @@ static struct Model
 
     L1AType L1A;
     L1BType L1B;
-#if ATTACK_MASKS
-    L1CType L1C;
-#endif
     PoolType POOL;
     L2Type L2;
     L3Type L3;
@@ -505,10 +469,6 @@ void Model::init()
     /* Same order as Model::load_weights file-based path */
     L1A.load_weights(file);
     L1B.load_weights(file);
-#if ATTACK_MASKS
-    L1C.load_weights(file);
-    nnue::threat_check_bounds(L1C);
-#endif
     POOL.load_weights(file);
     L2.load_weights(file);
     L3.load_weights(file);
@@ -546,11 +506,6 @@ static void _load_weights(const std::string& file_path)
     /* cached outputs are only valid for the weights they were computed with */
     for (auto& table : NNUE_refresh)
         table = {};
-#if ATTACK_MASKS
-    for (auto& stack : ATTACK_data)
-        for (auto& ts : stack)
-            ts.sums_hash = 0;
-#endif /* ATTACK_MASKS */
 }
 
 
@@ -601,7 +556,6 @@ void search::Context::update_accumulators()
         {
             ASSERT(ctxt->_parent == nullptr);
             update(accumulator, ctxt);
-
         }
         else
         {
@@ -609,7 +563,6 @@ void search::Context::update_accumulators()
             ASSERT(!prev_acc.needs_update(ctxt->_parent->state()));
 
             update(accumulator, ctxt, prev_acc);
-
         }
 
         ctxt->_eval_raw = SCORE_MIN;
@@ -626,40 +579,7 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     auto& acc = NNUE_data[tid()][_ply];
     ASSERT(!acc.needs_update(state()));
 
-#if ATTACK_MASKS
-    auto& ts = ATTACK_data[tid()][_ply];
-    const auto hash = state().hash();
-    if (ts.sums_hash != hash)
-    {
-        /* any slot ever written is a valid patch base (planes and sums are stored together); the parent's is usually one move away */
-        const ThreatState* base = nullptr;
-        if (_parent && ATTACK_data[tid()][_parent->_ply].sums_hash)
-            base = &ATTACK_data[tid()][_parent->_ply];
-        else if (ts.sums_hash)
-            base = &ts;
-
-        if (base == &ts)
-        {
-            /* rare: this slot is its own base, snapshot it first */
-            const ThreatState prev = ts;
-            ts.masks.compute(state());
-            nnue::threat_update(model.L1C, prev.masks._cols, ts.masks._cols, prev.sums, ts.sums);
-        }
-        else
-        {
-            ts.masks.compute(state());
-            if (base)
-                nnue::threat_update(model.L1C, base->masks._cols, ts.masks._cols, base->sums, ts.sums);
-            else
-                nnue::threat_refresh(model.L1C, ts.masks._cols, ts.sums);
-        }
-        ts.sums_hash = hash;
-    }
-
-    _eval_raw = nnue::eval(acc, model.POOL, model.L2, model.L3, model.EVAL, state().turn, ts.sums);
-#else
     _eval_raw = nnue::eval(acc, model.POOL, model.L2, model.L3, model.EVAL, state().turn);
-#endif /* ATTACK_MASKS */
 
     if (stm_perspective)
     {
@@ -724,9 +644,6 @@ void search::Context::update_root_accumulators()
     for (int i = 1; i != SMP_CORES; ++i)
     {
         NNUE_data[i][0] = root;
-    #if ATTACK_MASKS
-        ATTACK_data[i][0] = ATTACK_data[0][0];
-    #endif
     }
 }
 
@@ -956,9 +873,6 @@ namespace search
         #if WITH_NNUE
             NNUE_data.resize(n_threads);
             NNUE_refresh.resize(n_threads);
-          #if ATTACK_MASKS
-            ATTACK_data.resize(n_threads);
-          #endif /* ATTACK_MASKS */
         #endif /* WITH_NNUE */
         }
     }

@@ -104,7 +104,7 @@ namespace nnue
     static_assert((1 << QLOG2) == QSCALE, "QLOG2 must be log2(QSCALE)");
 
 #if NNUE_L2_INT16
-    /* hidden_2 input (pooled*(1+mod), threats) and its weights: finer int16 scales than the accumulator */
+    /* hidden_2 input (pooled*(1+mod)) and its weights: finer int16 scales than the accumulator */
     constexpr int AQLOG2 = QLOG2 + 2;
     constexpr int AQSCALE = 1 << AQLOG2;
     constexpr int WQLOG2 = QLOG2 + 2;
@@ -113,13 +113,6 @@ namespace nnue
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
-
-#if ATTACK_MASKS
-    /* threat planes feeding hidden_1c: (king,pawn,knight,bishop,rook,queen) x (black,white) */
-    constexpr int THREAT_PLANES = 12;
-    constexpr int THREAT_INPUTS = THREAT_PLANES * 64;
-    constexpr int THREATS_OUT = 32; /* hidden_1c width, must match the trained net */
-#endif /* ATTACK_MASKS */
 
     INLINE int pawn_bucket(const State& state)
     {
@@ -458,11 +451,9 @@ namespace nnue
 #endif /* INSTRSET >= 9 */
 
 
-    template <int I, int O, typename T, int Scale, bool Incremental, bool Transposed>
+    template <int I, int O, typename T, int Scale, bool Incremental>
     struct BaseLayer
     {
-        static_assert(Incremental && Transposed, "unsupported storage combination");
-
         static constexpr int ROWS = I;
         static constexpr int COLS = O;
         /* Round up to INPUT_STRIDE to deal with odd inputs. */
@@ -476,7 +467,7 @@ namespace nnue
 
 
     template <int I, int O, typename T, int Scale>
-    struct BaseLayer<I, O, T, Scale, false, true>
+    struct BaseLayer<I, O, T, Scale, false>
     {
         static constexpr int ROWS = I;
         static constexpr int COLS = O;
@@ -488,24 +479,10 @@ namespace nnue
     };
 
 
-    /* Row-major weights only, for sparse input-major gather (hidden_1c) */
-    template <int I, int O, typename T, int Scale>
-    struct BaseLayer<I, O, T, Scale, true, false>
+    template <int I, int O, typename T=weight_t, int Scale=1, bool Incremental=false>
+    struct Layer : BaseLayer<I, O, T, Scale, Incremental>
     {
-        static constexpr int ROWS = I;
-        static constexpr int COLS = O;
-        static constexpr int INPUTS = round_up<INPUT_STRIDE>(I);
-        static constexpr int OUTPUTS = O;
-
-        ALIGN T _b[OUTPUTS]; /* biases */
-        ALIGN T _w[INPUTS][OUTPUTS]; /* weights */
-    };
-
-
-    template <int I, int O, typename T=weight_t, int Scale=1, bool Incremental=false, bool Transposed=true>
-    struct Layer : BaseLayer<I, O, T, Scale, Incremental, Transposed>
-    {
-        using Base = BaseLayer<I, O, T, Scale, Incremental, Transposed>;
+        using Base = BaseLayer<I, O, T, Scale, Incremental>;
         using Base::INPUTS;
         using Base::OUTPUTS;
         using Base::_b;
@@ -547,8 +524,7 @@ namespace nnue
                         v = q;
                     }
 
-                    if constexpr (Transposed)
-                        this->_wt[j][i] = v;
+                    this->_wt[j][i] = v;
                     if constexpr (Incremental)
                         this->_w[i][j] = v;
                 }
@@ -558,8 +534,7 @@ namespace nnue
             {
                 for (int j = 0; j != OUTPUTS; ++j)
                 {
-                    if constexpr (Transposed)
-                        this->_wt[j][i] = 0;
+                    this->_wt[j][i] = 0;
                     if constexpr (Incremental)
                         this->_w[i][j] = 0;
                 }
@@ -1325,170 +1300,12 @@ namespace nnue
     };
 
 
-#if ATTACK_MASKS
-    /* hidden_1c: int16 rows and int16 sums at QSCALE / 4; threat_check_bounds proves the sums cannot overflow */
-    #if INSTRSET < 9
-        using VTS = Vec16s;
-    #else
-        using VTS = Vec32s;
-    #endif /* AVX512 */
-
-    constexpr int THREAT_LANES = int(VTS::size());
-    constexpr int THREAT_VECS = THREATS_OUT / THREAT_LANES;
-    static_assert(THREATS_OUT % THREAT_LANES == 0);
-
-    constexpr int THREAT_QSCALE = QSCALE / 4;
-
-    #if DEBUG_INCREMENTAL
-    /* scalar int32 reference */
-    template <typename LC>
-    void threat_check(const LC& l1c, const Bitboard (&cols)[THREAT_PLANES], const int16_t (&sums)[THREATS_OUT])
-    {
-        int32_t check[THREATS_OUT];
-        for (int i = 0; i != THREATS_OUT; ++i)
-            check[i] = l1c._b[i];
-        for (int p = 0; p != THREAT_PLANES; ++p)
-            for_each_square(cols[p], [&](Square sq) {
-                for (int i = 0; i != THREATS_OUT; ++i)
-                    check[i] += l1c._w[p * 64 + 63 - sq][i];
-            });
-        for (int i = 0; i != THREATS_OUT; ++i)
-            ASSERT_ALWAYS(check[i] == sums[i]);
-    }
-    #endif /* DEBUG_INCREMENTAL */
-
-#if NNUE_L2_INT16
-    constexpr int THREAT_SHIFT = AQLOG2 - (QLOG2 - 2);
-    static_assert(THREAT_QSCALE << THREAT_SHIFT == AQSCALE);
-
-    /* ReLU + rescale the hidden_1c sums from THREAT_QSCALE to AQSCALE, saturating */
-    INLINE void threat_activate_q(const int16_t (&sums)[THREATS_OUT], int16_t (&out)[THREATS_OUT])
-    {
-        constexpr int16_t cap = INT16_MAX >> THREAT_SHIFT;
-    #if __ARM__
-        for (int i = 0; i != THREATS_OUT; ++i)
-            out[i] = int16_t(std::min<int16_t>(std::max<int16_t>(sums[i], 0), cap) << THREAT_SHIFT);
-    #else
-        const VTS v_zero(0), v_cap(cap);
-        for (int k = 0; k != THREAT_VECS; ++k)
-        {
-            const auto v = min(max(VTS().load_a(&sums[k * THREAT_LANES]), v_zero), v_cap);
-            (v << THREAT_SHIFT).store_a(&out[k * THREAT_LANES]);
-        }
-    #endif /* __ARM__ */
-    }
-#endif /* NNUE_L2_INT16 */
-
-    /* ReLU + dequantize the hidden_1c sums into the L2 input tail */
-    INLINE void threat_activate(const int16_t (&sums)[THREATS_OUT], float (&out)[THREATS_OUT])
-    {
-        constexpr float scale = 1.0f / THREAT_QSCALE;
-    #if __ARM__
-        for (int i = 0; i != THREATS_OUT; ++i)
-            out[i] = std::max<float>(0, float(sums[i]) * scale);
-    #else
-        const VTS v_zero(0);
-        for (int k = 0; k != THREAT_VECS; ++k)
-        {
-            const auto v = max(VTS().load_a(&sums[k * THREAT_LANES]), v_zero);
-            (to_float(extend_low(v)) * scale).store_a(&out[k * THREAT_LANES]);
-            (to_float(extend_high(v)) * scale).store_a(&out[k * THREAT_LANES + THREAT_LANES / 2]);
-        }
-    #endif /* __ARM__ */
-    }
-
-    /* int16 sums are exact only if no column can leave int16 for any input set */
-    template <typename LC>
-    void threat_check_bounds(const LC& l1c)
-    {
-        for (int j = 0; j != THREATS_OUT; ++j)
-        {
-            int hi = l1c._b[j], lo = hi;
-            for (const auto& row : l1c._w)
-                (row[j] > 0 ? hi : lo) += row[j];
-            if (hi > INT16_MAX || lo < INT16_MIN)
-                throw std::runtime_error("hidden_1c column " + std::to_string(j) + " exceeds int16: ["
-                    + std::to_string(lo) + ", " + std::to_string(hi) + "]");
-        }
-    }
-
-    /* apply one plane's rows for the given bits: op(acc, weight row chunk) */
-    template <typename LC, typename OP>
-    INLINE void threat_plane_rows(const LC& l1c, Bitboard bits, int plane, VTS (&acc)[THREAT_VECS], OP op)
-    {
-        for_each_square_r(bits, [&](Square sq) {
-            /* input-major: each _w row is a contiguous, 64-byte aligned int16[THREATS_OUT] */
-            const auto& row = l1c._w[plane * 64 + 63 - sq];
-            for (int k = 0; k != THREAT_VECS; ++k)
-                op(acc[k], VTS().load_a(&row[k * THREAT_LANES]));
-        });
-    }
-
-    /* full recompute of the hidden_1c pre-activation sums (bias + all active rows) */
-    template <typename LC>
-    INLINE void threat_refresh(const LC& l1c, const Bitboard (&cols)[THREAT_PLANES], int16_t (&sums)[THREATS_OUT])
-    {
-        VTS acc[THREAT_VECS];
-        for (int k = 0; k != THREAT_VECS; ++k)
-            acc[k].load_a(&l1c._b[k * THREAT_LANES]);
-
-        for (int p = 0; p != THREAT_PLANES; ++p)
-            threat_plane_rows(l1c, cols[p], p, acc, [](VTS& a, VTS b) { a += b; });
-
-        for (int k = 0; k != THREAT_VECS; ++k)
-            acc[k].store_a(&sums[k * THREAT_LANES]);
-
-    #if DEBUG_INCREMENTAL
-        threat_check(l1c, cols, sums);
-    #endif /* DEBUG_INCREMENTAL */
-    }
-
-    /* patch prev sums with only the changed plane bits (add new, subtract gone) */
-    template <typename LC>
-    INLINE void threat_update(
-        const LC& l1c,
-        const Bitboard (&prev_cols)[THREAT_PLANES],
-        const Bitboard (&cols)[THREAT_PLANES],
-        const int16_t (&prev_sums)[THREATS_OUT],
-        int16_t (&sums)[THREATS_OUT])
-    {
-        VTS acc[THREAT_VECS];
-        for (int k = 0; k != THREAT_VECS; ++k)
-            acc[k].load_a(&prev_sums[k * THREAT_LANES]);
-
-        for (int p = 0; p != THREAT_PLANES; ++p)
-        {
-            const auto changed = prev_cols[p] ^ cols[p];
-            if (!changed)
-                continue;
-            threat_plane_rows(l1c, changed & cols[p], p, acc, [](VTS& a, VTS b) { a += b; });
-            threat_plane_rows(l1c, changed & prev_cols[p], p, acc, [](VTS& a, VTS b) { a -= b; });
-        }
-
-        for (int k = 0; k != THREAT_VECS; ++k)
-            acc[k].store_a(&sums[k * THREAT_LANES]);
-
-    #if DEBUG_INCREMENTAL
-        threat_check(l1c, cols, sums);
-    #endif /* DEBUG_INCREMENTAL */
-    }
-#endif /* ATTACK_MASKS */
-
-
     template <typename A, typename P, typename L2, typename L3, typename OUT>
-    INLINE int eval(const A& a, const P& pw, const L2& l2, const L3& l3, const OUT& out, bool turn
-#if ATTACK_MASKS
-        , const int16_t (&threat_sums)[THREATS_OUT]
-#endif
-    )
+    INLINE int eval(const A& a, const P& pw, const L2& l2, const L3& l3, const OUT& out, bool turn)
     {
         constexpr int POOL_OUT = A::OUTPUTS_A / POOL_STRIDE;
         static_assert(P::param_count() == 2 * A::OUTPUTS_A);
-#if ATTACK_MASKS
-        static_assert(POOL_OUT + THREATS_OUT == L2::INPUTS); /* hidden_1c concats into L2 */
-#else
         static_assert(POOL_OUT == L2::INPUTS);
-#endif
         static_assert(A::OUTPUTS_B == POOL_OUT); /* 1b modulates pooled 1:1 */
         static_assert(L2::OUTPUTS == L3::INPUTS);
         static_assert(L3::OUTPUTS == OUT::INPUTS);
@@ -1498,18 +1315,14 @@ namespace nnue
         ALIGN float output[1]; // eval
 
 #if NNUE_L2_INT16
-        ALIGN int16_t l2_in[L2::INPUTS];
+        ALIGN int16_t l2_in[POOL_OUT];
 
-        pool_modulate_q(a.slot(a._current_bucket).output, pw._wq[turn], a._output_b, reinterpret_cast<int16_t(&)[POOL_OUT]>(l2_in));
-    #if ATTACK_MASKS
-        threat_activate_q(threat_sums, reinterpret_cast<int16_t(&)[THREATS_OUT]>(l2_in[POOL_OUT]));
-    #endif /* ATTACK_MASKS */
+        pool_modulate_q(a.slot(a._current_bucket).output, pw._wq[turn], a._output_b, l2_in);
         dot_q(l2, l2_in, l2_out);
 #else
-        ALIGN float l2_in[L2::INPUTS];
+        ALIGN float l2_in[POOL_OUT];
 
-        /* pooled + modulation fill the first POOL_OUT entries of l2_in */
-        pool(a.slot(a._current_bucket).output, pw._w[turn], reinterpret_cast<float(&)[POOL_OUT]>(l2_in));
+        pool(a.slot(a._current_bucket).output, pw._w[turn], l2_in);
 
         static_assert(POOL_OUT % Vector::size() == 0);
 
@@ -1546,11 +1359,6 @@ namespace nnue
             (v1 * (m + v_one)).store_a(&l2_in[i]);
         }
 #endif /* INSTRSET >= 7 */
-
-#if ATTACK_MASKS
-        /* hidden_1c: activate the incrementally maintained sums into the L2 tail */
-        threat_activate(threat_sums, reinterpret_cast<float(&)[THREATS_OUT]>(l2_in[POOL_OUT]));
-#endif /* ATTACK_MASKS */
 
         l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); });
 #endif /* NNUE_L2_INT16 */

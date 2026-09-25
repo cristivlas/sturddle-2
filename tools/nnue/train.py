@@ -16,8 +16,6 @@ from contextlib import redirect_stdout
 import h5py
 import numpy as np
 
-from threat_planes import append_planes
-
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -39,12 +37,6 @@ Q_MIN_A = -Q_MAX_A
 # (8 pawns + 1 king) x 2 + 1 bias == 19
 Q_MAX_B = 32767  / Q_SCALE / 19
 Q_MIN_B = -Q_MAX_B
-
-# hidden_1c: quantized at Q_SCALE / 4 with int16 sums in the engine, so bias + the same-sign
-# column sum must fit int16; split the budget, keep 2.0 for rounding overshoot
-Q_SCALE_C = Q_SCALE // 4
-Q_MAX_C_BIAS = 8.0
-Q_MAX_C_COL = 32767 / Q_SCALE_C - Q_MAX_C_BIAS - 2.0
 
 SCALE = 100.0
 
@@ -187,34 +179,16 @@ def stm_pool_class():
 
 def make_model(args, strategy):
     class QConstraint(tf.keras.constraints.Constraint):
-        def __init__(self, qmin, qmax, quantize_round=args.quantize_round, scale=Q_SCALE):
+        def __init__(self, qmin, qmax, quantize_round=args.quantize_round):
             self.qmin = qmin
             self.qmax = qmax
             self.quantize_round = quantize_round
-            self.scale = scale
 
         def __call__(self, w):
             if self.quantize_round:
-                w = tf.round(w * self.scale) / self.scale
+                w = tf.round(w * Q_SCALE) / Q_SCALE
             w = tf.clip_by_value(w, self.qmin, self.qmax)
             return w
-
-    class QColumnConstraint(QConstraint):
-        """QConstraint plus a bound on each output column's positive and negative weight sums"""
-
-        def __init__(self, col_max, scale):
-            super().__init__(-col_max, col_max, scale=scale)
-            self.col_max = col_max
-
-        def __call__(self, w):
-            pos = tf.reduce_sum(tf.maximum(w, 0.0), axis=0, keepdims=True)
-            neg = -tf.reduce_sum(tf.minimum(w, 0.0), axis=0, keepdims=True)
-            w = tf.where(
-                w > 0,
-                w * tf.minimum(1.0, self.col_max / tf.maximum(pos, 1e-9)),
-                w * tf.minimum(1.0, self.col_max / tf.maximum(neg, 1e-9)),
-            )
-            return super().__call__(w)
 
     @tf.function
     def soft_clip(x, clip_value):
@@ -297,9 +271,9 @@ def make_model(args, strategy):
             self.num_outputs = num_outputs
 
         def call(self, packed):
-            bitboards, turn = packed[:, :-1], packed[:,-1:]
+            bitboards, turn = packed[:, :12], packed[:,-1:]
 
-            f = tf.concat([tf_unpack_bits(bitboards, (self.num_outputs - 1) // 64), turn], axis=1)
+            f = tf.concat([tf_unpack_bits(bitboards), turn], axis=1)
             return tf.cast(f, tf.float32)
 
     class BucketShift(tf.keras.layers.Layer):
@@ -358,19 +332,12 @@ def make_model(args, strategy):
         ACTIVATION = tf.keras.activations.relu
         K_INIT = tf.keras.initializers.HeNormal
 
-        # Define the input layer. With --threats, 12 attack-plane columns are appended
-        # after the piece bitboards (turn stays last).
-        input_layer = Input(shape=(13 + 12 * bool(args.threats),), dtype=tf.uint64, name='input')
-        unpack_layer = Unpack(args.hot_encoding + 768 * bool(args.threats), name='unpack')(input_layer)
-
-        if args.threats:
-            # Piece-encoding paths (bucketing, move head) see the original 769 features only
-            eval_features = Lambda(lambda x: tf.concat([x[:, :768], x[:, -1:]], axis=1), name='eval_features')(unpack_layer)
-        else:
-            eval_features = unpack_layer
+        # Define the input layer
+        input_layer = Input(shape=(13,), dtype=tf.uint64, name='input')
+        unpack_layer = Unpack(args.hot_encoding, name='unpack')(input_layer)
 
         # Apply bucketing
-        bucketed = BucketShift(MAIN_BUCKETS, name='bucket_shift')(eval_features)
+        bucketed = BucketShift(MAIN_BUCKETS, name='bucket_shift')(unpack_layer)
 
         constr_a = QConstraint(Q_MIN_A, Q_MAX_A)
         hidden_1a = Dense(
@@ -405,28 +372,13 @@ def make_model(args, strategy):
         modulation = Multiply(name='modulation')([pooled, hidden_1b])
         residual = Add(name='residual')([pooled, modulation])
 
-        hidden_2_input = residual
-        if args.threats:
-            input_1c = Lambda(lambda x: x[:, 768:1536], name='threat_planes')(unpack_layer)
-            # Linear-in-inputs before relu so the engine can update it incrementally.
-            hidden_1c = Dense(
-                args.threats_size,
-                activation=ACTIVATION,
-                name='hidden_1c',
-                kernel_initializer=K_INIT,
-                kernel_constraint=QColumnConstraint(Q_MAX_C_COL, Q_SCALE_C),
-                bias_constraint=QConstraint(-Q_MAX_C_BIAS, Q_MAX_C_BIAS, scale=Q_SCALE_C),
-                trainable=not args.freeze_eval,
-            )(input_1c)
-            hidden_2_input = Concatenate(name='concat_threats')([residual, hidden_1c])
-
         hidden_2 = Dense(
             16,
             activation=ACTIVATION,
             kernel_initializer=K_INIT,
             name='hidden_2',
             trainable=not args.freeze_eval,
-        )(hidden_2_input)
+        )(residual)
 
         hidden_3 = Dense(
             16,
@@ -446,7 +398,7 @@ def make_model(args, strategy):
             # share the trunk back-spilled into eval. Own sub-accumulator gives the head
             # depth without that coupling. move_acc is linear-in-inputs before the relu, so
             # the engine can update it incrementally like the eval accumulator.
-            stop_grad = tf.stop_gradient(eval_features)
+            stop_grad = tf.stop_gradient(unpack_layer)
 
             move_acc = Dense(
                 MOVE_ACCUMULATOR_SIZE,
@@ -673,7 +625,7 @@ def write_weigths(args, model, indent=2):
 def write_binary_weights(args, model, file):
     # Fixed engine load order (context.cpp): eval layers, then move head.
     # model.layers is graph-depth ordered and interleaves the head into the eval layers.
-    order = ['hidden_1a', 'hidden_1b', 'hidden_1c', 'pool', 'hidden_2', 'hidden_3', 'out', 'move_acc', 'move']
+    order = ['hidden_1a', 'hidden_1b', 'pool', 'hidden_2', 'hidden_3', 'out', 'move_acc', 'move']
     layers = [model.get_layer(n) for n in order if any(l.name == n for l in model.layers)]
     for layer in layers:
         if layer.name == 'pool':
@@ -709,33 +661,6 @@ def export_weights(args, model):
                 write_weigths(args, model)
 
 
-def strip_threats_payload(payload, by_name, path, expected):
-    """Downgrade a --threats bin payload: drop hidden_1c and the threat rows of hidden_2."""
-    pooled, h2_units = by_name['hidden_2'].get_weights()[0].shape
-    threat_inputs = 12 * 64
-    per_unit = threat_inputs + 1 + h2_units  # hidden_1c kernel column + bias + one hidden_2 row
-    ts, rem = divmod(payload.size - expected, per_unit)
-    if ts <= 0 or rem:
-        return payload  # not a threats layout; let the caller report the size mismatch
-
-    out = []
-    off = 0
-    for name in ['hidden_1a', 'hidden_1b']:
-        for w in by_name[name].get_weights():
-            size = int(np.prod(w.shape))
-            out.append(payload[off:off + size]); off += size
-    off += threat_inputs * ts + ts  # skip hidden_1c kernel + bias
-    for w in by_name['pool'].get_weights():
-        size = int(np.prod(w.shape))
-        out.append(payload[off:off + size]); off += size
-    kernel = payload[off:off + (pooled + ts) * h2_units].reshape(pooled + ts, h2_units)
-    off += (pooled + ts) * h2_units
-    out.append(kernel[:pooled].reshape(-1))
-    out.append(payload[off:])  # hidden_2 bias onward unchanged
-    print(f'REMOVED threats from {path}: hidden_1c ({threat_inputs}x{ts}) and {ts} hidden_2 input rows')
-    return np.concatenate(out)
-
-
 def load_binary_weights(args, model, file):
     """Load weights from a flat .bin into the eval layers, in C++/torch export order.
 
@@ -743,13 +668,11 @@ def load_binary_weights(args, model, file):
     NOT in the file (eval-only export), so it is skipped by name — importing an
     eval-only weights.bin into a --predict-moves graph leaves the head untouched.
     """
-    eval_order = ['hidden_1a', 'hidden_1b', 'hidden_1c', 'pool', 'hidden_2', 'hidden_3', 'out']
+    eval_order = ['hidden_1a', 'hidden_1b', 'pool', 'hidden_2', 'hidden_3', 'out']
     by_name = {l.name: l for l in model.layers}
 
     payload = np.fromfile(file, dtype=np.float32)
     expected = sum(int(np.prod(w.shape)) for n in eval_order if n in by_name for w in by_name[n].get_weights())
-    if payload.size != expected and 'hidden_1c' not in by_name:
-        payload = strip_threats_payload(payload, by_name, args.import_file, expected)
     if payload.size != expected:
         raise ValueError(f'{args.import_file}: expected {expected} float32, got {payload.size}')
 
@@ -766,7 +689,7 @@ def load_binary_weights(args, model, file):
         layer.set_weights(new_weights)
 
 
-def tf_unpack_bits(bitboards, count=12):
+def tf_unpack_bits(bitboards):
     # Create a tensor containing bit positions [63, 62, ..., 0]
     bit_positions = tf.constant(list(range(63, -1, -1)), dtype=tf.uint64)
 
@@ -784,7 +707,7 @@ def tf_unpack_bits(bitboards, count=12):
 
     # Flatten the isolated bits tensor
     # return tf.reshape(isolated_bits, [tf.shape(bitboards)[0], -1])
-    return tf.reshape(isolated_bits, [-1, count * 64])
+    return tf.reshape(isolated_bits, [-1, 12 * 64])
 
 
 def popcount(bb):
@@ -852,9 +775,6 @@ def decode_position(array):
 def dataset_from_file(args, filepath, strategy, callbacks):
     # Features are packed as np.uint64
     packed_feature_count = int(np.ceil(args.hot_encoding / 64))
-
-    # Model input columns: --threats appends 12 attack planes to the 13 H5 columns
-    packed_input_count = packed_feature_count + 12 * bool(args.threats)
 
     def vertical_mirror(bitboards):
         """
@@ -1047,10 +967,6 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 piece_count += popcount(x[:, i])
             piece_ratio = (piece_count / 32.0)[:, np.newaxis]
 
-            # Attack planes go after any position flips, before the turn column
-            if args.threats:
-                x = append_planes(x)
-
             # Combine targets into a single tensor
             y_combined = tf.concat(
                 [y_eval, y_outcome, tf.constant(piece_ratio), tf.constant(label_scale), tf.constant(outcome_scale)],
@@ -1146,12 +1062,12 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 (np.float32, np.float32)
             )
             output_shapes = (
-                (None, packed_input_count),
+                (None, packed_feature_count),
                 ((None, 5), (None, 1))
             )
         else:
             output_types = (np.uint64, np.float32)
-            output_shapes = ((None, packed_input_count), (None, 5))
+            output_shapes = ((None, packed_feature_count), (None, 5))
 
         dataset = tf.data.Dataset.from_generator(
             generator,
@@ -1444,11 +1360,6 @@ if __name__ == '__main__':
         parser.add_argument('--alt-pool-size', type=int, default=POOL_SIZE, help='POOL_SIZE the --alt-model was trained with (for loading its pool Lambda)')
 
         parser.add_argument('--profile', help='JSON dataset profile with per-bucket label scale ratios')
-
-        parser.add_argument('--threats', action='store_true', default=False,
-                            help='add attack-plane inputs feeding hidden_1c, concatenated into hidden_2')
-        parser.add_argument('--no-threats', dest='threats', action='store_false')
-        parser.add_argument('--threats-size', type=int, default=32, help='hidden_1c output width')
 
         parser.add_argument('--gpu', dest='gpu', action='store_true', default=True, help='train on GPU')
         parser.add_argument('--no-gpu', dest='gpu', action='store_false')

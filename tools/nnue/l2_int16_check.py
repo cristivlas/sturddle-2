@@ -12,15 +12,10 @@ mirroring train_torch.py and report the ranges that must fit int16 / int32.
 """
 import argparse
 import glob
-import os
 import random
-import sys
 
 import chess
 import numpy as np
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from threat_planes import append_planes
 
 ACTIVE_INPUTS = 769
 ACCUMULATOR_SIZE = 2048
@@ -28,12 +23,10 @@ POOL_SIZE = 8
 POOLED = ACCUMULATOR_SIZE // POOL_SIZE
 MAIN_BUCKETS = 16
 INPUTS_B = 256
-THREAT_INPUTS = 768
 HIDDEN_2 = 16
 HIDDEN_3 = 16
 
 Q_SCALE = 1024
-Q_SCALE_C = Q_SCALE // 4
 # mirror nnue.h: hidden_2 input (AQSCALE) and pool / hidden_2 weights (WQSCALE)
 AQ_SCALE = Q_SCALE * 4
 WQ_SCALE = Q_SCALE * 4
@@ -43,42 +36,30 @@ W_CAP = 32767 / WQ_SCALE  # pool and hidden_2 weights, int16 at WQ_SCALE
 INT32_CAP = 2**31 / (AQ_SCALE * WQ_SCALE)  # hidden_2 int32 sums
 
 
-def export_layout(ts):
-    layout = [
-        ("hidden_1a", MAIN_BUCKETS * ACTIVE_INPUTS, ACCUMULATOR_SIZE, ACCUMULATOR_SIZE),
-        ("hidden_1b", INPUTS_B, POOLED, POOLED),
-    ]
-    if ts:
-        layout.append(("hidden_1c", THREAT_INPUTS, ts, ts))
-    layout += [
-        ("pool", 2 * ACCUMULATOR_SIZE, 1, 0),
-        ("hidden_2", POOLED + ts, HIDDEN_2, HIDDEN_2),
-        ("hidden_3", HIDDEN_2, HIDDEN_3, HIDDEN_3),
-        ("out", HIDDEN_3, 1, 1),
-    ]
-    return layout
+EXPORT = [
+    ("hidden_1a", MAIN_BUCKETS * ACTIVE_INPUTS, ACCUMULATOR_SIZE, ACCUMULATOR_SIZE),
+    ("hidden_1b", INPUTS_B, POOLED, POOLED),
+    ("pool", 2 * ACCUMULATOR_SIZE, 1, 0),
+    ("hidden_2", POOLED, HIDDEN_2, HIDDEN_2),
+    ("hidden_3", HIDDEN_2, HIDDEN_3, HIDDEN_3),
+    ("out", HIDDEN_3, 1, 1),
+]
 
 
 def load_bin(path):
     data = np.fromfile(path, dtype=np.float32)
-
-    def total(layout):
-        return sum(i * o + b for _, i, o, b in layout)
-
-    base = total(export_layout(0))
-    per_unit = total(export_layout(1)) - base
-    ts, rem = divmod(data.size - base, per_unit)
-    if data.size < base or rem:
-        raise ValueError(f"{path}: {data.size} floats does not match any known layout")
+    expected = sum(i * o + b for _, i, o, b in EXPORT)
+    if data.size != expected:
+        raise ValueError(f"{path}: expected {expected} floats, got {data.size}")
     layers = {}
     off = 0
-    for name, i, o, bn in export_layout(ts):
+    for name, i, o, bn in EXPORT:
         k = data[off : off + i * o].reshape(i, o)
         off += i * o
         b = data[off : off + bn]
         off += bn
         layers[name] = (k, b)
-    return layers, ts
+    return layers
 
 
 def unpack_bits(packed):
@@ -132,11 +113,8 @@ def positions(paths, plies, seed):
     return boards
 
 
-def forward(layers, ts, packed):
+def forward(layers, packed):
     feats = unpack_bits(packed)
-    if ts:
-        threats = feats[:, 768:1536]
-        feats = np.concatenate([feats[:, :768], feats[:, -1:]], axis=1)
     w1a, b1a = layers["hidden_1a"]
     blocks = w1a.reshape(MAIN_BUCKETS, ACTIVE_INPUTS, ACCUMULATOR_SIZE)
     bid = bucket_id(feats)
@@ -156,20 +134,13 @@ def forward(layers, ts, packed):
     pooled = (acc.reshape(-1, POOLED, POOL_SIZE) * pool[stm]).sum(axis=-1)
     residual = pooled * (1 + mod)
 
-    x = residual
-    h1c = None
-    if ts:
-        w1c, b1c = layers["hidden_1c"]
-        h1c = np.maximum(threats @ w1c + b1c, 0)
-        x = np.concatenate([residual, h1c], axis=1)
-
     w2, b2 = layers["hidden_2"]
-    pre2 = x @ w2 + b2
-    abs2 = np.abs(x) @ np.abs(w2)  # bounds every partial sum of the int32 accumulators
-    return dict(pre=pre, acc=acc, mod=mod, pooled=pooled, residual=residual, h1c=h1c, pre2=pre2, abs2=abs2)
+    pre2 = residual @ w2 + b2
+    abs2 = np.abs(residual) @ np.abs(w2)  # bounds every partial sum of the int32 accumulators
+    return dict(pre=pre, acc=acc, mod=mod, pooled=pooled, residual=residual, pre2=pre2, abs2=abs2)
 
 
-def report_static(layers, ts):
+def report_static(layers):
     print("== static (weights only) ==")
     pool = layers["pool"][0].reshape(2, POOLED, POOL_SIZE)
     print(f"pool     max|w| {np.abs(pool).max():.4f}  int16@WQ cap {W_CAP:.2f}")
@@ -189,15 +160,11 @@ def report_static(layers, ts):
     )
     err = np.abs(w2 - np.round(w2 * WQ_SCALE) / WQ_SCALE)
     print(f"hidden_2 max rounding err @WQ {err.max():.2e}, mean {err.mean():.2e}")
-    if ts:
-        print(f"hidden_1c width {ts}: relu output must be < {INT16_CAP:.2f} after shift from Q/4 to AQ")
 
 
-def report_empirical(layers, ts, boards, batch):
+def report_empirical(layers, boards, batch):
     print(f"== empirical ({len(boards)} positions) ==")
     packed = np.stack([encode(b) for b in boards])
-    if ts:
-        packed = append_planes(packed)
     stats = {}
 
     def track(name, v, signed=True):
@@ -206,13 +173,11 @@ def report_empirical(layers, ts, boards, batch):
         s[0], s[1] = min(s[0], lo), max(s[1], hi)
 
     for i in range(0, packed.shape[0], batch):
-        r = forward(layers, ts, packed[i : i + batch])
+        r = forward(layers, packed[i : i + batch])
         track("acc pre-relu", r["pre"])
         track("mod (1b)", r["mod"])
         track("pooled", r["pooled"])
         track("residual = pooled*(1+mod)", r["residual"])
-        if ts:
-            track("hidden_1c relu", r["h1c"])
         track("hidden_2 pre-act", r["pre2"])
         track("hidden_2 sum|x||w|", r["abs2"])
 
@@ -221,7 +186,6 @@ def report_empirical(layers, ts, boards, batch):
         "mod (1b)": ACC_CAP,
         "pooled": INT16_CAP,
         "residual = pooled*(1+mod)": INT16_CAP,
-        "hidden_1c relu": INT16_CAP,
         "hidden_2 pre-act": INT32_CAP,
         "hidden_2 sum|x||w|": INT32_CAP,
     }
@@ -241,15 +205,15 @@ def main():
     p.add_argument("--batch", type=int, default=512)
     a = p.parse_args()
 
-    layers, ts = load_bin(a.weights)
-    print(f"{a.weights}: threats_size={ts}")
-    report_static(layers, ts)
+    layers = load_bin(a.weights)
+    print(a.weights)
+    report_static(layers)
 
     paths = [f for g in a.epd for f in glob.glob(g)]
     if paths:
         plies = [int(x) for x in a.plies.split(",") if int(x) > 0]
         boards = positions(paths, plies, a.seed)
-        report_empirical(layers, ts, boards, a.batch)
+        report_empirical(layers, boards, a.batch)
 
 
 if __name__ == "__main__":
