@@ -1080,6 +1080,12 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 if constexpr(EXTRA_STATS)
                     table._history_counters_hit += (next_ctxt->_move._group == MoveOrder::HISTORY_COUNTERS);
 
+            #if USE_MOVE_PREDICTION
+                /* keep the move-prediction seed; otherwise only exhausted nodes cache scores */
+                if (ctxt.iteration() <= MOVE_PREDICTION_MAX_ITER && ctxt.move_count() >= 0)
+                    ctxt.cache_scores();
+            #endif /* USE_MOVE_PREDICTION */
+
                 break; /* found a cutoff */
             }
             else if (next_ctxt->is_capture())
