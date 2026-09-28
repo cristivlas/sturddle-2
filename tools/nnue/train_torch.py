@@ -8,7 +8,7 @@ Loads / exports the same flat float32 weights.bin layout as the TF trainer so a
 TF-trained net can be continued here and the result consumed by the C++ engine.
 
 Layer export order (must match C++ context.cpp load order):
-    hidden_1a, hidden_1b, pool, hidden_2, hidden_3, out
+    hidden_1a, hidden_1b, hidden_1c, pool, hidden_2, hidden_3, out
 Each layer: kernel (in, out) float32 row-major, then bias (out,) float32.
 pool is kernel-only (no bias): 2 x ACCUMULATOR_SIZE floats, side-to-move
 major (black-to-move block first), init 1/POOL_SIZE == average pooling.
@@ -35,6 +35,7 @@ POOL_SIZE = 8
 POOLED = ACCUMULATOR_SIZE // POOL_SIZE  # 256
 MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
 INPUTS_B = 256  # kings + pawns
+INPUTS_C = 256  # bishops + occupancy
 HIDDEN_2 = 16
 HIDDEN_3 = 16
 
@@ -43,6 +44,8 @@ Q_SCALE = 1024
 Q_MAX_A = 32767 / Q_SCALE / 34
 # (8 pawns + 1 king) x 2 + bias == 19
 Q_MAX_B = 32767 / Q_SCALE / 19
+# 32 occupied + up to 20 bishops (promotions) + bias == 53
+Q_MAX_C = 32767 / Q_SCALE / 53
 
 SCALE = 100.0
 
@@ -123,6 +126,8 @@ class NNUE(nn.Module):
         super().__init__()
         self.hidden_1a = BucketedDense(MAIN_BUCKETS, ACTIVE_INPUTS, ACCUMULATOR_SIZE)
         self.hidden_1b = nn.Linear(INPUTS_B, POOLED)  # linear (no activation)
+        # linear, adds to hidden_1b; zero init == no-op, so a warm-started net is unchanged
+        self.hidden_1c = nn.Linear(INPUTS_C, POOLED)
         # learned pooling, one weight set per side to move; init == average pooling
         self.pool = nn.Parameter(torch.full((2, POOLED, POOL_SIZE), 1.0 / POOL_SIZE))
         self.hidden_2 = nn.Linear(POOLED, HIDDEN_2)
@@ -130,12 +135,17 @@ class NNUE(nn.Module):
         self.out = nn.Linear(HIDDEN_3, 1)
         for m in (self.hidden_1b, self.hidden_2, self.hidden_3):
             nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
+        nn.init.zeros_(self.hidden_1c.weight)
+        nn.init.zeros_(self.hidden_1c.bias)
 
     def forward(self, packed):
         feats = unpack_bits(packed)  # (B, 769)
         acc = self.hidden_1a(feats)  # (B, 2048) relu'd
         kp = feats[:, :INPUTS_B]
-        mod = self.hidden_1b(kp)  # (B, 256) linear
+        # bishops [384:512], then per-color occupancy: sum of the 6 piece blocks of (black 64, white 64)
+        occ = feats[:, :768].view(-1, 6, 128).sum(dim=1)
+        bo = torch.cat([feats[:, 384:512], occ], dim=1)
+        mod = self.hidden_1b(kp) + self.hidden_1c(bo)  # (B, 256) linear
 
         stm = packed[:, 12].long()  # 0 = black to move, 1 = white
         w = self.pool[stm]  # (B, 256, 8)
@@ -169,6 +179,8 @@ def apply_constraints(model, quantize_round):
     clamp(model.hidden_1a.bias, Q_MAX_A)
     clamp(model.hidden_1b.weight, Q_MAX_B)
     clamp(model.hidden_1b.bias, Q_MAX_B)
+    clamp(model.hidden_1c.weight, Q_MAX_C)
+    clamp(model.hidden_1c.bias, Q_MAX_C)
     # hidden_2 / hidden_3 / out are unconstrained (hidden_2 is int16 at 4096 in C++ under NNUE_L2_INT16, see tools/nnue/l2_int16_check.py)
 
 
@@ -180,6 +192,7 @@ def apply_constraints(model, quantize_round):
 _EXPORT = [
     ("hidden_1a", MAIN_BUCKETS * ACTIVE_INPUTS, ACCUMULATOR_SIZE, ACCUMULATOR_SIZE),
     ("hidden_1b", INPUTS_B, POOLED, POOLED),
+    ("hidden_1c", INPUTS_C, POOLED, POOLED),
     ("pool", 2 * ACCUMULATOR_SIZE, 1, 0),
     ("hidden_2", POOLED, HIDDEN_2, HIDDEN_2),
     ("hidden_3", HIDDEN_2, HIDDEN_3, HIDDEN_3),
@@ -211,7 +224,7 @@ def save_bin(model, path, quantize_round=False):
             a = np.clip(a, -qmax, qmax)
         return a.astype(np.float32)
 
-    qmax = {"hidden_1a": Q_MAX_A, "hidden_1b": Q_MAX_B}
+    qmax = {"hidden_1a": Q_MAX_A, "hidden_1b": Q_MAX_B, "hidden_1c": Q_MAX_C}
     tmp = path + ".tmp"
     with open(tmp, "wb") as f:
         for name, _, _, _ in _EXPORT:
@@ -233,7 +246,9 @@ def load_bin(model, path, count=-1):
     data = np.fromfile(path, dtype=np.float32, count=count)
     expected = sum(i * o + bn for _, i, o, bn in _EXPORT)
     if data.size != expected:
-        raise ValueError(f"{path}: expected {expected} floats, got {data.size}")
+        raise ValueError(
+            f"{path}: expected {expected} floats, got {data.size} (pre-hidden_1c weights: see add_hidden_1c.py)"
+        )
     off = 0
     for name, i, o, bn in _EXPORT:
         k = data[off : off + i * o].reshape(i, o)
@@ -599,9 +614,20 @@ def main(args):
         model = nn.DataParallel(model)
         print(f"DataParallel over {torch.cuda.device_count()} GPUs")
 
+    # hidden_1c trains at --learn-rate; everything else at --base-lr-scale times that (0 == frozen)
+    core = _core(model)
+    base = [p for n, p in core.named_parameters() if not n.startswith("hidden_1c.")]
+    groups = [{"params": list(core.hidden_1c.parameters())}]
+    if args.base_lr_scale > 0:
+        groups.append({"params": base, "lr": args.learn_rate * args.base_lr_scale})
+    else:
+        for p in base:
+            p.requires_grad_(False)
+        print("base layers frozen, training hidden_1c only")
+
     if args.optimizer == "sgd":
         opt = torch.optim.SGD(
-            model.parameters(),
+            groups,
             lr=args.learn_rate,
             momentum=args.momentum,
             nesterov=args.nesterov,
@@ -609,7 +635,7 @@ def main(args):
         )
     else:
         opt = torch.optim.AdamW(
-            model.parameters(),
+            groups,
             lr=args.learn_rate,
             betas=(0.99, 0.995),
             amsgrad=(args.optimizer == "amsgrad"),
@@ -724,8 +750,9 @@ def main(args):
             avg_mae = mae_sum / max(count, 1)
             if sched:
                 sched.step(avg)
-            lr = opt.param_groups[0]["lr"]
-            print(f"epoch {epoch} loss {avg:.6f} acc {avg_acc:.4f} mae {avg_mae:.4f} lr {lr:.2e}")
+            lr = opt.param_groups[0]["lr"]  # hidden_1c
+            base_lr = f" base lr {opt.param_groups[1]['lr']:.2e}" if len(opt.param_groups) > 1 else ""
+            print(f"epoch {epoch} loss {avg:.6f} acc {avg_acc:.4f} mae {avg_mae:.4f} lr {lr:.2e}{base_lr}")
             # format compatible with tools/nnue/plot.py
             hyperparam = {
                 "learn rate": f"{lr:.2e}",
@@ -755,6 +782,12 @@ if __name__ == "__main__":
     # Defaults below are tuned for SGD (--optimizer sgd). For adam/amsgrad use a
     # much smaller --learn-rate (e.g. 1e-4) and lower --momentum (~0.5).
     p.add_argument("-r", "--learn-rate", type=float, default=1e-2)
+    p.add_argument(
+        "--base-lr-scale",
+        type=float,
+        default=1.0,
+        help="learn rate multiplier for all layers but hidden_1c (0 = freeze them)",
+    )
     p.add_argument("-o", "--export", help="export weights.bin and exit")
     p.add_argument(
         "-q",

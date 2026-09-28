@@ -108,6 +108,9 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
   #define NATIVE_UCI                        true
 #endif /* NATIVE_UCI */
 
+/* Experimental: hidden_1c (bishops + occupancy) modulation, adds to hidden_1b */
+#define NNUE_HIDDEN_1C                      true
+
 /* hidden_2 in int16 at QSCALE (madd_epi16), float from hidden_3 on */
 #define NNUE_L2_INT16                       true
 
@@ -131,7 +134,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 /* Experimental */
 #define USE_BOOK_HINT                       false
-#define USE_MOVE_PREDICTION                 true
+#define USE_MOVE_PREDICTION                 false
 
 /* Support endtable probing with the Fathom library */
 #define USE_ENDTABLES                       true

@@ -23,6 +23,7 @@ POOL_SIZE = 8
 POOLED = ACCUMULATOR_SIZE // POOL_SIZE
 MAIN_BUCKETS = 16
 INPUTS_B = 256
+INPUTS_C = 256
 HIDDEN_2 = 16
 HIDDEN_3 = 16
 
@@ -30,7 +31,7 @@ Q_SCALE = 1024
 # mirror nnue.h: hidden_2 input (AQSCALE) and pool / hidden_2 weights (WQSCALE)
 AQ_SCALE = Q_SCALE * 4
 WQ_SCALE = Q_SCALE * 4
-ACC_CAP = 32767 / Q_SCALE  # accumulator and hidden_1b, int16 at Q_SCALE
+ACC_CAP = 32767 / Q_SCALE  # accumulator, hidden_1b, hidden_1c and their sum, int16 at Q_SCALE
 INT16_CAP = 32767 / AQ_SCALE  # hidden_2 input, int16 at AQ_SCALE
 W_CAP = 32767 / WQ_SCALE  # pool and hidden_2 weights, int16 at WQ_SCALE
 INT32_CAP = 2**31 / (AQ_SCALE * WQ_SCALE)  # hidden_2 int32 sums
@@ -39,6 +40,7 @@ INT32_CAP = 2**31 / (AQ_SCALE * WQ_SCALE)  # hidden_2 int32 sums
 EXPORT = [
     ("hidden_1a", MAIN_BUCKETS * ACTIVE_INPUTS, ACCUMULATOR_SIZE, ACCUMULATOR_SIZE),
     ("hidden_1b", INPUTS_B, POOLED, POOLED),
+    ("hidden_1c", INPUTS_C, POOLED, POOLED),
     ("pool", 2 * ACCUMULATOR_SIZE, 1, 0),
     ("hidden_2", POOLED, HIDDEN_2, HIDDEN_2),
     ("hidden_3", HIDDEN_2, HIDDEN_3, HIDDEN_3),
@@ -127,7 +129,12 @@ def forward(layers, packed):
     acc = np.maximum(pre, 0)
 
     w1b, b1b = layers["hidden_1b"]
-    mod = feats[:, :INPUTS_B] @ w1b + b1b
+    mod_b = feats[:, :INPUTS_B] @ w1b + b1b
+
+    w1c, b1c = layers["hidden_1c"]
+    occ = feats[:, :768].reshape(-1, 6, 128).sum(axis=1)
+    mod_c = np.concatenate([feats[:, 384:512], occ], axis=1) @ w1c + b1c
+    mod = mod_b + mod_c  # one int16 accumulator in the engine
 
     pool = layers["pool"][0].reshape(2, POOLED, POOL_SIZE)
     stm = packed[:, -1].astype(int)
@@ -137,7 +144,7 @@ def forward(layers, packed):
     w2, b2 = layers["hidden_2"]
     pre2 = residual @ w2 + b2
     abs2 = np.abs(residual) @ np.abs(w2)  # bounds every partial sum of the int32 accumulators
-    return dict(pre=pre, acc=acc, mod=mod, pooled=pooled, residual=residual, pre2=pre2, abs2=abs2)
+    return dict(pre=pre, acc=acc, mod_b=mod_b, mod_c=mod_c, mod=mod, pooled=pooled, residual=residual, pre2=pre2, abs2=abs2)
 
 
 def report_static(layers):
@@ -175,7 +182,9 @@ def report_empirical(layers, boards, batch):
     for i in range(0, packed.shape[0], batch):
         r = forward(layers, packed[i : i + batch])
         track("acc pre-relu", r["pre"])
-        track("mod (1b)", r["mod"])
+        track("mod (1b)", r["mod_b"])
+        track("mod (1c)", r["mod_c"])
+        track("mod (1b + 1c)", r["mod"])
         track("pooled", r["pooled"])
         track("residual = pooled*(1+mod)", r["residual"])
         track("hidden_2 pre-act", r["pre2"])
@@ -183,7 +192,9 @@ def report_empirical(layers, boards, batch):
 
     caps = {
         "acc pre-relu": ACC_CAP,
-        "mod (1b)": ACC_CAP,
+        "mod (1b)": None,  # informational: the engine only materializes the sum
+        "mod (1c)": None,
+        "mod (1b + 1c)": ACC_CAP,
         "pooled": INT16_CAP,
         "residual = pooled*(1+mod)": INT16_CAP,
         "hidden_2 pre-act": INT32_CAP,
@@ -191,6 +202,9 @@ def report_empirical(layers, boards, batch):
     }
     for name, (lo, hi) in stats.items():
         cap = caps[name]
+        if cap is None:
+            print(f"{name:28s} [{lo:10.4f}, {hi:10.4f}]")
+            continue
         worst = max(abs(lo), abs(hi))
         flag = "  OVERFLOW" if worst >= cap else f"  headroom x{cap / max(worst, 1e-9):.1f}"
         print(f"{name:28s} [{lo:10.4f}, {hi:10.4f}]  cap {cap:8.2f}{flag}")

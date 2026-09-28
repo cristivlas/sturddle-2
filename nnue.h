@@ -21,6 +21,9 @@
  */
 #include "common.h"
 #include "chess.h"
+#include <algorithm>
+#include <climits>
+#include <functional>
 #include <istream>
 #include <stdexcept>
 #include <string>
@@ -367,6 +370,103 @@ namespace nnue
     {
         return (piece_type % 6) * 128 + (64 * color) + 63 - square;
     }
+
+#if NNUE_HIDDEN_1C
+    /* hidden_1c inputs: bishops (2x64), then occupancy (2x64) */
+    constexpr int INPUTS_C = 256;
+
+    /* hidden_1b and hidden_1c share one int16 accumulator: throw if any column can overflow */
+    template <typename LB, typename LC>
+    void check_modulation_bounds(const LB& layer_b, const LC& layer_c)
+    {
+        static_assert(LB::OUTPUTS == LC::OUTPUTS);
+
+        /* prefix sums of the largest sign-aligned weights in a 64-row (color, square) block */
+        const auto prefix = [](const auto& layer, int first, int j, int sign, int (&sums)[65])
+        {
+            int v[64];
+            for (int i = 0; i != 64; ++i)
+                v[i] = std::max(0, sign * int(layer._wt[j][first + i]));
+            std::sort(v, v + 64, std::greater<int>());
+            sums[0] = 0;
+            for (int i = 0; i != 64; ++i)
+                sums[i + 1] = sums[i] + v[i];
+        };
+
+        for (int j = 0; j != LB::OUTPUTS; ++j)
+        {
+            const int bias = int(layer_b._b[j]) + int(layer_c._b[j]);
+
+            for (const int sign : { 1, -1 })
+            {
+                int bound = sign * bias;
+
+                for (int c = 0; c != 2; ++c)
+                {
+                    int king = INT_MIN; /* exactly one */
+                    for (int i = 0; i != 64; ++i)
+                        king = std::max(king, sign * int(layer_b._wt[j][64 * c + i]));
+
+                    int pawns[65], bishops[65], occupied[65];
+                    prefix(layer_b, 128 + 64 * c, j, sign, pawns);
+                    prefix(layer_c, 64 * c, j, sign, bishops);
+                    prefix(layer_c, 128 + 64 * c, j, sign, occupied);
+
+                    /* bishops beyond two are promoted pawns: pawns + bishops <= 10 */
+                    int pawns_bishops = 0;
+                    for (int p = 0; p <= 8; ++p)
+                        pawns_bishops = std::max(pawns_bishops, pawns[p] + bishops[10 - p]);
+
+                    bound += king + pawns_bishops + occupied[16];
+                }
+
+                if (bound > (sign > 0 ? INT16_MAX : -INT16_MIN))
+                    throw std::runtime_error("hidden_1b + hidden_1c column " + std::to_string(j) + " can overflow int16: " + std::to_string(sign * bound));
+            }
+        }
+    }
+
+    /* fuse hidden_1b and hidden_1c onto the piece-square inputs, so each delta is one row */
+    template <typename LM, typename LB, typename LC>
+    void fuse_modulation(LM& fused, const LB& layer_b, const LC& layer_c)
+    {
+        static_assert(LM::ROWS == TURN_INDEX && LM::INPUTS == TURN_INDEX);
+        static_assert(LB::ROWS == 256 && LC::ROWS == INPUTS_C);
+        static_assert(LM::OUTPUTS == LB::OUTPUTS && LM::OUTPUTS == LC::OUTPUTS);
+
+        constexpr int BISHOPS = PieceType::BISHOP % 6;
+
+        for (int j = 0; j != LM::OUTPUTS; ++j)
+            fused._b[j] = int16_t(layer_b._b[j] + layer_c._b[j]);
+
+        for (int i = 0; i != TURN_INDEX; ++i)
+        {
+            const int color_square = i & 127;
+
+            for (int j = 0; j != LM::OUTPUTS; ++j)
+            {
+                int v = layer_c._wt[j][128 + color_square]; /* occupancy */
+                if (i < LB::ROWS)
+                    v += layer_b._wt[j][i]; /* kings, pawns */
+                if ((i >> 7) == BISHOPS)
+                    v += layer_c._wt[j][color_square];
+                fused._w[i][j] = fused._wt[j][i] = int16_t(v);
+            }
+        }
+    }
+
+  #if DEBUG_INCREMENTAL
+    /* hidden_1c inputs straight from the bitboards, to check the fused layer against B + C */
+    INLINE void encode_bishops_occupancy(const State& board, input_t (&encoding)[INPUTS_C])
+    {
+        for (int c = 0; c != 2; ++c)
+        {
+            for_each_square_r(board.bishops & board._occupied_co[c], [&](Square j) { encoding[64 * c + 63 - j] = 1; });
+            for_each_square_r(board._occupied_co[c], [&](Square j) { encoding[128 + 64 * c + 63 - j] = 1; });
+        }
+    }
+  #endif /* DEBUG_INCREMENTAL */
+#endif /* NNUE_HIDDEN_1C */
 
 
     /** Rectified Linear Unit (reLU) activation */
@@ -921,7 +1021,7 @@ namespace nnue
 
         Bucket _bucket[SLOTS];
         int _current_bucket = 0;
-        ALIGN int16_t _output_b[OUTPUTS_B] = { };
+        ALIGN int16_t _output_b[OUTPUTS_B] = { }; /* with NNUE_HIDDEN_1C: hidden_1b + hidden_1c */
 
         INLINE Bucket& slot(int bucket) { return _bucket[NNUE_SINGLE_BUCKET ? 0 : bucket]; }
         INLINE const Bucket& slot(int bucket) const { return _bucket[NNUE_SINGLE_BUCKET ? 0 : bucket]; }
@@ -1048,6 +1148,11 @@ namespace nnue
                 ASSERT_ALWAYS(_input[i] == temp[i]);
         #endif /* DEBUG_INCREMENTAL */
 
+        #if NNUE_HIDDEN_1C
+            /* piece-square deltas only, for the fused layer B */
+            const int rb_idx = r_idx, ab_idx = a_idx;
+        #endif /* NNUE_HIDDEN_1C */
+
             if (state.turn)
                 add_inputs[a_idx++] = TURN_INDEX;
             else
@@ -1130,7 +1235,11 @@ namespace nnue
             }
 
             /* layer B: updated incrementally from the ancestor inside incremental_update */
-            incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, incremental_a, src_a, ancestor._output_b);
+            incremental_update(layer_a, layer_b, remove_inputs, add_inputs, r_idx, a_idx, base, bucket, incremental_a, src_a, ancestor._output_b
+            #if NNUE_HIDDEN_1C
+                , rb_idx, ab_idx
+            #endif /* NNUE_HIDDEN_1C */
+            );
 
             slot(bucket).hash = state.hash();
             _current_bucket = bucket;
@@ -1170,7 +1279,12 @@ namespace nnue
             int bucket,
             bool update_layer_a,
             const int16_t* src_a,
-            const int16_t* src_b)
+            const int16_t* src_b
+        #if NNUE_HIDDEN_1C
+            , const int rb_idx /* piece-square deltas, without the turn */
+            , const int ab_idx
+        #endif /* NNUE_HIDDEN_1C */
+            )
         {
         #if __ARM__
             using VecShort = Vec16s;
@@ -1183,11 +1297,17 @@ namespace nnue
             static_assert(LA::OUTPUTS % VecShort::size() == 0);
             static_assert(LB::OUTPUTS % VecShort::size() == 0);
 
+        #if NNUE_HIDDEN_1C
+            /* fused layer B: one row per piece-square delta */
+            static_assert(LB::INPUTS == TURN_INDEX);
+            const int update_layer_b = rb_idx + ab_idx;
+        #else
             int update_layer_b = 0;
             for (int i = 0; i < r_idx && !update_layer_b; ++i)
                 update_layer_b += remove_inputs[i] < LB::INPUTS;
             for (int i = 0; i < a_idx && !update_layer_b; ++i)
                 update_layer_b += add_inputs[i] < LB::INPUTS;
+        #endif /* NNUE_HIDDEN_1C */
 
             VecShort vo, vw;
 
@@ -1224,6 +1344,19 @@ namespace nnue
                 {
                     vo.load_a(&src_b[j]);
 
+                #if NNUE_HIDDEN_1C
+                    for (int i = 0; i < rb_idx; ++i)
+                    {
+                        vw.load_a(&layer_b._w[remove_inputs[i]][j]);
+                        vo -= vw;
+                    }
+
+                    for (int i = 0; i < ab_idx; ++i)
+                    {
+                        vw.load_a(&layer_b._w[add_inputs[i]][j]);
+                        vo += vw;
+                    }
+                #else
                     for (int i = 0; i < r_idx; ++i)
                     {
                         const auto index = remove_inputs[i];
@@ -1241,6 +1374,7 @@ namespace nnue
                         vw.load_a(&layer_b._w[index][j]);
                         vo += vw;
                     }
+                #endif /* NNUE_HIDDEN_1C */
                     vo.store_a(&_output_b[j]);
                 }
             }

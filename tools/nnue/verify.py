@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Verify NNUE binary weights for proper clipping and rounding.
-Architecture: 2048-accumulator, hidden_1b (linear) modulates pooled 1:1, 16-way bucketing (4 pawn x 4 king-file).
+Architecture: 2048-accumulator, hidden_1b + hidden_1c (linear) modulate pooled 1:1, 16-way bucketing (4 pawn x 4 king-file).
 """
 import sys
 from pathlib import Path
@@ -18,6 +18,9 @@ Q_MAX_A = 32767 / Q_SCALE / 34
 # Constraint B: for hidden_1b layer
 Q_MAX_B = 32767 / Q_SCALE / 19
 
+# Constraint C: for hidden_1c layer (32 occupied + up to 20 bishops + bias)
+Q_MAX_C = 32767 / Q_SCALE / 53
+
 ACTIVE_INPUTS = 769
 ACCUMULATOR_SIZE = 2048
 POOL_SIZE = 8
@@ -27,12 +30,13 @@ MOVE_ACCUMULATOR_SIZE = 256
 MOVE_OUTPUTS = 4096  # 64x64 (from, to)
 
 # Layer definitions: (name, kernel_shape, bias_shape, constraint_type)
-# constraint_type: 'A', 'B', or None
+# constraint_type: 'A', 'B', 'C', or None
 # ORDER MATTERS - must match export order from trainer
 
 LAYERS = [
     ('hidden_1a', (ACTIVE_INPUTS * MAIN_BUCKETS, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), 'A'),
     ('hidden_1b', (256, POOLED), (POOLED,), 'B'),
+    ('hidden_1c', (256, POOLED), (POOLED,), 'C'),  # bishops + occupancy, adds to hidden_1b
     ('pool', (2 * ACCUMULATOR_SIZE, 1), (0,), None),  # stm-major, kernel-only, float; (0,) -> np.prod == 0, no bias read
     ('hidden_2', (POOLED, 16), (16,), None),
     ('hidden_3', (16, 16), (16,), None),
@@ -51,6 +55,8 @@ def get_constraint_params(constraint_type):
         return Q_MAX_A, Q_SCALE
     elif constraint_type == 'B':
         return Q_MAX_B, Q_SCALE
+    elif constraint_type == 'C':
+        return Q_MAX_C, Q_SCALE
     else:
         return None, None
 
@@ -146,6 +152,7 @@ def main():
     print(f"Q_SCALE = {Q_SCALE}")
     print(f"Q_MAX_A = {Q_MAX_A:.10f} (hidden_1a, move)")
     print(f"Q_MAX_B = {Q_MAX_B:.10f} (hidden_1b)")
+    print(f"Q_MAX_C = {Q_MAX_C:.10f} (hidden_1c)")
     print()
     
     data = np.fromfile(filepath, dtype=np.float32)

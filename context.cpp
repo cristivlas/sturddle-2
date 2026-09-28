@@ -301,7 +301,14 @@ constexpr int HIDDEN_2 = 16;
 constexpr int HIDDEN_3 = 16;
 
 using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
+#if NNUE_HIDDEN_1C
+/* L1B and L1C are load-only; the accumulator uses their fusion L1M as its layer B */
+using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE>;
+using L1CType = nnue::Layer<nnue::INPUTS_C, HIDDEN_1B, int16_t, nnue::QSCALE>;
+using L1MType = nnue::Layer<nnue::TURN_INDEX, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
+#else
 using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
+#endif /* NNUE_HIDDEN_1C */
 using PoolType = nnue::PoolLayer<HIDDEN_1A>;
 #if NNUE_L2_INT16
   using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, int16_t, nnue::WQSCALE>;
@@ -317,7 +324,9 @@ using EVALType = nnue::Layer<HIDDEN_3, 1>;
  * The accumulator takes the inputs and processes them into two outputs,
  * using layers L1A and L1B. L1B processes the 1st 256 inputs, which
  * correspond to kings and pawns. The (linear) output of L1B modulates the
- * pooled output of L1A 1:1.
+ * pooled output of L1A 1:1. With NNUE_HIDDEN_1C, L1C (bishops and occupancy)
+ * is also linear; L1B and L1C are fused at load into L1M, which maps every
+ * piece-square input to one row.
  */
 using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
 using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
@@ -345,6 +354,9 @@ static struct Model
         constexpr auto param_count =
             L1AType::param_count()
             + L1BType::param_count()
+        #if NNUE_HIDDEN_1C
+            + L1CType::param_count()
+        #endif /* NNUE_HIDDEN_1C */
             + PoolType::param_count()
             + L2Type::param_count()
             + L3Type::param_count()
@@ -375,6 +387,9 @@ static struct Model
             /* Load layers in the same order that the trainer exports them. */
             L1A.load_weights(file);
             L1B.load_weights(file);
+        #if NNUE_HIDDEN_1C
+            L1C.load_weights(file);
+        #endif /* NNUE_HIDDEN_1C */
             POOL.load_weights(file);
             L2.load_weights(file);
             L3.load_weights(file);
@@ -389,13 +404,28 @@ static struct Model
         {
             throw std::runtime_error("Error reading weights from: " + weights_path.string());
         }
+    #if NNUE_HIDDEN_1C
+        fuse_modulation();
+    #endif /* NNUE_HIDDEN_1C */
         Context::log_message(LogLevel::DEBUG, "Loaded " + weights_path.string());
     }
+
+#if NNUE_HIDDEN_1C
+    void fuse_modulation()
+    {
+        nnue::check_modulation_bounds(L1B, L1C);
+        nnue::fuse_modulation(L1M, L1B, L1C);
+    }
+#endif /* NNUE_HIDDEN_1C */
 
     std::string default_weights_path;
 
     L1AType L1A;
     L1BType L1B;
+#if NNUE_HIDDEN_1C
+    L1CType L1C;
+    L1MType L1M;
+#endif /* NNUE_HIDDEN_1C */
     PoolType POOL;
     L2Type L2;
     L3Type L3;
@@ -417,8 +447,12 @@ static struct Model
 void Model::init()
 {
     /* POOL not in legacy weights.h; constructor default (1/8 == avg pool) applies */
+    /* L1C not in legacy weights.h either; zero-initialized (static model), so it is a no-op */
     INIT_LAYER(L1A, hidden_1a);
     INIT_LAYER(L1B, hidden_1b);
+#if NNUE_HIDDEN_1C
+    fuse_modulation();
+#endif /* NNUE_HIDDEN_1C */
     INIT_LAYER(L2, hidden_2);
     INIT_LAYER(L3, hidden_3);
     INIT_LAYER(EVAL, out);
@@ -469,6 +503,10 @@ void Model::init()
     /* Same order as Model::load_weights file-based path */
     L1A.load_weights(file);
     L1B.load_weights(file);
+#if NNUE_HIDDEN_1C
+    L1C.load_weights(file);
+    fuse_modulation();
+#endif /* NNUE_HIDDEN_1C */
     POOL.load_weights(file);
     L2.load_weights(file);
     L3.load_weights(file);
@@ -515,16 +553,49 @@ void Context::load_weights(const std::string& file_path)
 }
 
 
+#if NNUE_HIDDEN_1C && DEBUG_INCREMENTAL
+/* the fused L1M output must equal L1B + L1C computed separately */
+static void check_fused_modulation(const Accumulator& accumulator, const chess::State& state)
+{
+    ALIGN nnue::input_t input_b[nnue::round_up<INPUT_STRIDE>(nnue::ACTIVE_INPUTS)] = { };
+    ALIGN nnue::input_t input_c[nnue::INPUTS_C] = { };
+    nnue::one_hot_encode(state, input_b);
+    nnue::encode_bishops_occupancy(state, input_c);
+
+    ALIGN int16_t output_b[HIDDEN_1B], output_c[HIDDEN_1B];
+    model.L1B.dot(input_b, output_b);
+    model.L1C.dot(input_c, output_c);
+
+    for (int j = 0; j != HIDDEN_1B; ++j)
+        ASSERT_ALWAYS(int16_t(output_b[j] + output_c[j]) == accumulator._output_b[j]);
+}
+#endif /* NNUE_HIDDEN_1C && DEBUG_INCREMENTAL */
+
+
 static INLINE void update(Accumulator& accumulator, const Context* ctxt)
 {
+#if NNUE_HIDDEN_1C
+    accumulator.update(model.L1A, model.L1M, ctxt->state());
+  #if DEBUG_INCREMENTAL
+    check_fused_modulation(accumulator, ctxt->state());
+  #endif /* DEBUG_INCREMENTAL */
+#else
     accumulator.update(model.L1A, model.L1B, ctxt->state());
+#endif /* NNUE_HIDDEN_1C */
 }
 
 
 /* incremental version */
 static INLINE void update(Accumulator& accumulator, const Context* ctxt, Accumulator& prev_acc)
 {
+#if NNUE_HIDDEN_1C
+    accumulator.update(model.L1A, model.L1M, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc, NNUE_refresh[ctxt->tid()]);
+  #if DEBUG_INCREMENTAL
+    check_fused_modulation(accumulator, ctxt->state());
+  #endif /* DEBUG_INCREMENTAL */
+#else
     accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc, NNUE_refresh[ctxt->tid()]);
+#endif /* NNUE_HIDDEN_1C */
 }
 
 
