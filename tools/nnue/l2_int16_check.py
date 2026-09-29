@@ -51,11 +51,16 @@ EXPORT = [
 def load_bin(path):
     data = np.fromfile(path, dtype=np.float32)
     expected = sum(i * o + b for _, i, o, b in EXPORT)
-    if data.size != expected:
-        raise ValueError(f"{path}: expected {expected} floats, got {data.size}")
     layers = {}
+    export = EXPORT
+    if data.size == expected - (INPUTS_C * POOLED + POOLED):
+        # without hidden_1c (NNUE_HIDDEN_1C off): same as all-zero hidden_1c
+        export = [layer for layer in EXPORT if layer[0] != "hidden_1c"]
+        layers["hidden_1c"] = (np.zeros((INPUTS_C, POOLED), np.float32), np.zeros(POOLED, np.float32))
+    elif data.size != expected:
+        raise ValueError(f"{path}: expected {expected} floats, got {data.size}")
     off = 0
-    for name, i, o, bn in EXPORT:
+    for name, i, o, bn in export:
         k = data[off : off + i * o].reshape(i, o)
         off += i * o
         b = data[off : off + bn]

@@ -245,12 +245,19 @@ def load_bin(model, path, count=-1):
     model = _core(model)
     data = np.fromfile(path, dtype=np.float32, count=count)
     expected = sum(i * o + bn for _, i, o, bn in _EXPORT)
-    if data.size != expected:
+    skip_1c = data.size == expected - (INPUTS_C * POOLED + POOLED)
+    if skip_1c:
+        # pre-hidden_1c weights: hidden_1c stays zero, which leaves the net unchanged
+        model.hidden_1c.weight.zero_()
+        model.hidden_1c.bias.zero_()
+    elif data.size != expected:
         raise ValueError(
-            f"{path}: expected {expected} floats, got {data.size} (pre-hidden_1c weights: see add_hidden_1c.py)"
+            f"{path}: expected {expected} floats, got {data.size} (with a move head: see add_hidden_1c.py)"
         )
     off = 0
     for name, i, o, bn in _EXPORT:
+        if name == "hidden_1c" and skip_1c:
+            continue
         k = data[off : off + i * o].reshape(i, o)
         off += i * o
         b = data[off : off + bn]

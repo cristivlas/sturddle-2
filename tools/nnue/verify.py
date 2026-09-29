@@ -157,10 +157,19 @@ def main():
     
     data = np.fromfile(filepath, dtype=np.float32)
     print(f"Total values: {len(data)}")
-    
-    # Calculate expected sizes
-    base_total = sum(np.prod(k) + np.prod(b) for _, k, b, _ in LAYERS)
+
     move_total = sum(np.prod(k) + np.prod(b) for _, k, b, _ in MOVE_LAYERS)
+
+    # Without hidden_1c (NNUE_HIDDEN_1C off)?
+    layers = LAYERS
+    no_1c = [layer for layer in LAYERS if layer[0] != 'hidden_1c']
+    no_1c_size = sum(np.prod(k) + np.prod(b) for _, k, b, _ in no_1c)
+    if len(data) in (no_1c_size, no_1c_size + move_total):
+        layers = no_1c
+        print("Detected: model WITHOUT hidden_1c")
+
+    # Calculate expected sizes
+    base_total = sum(np.prod(k) + np.prod(b) for _, k, b, _ in layers)
     
     print(f"Expected (without move): {base_total}")
     print(f"Expected (with move): {base_total + move_total}")
@@ -178,7 +187,7 @@ def main():
     print()
     
     # Verify base layers
-    offset, total_clip_violations, total_round_violations, success = verify_layers(data, LAYERS)
+    offset, total_clip_violations, total_round_violations, success = verify_layers(data, layers)
     
     if not success:
         print("ERROR: Unexpected end of data while reading base layers")

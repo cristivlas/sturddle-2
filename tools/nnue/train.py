@@ -38,6 +38,10 @@ Q_MIN_A = -Q_MAX_A
 Q_MAX_B = 32767  / Q_SCALE / 19
 Q_MIN_B = -Q_MAX_B
 
+# 32 occupied + up to 20 bishops (promotions) + 1 bias == 53
+Q_MAX_C = 32767 / Q_SCALE / 53
+Q_MIN_C = -Q_MAX_C
+
 SCALE = 100.0
 
 # Square color masks for OCB detection
@@ -365,11 +369,32 @@ def make_model(args, strategy):
             trainable=not args.freeze_eval,
         )(input_1b)
 
+        mod = hidden_1b
+        if args.hidden_1c:
+            # Hidden layer 1c (bishops + per-color occupancy) adds to the 1b modulation.
+            # Zero init: importing pre-1c weights leaves the net unchanged (warm start).
+            constr_c = QConstraint(Q_MIN_C, Q_MAX_C)
+            input_1c = Lambda(
+                lambda x: tf.concat([x[:, 384:512], tf.reduce_sum(tf.reshape(x[:, :768], [-1, 6, 128]), axis=1)], axis=1),
+                name='bishops_and_occupancy',
+            )(unpack_layer)
+            hidden_1c = Dense(
+                ACCUMULATOR_SIZE // POOL_SIZE,
+                activation=None,
+                name='hidden_1c',
+                kernel_initializer='zeros',
+                bias_initializer='zeros',
+                kernel_constraint=constr_c,
+                bias_constraint=constr_c,
+                trainable=not args.freeze_eval,
+            )(input_1c)
+            mod = Add(name='modulation_sum')([hidden_1b, hidden_1c])
+
         turn = Lambda(lambda x: x[:, -1:], name='turn')(unpack_layer)
         pooled = stm_pool_class()(name='pool', trainable=not args.freeze_eval)([hidden_1a, turn])
 
-        # Modulate pooled by 1b: pooled * (1 + h1b)
-        modulation = Multiply(name='modulation')([pooled, hidden_1b])
+        # Modulate pooled by 1b (+ 1c): pooled * (1 + mod)
+        modulation = Multiply(name='modulation')([pooled, mod])
         residual = Add(name='residual')([pooled, modulation])
 
         hidden_2 = Dense(
@@ -625,7 +650,7 @@ def write_weigths(args, model, indent=2):
 def write_binary_weights(args, model, file):
     # Fixed engine load order (context.cpp): eval layers, then move head.
     # model.layers is graph-depth ordered and interleaves the head into the eval layers.
-    order = ['hidden_1a', 'hidden_1b', 'pool', 'hidden_2', 'hidden_3', 'out', 'move_acc', 'move']
+    order = ['hidden_1a', 'hidden_1b', 'hidden_1c', 'pool', 'hidden_2', 'hidden_3', 'out', 'move_acc', 'move']
     layers = [model.get_layer(n) for n in order if any(l.name == n for l in model.layers)]
     for layer in layers:
         if layer.name == 'pool':
@@ -664,17 +689,24 @@ def export_weights(args, model):
 def load_binary_weights(args, model, file):
     """Load weights from a flat .bin into the eval layers, in C++/torch export order.
 
-    Consumes hidden_1a, 1b, 2, 3, out (kernel then bias each). The 'move' head is
+    Consumes hidden_1a, 1b, [1c,] pool, 2, 3, out (kernel then bias each). The 'move' head is
     NOT in the file (eval-only export), so it is skipped by name — importing an
     eval-only weights.bin into a --predict-moves graph leaves the head untouched.
+    Pre-1c weights import into a --hidden-1c graph with hidden_1c left at its zero init.
     """
-    eval_order = ['hidden_1a', 'hidden_1b', 'pool', 'hidden_2', 'hidden_3', 'out']
+    eval_order = ['hidden_1a', 'hidden_1b', 'hidden_1c', 'pool', 'hidden_2', 'hidden_3', 'out']
     by_name = {l.name: l for l in model.layers}
 
+    def size_of(name):
+        return sum(int(np.prod(w.shape)) for w in by_name[name].get_weights()) if name in by_name else 0
+
     payload = np.fromfile(file, dtype=np.float32)
-    expected = sum(int(np.prod(w.shape)) for n in eval_order if n in by_name for w in by_name[n].get_weights())
-    if payload.size != expected:
-        raise ValueError(f'{args.import_file}: expected {expected} float32, got {payload.size}')
+    expected = sum(size_of(n) for n in eval_order)
+    if 'hidden_1c' in by_name and payload.size == expected - size_of('hidden_1c'):
+        eval_order.remove('hidden_1c')
+        print('No hidden_1c in weights file, keeping zero init')
+    elif payload.size != expected:
+        raise ValueError(f'{args.import_file}: expected {expected} float32, got {payload.size} (hidden_1c needs --hidden-1c)')
 
     off = 0
     for name in eval_order:
@@ -1326,6 +1358,7 @@ if __name__ == '__main__':
         parser.add_argument('--bin', action='store_true', help='export weights in binary format')
         parser.add_argument('--freeze-eval', action='store_true')
         parser.add_argument('--hex', action='store_true', help='export weights in hex format')
+        parser.add_argument('--hidden-1c', action='store_true', help='add the hidden_1c (bishops + occupancy) modulation path (engine: NNUE_HIDDEN_1C)')
         parser.add_argument('--import-file', help='import weights from binary file')
         parser.add_argument('--save-model', action='store_true', help='save model immediately, use with --import and/or --alt-model')
 
