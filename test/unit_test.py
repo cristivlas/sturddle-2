@@ -151,27 +151,6 @@ def test_is_checkmate():
 
 
 
-def test_connected_rooks():
-    tests = [
-        ('rooks.01', '1rb1r1k1/p1p2ppp/8/2pn4/5P2/2QB4/qNP3PP/2KRB2R w - -', (False, False)),
-        ('rooks.02', '1rb1r1k1/p1p2ppp/8/2pn4/5P2/2QB4/qNP2BPP/2KR3R w - -', (True, False)),
-        ('rooks.03', '1r2r1k1/p1pb1ppp/8/2pn4/5P2/2QB4/qNP2BPP/2KR3R w - -', (True, True)),
-        ('rooks.04', '1r4k1/p1pb1ppp/1r6/2pn4/5P2/2QB4/qNP2BPP/2KR3R w - -', (True, True)),
-        ('rooks.05', '1r4k1/pbp2ppp/1r2r3/2pn4/5P2/2QB4/qNP3PP/2K1R1BR w - -', (False, True)),
-    ]
-
-    for id, epd, expected in tests:
-        board = chess.Board(fen=epd)
-        state = engine.BoardState(board)
-
-        # engine.print_board(board)
-        result_w = state.has_connected_rooks(chess.WHITE)
-        result_b = state.has_connected_rooks(chess.BLACK)
-
-        assert expected[0] == result_w, (id, expected[0], result_w)
-        assert expected[1] == result_b, (id, expected[1], result_b)
-
-
 def test_pins():
     tests = [
         ('pin.01', '4k3/1p6/8/4q3/2p2P2/P2p4/1r5P/4RK2 b - -', True),
@@ -329,51 +308,6 @@ def test_forks():
         assert state.has_fork(color)==expected, (id, expected)
 
 
-def test_connected_pawns():
-    tests = [
-        ('connected.01', '8/P5kp/3p2p1/3P4/2P2Pb1/6P1/4p2P/3rR1K1 w - -', chess.WHITE, 5),
-        ('connected.02', '8/P5kp/3p2p1/3P4/2P2Pb1/6P1/4p2P/3rR1K1 w - -', chess.BLACK, 4),
-        ('connected.03', '2r1k2r/2p3p1/1p2P2p/p7/7B/P1N5/6PP/R5K1 b k -', chess.BLACK, 5),
-        ('connected.04', '2r1k2r/2p3p1/1p2P2p/p7/7B/P1N5/6PP/R5K1 b k -', chess.WHITE, 2),
-    ]
-
-    for id, fen, color, expected in tests:
-        state = engine.BoardState(chess.Board(fen=fen))
-        count = state.count_connected_pawns(color)
-        assert count == expected, (id, count, f'expected={expected}')
-
-
-def test_isolated_pawns():
-    tests = [
-        ('isolated.01', '8/P5kp/3p2p1/3P4/2P2Pb1/6P1/4p2P/3rR1K1 w - -', chess.WHITE, 1),
-        ('isolated.02', '8/P5kp/3p2p1/3P4/2P2Pb1/6P1/4p2P/3rR1K1 w - -', chess.BLACK, 0),
-    ]
-
-    for id, fen, color, expected in tests:
-        state = engine.BoardState(chess.Board(fen=fen))
-        count = state.count_isolated_pawns(color)
-        assert count == expected, (id, count, f'expected={expected}')
-
-
-def test_longest_pawn_sequence():
-    tests = [
-        ('seq.01', '8/P5kp/3p2p1/3P4/2P2Pb1/6P1/4p2P/3rR1K1 w - -', chess.WHITE, 3),
-        ('seq.02', '8/P5kp/3p2p1/3P4/2P2Pb1/6P1/4p2P/3rR1K1 w - -', chess.BLACK, 2),
-        ('seq.03', 'r1bq2rk/pp3pbp/2p1p1pQ/7P/3P4/2PB1N2/PP3PPR/2KR4 w - -', chess.WHITE, 4),
-        ('seq.04', 'r1bq2rk/pp3pbp/2p1p1pQ/7P/3P4/2PB1N2/PP3PPR/2KR4 w - -', chess.BLACK, 4),
-        ('seq.05',  '8/7p/5k2/5p2/p1p2P2/Pr1pPK2/1P1R3P/8 b - -', chess.WHITE, 2),
-        ('seq.06',  '8/7p/5k2/5p2/p1p2P2/Pr1pPK2/1P1R3P/8 b - -', chess.BLACK, 2),
-        ('seq.07',  '2b5/1r6/2kBp1p1/p2pP1P1/2pP4/1pP3K1/1R3P2/8 b - -', chess.BLACK, 5),
-        ('seq.08',  '2b5/1r6/2kBp1p1/p2pP1P1/2pP4/1pP3K1/1R3P2/8 b - -', chess.WHITE, 5),
-    ]
-
-    for id, fen, color, expected in tests:
-        board = chess.Board(fen=fen)
-        state = engine.BoardState(board)
-        count = state.longest_pawn_sequence(board.occupied_co[color])
-        assert count == expected, (id, count, f'expected={expected}')
-
-
 def test_repetition():
     game = chess.pgn.read_game(io.StringIO('''
 [FEN "4k3/4p3/8/8/8/3B4/4P3/4K3 w - -"]
@@ -427,7 +361,6 @@ def test_parse_fen():
 
 test_castling()
 test_castling_moves_generation()
-test_connected_rooks()
 test_en_passant()
 
 test_is_checkmate()
@@ -436,11 +369,6 @@ test_pin_mask()
 test_static_exchanges()
 test_zobrist()
 test_forks()
-
-# Test eval components
-test_connected_pawns()
-test_isolated_pawns()
-test_longest_pawn_sequence()
 
 test_repetition()
 

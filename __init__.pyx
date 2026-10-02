@@ -170,17 +170,12 @@ cdef extern from 'chess.h' namespace 'chess':
 
         void    apply_move(const BaseMove&)
 
-        int     count_connected_pawns(Color, Bitboard) const
-        int     count_isolated_pawns(Color, Bitboard) const
-
         bool    equals(const State&) const
-        score_t eval() const
         score_t eval_incremental(const BaseMove&) const
 
         uint64_t hash() const
         void    rehash()
 
-        bool    has_connected_rooks(int) const
         bool    has_fork(Color) const
 
         bool    is_castling(const BaseMove&) const
@@ -189,8 +184,6 @@ cdef extern from 'chess.h' namespace 'chess':
         bool    is_endgame() const
         bool    is_en_passant(const BaseMove&) const
         bool    is_pinned(Color) const
-
-        int     longest_pawn_sequence(Bitboard) const
 
         Bitboard checkers_mask(Color) const
 
@@ -314,18 +307,6 @@ cdef class BoardState:
         return self._state.checkers_mask(self._state.turn)
 
 
-    cpdef int count_connected_pawns(self, Color color, Bitboard mask = BB_ALL):
-        return self._state.count_connected_pawns(color, mask)
-
-
-    cpdef int count_isolated_pawns(self, Color color, Bitboard mask = BB_ALL):
-        return self._state.count_isolated_pawns(color, mask)
-
-
-    cpdef bool has_connected_rooks(self, color):
-        return self._state.has_connected_rooks(WHITE if color else BLACK)
-
-
     cpdef bool is_check(self):
         return self._state.is_check()
 
@@ -344,10 +325,6 @@ cdef class BoardState:
 
     cpdef has_fork(self, Color color):
         return self._state.has_fork(color)
-
-
-    cpdef int longest_pawn_sequence(self, Bitboard mask):
-        return self._state.longest_pawn_sequence(mask)
 
 
     cpdef Bitboard pin_mask(self, Color color, Square square):

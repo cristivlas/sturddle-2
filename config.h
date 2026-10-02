@@ -341,10 +341,8 @@ DECLARE_VALUE(  MULTICUT_MARGIN,                    105,    0,     441)
 DECLARE_VALUE(  MOVE_PREDICTION_MAX_ITER,             3,    0,      10)
 #endif
 
-#if WITH_NNUE
 DECLARE_VALUE(  NNUE_BLEND_PERCENT,                 100,   50,     100)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      469,  249,     690)
-#endif /* WITH_NNUE */
 
 /* is_null_move_ok */
 DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT_PCT,         305,   84,     525)
@@ -414,48 +412,6 @@ DECLARE_VALUE(  HISTORY_HIGH,                        91,   50,     150)
 DECLARE_VALUE(  HISTORY_LOW,                         12,    0,      30)
 DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,      15)
 
-GROUP(Eval)
-
-/****************************************************************************/
-#if !WITH_NNUE /* HCE tunable parameters */
-
-DECLARE_VALUE(  BISHOP_PAIR,                         53,    0,     100)
-DECLARE_VALUE(  CASTLING_RIGHTS_BONUS,               32,    0,     100)
-DECLARE_VALUE(  CENTER_ATTACKS,                      65,    0,     100)
-DECLARE_VALUE(  CENTER_OCCUPANCY,                    60,    0,     100)
-DECLARE_VALUE(  EVAL_MARGIN,                        300,    0,    5000)
-DECLARE_VALUE(  EVAL_LOW_DEPTH,                       5,    0,     100)
-DECLARE_VALUE(  KING_ATTACK_DIV,                     48,    1,     100)
-DECLARE_VALUE(  KING_OUT_PENALTY,                  -120, -500,       0)
-DECLARE_VALUE(  PAWN_SHIELD,                         21,    0,     100)
-DECLARE_VALUE(  MATERIAL_IMBALANCE,                -235, -500,       0)
-DECLARE_VALUE(  REDUNDANT_ROOK,                    -302, -500,       0)
-
-DECLARE_VALUE(  ENDGAME_CONNECTED_ROOKS,             39,    0,     100)
-DECLARE_VALUE(  ENDGAME_DEFENDED_PASSED,             29,    0,     100)
-DECLARE_VALUE(  ENDGAME_KING_QUADRANT,               22,    0,     100)
-DECLARE_VALUE(  ENDGAME_DOUBLED_PAWNS,              -42, -100,       0)
-DECLARE_VALUE(  ENDGAME_ISOLATED_PAWNS,             -38, -100,       0)
-DECLARE_VALUE(  ENDGAME_PASSED_FORMATION,            81,    0,     250)
-DECLARE_VALUE(  ENDGAME_PAWN_MAJORITY,               65,    0,     250)
-DECLARE_VALUE(  ENDGAME_THREATS,                     74,    0,     250)
-DECLARE_VALUE(  ENDGAME_UNBLOCKED_PASSED_6,         148,    0,     250)
-DECLARE_VALUE(  ENDGAME_UNBLOCKED_PASSED_7,         227,    0,     500)
-
-DECLARE_VALUE(  MIDGAME_CONNECTED_ROOKS,             48,    0,     100)
-DECLARE_VALUE(  MIDGAME_DEFENDED_PASSED,             68,    0,     100)
-DECLARE_VALUE(  MIDGAME_KING_QUADRANT,               18,    0,     100)
-DECLARE_VALUE(  MIDGAME_DOUBLED_PAWNS,              -28, -100,       0)
-DECLARE_VALUE(  MIDGAME_ISOLATED_PAWNS,             -36, -100,       0)
-DECLARE_VALUE(  MIDGAME_HALF_OPEN_FILE,              48,    0,     250)
-DECLARE_VALUE(  MIDGAME_OPEN_FILE,                   65,    0,     250)
-DECLARE_VALUE(  MIDGAME_PASSED_FORMATION,            79,    0,     250)
-DECLARE_VALUE(  MIDGAME_PAWN_MAJORITY,              109,    0,     250)
-DECLARE_VALUE(  MIDGAME_THREATS,                     83,    0,     250)
-DECLARE_VALUE(  MIDGAME_UNBLOCKED_PASSED_6,         124,    0,     250)
-DECLARE_VALUE(  MIDGAME_UNBLOCKED_PASSED_7,         163,    0,     250)
-#endif /* !WITH_NNUE */
-/****************************************************************************/
 #undef DECLARE_ALIAS
 #undef DECLARE_PARAM
 #undef DECLARE_VALUE

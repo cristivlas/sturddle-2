@@ -751,7 +751,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
     {
         ASSERT(ctxt._alpha < ctxt._beta);
         auto eval = ctxt.tt_entry()._eval;
-    #if WITH_NNUE
         if (is_valid(eval))
         {
             ASSERT(!ctxt.is_root());
@@ -762,7 +761,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             ctxt.eval_with_nnue();
             eval = ctxt._eval;
         }
-    #endif /* WITH_NNUE */
 
     #if REVERSE_FUTILITY_PRUNING
         /*

@@ -193,7 +193,6 @@ if platform.startswith('win'):
     args += [
         '/fp:fast',
         '/std:c++20',
-        '/DWITH_NNUE',
         '/DCALLBACK_PERIOD=8192',
         '/DCYTHON_WITHOUT_ASSERTIONS',
     ]
@@ -251,7 +250,6 @@ else:
         '-DCYTHON_WITHOUT_ASSERTIONS',
         '-DCALLBACK_PERIOD=8192',
         '-fno-stack-protector',
-        '-DWITH_NNUE',
         '-Wno-empty-body',
         '-Wno-int-in-bool-context',
     ]

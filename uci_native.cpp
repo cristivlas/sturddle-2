@@ -3,9 +3,7 @@
 #include <filesystem>
 #include <unordered_map>
 #include "context.h"
-#if WITH_NNUE
-    #include "nnue.h"
-#endif
+#include "nnue.h"
 
 namespace fs = std::filesystem;
 using Params = std::unordered_map<std::string, std::string>;
@@ -1573,11 +1571,7 @@ void uci_loop(Params params)
     const auto version = params["version"];
     const auto debug = params["debug"];
 
-#if WITH_NNUE
     output<false>(std::format("{} {} {}", name, version, nnue::instrset));
-#else
-    output<false>(std::format("{} {}", name, version));
-#endif /* WITH_NNUE */
 
     _debug = (debug == "true");
     sync_native_log_level();

@@ -36,15 +36,9 @@
   #include "context.h"
 #undef CONFIG_IMPL
 
-#if !defined(WITH_NNUE)
-  #define WITH_NNUE true
-#endif
-
-#if WITH_NNUE
-  #include "nnue.h"
-  #if !SHARED_WEIGHTS && defined(USE_WEIGHTS_H)
-    #include "weights.h"
-  #endif
+#include "nnue.h"
+#if !SHARED_WEIGHTS && defined(USE_WEIGHTS_H)
+  #include "weights.h"
 #endif
 
 #include "eval.h"
@@ -290,7 +284,8 @@ std::map<std::string, int> _get_params()
  *  NNUE
  *****************************************************************************/
 
-#if WITH_NNUE
+using search::Context;
+
 /* Define the network architecture */
 constexpr int INPUTS_A = nnue::ACTIVE_INPUTS * nnue::NUM_BUCKETS;
 constexpr int INPUTS_B = 256;
@@ -735,7 +730,6 @@ int nnue::eval_fen(const std::string& fen)
 
     return ctxt.eval_nnue_raw(false);
 }
-#endif /* WITH_NNUE */
 
 
 namespace search
@@ -863,7 +857,6 @@ namespace search
         setup_crash_handler();
         _init(); /* Init attack masks and other magic bitboards in chess.cpp */
 
-    #if WITH_NNUE
         try
         {
         #if SHARED_WEIGHTS
@@ -880,7 +873,6 @@ namespace search
             std::cerr << e.what() << std::endl;
             _exit(-1);
         }
-    #endif /* WITH_NNUE */
     }
 
 
@@ -941,10 +933,8 @@ namespace search
             for (size_t i = 0; i < n_threads; ++i)
                 _pvs[i].reserve(PLY_MAX);
 
-        #if WITH_NNUE
             NNUE_data.resize(n_threads);
             NNUE_refresh.resize(n_threads);
-        #endif /* WITH_NNUE */
         }
     }
 
@@ -1310,11 +1300,9 @@ namespace search
 
 
     /*
-     * Static evaluation has three components:
-     * 1. base = material + piece-square table values (optional)
-     * 2. tactical (positional) - aka Hand-crafted evals (HCE)
-     * 3. capture estimates (in Context::evaluate)
-     * NOTE: when using NNUE for evaluation (default), 2 does not apply.
+     * Static evaluation has two components:
+     * 1. NNUE eval
+     * 2. capture estimates (in Context::evaluate)
      */
     score_t Context::_evaluate()
     {
@@ -1322,27 +1310,7 @@ namespace search
 
         if (!is_valid(_eval))
         {
-        #if WITH_NNUE
             eval_with_nnue();
-        #else
-            /*
-             * 1. Material + piece-squares
-             */
-            _eval = state().eval();
-
-            ASSERT(_eval > SCORE_MIN);
-            ASSERT(_eval < SCORE_MAX);
-
-            _eval += eval_fuzz();
-
-            /*
-             * 2. Tactical (positional) evaluation.
-             */
-            _eval += eval_insufficient_material(state(), _eval, [this]() {
-                return eval_tactical(*this, _eval);
-            });
-
-        #endif /* !WITH_NNUE */
         }
 
         ASSERT(_eval > SCORE_MIN);

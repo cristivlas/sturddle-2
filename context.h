@@ -771,13 +771,6 @@ namespace search
     }
 
 
-#if !WITH_NNUE
-    INLINE void search::Context::eval_with_nnue() {}
-    INLINE score_t search::Context::eval_nnue_raw(bool) { return 0; }
-    INLINE void search::Context::update_root_accumulators() {}
-#endif /* !WITH_NNUE */
-
-
     template<bool EvalCaptures> INLINE score_t Context::evaluate()
     {
         ASSERT(_fifty < 100);
@@ -1727,9 +1720,5 @@ namespace nnue
     /**
      * Evaluate FEN from White's point of view, for testing.
      */
-#if WITH_NNUE
     int eval_fen(const std::string&);
-#else
-    INLINE int eval_fen(const std::string&) { return 0; }
-#endif
 }
