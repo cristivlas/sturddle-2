@@ -37,9 +37,6 @@
 #undef CONFIG_IMPL
 
 #include "nnue.h"
-#if !SHARED_WEIGHTS && defined(USE_WEIGHTS_H)
-  #include "weights.h"
-#endif
 
 #include "eval.h"
 
@@ -434,32 +431,9 @@ static struct Model
 } model;
 
 
-#if !SHARED_WEIGHTS
-#ifdef USE_WEIGHTS_H
-/* Legacy debug path: weights baked in as constexpr arrays from weights.h */
-#define INIT_LAYER(layer, name) layer.set_weights(name ## _w, name ## _b)
-
-void Model::init()
-{
-    /* POOL not in legacy weights.h; constructor default (1/8 == avg pool) applies */
-    /* L1C not in legacy weights.h either; zero-initialized (static model), so it is a no-op */
-    INIT_LAYER(L1A, hidden_1a);
-    INIT_LAYER(L1B, hidden_1b);
-#if NNUE_HIDDEN_1C
-    fuse_modulation();
-#endif /* NNUE_HIDDEN_1C */
-    INIT_LAYER(L2, hidden_2);
-    INIT_LAYER(L3, hidden_3);
-    INIT_LAYER(EVAL, out);
-
-#if USE_MOVE_PREDICTION
-    INIT_LAYER(LMOVE_ACC, move_acc);
-    INIT_LAYER(LMOVES, move);
-#endif
-}
-#else /* default: C23/C++26 #embed of weights.bin */
+#if !SHARED_WEIGHTS /* C23/C++26 #embed of weights.bin */
 #if !defined(__has_embed)
-  #error "embedded build requires #embed support (GCC 15+, Clang 19+, MSVC 17.15+); define USE_WEIGHTS_H to use the weights.h fallback"
+  #error "embedded build requires #embed support (GCC 15+, Clang 19+, MSVC 17.15+)"
 #endif
 #if __has_embed("weights.bin") != __STDC_EMBED_FOUND__
   #error "weights.bin not found; run tools/fetch_weights.py before building"
@@ -516,7 +490,6 @@ void Model::init()
 #elif defined(__GNUC__)
   #pragma GCC diagnostic pop
 #endif
-#endif /* USE_WEIGHTS_H */
 #else
 
 void Model::init()
