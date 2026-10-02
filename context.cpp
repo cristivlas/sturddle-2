@@ -1505,13 +1505,7 @@ namespace search
 
         /* late move pruning */
         if (depth > 0 && count >= LMP[depth] && can_prune())
-        {
-        #if CONTINUATION_HISTORY
-            const auto cont_score = _tt->continuation_history_score(*_parent, _parent->turn(), _move);
-            if (cont_score <= CONTINUATION_HISTORY_PRUNING)
-        #endif /* CONTINUATION_HISTORY */
-                return LMRAction::Prune;
-        }
+            return LMRAction::Prune;
 
         /* no reductions at very low depth and in qsearch */
         if (depth < 3 || count < LATE_MOVE_REDUCTION_THRESHOLD || !can_reduce())
@@ -1527,29 +1521,12 @@ namespace search
             reduction += !_parent->has_improved<THEM>();
             reduction -= 2 * _parent->is_counter_move(_move);
 
-        #if 0 && CONTINUATION_HISTORY
-            {
-                const auto cont_score = _tt->continuation_history_score(*_parent, _parent->turn(), _move);
-                if (cont_score > 0)
-                    reduction -= std::min(2, int(cont_score * 1000 / CONTINUATION_HISTORY_LMR_DIV));
-            }
-        #endif /* CONTINUATION_HISTORY */
-
             if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= 13)
                 ++reduction;
         }
 
         if (is_capture())
-        {
             --reduction;
-        #if CAPTURE_HISTORY
-            const auto cap_hist = _tt->capture_history_score(_parent->state(), _parent->turn(), _move);
-            if (cap_hist > CAPTURE_HISTORY_LMR_HIGH)
-                /* --reduction */;
-            else if (cap_hist > 0 && cap_hist < CAPTURE_HISTORY_LMR_LOW)
-                ++reduction;
-        #endif /* CAPTURE_HISTORY */
-        }
         else if (_move.from_square() == _parent->_capture_square)
         {
             --reduction;

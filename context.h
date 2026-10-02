@@ -861,9 +861,6 @@ namespace search
 
         auto score = _tt->history_score(_ply, state(), turn(), move);
         score += COUNTER_MOVE_BONUS * is_counter_move(move);
-    #if CONTINUATION_HISTORY
-        score += _tt->continuation_history_score(*this, turn(), move);
-    #endif /* CONTINUATION_HISTORY */
         return score;
     }
 
@@ -1483,11 +1480,7 @@ namespace search
                     move._group = MoveOrder::WINNING_CAPTURES + (gain == 0);
                 }
 
-            #if CAPTURE_HISTORY
-                move._score = gain + ctxt._tt->capture_history_score(ctxt.state(), ctxt.turn(), move);
-            #else
                 move._score = gain;
-            #endif /* CAPTURE_HISTORY */
             }
         }
     }

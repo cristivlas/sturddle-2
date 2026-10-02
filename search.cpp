@@ -95,17 +95,6 @@ TranspositionTable::TranspositionTable(const TranspositionTable& other)
     : _countermoves{other._countermoves[BLACK], other._countermoves[WHITE]}
     , _killer_moves(other._killer_moves)
     , _hcounters{other._hcounters[BLACK], other._hcounters[WHITE]}
-#if CAPTURE_HISTORY
-    , _capture_hcounters{other._capture_hcounters[BLACK], other._capture_hcounters[WHITE]}
-#endif
-#if CONTINUATION_HISTORY
-    , _cmh{
-        other._cmh[BLACK] ? std::make_unique<ContinuationTable>(*other._cmh[BLACK]) : nullptr,
-        other._cmh[WHITE] ? std::make_unique<ContinuationTable>(*other._cmh[WHITE]) : nullptr}
-    , _followup{
-        other._followup[BLACK] ? std::make_unique<ContinuationTable>(*other._followup[BLACK]) : nullptr,
-        other._followup[WHITE] ? std::make_unique<ContinuationTable>(*other._followup[WHITE]) : nullptr}
-#endif /* CONTINUATION_HISTORY */
     , _tid(other._tid)
     , _iteration(other._iteration)
     , _eval_depth(other._eval_depth)
@@ -134,16 +123,6 @@ void TranspositionTable::swap(TranspositionTable& other) noexcept
     swap(_killer_moves, other._killer_moves);
     swap(_hcounters[BLACK], other._hcounters[BLACK]);
     swap(_hcounters[WHITE], other._hcounters[WHITE]);
-#if CAPTURE_HISTORY
-    swap(_capture_hcounters[BLACK], other._capture_hcounters[BLACK]);
-    swap(_capture_hcounters[WHITE], other._capture_hcounters[WHITE]);
-#endif /* CAPTURE_HISTORY */
-#if CONTINUATION_HISTORY
-    swap(_cmh[BLACK], other._cmh[BLACK]);
-    swap(_cmh[WHITE], other._cmh[WHITE]);
-    swap(_followup[BLACK], other._followup[BLACK]);
-    swap(_followup[WHITE], other._followup[WHITE]);
-#endif /* CONTINUATION_HISTORY */
     swap(_tid, other._tid);
     swap(_iteration, other._iteration);
     swap(_eval_depth, other._eval_depth);
@@ -257,21 +236,6 @@ void TranspositionTable::init(bool new_game)
 
         _killer_moves.fill({});
         _ply_history.fill({});
-    #if CAPTURE_HISTORY
-        _capture_hcounters[BLACK] = {};
-        _capture_hcounters[WHITE] = {};
-    #endif /* CAPTURE_HISTORY */
-    #if CONTINUATION_HISTORY
-        ASSERT(_cmh[BLACK]);
-        ASSERT(_cmh[WHITE]);
-        ASSERT(_followup[BLACK]);
-        ASSERT(_followup[WHITE]);
-
-        _cmh[BLACK]->clear();
-        _cmh[WHITE]->clear();
-        _followup[BLACK]->clear();
-        _followup[WHITE]->clear();
-    #endif /* CONTINUATION_HISTORY */
     }
     else
     {
@@ -860,11 +824,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     ASSERT(move_count > 0);
                     const auto val = futility - next_ctxt->evaluate_material();
 
-                    if (val < ctxt._alpha && next_ctxt->can_prune<true>()
-                    #if CONTINUATION_HISTORY
-                        && table.continuation_history_score(ctxt, ctxt.turn(), next_ctxt->_move) <= CONTINUATION_HISTORY_PRUNING
-                    #endif /* CONTINUATION_HISTORY */
-                       )
+                    if (val < ctxt._alpha && next_ctxt->can_prune<true>())
                     {
                         next_ctxt->_prune_reason = PruneReason::PRUNE_FUTILITY;
                         update_pruned(ctxt, *next_ctxt, table._futility_prune_count);
@@ -945,12 +905,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                         }
                         else if (ctxt.tt_entry()._value >= ctxt._beta && next_ctxt->can_reduce())
                         {
-                        #if CONTINUATION_HISTORY
-                            const auto cont_score = table.continuation_history_score(ctxt, ctxt.turn(), next_ctxt->_move);
-                            next_ctxt->_max_depth -= (cont_score > CONTINUATION_HISTORY_PRUNING) ? 1 : 2;
-                        #else
                             next_ctxt->_max_depth -= 2;
-                        #endif /* CONTINUATION_HISTORY */
                         }
                     }
                 #endif /* SINGULAR_EXTENSION */
@@ -1035,13 +990,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                     return ctxt._score;
                 }
-                else if (next_ctxt->is_capture())
-                {
-                #if CAPTURE_HISTORY
-                    table.capture_history_update(ctxt.state(), next_ctxt->_move, true);
-                #endif /* CAPTURE_HISTORY */
-                }
-                else if (next_ctxt->is_promotion() == 0)
+                else if (!next_ctxt->is_capture() && next_ctxt->is_promotion() == 0)
                 {
                     /*
                      * Store data for move reordering heuristics.
@@ -1069,10 +1018,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                         if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_check())
                             table.history_update_cutoffs(next_ctxt->_move);
-                    #if CONTINUATION_HISTORY
-                        if (next_ctxt->depth() >= CONTINUATION_HISTORY_MIN_DEPTH && !next_ctxt->is_check())
-                            table.continuation_history_update(ctxt, next_ctxt->_move, true);
-                    #endif /* CONTINUATION_HISTORY */
                     }
                 }
                 if constexpr(EXTRA_STATS)
@@ -1080,19 +1025,9 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                 break; /* found a cutoff */
             }
-            else if (next_ctxt->is_capture())
-            {
-        #if CAPTURE_HISTORY
-                table.capture_history_update(ctxt.state(), next_ctxt->_move, false);
-        #endif /* CAPTURE_HISTORY */
-            }
-            else if (next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_check())
+            else if (!next_ctxt->is_capture() && next_ctxt->depth() >= HISTORY_MIN_DEPTH && !next_ctxt->is_check())
             {
                 table.history_update_non_cutoffs(next_ctxt->_move);
-            #if CONTINUATION_HISTORY
-                if (next_ctxt->_move && next_ctxt->depth() >= CONTINUATION_HISTORY_MIN_DEPTH)
-                    table.continuation_history_update(ctxt, next_ctxt->_move, false);
-            #endif /* CONTINUATION_HISTORY */
             }
 
             /*
