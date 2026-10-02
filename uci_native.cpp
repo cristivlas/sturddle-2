@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <unordered_map>
 #include "context.h"
-#include "nnue.h"
+#include "nnue/nnue.h"
 
 namespace fs = std::filesystem;
 using Params = std::unordered_map<std::string, std::string>;

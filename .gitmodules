@@ -5,10 +5,10 @@
 	path = magic-bits
 	url = https://github.com/cristivlas/magic-bits.git
 [submodule "version2"]
-	path = version2
+	path = nnue/version2
 	url = https://github.com/vectorclass/version2.git
 [submodule "simde"]
-	path = simde
+	path = nnue/simde
 	url = https://github.com/simd-everywhere/simde.git
 [submodule "Fathom"]
 	path = Fathom

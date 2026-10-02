@@ -1,6 +1,6 @@
 #include "common.h"
 #if __arm__ || __arm64__ || __aarch64__
-#include "armvector.h"
+#include "nnue/armvector.h"
 #if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
 
 void testVec8fConstructorAndElementAccess()

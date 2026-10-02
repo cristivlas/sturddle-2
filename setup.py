@@ -153,7 +153,7 @@ Compiler args.
 inc_dirs = [
     '-I./libpopcnt',
     '-I./magic-bits/include',
-    '-I./version2',
+    '-I./nnue/version2',
     '-I.',
     '-I./Fathom/src',
 ]
@@ -184,7 +184,7 @@ args += environ.get("CXXFLAGS", '').split()
 arm_arch = armcpu.get_arch()
 if not arm_arch is None:
     # Emulate SSE on ARM using: https://github.com/simd-everywhere/simde
-    args += [ '-I./simde', '-Wno-bitwise-instead-of-logical' ]
+    args += [ '-I./nnue/simde', '-Wno-bitwise-instead-of-logical' ]
     if arm_arch == 'armv7':
         args += [ '-mfpu=neon-vfpv4', '-mfloat-abi=hard' ]
 

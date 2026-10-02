@@ -36,7 +36,7 @@
   #include "context.h"
 #undef CONFIG_IMPL
 
-#include "nnue.h"
+#include "nnue/nnue.h"
 
 #include "eval.h"
 
