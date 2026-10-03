@@ -27,7 +27,6 @@
 #include <iomanip>
 #include <iterator>
 #include <filesystem>
-#include <fstream>
 #include <map>
 #include <sstream>
 #include "chess.h"
@@ -36,9 +35,8 @@
   #include "context.h"
 #undef CONFIG_IMPL
 
-#include "nnue/nnue.h"
-
 #include "eval.h"
+#include "nnue/model.h"
 
 #if USE_ENDTABLES
   #include "tbprobe.h"
@@ -280,56 +278,10 @@ std::map<std::string, int> _get_params()
 /*****************************************************************************
  *  NNUE
  *****************************************************************************/
+static nnue::Model model;
 
-using search::Context;
-
-/* Define the network architecture */
-constexpr int INPUTS_A = nnue::ACTIVE_INPUTS * nnue::NUM_BUCKETS;
-constexpr int INPUTS_B = 256;
-constexpr int HIDDEN_1A = 2048;
-constexpr int HIDDEN_1A_POOLED = HIDDEN_1A / nnue::POOL_STRIDE;
-constexpr int HIDDEN_1B = HIDDEN_1A_POOLED; /* 1b modulates pooled 1:1 */
-constexpr int HIDDEN_2 = 16;
-constexpr int HIDDEN_3 = 16;
-
-using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
-#if NNUE_HIDDEN_1C
-/* L1B and L1C are load-only; the accumulator uses their fusion L1M as its layer B */
-using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE>;
-using L1CType = nnue::Layer<nnue::INPUTS_C, HIDDEN_1B, int16_t, nnue::QSCALE>;
-using L1MType = nnue::Layer<nnue::TURN_INDEX, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
-#else
-using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
-#endif /* NNUE_HIDDEN_1C */
-using PoolType = nnue::PoolLayer<HIDDEN_1A>;
-#if NNUE_L2_INT16
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, int16_t, nnue::WQSCALE>;
-#elif USE_BF16
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, __bf16>;
-#else
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, float>;
-#endif
-using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
-using EVALType = nnue::Layer<HIDDEN_3, 1>;
-
-/*
- * The accumulator takes the inputs and processes them into two outputs,
- * using layers L1A and L1B. L1B processes the 1st 256 inputs, which
- * correspond to kings and pawns. The (linear) output of L1B modulates the
- * pooled output of L1A 1:1. With NNUE_HIDDEN_1C, L1C (bishops and occupancy)
- * is also linear; L1B and L1C are fused at load into L1M, which maps every
- * piece-square input to one row.
- */
-using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
+using Accumulator = nnue::Model::Accumulator;
 using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
-
-/* Move-prediction head (experimental): own 256-wide sub-accumulator off raw inputs
- * (decoupled from eval), then a bilinear map to the 4096 (from,to) logits scored
- * per-move by column. Full recompute per node -- only used at early iterations.
- */
-constexpr int MOVE_ACC = 256;
-using LMOVEAccType = nnue::Layer<INPUTS_A / nnue::NUM_BUCKETS, MOVE_ACC, int16_t, nnue::QSCALE>;
-using LMOVEType = nnue::Layer<MOVE_ACC, 4096, int16_t, nnue::QSCALE>;
 
 /* Each thread uses its own stack */
 static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
@@ -337,177 +289,18 @@ static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
 /* Per-thread bucket-refresh caches */
 static std::vector<Accumulator::RefreshTable> NNUE_refresh(SMP_CORES);
 
-static struct Model
-{
-    void init();
-
-    void validate_weights_file(const std::filesystem::path& weights_path)
-    {
-        constexpr auto param_count =
-            L1AType::param_count()
-            + L1BType::param_count()
-        #if NNUE_HIDDEN_1C
-            + L1CType::param_count()
-        #endif /* NNUE_HIDDEN_1C */
-            + PoolType::param_count()
-            + L2Type::param_count()
-            + L3Type::param_count()
-            + EVALType::param_count()
-        #if USE_MOVE_PREDICTION
-            + LMOVEAccType::param_count()
-            + LMOVEType::param_count()
-        #endif
-            ;
-        constexpr auto expected_size = param_count * sizeof(float);
-        const auto file_size = std::filesystem::file_size(weights_path);
-        if (file_size != expected_size)
-            throw std::runtime_error(weights_path.string() + ": expected " + std::to_string(expected_size) + " bytes, got " + std::to_string(file_size));
-    }
-
-    void load_weights(const std::filesystem::path& weights_path)
-    {
-        validate_weights_file(weights_path);
-
-        std::ifstream file(weights_path, std::ios::binary);
-        if (!file)
-            throw std::runtime_error("Could not open weights file: " + weights_path.string());
-
-        file.exceptions(std::ios::failbit | std::ios::badbit);
-
-        try
-        {
-            /* Load layers in the same order that the trainer exports them. */
-            L1A.load_weights(file);
-            L1B.load_weights(file);
-        #if NNUE_HIDDEN_1C
-            L1C.load_weights(file);
-        #endif /* NNUE_HIDDEN_1C */
-            POOL.load_weights(file);
-            L2.load_weights(file);
-            L3.load_weights(file);
-            EVAL.load_weights(file);
-
-        #if USE_MOVE_PREDICTION
-            LMOVE_ACC.load_weights(file);
-            LMOVES.load_weights(file);
-        #endif
-        }
-        catch (const std::exception&)
-        {
-            throw std::runtime_error("Error reading weights from: " + weights_path.string());
-        }
-    #if NNUE_HIDDEN_1C
-        fuse_modulation();
-    #endif /* NNUE_HIDDEN_1C */
-        Context::log_message(LogLevel::DEBUG, "Loaded " + weights_path.string());
-    }
-
-#if NNUE_HIDDEN_1C
-    void fuse_modulation()
-    {
-        nnue::check_modulation_bounds(L1B, L1C);
-        nnue::fuse_modulation(L1M, L1B, L1C);
-    }
-#endif /* NNUE_HIDDEN_1C */
-
-    std::string default_weights_path;
-
-    L1AType L1A;
-    L1BType L1B;
-#if NNUE_HIDDEN_1C
-    L1CType L1C;
-    L1MType L1M;
-#endif /* NNUE_HIDDEN_1C */
-    PoolType POOL;
-    L2Type L2;
-    L3Type L3;
-    EVALType EVAL;
-
-#if USE_MOVE_PREDICTION
-    LMOVEAccType LMOVE_ACC;
-    LMOVEType LMOVES;
-#endif
-
-} model;
-
-
-#if !SHARED_WEIGHTS /* C23/C++26 #embed of weights.bin */
-#if !defined(__has_embed)
-  #error "embedded build requires #embed support (GCC 15+, Clang 19+, MSVC 17.15+)"
-#endif
-#if __has_embed("weights.bin") != __STDC_EMBED_FOUND__
-  #error "weights.bin not found; run tools/fetch_weights.py before building"
-#endif
-
-/* #embed is a C23/C++26 feature; under -std=c++20 -Werror it is diagnosed as an
- * extension (clang: -Wc23-extensions, gcc: -Wc++26-extensions). Silence it here so
- * every compiler/build path is covered in one place rather than via build flags. */
-#if defined(__clang__)
-  #pragma clang diagnostic push
-  #pragma clang diagnostic ignored "-Wc23-extensions"
-#elif defined(__GNUC__)
-  #pragma GCC diagnostic push
-  #pragma GCC diagnostic ignored "-Wpedantic"       /* umbrella: any gcc with #embed */
-  #pragma GCC diagnostic ignored "-Wc++26-extensions" /* precise name where recognized */
-#endif
-
-void Model::init()
-{
-    static constexpr unsigned char WEIGHTS_DATA[] = {
-        #embed "weights.bin"
-    };
-
-    struct membuf : std::streambuf
-    {
-        membuf(const char* data, size_t size)
-        {
-            char* p = const_cast<char*>(data);
-            setg(p, p, p + size);
-        }
-    } buf(reinterpret_cast<const char*>(WEIGHTS_DATA), sizeof(WEIGHTS_DATA));
-
-    std::istream file(&buf);
-    file.exceptions(std::ios::failbit | std::ios::badbit);
-
-    /* Same order as Model::load_weights file-based path */
-    L1A.load_weights(file);
-    L1B.load_weights(file);
-#if NNUE_HIDDEN_1C
-    L1C.load_weights(file);
-    fuse_modulation();
-#endif /* NNUE_HIDDEN_1C */
-    POOL.load_weights(file);
-    L2.load_weights(file);
-    L3.load_weights(file);
-    EVAL.load_weights(file);
-#if USE_MOVE_PREDICTION
-    LMOVE_ACC.load_weights(file);
-    LMOVES.load_weights(file);
-#endif
-}
-#if defined(__clang__)
-  #pragma clang diagnostic pop
-#elif defined(__GNUC__)
-  #pragma GCC diagnostic pop
-#endif
-#else
-
-void Model::init()
-{
-    if (!default_weights_path.empty())
-    {
-        load_weights(default_weights_path);
-    }
-}
-#endif /* SHARED_WEIGHTS */
-
 
 static void _load_weights(const std::string& file_path)
 {
     if (file_path.empty())
+    {
         model.init();
+    }
     else
+    {
         model.load_weights(file_path);
+        search::Context::log_message(LogLevel::DEBUG, "Loaded " + file_path);
+    }
 
     /* cached outputs are only valid for the weights they were computed with */
     for (auto& table : NNUE_refresh)
@@ -515,55 +308,22 @@ static void _load_weights(const std::string& file_path)
 }
 
 
-void Context::load_weights(const std::string& file_path)
+void search::Context::load_weights(const std::string& file_path)
 {
     cython_wrapper::call_nogil(_load_weights, file_path); // catch exception and translate to Python
 }
 
 
-#if NNUE_HIDDEN_1C && DEBUG_INCREMENTAL
-/* the fused L1M output must equal L1B + L1C computed separately */
-static void check_fused_modulation(const Accumulator& accumulator, const chess::State& state)
+static INLINE void update(Accumulator& accumulator, const search::Context* ctxt)
 {
-    ALIGN nnue::input_t input_b[nnue::round_up<INPUT_STRIDE>(nnue::ACTIVE_INPUTS)] = { };
-    ALIGN nnue::input_t input_c[nnue::INPUTS_C] = { };
-    nnue::one_hot_encode(state, input_b);
-    nnue::encode_bishops_occupancy(state, input_c);
-
-    ALIGN int16_t output_b[HIDDEN_1B], output_c[HIDDEN_1B];
-    model.L1B.dot(input_b, output_b);
-    model.L1C.dot(input_c, output_c);
-
-    for (int j = 0; j != HIDDEN_1B; ++j)
-        ASSERT_ALWAYS(int16_t(output_b[j] + output_c[j]) == accumulator._output_b[j]);
-}
-#endif /* NNUE_HIDDEN_1C && DEBUG_INCREMENTAL */
-
-
-static INLINE void update(Accumulator& accumulator, const Context* ctxt)
-{
-#if NNUE_HIDDEN_1C
-    accumulator.update(model.L1A, model.L1M, ctxt->state());
-  #if DEBUG_INCREMENTAL
-    check_fused_modulation(accumulator, ctxt->state());
-  #endif /* DEBUG_INCREMENTAL */
-#else
-    accumulator.update(model.L1A, model.L1B, ctxt->state());
-#endif /* NNUE_HIDDEN_1C */
+    model.update(accumulator, ctxt);
 }
 
 
 /* incremental version */
-static INLINE void update(Accumulator& accumulator, const Context* ctxt, Accumulator& prev_acc)
+static INLINE void update(Accumulator& accumulator, const search::Context* ctxt, Accumulator& prev_acc)
 {
-#if NNUE_HIDDEN_1C
-    accumulator.update(model.L1A, model.L1M, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc, NNUE_refresh[ctxt->tid()]);
-  #if DEBUG_INCREMENTAL
-    check_fused_modulation(accumulator, ctxt->state());
-  #endif /* DEBUG_INCREMENTAL */
-#else
-    accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc, NNUE_refresh[ctxt->tid()]);
-#endif /* NNUE_HIDDEN_1C */
+    model.update(accumulator, ctxt, prev_acc, NNUE_refresh[ctxt->tid()]);
 }
 
 
@@ -618,7 +378,7 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     auto& acc = NNUE_data[tid()][_ply];
     ASSERT(!acc.needs_update(state()));
 
-    _eval_raw = nnue::eval(acc, model.POOL, model.L2, model.L3, model.EVAL, state().turn);
+    _eval_raw = model.eval(acc, state().turn);
 
     if (stm_perspective)
     {
@@ -631,7 +391,7 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
 
 /* TODO: define array of margins, using LMP for now as a temporary hack. */
 
-static INLINE score_t eval_margin(const Context& ctxt)
+static INLINE score_t eval_margin(const search::Context& ctxt)
 {
     const auto depth = ctxt.depth();
     const auto pc = ctxt.piece_count();
@@ -1883,7 +1643,7 @@ namespace search
     #if USE_MOVE_PREDICTION
         int active[nnue::MAX_ACTIVE_INPUTS];
         int active_count = 0;
-        ALIGN int16_t move_acc[MOVE_ACC];  /* node sub-accumulator, filled with active[] */
+        ALIGN int16_t move_acc[nnue::MOVE_ACC];  /* node sub-accumulator, filled with active[] */
     #endif /* USE_MOVE_PREDICTION */
 
         /********************************************************************/

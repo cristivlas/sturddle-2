@@ -135,6 +135,7 @@ sourcefiles = [
     'search.cpp',
     'uci_native.cpp',
     'tbprobe.cpp',
+    'nnue/model.cpp',
 ]
 
 

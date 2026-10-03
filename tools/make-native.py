@@ -43,7 +43,7 @@ ARCH_SUFFIX = {
     'AVX2_VNNI': '-avx2-vnni', 'AVX512': '-avx512', 'AVX512_BF16': '-avx512-bf16',
 }
 
-SOURCES = ['chess.cpp', 'context.cpp', 'search.cpp', 'uci_native.cpp', 'tbprobe.cpp', 'main_native.cpp']
+SOURCES = ['chess.cpp', 'context.cpp', 'search.cpp', 'uci_native.cpp', 'tbprobe.cpp', 'main_native.cpp', 'nnue/model.cpp']
 INCLUDES = ['.', 'libpopcnt', 'magic-bits/include', 'nnue/version2', 'Fathom/src']
 DEFINES = ['NATIVE_BUILD=1', 'NATIVE_UCI=1', 'NATIVE_BOOK=1', 'CALLBACK_PERIOD=8192', 'NO_ASSERT']
 
