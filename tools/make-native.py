@@ -154,6 +154,8 @@ def build_linux(arch, version, define_args):
     cxxflags += shlex.split(os.environ.get('CXXFLAGS', ''))
 
     include_args = [f'-I{d}' for d in INCLUDES]
+    if triplet.startswith(('aarch64', 'arm')):
+        include_args.append('-Innue/simde')
 
     with tempfile.TemporaryDirectory(prefix='sturddle-native-') as tmp:
         tmp_dir = Path(tmp)
