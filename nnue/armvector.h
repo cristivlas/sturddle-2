@@ -305,6 +305,107 @@ INLINE Vec16s max(Vec16s a, Vec16s b)
 }
 
 
+INLINE Vec8s min(Vec8s a, Vec8s b)
+{
+    return _mm_min_epi16(a, b);
+}
+
+INLINE Vec8s operator >> (Vec8s a, int b)
+{
+    return _mm_srai_epi16(a, b);
+}
+
+
+class Vec16c
+{
+    int8x16_t v;
+
+public:
+    static constexpr size_t size() { return 16; }
+
+    Vec16c() = default;
+
+    Vec16c(int8x16_t x) : v(x) {}
+
+    INLINE operator int8x16_t() const { return v; }
+
+    INLINE Vec16c & load_a(void const * p)
+    {
+        v = vld1q_s8((const int8_t*)p);
+        return *this;
+    }
+};
+
+class Vec16uc
+{
+    uint8x16_t v;
+
+public:
+    static constexpr size_t size() { return 16; }
+
+    Vec16uc() = default;
+
+    Vec16uc(uint8x16_t x) : v(x) {}
+
+    Vec16uc(Vec16c x) : v(vreinterpretq_u8_s8(x)) {}
+
+    INLINE operator uint8x16_t() const { return v; }
+
+    INLINE Vec16uc & load_a(void const * p)
+    {
+        v = vld1q_u8((const uint8_t*)p);
+        return *this;
+    }
+
+    INLINE void store_a(void * p) const { vst1q_u8((uint8_t*)p, v); }
+};
+
+class Vec4i
+{
+    int32x4_t v;
+
+public:
+    static constexpr size_t size() { return 4; }
+
+    Vec4i() = default;
+
+    Vec4i(int32x4_t x) : v(x) {}
+
+    Vec4i(int i) : v(vdupq_n_s32(i)) {}
+
+    INLINE operator int32x4_t() const { return v; }
+};
+
+INLINE int32_t horizontal_add(Vec4i a)
+{
+#if (__arm64__) || (__aarch64__)
+    return vaddvq_s32(a);
+#else
+    const int32x2_t s = vadd_s32(vget_low_s32(a), vget_high_s32(a));
+    return vget_lane_s32(vpadd_s32(s, s), 0);
+#endif
+}
+
+/* Signed saturation to int8 */
+INLINE Vec16c compress_saturated(Vec8s low, Vec8s high)
+{
+    /* on NEON, simde's __m128i is int64x2_t */
+    return vcombine_s8(vqmovn_s16(vreinterpretq_s16_s64(low)), vqmovn_s16(vreinterpretq_s16_s64(high)));
+}
+
+/* acc + sums of 4 u8 x s8 products per int32 lane; a <= 127 */
+INLINE Vec4i dot_add(Vec4i acc, Vec16uc a, Vec16c b)
+{
+    const int8x16_t sa = vreinterpretq_s8_u8(a);
+#if __ARM_FEATURE_DOTPROD
+    return vdotq_s32(acc, sa, b);
+#else
+    const int16x8_t p = vmlal_s8(vmull_s8(vget_low_s8(sa), vget_low_s8(b)), vget_high_s8(sa), vget_high_s8(b));
+    return vpadalq_s16(acc, p);
+#endif /* __ARM_FEATURE_DOTPROD */
+}
+
+
 template <typename V> INLINE V& operator += (V& a, V b)
 {
     a = a + b;

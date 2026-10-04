@@ -59,6 +59,7 @@ void Model::init()
     static constexpr unsigned char WEIGHTS_DATA[] = {
         #embed "weights.bin"
     };
+    static_assert(sizeof(WEIGHTS_DATA) == param_count() * sizeof(float), "weights.bin does not match the network architecture");
 
     struct membuf : std::streambuf
     {
@@ -74,15 +75,12 @@ void Model::init()
 
     /* Same order as Model::load_weights file-based path */
     L1A.load_weights(file);
-    L1B.load_weights(file);
-#if NNUE_HIDDEN_1C
-    L1C.load_weights(file);
-    fuse_modulation();
-#endif /* NNUE_HIDDEN_1C */
-    POOL.load_weights(file);
-    L2.load_weights(file);
-    L3.load_weights(file);
-    EVAL.load_weights(file);
+    for (int s = 0; s != STACKS; ++s)
+    {
+        L2[s].load_weights(file);
+        L3[s].load_weights(file);
+        EVAL[s].load_weights(file);
+    }
 #if USE_MOVE_PREDICTION
     LMOVE_ACC.load_weights(file);
     LMOVES.load_weights(file);
@@ -100,22 +98,7 @@ void Model::init()
 
 void Model::validate_weights_file(const std::filesystem::path& weights_path)
 {
-    constexpr auto param_count =
-        L1AType::param_count()
-        + L1BType::param_count()
-    #if NNUE_HIDDEN_1C
-        + L1CType::param_count()
-    #endif /* NNUE_HIDDEN_1C */
-        + PoolType::param_count()
-        + L2Type::param_count()
-        + L3Type::param_count()
-        + EVALType::param_count()
-    #if USE_MOVE_PREDICTION
-        + LMOVEAccType::param_count()
-        + LMOVEType::param_count()
-    #endif
-        ;
-    constexpr auto expected_size = param_count * sizeof(float);
+    constexpr auto expected_size = param_count() * sizeof(float);
     const auto file_size = std::filesystem::file_size(weights_path);
     if (file_size != expected_size)
         throw std::runtime_error(weights_path.string() + ": expected " + std::to_string(expected_size) + " bytes, got " + std::to_string(file_size));
@@ -136,25 +119,20 @@ void Model::load_weights(const std::filesystem::path& weights_path)
     {
         /* Load layers in the same order that the trainer exports them. */
         L1A.load_weights(file);
-        L1B.load_weights(file);
-    #if NNUE_HIDDEN_1C
-        L1C.load_weights(file);
-    #endif /* NNUE_HIDDEN_1C */
-        POOL.load_weights(file);
-        L2.load_weights(file);
-        L3.load_weights(file);
-        EVAL.load_weights(file);
+        for (int s = 0; s != STACKS; ++s)
+        {
+            L2[s].load_weights(file);
+            L3[s].load_weights(file);
+            EVAL[s].load_weights(file);
+        }
 
     #if USE_MOVE_PREDICTION
         LMOVE_ACC.load_weights(file);
         LMOVES.load_weights(file);
     #endif
     }
-    catch (const std::exception&)
+    catch (const std::exception& e)
     {
-        throw std::runtime_error("Error reading weights from: " + weights_path.string());
+        throw std::runtime_error("Error reading weights from: " + weights_path.string() + ": " + e.what());
     }
-#if NNUE_HIDDEN_1C
-    fuse_modulation();
-#endif /* NNUE_HIDDEN_1C */
 }

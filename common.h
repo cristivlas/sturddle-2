@@ -104,11 +104,10 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
   #define NATIVE_UCI                        true
 #endif /* NATIVE_UCI */
 
-/* Experimental: hidden_1c (bishops + occupancy) modulation, adds to hidden_1b */
-#define NNUE_HIDDEN_1C                      false
-
-/* hidden_2 in int16 at QSCALE (madd_epi16), float from hidden_3 on */
-#define NNUE_L2_INT16                       true
+/* Experimental: bf16 hidden_3 weights on AVX512_BF16 builds; the trainer models fp32 */
+#if !defined(NNUE_TAIL_BF16)
+  #define NNUE_TAIL_BF16                    false
+#endif /* NNUE_TAIL_BF16 */
 
 #define RAZORING                            true
 
