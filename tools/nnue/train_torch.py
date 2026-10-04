@@ -3,18 +3,20 @@
 PyTorch trainer for the Sturddle Chess engine's NNUE.
 Copyright (c) 2023 - 2026 Cristian Vlasceanu.
 
-Port of train.py (TF) to PyTorch. Primary optimizer is SGD+momentum.
-Loads / exports the same flat float32 weights.bin layout as the TF trainer so a
-TF-trained net can be continued here and the result consumed by the C++ engine.
+Primary optimizer is SGD+momentum.
 
-Layer export order (must match C++ context.cpp load order):
-    hidden_1a, hidden_1b, hidden_1c, pool, hidden_2, hidden_3, out
+Perspective accumulator: one bucketed hidden_1a (768 inputs -> 1024) shared by the
+white view and the black view (idx ^ 120: color swap + rank flip), concatenated
+[black, white] -> 2048, clipped relu, then one of two 2048 -> 32 -> 32 -> 1 stacks
+selected by side to move. Target is white POV.
+
+Layer export order (must match the C++ load order):
+    hidden_1a, then per stack (black-to-move first): hidden_2, hidden_3, out
 Each layer: kernel (in, out) float32 row-major, then bias (out,) float32.
-pool is kernel-only (no bias): 2 x ACCUMULATOR_SIZE floats, side-to-move
-major (black-to-move block first), init 1/POOL_SIZE == average pooling.
 """
 
 import argparse
+import contextlib
 import json
 import logging
 import math
@@ -28,24 +30,30 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# ---- architecture constants (keep in sync with nnue.h / context.cpp) ----
-ACTIVE_INPUTS = 769
-ACCUMULATOR_SIZE = 2048
-POOL_SIZE = 8
-POOLED = ACCUMULATOR_SIZE // POOL_SIZE  # 256
+# ---- architecture constants (keep in sync with nnue.h / model.h) ----
+ACTIVE_INPUTS = 768
+ACCUMULATOR_SIZE = 1024  # per perspective
+L1_INPUTS = 2 * ACCUMULATOR_SIZE  # [black, white]
 MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
-INPUTS_B = 256  # kings + pawns
-INPUTS_C = 256  # bishops + occupancy
-HIDDEN_2 = 16
-HIDDEN_3 = 16
+STACKS = 2  # selected by side to move, black first
+HIDDEN_2 = 32
+HIDDEN_3 = 32
+
+# black-view feature index: color swap (64) + rank flip (56)
+PERSPECTIVE_XOR = 120
 
 Q_SCALE = 1024
-# 32 pieces + side-to-move + bias == 34
-Q_MAX_A = 32767 / Q_SCALE / 34
-# (8 pawns + 1 king) x 2 + bias == 19
-Q_MAX_B = 32767 / Q_SCALE / 19
-# 32 occupied + up to 20 bishops (promotions) + bias == 53
-Q_MAX_C = 32767 / Q_SCALE / 53
+# 32 pieces + bias == 33 terms; floor(32767 / 33) LSB so the bound is exact
+Q_MAX_A = 992 / Q_SCALE
+
+# activation: clamp(acc, 0, 1023) >> 3 in the engine -> u8 in [0, 127] at scale 128
+Q_ACT = 128
+ACT_MAX = 127 / Q_ACT
+
+# hidden_2: s8 weights at scale 64, int32 bias at the product scale
+Q_W2 = 64
+Q_MAX_W2 = 127 / Q_W2
+Q_B2 = Q_ACT * Q_W2
 
 SCALE = 100.0
 
@@ -54,15 +62,21 @@ SCALE = 100.0
 # Feature unpacking and bucketing (mirror tools/nnue/train.py exactly)
 # ---------------------------------------------------------------------------
 def unpack_bits(packed):
-    """packed: (B, 13) uint64 [12 bitboards + turn] -> (B, 769) float32 features.
+    """packed: (B, 13) int64 [12 bitboards + turn] -> (B, 768) float32 white-view features.
 
     Feature index idx within a 64-block holds bitboard bit (63 - idx)."""
     bitboards = packed[:, :12]  # (B, 12) int64
-    turn = packed[:, 12:13]  # (B, 1)
     shifts = torch.arange(63, -1, -1, device=packed.device, dtype=torch.int64)
     bits = (bitboards.unsqueeze(-1) >> shifts) & 1  # (B, 12, 64)
-    feats = bits.reshape(bits.shape[0], 12 * 64)  # (B, 768)
-    return torch.cat([feats, turn], dim=1).float()  # (B, 769)
+    return bits.reshape(bits.shape[0], 12 * 64).float()  # (B, 768)
+
+
+_PERSPECTIVE_PERM = torch.arange(ACTIVE_INPUTS) ^ PERSPECTIVE_XOR
+
+
+def black_view(features):
+    """White-view features -> black-view features (colors swapped, ranks flipped)."""
+    return features[:, _PERSPECTIVE_PERM.to(features.device)]
 
 
 # right half = files e-h: feature idx where (63 - idx) % 8 >= 4
@@ -70,7 +84,9 @@ _RIGHT_MASK = torch.tensor([1.0 if ((63 - idx) % 8) >= 4 else 0.0 for idx in ran
 
 
 def compute_bucket_id(features):
-    """features: (B, 769) -> (B,) bucket id = pawn_id * 4 + king_id."""
+    """features: (B, 768) -> (B,) bucket id = pawn_id * 4 + king_id.
+
+    On black-view features the king bits come out swapped, as the engine expects."""
     right_mask = _RIGHT_MASK.to(features.device)
     # black king [0:64], white king [64:128], black pawns [128:192], white pawns [192:256]
     pawn_count = features[:, 128:256].sum(dim=1)
@@ -87,12 +103,32 @@ def compute_bucket_id(features):
     return pawn_id * 4 + king_id
 
 
+def round_half_away(x):
+    """Round ties away from zero, like the engine loader's std::round."""
+    return torch.sign(x) * torch.floor(torch.abs(x) + 0.5)
+
+
+def fake_quant(x, scale):
+    """Round to 1/scale in the forward pass; straight-through gradient."""
+    return x + (round_half_away(x * scale) / scale - x).detach()
+
+
+def fake_floor(x, scale):
+    """Floor to 1/scale in the forward pass (the engine's >> 3); straight-through gradient."""
+    return x + (torch.floor(x * scale) / scale - x).detach()
+
+
+def exact_fp32(device, quant):
+    """Integer-grid arithmetic must not be downcast under autocast; float runs keep mixed precision."""
+    return torch.autocast(device_type=device.type, enabled=False) if quant else contextlib.nullcontext()
+
+
 class BucketedDense(nn.Module):
     """hidden_1a: per-row bucket selects a (ACTIVE_INPUTS, units) weight block.
 
     Kernel stored as one (num_buckets * ACTIVE_INPUTS, units) tensor, bucket-major,
     matching the C++ inference convention base = bucket * ACTIVE_INPUTS and the flat
-    weights.bin layout."""
+    weights.bin layout. Returns the linear accumulator (no activation)."""
 
     def __init__(self, num_buckets, in_features, units):
         super().__init__()
@@ -104,62 +140,86 @@ class BucketedDense(nn.Module):
         self.bias = nn.Parameter(torch.zeros(units))
         nn.init.kaiming_normal_(self.weight, nonlinearity="relu")
 
-    def forward(self, features):
+    def forward(self, features, quant):
+        w, b = self.weight, self.bias
+        if quant:
+            w, b = fake_quant(w, Q_SCALE), fake_quant(b, Q_SCALE)
         bucket_id = compute_bucket_id(features)  # (B,)
-        blocks = self.weight.view(self.num_buckets, self.in_features, self.units)
+        blocks = w.view(self.num_buckets, self.in_features, self.units)
         out = None
-        for b in range(self.num_buckets):
-            rows = (bucket_id == b).nonzero(as_tuple=True)[0]
+        for k in range(self.num_buckets):
+            rows = (bucket_id == k).nonzero(as_tuple=True)[0]
             if rows.numel():
-                r = features[rows] @ blocks[b]
+                r = features[rows] @ blocks[k]
                 if out is None:  # match matmul dtype (AMP -> Half)
-                    out = features.new_empty(features.shape[0], self.units, dtype=r.dtype)
+                    out = r.new_zeros(features.shape[0], self.units)
                 out[rows] = r
         if out is None:
             out = features.new_zeros(features.shape[0], self.units)
-        out = out + self.bias
-        return F.relu(out)
+        return out + b
+
+
+class Stacked(nn.Module):
+    """STACKS independent dense layers; each row uses the one its stack index selects.
+
+    Weight (STACKS, in, out) matches the .bin (in, out) layout per stack. Both stacks
+    run as one matmul (no per-sample weight gather), then rows are selected."""
+
+    def __init__(self, in_features, units, init_std=None):
+        super().__init__()
+        self.units = units
+        bound = 1.0 / math.sqrt(in_features)
+        self.weight = nn.Parameter(torch.empty(STACKS, in_features, units))
+        self.bias = nn.Parameter(torch.empty(STACKS, units).uniform_(-bound, bound))
+        if init_std is None:
+            nn.init.uniform_(self.weight, -bound, bound)
+        else:
+            nn.init.normal_(self.weight, std=init_std)
+
+    def forward(self, x, stm, w=None, b=None):
+        w = self.weight if w is None else w
+        b = self.bias if b is None else b
+        w_cat = w.permute(1, 0, 2).reshape(w.shape[1], STACKS * self.units)  # (in, STACKS * out)
+        y = (x @ w_cat).view(-1, STACKS, self.units) + b
+        return torch.where(stm.view(-1, 1).bool(), y[:, 1], y[:, 0])
 
 
 class NNUE(nn.Module):
-    def __init__(self):
+    def __init__(self, qat=False):
         super().__init__()
+        self.qat = qat  # fake-quant in training; always on in eval()
         self.hidden_1a = BucketedDense(MAIN_BUCKETS, ACTIVE_INPUTS, ACCUMULATOR_SIZE)
-        self.hidden_1b = nn.Linear(INPUTS_B, POOLED)  # linear (no activation)
-        # linear, adds to hidden_1b; zero init == no-op, so a warm-started net is unchanged
-        self.hidden_1c = nn.Linear(INPUTS_C, POOLED)
-        # learned pooling, one weight set per side to move; init == average pooling
-        self.pool = nn.Parameter(torch.full((2, POOLED, POOL_SIZE), 1.0 / POOL_SIZE))
-        self.hidden_2 = nn.Linear(POOLED, HIDDEN_2)
-        self.hidden_3 = nn.Linear(HIDDEN_2, HIDDEN_3)
-        self.out = nn.Linear(HIDDEN_3, 1)
-        for m in (self.hidden_1b, self.hidden_2, self.hidden_3):
-            nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
-        nn.init.zeros_(self.hidden_1c.weight)
-        nn.init.zeros_(self.hidden_1c.bias)
+        self.hidden_2 = Stacked(L1_INPUTS, HIDDEN_2, init_std=math.sqrt(2.0 / L1_INPUTS))
+        self.hidden_3 = Stacked(HIDDEN_2, HIDDEN_3, init_std=math.sqrt(2.0 / HIDDEN_2))
+        self.out = Stacked(HIDDEN_3, 1)
+
+    def accumulator(self, packed, quant):
+        """Linear accumulator halves (white view, black view), each (B, ACCUMULATOR_SIZE)."""
+        white = unpack_bits(packed)
+        with exact_fp32(packed.device, quant):
+            both = self.hidden_1a(torch.cat([white, black_view(white)], dim=0), quant)
+        n = packed.shape[0]
+        return both[:n], both[n:]
 
     def forward(self, packed):
-        feats = unpack_bits(packed)  # (B, 769)
-        acc = self.hidden_1a(feats)  # (B, 2048) relu'd
-        kp = feats[:, :INPUTS_B]
-        # bishops [384:512], then per-color occupancy: sum of the 6 piece blocks of (black 64, white 64)
-        occ = feats[:, :768].view(-1, 6, 128).sum(dim=1)
-        bo = torch.cat([feats[:, 384:512], occ], dim=1)
-        mod = self.hidden_1b(kp) + self.hidden_1c(bo)  # (B, 256) linear
+        quant = self.qat or not self.training
+        stm = packed[:, 12]  # 0 = black to move, 1 = white
 
-        stm = packed[:, 12].long()  # 0 = black to move, 1 = white
-        w = self.pool[stm]  # (B, 256, 8)
-        pooled = (acc.view(acc.shape[0], POOLED, POOL_SIZE) * w).sum(dim=-1)  # (B, 256)
-        residual = pooled + pooled * mod  # pooled * (1 + mod)
+        with exact_fp32(packed.device, quant):
+            acc_w, acc_b = self.accumulator(packed, quant)
+            a = torch.clamp(torch.cat([acc_b, acc_w], dim=1), 0.0, ACT_MAX)
+            w2, b2 = self.hidden_2.weight, self.hidden_2.bias
+            if quant:
+                a = fake_floor(a, Q_ACT)
+                w2, b2 = fake_quant(w2, Q_W2), fake_quant(b2, Q_B2)
+            x = F.relu(self.hidden_2(a, stm, w2, b2))
 
-        x = F.relu(self.hidden_2(residual))
-        x = F.relu(self.hidden_3(x))
-        return self.out(x)  # (B, 1)
+        x = F.relu(self.hidden_3(x, stm))
+        return self.out(x, stm)  # (B, 1)
 
 
 # ---------------------------------------------------------------------------
-# Quantization constraint: round to 1/Q_SCALE and clamp. Applied in-place after
-# each optimizer step (PyTorch has no kernel/bias constraint hook).
+# Clamp latent weights in place after each optimizer step
 # ---------------------------------------------------------------------------
 def _core(model):
     """Unwrap nn.DataParallel to reach the real NNUE layers."""
@@ -167,71 +227,55 @@ def _core(model):
 
 
 @torch.no_grad()
-def apply_constraints(model, quantize_round):
+def apply_constraints(model):
     model = _core(model)
-
-    def clamp(p, qmax):
-        if quantize_round:
-            p.copy_(torch.round(p * Q_SCALE) / Q_SCALE)
-        p.clamp_(-qmax, qmax)
-
-    clamp(model.hidden_1a.weight, Q_MAX_A)
-    clamp(model.hidden_1a.bias, Q_MAX_A)
-    clamp(model.hidden_1b.weight, Q_MAX_B)
-    clamp(model.hidden_1b.bias, Q_MAX_B)
-    clamp(model.hidden_1c.weight, Q_MAX_C)
-    clamp(model.hidden_1c.bias, Q_MAX_C)
-    # hidden_2 / hidden_3 / out are unconstrained (hidden_2 is int16 at 4096 in C++ under NNUE_L2_INT16, see tools/nnue/l2_int16_check.py)
+    model.hidden_1a.weight.clamp_(-Q_MAX_A, Q_MAX_A)
+    model.hidden_1a.bias.clamp_(-Q_MAX_A, Q_MAX_A)
+    model.hidden_2.weight.clamp_(-Q_MAX_W2, Q_MAX_W2)
 
 
 # ---------------------------------------------------------------------------
 # Flat weights.bin load / save (C++-compatible: kernel (in, out) then bias)
 # ---------------------------------------------------------------------------
 # (name, in, out, bias count); BucketedDense uses num_buckets*in as the stored row count.
-# pool is kernel-only: (2 * ACCUMULATOR_SIZE, 1), stm-major, no bias.
-_EXPORT = [
-    ("hidden_1a", MAIN_BUCKETS * ACTIVE_INPUTS, ACCUMULATOR_SIZE, ACCUMULATOR_SIZE),
-    ("hidden_1b", INPUTS_B, POOLED, POOLED),
-    ("hidden_1c", INPUTS_C, POOLED, POOLED),
-    ("pool", 2 * ACCUMULATOR_SIZE, 1, 0),
-    ("hidden_2", POOLED, HIDDEN_2, HIDDEN_2),
-    ("hidden_3", HIDDEN_2, HIDDEN_3, HIDDEN_3),
-    ("out", HIDDEN_3, 1, 1),
+# Stacked layers are named "<layer>.<stack>", stack 0 = black to move.
+_EXPORT = [("hidden_1a", MAIN_BUCKETS * ACTIVE_INPUTS, ACCUMULATOR_SIZE, ACCUMULATOR_SIZE)] + [
+    (f"{name}.{s}", i, o, o)
+    for s in range(STACKS)
+    for name, i, o in (("hidden_2", L1_INPUTS, HIDDEN_2), ("hidden_3", HIDDEN_2, HIDDEN_3), ("out", HIDDEN_3, 1))
 ]
 
+# on-grid export: (kernel scale, bias scale, kernel clamp, bias clamp)
+_QUANT = {
+    "hidden_1a": (Q_SCALE, Q_SCALE, Q_MAX_A, Q_MAX_A),
+    "hidden_2": (Q_W2, Q_B2, Q_MAX_W2, None),
+}
 
-def _layer_kernel_bias(model, name):
-    """Return (kernel (in,out) np.float32, bias (out,) np.float32) for export."""
+
+def _layer_params(model, name):
+    """(kernel (in, out), bias (out,)) parameter views for an _EXPORT entry."""
     model = _core(model)
-    if name == "pool":
-        k = model.pool.detach().cpu().numpy().reshape(-1, 1)  # (2*2048, 1), stm-major
-        b = np.zeros(0, dtype=np.float32)
-    elif name == "hidden_1a":
-        k = model.hidden_1a.weight.detach().cpu().numpy()  # already (in, out)
-        b = model.hidden_1a.bias.detach().cpu().numpy()
-    else:
-        m = getattr(model, name)
-        k = m.weight.detach().cpu().numpy().T  # (out,in) -> (in,out)
-        b = m.bias.detach().cpu().numpy()
-    return k.astype(np.float32), b.astype(np.float32)
+    if name == "hidden_1a":
+        return model.hidden_1a.weight, model.hidden_1a.bias
+    layer, s = name.split(".")
+    m = getattr(model, layer)
+    return m.weight[int(s)], m.bias[int(s)]
+
+
+def _on_grid(a, scale, qmax):
+    a = np.sign(a) * np.floor(np.abs(a * scale) + 0.5) / scale
+    return a if qmax is None else np.clip(a, -qmax, qmax)
 
 
 @torch.no_grad()
 def save_bin(model, path, quantize_round=False):
-    def q(a, qmax):
-        if quantize_round:
-            a = np.round(a * Q_SCALE) / Q_SCALE
-            a = np.clip(a, -qmax, qmax)
-        return a.astype(np.float32)
-
-    qmax = {"hidden_1a": Q_MAX_A, "hidden_1b": Q_MAX_B, "hidden_1c": Q_MAX_C}
     tmp = path + ".tmp"
     with open(tmp, "wb") as f:
         for name, _, _, _ in _EXPORT:
-            k, b = _layer_kernel_bias(model, name)
-            m = qmax.get(name)
-            if m is not None:
-                k, b = q(k, m), q(b, m)
+            k, b = (p.detach().cpu().numpy().astype(np.float32) for p in _layer_params(model, name))
+            q = _QUANT.get(name.split(".")[0])
+            if quantize_round and q:
+                k, b = _on_grid(k, q[0], q[2]), _on_grid(b, q[1], q[3])
             k.tofile(f)
             b.tofile(f)
         f.flush()
@@ -242,35 +286,17 @@ def save_bin(model, path, quantize_round=False):
 
 @torch.no_grad()
 def load_bin(model, path, count=-1):
-    model = _core(model)
     data = np.fromfile(path, dtype=np.float32, count=count)
     expected = sum(i * o + bn for _, i, o, bn in _EXPORT)
-    skip_1c = data.size == expected - (INPUTS_C * POOLED + POOLED)
-    if skip_1c:
-        # pre-hidden_1c weights: hidden_1c stays zero, which leaves the net unchanged
-        model.hidden_1c.weight.zero_()
-        model.hidden_1c.bias.zero_()
-    elif data.size != expected:
-        raise ValueError(
-            f"{path}: expected {expected} floats, got {data.size} (with a move head: see add_hidden_1c.py)"
-        )
+    if data.size != expected:
+        raise ValueError(f"{path}: expected {expected} floats, got {data.size}")
     off = 0
     for name, i, o, bn in _EXPORT:
-        if name == "hidden_1c" and skip_1c:
-            continue
-        k = data[off : off + i * o].reshape(i, o)
+        k, b = _layer_params(model, name)
+        k.copy_(torch.from_numpy(data[off : off + i * o].reshape(i, o).copy()))
         off += i * o
-        b = data[off : off + bn]
+        b.copy_(torch.from_numpy(data[off : off + bn].copy()))
         off += bn
-        if name == "pool":
-            model.pool.copy_(torch.from_numpy(k.reshape(2, POOLED, POOL_SIZE).copy()))
-        elif name == "hidden_1a":
-            model.hidden_1a.weight.copy_(torch.from_numpy(k.copy()))
-            model.hidden_1a.bias.copy_(torch.from_numpy(b.copy()))
-        else:
-            m = getattr(model, name)
-            m.weight.copy_(torch.from_numpy(k.T.copy()))  # (in,out)->(out,in)
-            m.bias.copy_(torch.from_numpy(b.copy()))
     print(f"Loaded weights from {path}")
 
 
@@ -575,10 +601,10 @@ def summary(model):
     print("-" * 46)
     total = 0
     for name, _, _, _ in _EXPORT:
-        k, b = _layer_kernel_bias(model, name)
-        n = k.size + b.size
+        k, b = _layer_params(model, name)
+        n = k.numel() + b.numel()
         total += n
-        print(f"{name:<12}{str(k.shape):<22}{n:>12,}")
+        print(f"{name:<12}{str(tuple(k.shape)):<22}{n:>12,}")
     print("-" * 46)
     print(f'{"total":<34}{total:>12,}')
 
@@ -607,7 +633,7 @@ def main(args):
             total = torch.cuda.get_device_properties(i).total_memory
             torch.cuda.set_per_process_memory_fraction(min(1.0, args.mem_limit * 1024 * 1024 / total), device=i)
 
-    model = NNUE().to(device)
+    model = NNUE(qat=args.quant_round).to(device)
     src = args.import_file or (args.model if args.model and os.path.exists(args.model) else None)
     if src:
         load_bin(model, src)
@@ -616,25 +642,16 @@ def main(args):
         save_bin(model, args.export, quantize_round=args.quant_round)
         return
 
+    print(f"QAT {'on' if args.quant_round else 'off (float run)'}")
+
     # Multi-GPU: split each global batch across all visible GPUs (like TF MirroredStrategy).
     if use_dp:
         model = nn.DataParallel(model)
         print(f"DataParallel over {torch.cuda.device_count()} GPUs")
 
-    # hidden_1c trains at --learn-rate; everything else at --base-lr-scale times that (0 == frozen)
-    core = _core(model)
-    base = [p for n, p in core.named_parameters() if not n.startswith("hidden_1c.")]
-    groups = [{"params": list(core.hidden_1c.parameters())}]
-    if args.base_lr_scale > 0:
-        groups.append({"params": base, "lr": args.learn_rate * args.base_lr_scale})
-    else:
-        for p in base:
-            p.requires_grad_(False)
-        print("base layers frozen, training hidden_1c only")
-
     if args.optimizer == "sgd":
         opt = torch.optim.SGD(
-            groups,
+            model.parameters(),
             lr=args.learn_rate,
             momentum=args.momentum,
             nesterov=args.nesterov,
@@ -642,7 +659,7 @@ def main(args):
         )
     else:
         opt = torch.optim.AdamW(
-            groups,
+            model.parameters(),
             lr=args.learn_rate,
             betas=(0.99, 0.995),
             amsgrad=(args.optimizer == "amsgrad"),
@@ -734,7 +751,7 @@ def main(args):
                     nn.utils.clip_grad_norm_(model.parameters(), args.clip_norm)
                 scaler.step(opt)
                 scaler.update()
-                apply_constraints(model, args.quant_round)
+                apply_constraints(model)
                 total += loss.item()
                 count += 1
                 acc, mae = metrics(pred, y, args.outcome_scale)
@@ -757,9 +774,8 @@ def main(args):
             avg_mae = mae_sum / max(count, 1)
             if sched:
                 sched.step(avg)
-            lr = opt.param_groups[0]["lr"]  # hidden_1c
-            base_lr = f" base lr {opt.param_groups[1]['lr']:.2e}" if len(opt.param_groups) > 1 else ""
-            print(f"epoch {epoch} loss {avg:.6f} acc {avg_acc:.4f} mae {avg_mae:.4f} lr {lr:.2e}{base_lr}")
+            lr = opt.param_groups[0]["lr"]
+            print(f"epoch {epoch} loss {avg:.6f} acc {avg_acc:.4f} mae {avg_mae:.4f} lr {lr:.2e}")
             # format compatible with tools/nnue/plot.py
             hyperparam = {
                 "learn rate": f"{lr:.2e}",
@@ -772,7 +788,7 @@ def main(args):
             logging.info(f"epoch={epoch} mae={avg_mae:.6f}")
             if args.model and (args.sample or avg < best):  # sampling: loss not comparable across epochs
                 best = avg
-                save_bin(model, args.model)
+                save_bin(model, args.model)  # latents, so a resume keeps sub-LSB progress
     except KeyboardInterrupt:
         if tqdm and bar is not None:
             bar.close()
@@ -789,18 +805,12 @@ if __name__ == "__main__":
     # Defaults below are tuned for SGD (--optimizer sgd). For adam/amsgrad use a
     # much smaller --learn-rate (e.g. 1e-4) and lower --momentum (~0.5).
     p.add_argument("-r", "--learn-rate", type=float, default=1e-2)
-    p.add_argument(
-        "--base-lr-scale",
-        type=float,
-        default=1.0,
-        help="learn rate multiplier for all layers but hidden_1c (0 = freeze them)",
-    )
     p.add_argument("-o", "--export", help="export weights.bin and exit")
     p.add_argument(
         "-q",
         "--quant-round",
         action="store_true",
-        help="round weights to 1/Q_SCALE (training constraint and on export)",
+        help="QAT: fake-quant in the training forward pass, on-grid values on export (off = float run)",
     )
     p.add_argument("-s", "--outcome-smoothing", type=float, default=0.025)
     p.add_argument("-d", "--decay", type=float)
