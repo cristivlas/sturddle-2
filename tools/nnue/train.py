@@ -23,7 +23,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
 ACCUMULATOR_SIZE = 1024  # per perspective; hidden_2 sees [black, white] == 2048
-MAIN_BUCKETS = 16  # Number of buckets for hidden_1a / BucketShift (4 pawn x 4 king-file)
+MAIN_BUCKETS = 16  # Number of buckets for hidden_1a / BucketShift
 STACKS = 2  # hidden_2 -> hidden_3 -> out, selected by side to move, black first
 HIDDEN_2 = 32
 HIDDEN_3 = 32
@@ -258,7 +258,6 @@ def custom_layers():
                 bk_right = tf.cast(tf.reduce_sum(black_king * right_mask, axis=1), tf.int32)
                 king_id = wk_right * 2 + bk_right
 
-                # Compose: pawn dimension (4) x king-file dimension (4) = 16 buckets.
                 bucket_id = pawn_id * 4 + king_id
 
                 # tf.print("\nPawn count:", pawn_count, "\nBucket id:", bucket_id)

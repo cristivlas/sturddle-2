@@ -34,7 +34,7 @@ import torch.nn.functional as F
 ACTIVE_INPUTS = 768
 ACCUMULATOR_SIZE = 1024  # per perspective
 L1_INPUTS = 2 * ACCUMULATOR_SIZE  # [black, white]
-MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
+MAIN_BUCKETS = 16
 STACKS = 2  # selected by side to move, black first
 HIDDEN_2 = 32
 HIDDEN_3 = 32
