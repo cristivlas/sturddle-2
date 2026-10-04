@@ -108,7 +108,7 @@ namespace nnue
 
 #if NNUE_L2_INT16
     /* hidden_2 input (pooled*(1+mod)) and its weights: finer int16 scales than the accumulator */
-    constexpr int AQLOG2 = QLOG2 + 2;
+    constexpr int AQLOG2 = QLOG2 + 2;  /* int16 range at this scale is about +/-8 */
     constexpr int AQSCALE = 1 << AQLOG2;
     constexpr int WQLOG2 = QLOG2 + 2;
     constexpr int WQSCALE = 1 << WQLOG2;

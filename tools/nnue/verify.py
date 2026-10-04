@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Verify NNUE binary weights for proper clipping and rounding.
-Architecture: 2048-accumulator, hidden_1b + hidden_1c (linear) modulate pooled 1:1, 16-way bucketing (4 pawn x 4 king-file).
+Architecture: 2048-accumulator, hidden_1b + hidden_1c (linear) modulate pooled 1:1, 16-way bucketing.
 """
 import sys
 from pathlib import Path
@@ -25,7 +25,7 @@ ACTIVE_INPUTS = 769
 ACCUMULATOR_SIZE = 2048
 POOL_SIZE = 8
 POOLED = ACCUMULATOR_SIZE // POOL_SIZE  # hidden_1b output width (modulates pooled 1:1)
-MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
+MAIN_BUCKETS = 16
 MOVE_ACCUMULATOR_SIZE = 256
 MOVE_OUTPUTS = 4096  # 64x64 (from, to)
 
