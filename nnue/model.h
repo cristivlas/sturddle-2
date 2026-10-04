@@ -29,9 +29,10 @@ namespace nnue
     constexpr int HIDDEN_2 = 32;
     constexpr int HIDDEN_3 = 32;
     constexpr int STACKS = 2; /* selected by side to move, black first */
+    constexpr int L2_SCALE = 64; /* hidden_2 s8 weights */
 
-    using L1AType = nnue::AccumulatorLayer<INPUTS_A, HIDDEN_1A>;
-    using L2Type = nnue::DenseInt8Layer<2 * HIDDEN_1A, HIDDEN_2>;
+    using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
+    using L2Type = nnue::Layer<2 * HIDDEN_1A, HIDDEN_2, int8_t, L2_SCALE, false, nnue::ACT_SCALE>;
 #if USE_BF16 && NNUE_TAIL_BF16
     using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3, __bf16>;
 #else

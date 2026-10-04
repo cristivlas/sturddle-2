@@ -25,6 +25,7 @@
 #include <istream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "x86vector.h"
@@ -109,14 +110,11 @@ namespace nnue
     /* accumulator rows: 32 pieces + bias must not overflow int16 */
     constexpr int ACC_WEIGHT_MAX = INT16_MAX / 33;
 
-    /* activation: clamp(acc, 0, ACT_CLAMP) >> ACT_SHIFT -> u8 in [0, ACT_MAX] */
+    /* activation: clamp(acc, 0, ACT_CLAMP) >> ACT_SHIFT -> u8 in [0, ACT_MAX] at ACT_SCALE */
     constexpr int ACT_SHIFT = 3;
     constexpr int ACT_MAX = 127;
     constexpr int ACT_CLAMP = ((ACT_MAX + 1) << ACT_SHIFT) - 1;
-
-    /* hidden_2: s8 weights; int32 sums and bias at activation scale x weight scale */
-    constexpr int L2_WSCALE = 64;
-    constexpr int L2_SCALE = (QSCALE >> ACT_SHIFT) * L2_WSCALE;
+    constexpr int ACT_SCALE = QSCALE >> ACT_SHIFT;
 
     /* move head inputs: piece-square + side to move */
     constexpr int MOVE_INPUTS = 769;
@@ -332,17 +330,102 @@ namespace nnue
     INLINE Vector relu(Vector v) { return max(v, v_zero); }
 
 
-    template <int I, int O, typename T=weight_t, int Scale=1>
-    struct Layer
+    /* int8 layer vectors: int16 accumulator lanes, u8 activations, s8 weights, int32 sums */
+#if INSTRSET >= 10 /* AVX-512BW */
+    using VecS16 = Vec32s;
+    using VecU8 = Vec64uc;
+    using VecS8 = Vec64c;
+    using VecI32 = Vec16i;
+#elif INSTRSET >= 8
+    using VecS16 = Vec16s;
+    using VecU8 = Vec32uc;
+    using VecS8 = Vec32c;
+    using VecI32 = Vec8i;
+#else
+    using VecS16 = Vec8s;
+    using VecU8 = Vec16uc;
+    using VecS8 = Vec16c;
+    using VecI32 = Vec4i;
+#endif /* INSTRSET */
+
+
+    /* sums[k] = in . wt[k] for R rows, int32 */
+    template <int R, int N>
+    INLINE void dot_rows(const uint8_t (&in)[N], const int8_t (*wt)[N], int32_t (&sums)[R])
     {
+        static_assert(N % VecU8::size() == 0);
+
+        VecI32 acc[R];
+        for (int k = 0; k != R; ++k)
+            acc[k] = VecI32(0);
+
+        VecU8 a;
+        VecS8 w;
+        for (int i = 0; i != N; i += VecU8::size())
+        {
+            a.load_a(&in[i]);
+            for (int k = 0; k != R; ++k)
+            {
+                w.load_a(&wt[k][i]);
+                acc[k] = dot_add(acc[k], a, w);
+            }
+        }
+
+        for (int k = 0; k != R; ++k)
+            sums[k] = ::horizontal_add(acc[k]);
+    }
+
+
+    /* int16 accumulator at QSCALE -> u8 activations at ACT_SCALE: clamp to [0, ACT_CLAMP], >> ACT_SHIFT */
+    template <int N>
+    INLINE void activate(const int16_t (&in)[N], uint8_t (&out)[N])
+    {
+        constexpr int W = VecS16::size();
+        static_assert(2 * W == VecU8::size() && N % (2 * W) == 0);
+
+        const VecS16 lo(0), hi(ACT_CLAMP);
+        for (int i = 0; i != N; i += 2 * W)
+        {
+            const VecS16 a = min(max(VecS16().load_a(&in[i]), lo), hi) >> ACT_SHIFT;
+            const VecS16 b = min(max(VecS16().load_a(&in[i + W]), lo), hi) >> ACT_SHIFT;
+            /* values are in [0, ACT_MAX], so the signed saturating pack is exact */
+            VecU8(compress_saturated(a, b)).store_a(&out[i]);
+        }
+    }
+
+
+    /* int8 weights accumulate in int32, so their biases are int32 */
+    template <typename T> using bias_type = std::conditional_t<std::is_same_v<T, int8_t>, int32_t, T>;
+
+    template <int I, int O, typename T, int INPUTS, bool Incremental>
+    struct BaseLayer
+    {
+        ALIGN bias_type<T> _b[O]; /* biases */
+        ALIGN T _wt[O][INPUTS]; /* weights transposed */
+    };
+
+
+    template <int I, int O, typename T, int INPUTS>
+    struct BaseLayer<I, O, T, INPUTS, true>
+    {
+        ALIGN bias_type<T> _b[O]; /* biases */
+        ALIGN T _w[I][O]; /* one row per input, for incremental updates */
+    };
+
+
+    /* Weights are float on disk, quantized at load: weights at Scale, biases at Scale x InScale (the input scale) */
+    template <int I, int O, typename T=weight_t, int Scale=1, bool Incremental=false, int InScale=1>
+    struct Layer : BaseLayer<I, O, T, (Scale == 1 || Incremental) ? I : round_up<INPUT_STRIDE>(I), Incremental>
+    {
+        using bias_t = bias_type<T>;
+
         static constexpr int ROWS = I;
         static constexpr int COLS = O;
-        static constexpr int INPUTS = (Scale == 1) ? I : round_up<INPUT_STRIDE>(I);
+        /* Round up to INPUT_STRIDE to deal with odd inputs. */
+        static constexpr int INPUTS = (Scale == 1 || Incremental) ? I : round_up<INPUT_STRIDE>(I);
         static constexpr int OUTPUTS = O;
         static constexpr int SCALE = Scale;
-
-        ALIGN T _b[OUTPUTS]; /* biases */
-        ALIGN T _wt[OUTPUTS][INPUTS]; /* weights transposed */
+        static constexpr int BIAS_SCALE = Scale * InScale;
 
         Layer() = default;
 
@@ -356,35 +439,42 @@ namespace nnue
             return (I + 1) * O;
         }
 
+        template <typename V>
+        static V quantize(float v, int scale)
+        {
+            if constexpr (Scale == 1)
+                return v;
+            else
+            {
+                const auto q = std::round(double(v) * scale);
+                /* symmetric: int8 -128 is rejected */
+                if (std::abs(q) > std::numeric_limits<V>::max())
+                    throw std::runtime_error("weight " + std::to_string(v) + " exceeds range at scale " + std::to_string(scale));
+                return V(q);
+            }
+        }
+
         void set_weights(const float(&w)[I][OUTPUTS], const float(&b)[OUTPUTS])
         {
             for (int j = 0; j != OUTPUTS; ++j)
-                if constexpr (Scale == 1)
-                    _b[j] = b[j];
-                else
-                    _b[j] = std::round(b[j] * Scale);
+                this->_b[j] = quantize<bias_t>(b[j], BIAS_SCALE);
 
             for (int i = 0; i != I; ++i)
             {
                 for (int j = 0; j != OUTPUTS; ++j)
                 {
-                    T v;
-                    if constexpr (Scale == 1)
-                        v = w[i][j];
+                    const T v = quantize<T>(w[i][j], Scale);
+                    if constexpr (Incremental)
+                        this->_w[i][j] = v;
                     else
-                    {
-                        const auto q = std::round(w[i][j] * Scale);
-                        if (q > std::numeric_limits<T>::max() || q < std::numeric_limits<T>::lowest())
-                            throw std::runtime_error("weight " + std::to_string(w[i][j]) + " exceeds range at scale " + std::to_string(Scale));
-                        v = q;
-                    }
-                    _wt[j][i] = v;
+                        this->_wt[j][i] = v;
                 }
             }
             /* padding, if needed */
-            for (int i = I; i != INPUTS; ++i)
-                for (int j = 0; j != OUTPUTS; ++j)
-                    _wt[j][i] = 0;
+            if constexpr (!Incremental)
+                for (int i = I; i != INPUTS; ++i)
+                    for (int j = 0; j != OUTPUTS; ++j)
+                        this->_wt[j][i] = 0;
         }
 
         void load_weights(std::istream& file)
@@ -396,6 +486,25 @@ namespace nnue
             file.read(reinterpret_cast<char*>(b.get()), OUTPUTS * sizeof(float));
 
             set_weights(reinterpret_cast<float(&)[I][OUTPUTS]>(*(w.get())), reinterpret_cast<float(&)[OUTPUTS]>(*(b.get())));
+        }
+
+        /* u8 activations x int8 weights: int32 sums + bias, relu, to float */
+        INLINE void dot(const uint8_t (&input)[INPUTS], float (&output)[OUTPUTS]) const
+        {
+            static_assert(std::is_same_v<T, int8_t> && !Incremental);
+
+            constexpr int R = 4;
+            static_assert(OUTPUTS % R == 0);
+            constexpr float OUT_SCALE = 1.0f / BIAS_SCALE;
+
+            for (int j = 0; j != OUTPUTS; j += R)
+            {
+                int32_t sums[R];
+                dot_rows<R>(input, &this->_wt[j], sums);
+
+                for (int k = 0; k != R; ++k)
+                    output[j + k] = float(std::max(0, sums[k] + this->_b[j + k])) * OUT_SCALE;
+            }
         }
 
         /* hidden, output */
@@ -447,177 +556,13 @@ namespace nnue
         template <size_t N, typename U, typename V>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS]) const
         {
-            dot(input, output, _b, _wt, [](const Vector& v) { return v; }, 0);
+            dot(input, output, this->_b, this->_wt, [](const Vector& v) { return v; }, 0);
         }
 
         template <size_t N, typename U, typename V, typename ACTIVATION>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], ACTIVATION activate) const
         {
-            dot(input, output, _b, _wt, activate, 0);
-        }
-    };
-
-
-    /* Accumulator weights: one int16 row per (bucket, input) at QSCALE, shared by both perspectives */
-    template <int I, int O>
-    struct AccumulatorLayer
-    {
-        static constexpr int ROWS = I;
-        static constexpr int OUTPUTS = O;
-
-        ALIGN int16_t _b[OUTPUTS];
-        ALIGN int16_t _w[ROWS][OUTPUTS];
-
-        static constexpr size_t param_count()
-        {
-            return (I + 1) * O;
-        }
-
-        void load_weights(std::istream& file)
-        {
-            auto w = std::make_unique<float[]>(size_t(I) * O);
-            auto b = std::make_unique<float[]>(O);
-
-            file.read(reinterpret_cast<char*>(w.get()), size_t(I) * O * sizeof(float));
-            file.read(reinterpret_cast<char*>(b.get()), O * sizeof(float));
-
-            const auto quantize = [](float v)
-            {
-                const auto q = std::round(v * QSCALE);
-                if (std::abs(q) > ACC_WEIGHT_MAX)
-                    throw std::runtime_error("accumulator weight " + std::to_string(v) + " exceeds " + std::to_string(ACC_WEIGHT_MAX) + " at scale " + std::to_string(QSCALE));
-                return int16_t(q);
-            };
-
-            for (int j = 0; j != O; ++j)
-                _b[j] = quantize(b[j]);
-
-            int16_t* const rows = &_w[0][0];
-            for (size_t i = 0; i != size_t(I) * O; ++i)
-                rows[i] = quantize(w[i]);
-        }
-    };
-
-
-    /* int8 layer vectors: int16 accumulator lanes, u8 activations, s8 weights, int32 sums */
-#if INSTRSET >= 10 /* AVX-512BW */
-    using VecS16 = Vec32s;
-    using VecU8 = Vec64uc;
-    using VecS8 = Vec64c;
-    using VecI32 = Vec16i;
-#elif INSTRSET >= 8
-    using VecS16 = Vec16s;
-    using VecU8 = Vec32uc;
-    using VecS8 = Vec32c;
-    using VecI32 = Vec8i;
-#else
-    using VecS16 = Vec8s;
-    using VecU8 = Vec16uc;
-    using VecS8 = Vec16c;
-    using VecI32 = Vec4i;
-#endif /* INSTRSET */
-
-
-    /* sums[k] = in . wt[k] for R rows, int32 */
-    template <int R, int N>
-    INLINE void dot_rows(const uint8_t (&in)[N], const int8_t (*wt)[N], int32_t (&sums)[R])
-    {
-        static_assert(N % VecU8::size() == 0);
-
-        VecI32 acc[R];
-        for (int k = 0; k != R; ++k)
-            acc[k] = VecI32(0);
-
-        VecU8 a;
-        VecS8 w;
-        for (int i = 0; i != N; i += VecU8::size())
-        {
-            a.load_a(&in[i]);
-            for (int k = 0; k != R; ++k)
-            {
-                w.load_a(&wt[k][i]);
-                acc[k] = dot_add(acc[k], a, w);
-            }
-        }
-
-        for (int k = 0; k != R; ++k)
-            sums[k] = ::horizontal_add(acc[k]);
-    }
-
-
-    /* int16 accumulator at QSCALE -> u8 activations: clamp to [0, ACT_CLAMP], >> ACT_SHIFT */
-    template <int N>
-    INLINE void activate(const int16_t (&in)[N], uint8_t (&out)[N])
-    {
-        constexpr int W = VecS16::size();
-        static_assert(2 * W == VecU8::size() && N % (2 * W) == 0);
-
-        const VecS16 lo(0), hi(ACT_CLAMP);
-        for (int i = 0; i != N; i += 2 * W)
-        {
-            const VecS16 a = min(max(VecS16().load_a(&in[i]), lo), hi) >> ACT_SHIFT;
-            const VecS16 b = min(max(VecS16().load_a(&in[i + W]), lo), hi) >> ACT_SHIFT;
-            /* values are in [0, ACT_MAX], so the signed saturating pack is exact */
-            VecU8(compress_saturated(a, b)).store_a(&out[i]);
-        }
-    }
-
-
-    /* u8 activations x s8 weights at L2_WSCALE; int32 sums + bias at L2_SCALE, relu, to float */
-    template <int I, int O>
-    struct DenseInt8Layer
-    {
-        static constexpr int INPUTS = I;
-        static constexpr int OUTPUTS = O;
-
-        ALIGN int32_t _b[OUTPUTS];
-        ALIGN int8_t _wt[OUTPUTS][INPUTS];
-
-        static constexpr size_t param_count()
-        {
-            return (I + 1) * O;
-        }
-
-        void load_weights(std::istream& file)
-        {
-            auto w = std::make_unique<float[]>(I * O);
-            auto b = std::make_unique<float[]>(O);
-
-            file.read(reinterpret_cast<char*>(w.get()), I * O * sizeof(float));
-            file.read(reinterpret_cast<char*>(b.get()), O * sizeof(float));
-
-            for (int j = 0; j != O; ++j)
-            {
-                const auto q = std::round(double(b[j]) * L2_SCALE);
-                if (q > INT32_MAX || q < INT32_MIN)
-                    throw std::runtime_error("bias " + std::to_string(b[j]) + " exceeds int32 at scale " + std::to_string(L2_SCALE));
-                _b[j] = int32_t(q);
-            }
-
-            for (int i = 0; i != I; ++i)
-                for (int j = 0; j != O; ++j)
-                {
-                    const auto q = std::round(w[i * O + j] * L2_WSCALE);
-                    if (std::abs(q) > INT8_MAX) /* symmetric: -128 rejected */
-                        throw std::runtime_error("weight " + std::to_string(w[i * O + j]) + " exceeds int8 at scale " + std::to_string(L2_WSCALE));
-                    _wt[j][i] = int8_t(q);
-                }
-        }
-
-        INLINE void dot(const uint8_t (&input)[INPUTS], float (&output)[OUTPUTS]) const
-        {
-            constexpr int R = 4;
-            static_assert(OUTPUTS % R == 0);
-            constexpr float OUT_SCALE = 1.0f / L2_SCALE;
-
-            for (int j = 0; j != OUTPUTS; j += R)
-            {
-                int32_t sums[R];
-                dot_rows<R>(input, &_wt[j], sums);
-
-                for (int k = 0; k != R; ++k)
-                    output[j + k] = float(std::max(0, sums[k] + _b[j + k])) * OUT_SCALE;
-            }
+            dot(input, output, this->_b, this->_wt, activate, 0);
         }
     };
 
@@ -683,6 +628,22 @@ namespace nnue
         INLINE bool needs_update(const State& state) const
         {
             return state.hash() != slot(_current_bucket).hash;
+        }
+
+        /* 32 pieces + bias per output must not overflow int16 */
+        template <typename LA>
+        static void check_weights(const LA& layer)
+        {
+            const auto check = [](int v)
+            {
+                if (std::abs(v) > ACC_WEIGHT_MAX)
+                    throw std::runtime_error("accumulator weight " + std::to_string(v) + " exceeds " + std::to_string(ACC_WEIGHT_MAX));
+            };
+            for (const auto b : layer._b)
+                check(b);
+            for (const auto& row : layer._w)
+                for (const auto w : row)
+                    check(w);
         }
 
 

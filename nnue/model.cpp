@@ -75,6 +75,7 @@ void Model::init()
 
     /* Same order as Model::load_weights file-based path */
     L1A.load_weights(file);
+    Accumulator::check_weights(L1A);
     for (int s = 0; s != STACKS; ++s)
     {
         L2[s].load_weights(file);
@@ -119,6 +120,7 @@ void Model::load_weights(const std::filesystem::path& weights_path)
     {
         /* Load layers in the same order that the trainer exports them. */
         L1A.load_weights(file);
+        Accumulator::check_weights(L1A);
         for (int s = 0; s != STACKS; ++s)
         {
             L2[s].load_weights(file);
