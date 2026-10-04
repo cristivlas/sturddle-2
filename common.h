@@ -77,8 +77,8 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
  */
 #define COUNT_VALID_MOVES_AS_NODES          true
 
-/* Experimental in 2.03 */
-#define EVAL_PIECE_GRADING                  false /* TODO: tuneup */
+/* Experimental */
+#define EVAL_PIECE_GRADING                  false
 
 /* Collect extra stats for troubleshooting */
 #define EXTRA_STATS                         false
@@ -108,6 +108,9 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
   #define NATIVE_UCI                        true
 #endif /* NATIVE_UCI */
 
+/* hidden_2 in int16 at QSCALE (madd_epi16), float from hidden_3 on */
+#define NNUE_L2_INT16                       true
+
 #define RAZORING                            true
 
 #define REPORT_CURRENT_MOVE                 false
@@ -123,12 +126,12 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define SMP                                 true
 
 #if !defined(USE_PIECE_SQUARE_TABLES)
-  #define USE_PIECE_SQUARE_TABLES           true /* TODO: tuneup */
+  #define USE_PIECE_SQUARE_TABLES           true
 #endif
 
 /* Experimental */
 #define USE_BOOK_HINT                       false
-#define USE_MOVE_PREDICTION                 false
+#define USE_MOVE_PREDICTION                 true
 
 /* Support endtable probing with the Fathom library */
 #define USE_ENDTABLES                       true

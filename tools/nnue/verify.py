@@ -33,6 +33,7 @@ MOVE_OUTPUTS = 4096  # 64x64 (from, to)
 LAYERS = [
     ('hidden_1a', (ACTIVE_INPUTS * MAIN_BUCKETS, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), 'A'),
     ('hidden_1b', (256, POOLED), (POOLED,), 'B'),
+    ('pool', (2 * ACCUMULATOR_SIZE, 1), (0,), None),  # stm-major, kernel-only, float; (0,) -> np.prod == 0, no bias read
     ('hidden_2', (POOLED, 16), (16,), None),
     ('hidden_3', (16, 16), (16,), None),
     ('out', (16, 1), (1,), None),

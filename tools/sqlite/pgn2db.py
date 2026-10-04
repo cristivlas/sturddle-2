@@ -406,7 +406,8 @@ def main(args, stats):
             logging.info("Shuffle mode: ENABLED (shuffling positions within each game)\n")
 
         # Open PGN file and process games sequentially
-        with open(args.pgn_file, 'r', encoding='utf-8') as pgn_data:
+        # errors='replace': tolerate stray non-UTF-8 bytes (e.g. Latin-1 in opening book headers)
+        with open(args.pgn_file, 'r', encoding='utf-8-sig', errors='replace') as pgn_data:
             game_iter = iter(lambda: pgn.read_game(pgn_data), None)
 
             for game in tqdm(game_iter, total=num_games):

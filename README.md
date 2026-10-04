@@ -3,6 +3,8 @@
 Sturddle 2 is a fork of my Sturddle Chess Engine (https://github.com/cristivlas/sturddle-chess-engine)
 with many bug fixes and a rewritten (and trained from scratch) neural network.
 
+The engine is a command-line program. You need a GUI (such as https://github.com/cristivlas/sturddle-view) to use it.
+
 ## Building the Engine
 
 Python (3.9 or higher) and a working C++ compiler are required. The compiler must support
@@ -23,17 +25,6 @@ To build just a python module:
 <code>python3 setup.py build_ext --inplace</code>
 or:
 <code>CC=clang++ CFLAGS=-march=native python3 setup.py build_ext --inplace</code>
-
-# Neural Net Architecture
-*NOTE*: Some internal details omitted for simplicity.
-
-![plot](./model.png)
-
-Inference runs on the CPU using vectorized instructions.
-The x86_64 and ARM64 with NEON architectures are supported.
-To enable half precision on ARM processors that support it, set CXXFLAGS or CFLAGS:
-CFLAGS="march=armv8.2-a+fp16"
-
 
 ## Tuning the Engine
 

@@ -813,6 +813,14 @@
                 var _pertView = 'value';
                 try {{ var _sv = JSON.parse(localStorage.getItem('chartSolo')); if (_sv && _sv.p && _origData[_sv.p]) {{ _soloParam = _sv.p; _pertView = (_sv.m === 'pert' || _sv.m === 'conv') ? _sv.m : 'value'; }} }} catch(e) {{}}
                 function denorm(v, lo, hi) {{ return (v + 1) * (hi - lo) / 2 + lo; }}
+                // History can escape the param range after a warm-resume renormalization;
+                // widen the solo y-axis so that data stays visible. Reads _origData
+                // (always theta space) and denormalizes itself -- unit-proof.
+                function _soloYBounds(name, range) {{
+                    var lo = range[0], hi = range[1];
+                    (_origData[name] || []).forEach(function(pt) {{ if (pt.y != null) {{ var v = denorm(pt.y, range[0], range[1]); if (v < lo) lo = v; if (v > hi) hi = v; }} }});
+                    return [lo, hi];
+                }}
                 // Window stats in engine-space (when range known) or normalized space.
                 // slope is in engine units per iteration (caller scales to per-1k).
                 // Cached by (name, fromIdx, toIdx) — zoom drag fires this on every
@@ -997,7 +1005,7 @@
                     if (mode === 'value') {{
                         var range = paramRanges[_soloParam];
                         soloDs.data = range ? _origData[_soloParam].map(function(pt) {{ return {{x: pt.x, y: pt.y != null ? denorm(pt.y, range[0], range[1]) : null}}; }}) : _origData[_soloParam].slice();
-                        if (range) {{ ch.options.scales.y.min = range[0]; ch.options.scales.y.max = range[1]; }}
+                        if (range) {{ var yb = _soloYBounds(_soloParam, range); ch.options.scales.y.min = yb[0]; ch.options.scales.y.max = yb[1]; }}
                         else {{ delete ch.options.scales.y.min; delete ch.options.scales.y.max; }}
                         ch.options.plugins.title.display = true;
                         ch.options.plugins.title.text = _soloParam;
@@ -1049,8 +1057,9 @@
                     }}
                     var soloDs = ch.data.datasets.find(function(d) {{ return d.label === _soloParam; }});
                     if (soloDs) soloDs.data = _origData[_soloParam].map(function(pt) {{ return {{x: pt.x, y: pt.y != null ? denorm(pt.y, range[0], range[1]) : null}}; }});
-                    ch.options.scales.y.min = range[0];
-                    ch.options.scales.y.max = range[1];
+                    var yb = _soloYBounds(_soloParam, range);
+                    ch.options.scales.y.min = yb[0];
+                    ch.options.scales.y.max = yb[1];
                     ch.update();
                     document.getElementById('thetaChart').style.visibility = '';
                 }};
@@ -1197,8 +1206,9 @@
                                         }}
                                     }});
                                     if (range) {{
-                                        ch.options.scales.y.min = range[0];
-                                        ch.options.scales.y.max = range[1];
+                                        var yb = _soloYBounds(name, range);
+                                        ch.options.scales.y.min = yb[0];
+                                        ch.options.scales.y.max = yb[1];
                                     }} else {{
                                         delete ch.options.scales.y.min;
                                         delete ch.options.scales.y.max;

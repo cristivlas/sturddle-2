@@ -165,6 +165,8 @@ cdef extern from 'chess.h' namespace 'chess':
         Square      en_passant_square
         Color       turn
         score_t     simple_score
+        score_t     grading_score
+        const score_t UNKNOWN_SCORE
 
         void    apply_move(const BaseMove&)
 
@@ -278,6 +280,7 @@ cdef class BoardState:
 
         self._state.rehash()
         self._state.simple_score = self._state.eval_simple()
+        self._state.grading_score = self._state.UNKNOWN_SCORE
 
 
     cpdef void apply(self, move: chess.Move):

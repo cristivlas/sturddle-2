@@ -107,9 +107,8 @@ def _ensure_venv(clean):
     if not python.exists():
         raise RuntimeError(f'venv python not found at {python}')
 
-    if fresh:
-        print('--- upgrading pip ---')
-        _pip(python, '--upgrade', 'pip')
+    print('--- upgrading pip ---')
+    _pip(python, '--upgrade', 'pip')
 
     print('--- installing requirements ---')
     _pip(python, '-r', str(REQUIREMENTS))

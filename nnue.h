@@ -22,6 +22,8 @@
 #include "common.h"
 #include "chess.h"
 #include <istream>
+#include <stdexcept>
+#include <string>
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "vectorclass.h"
@@ -93,20 +95,28 @@ namespace nnue
     constexpr int EVAL_SCALE = 100;
     constexpr int MAX_ACTIVE_INPUTS = 33; // 32 pieces + turn
     constexpr int NUM_BUCKETS = 16;
-    constexpr int PAWN_BUCKETS = 4;
+    constexpr int PAWN_BUCKETS = chess::PAWN_BUCKETS;
     constexpr int KING_BUCKETS = 4;
+    static_assert(NUM_BUCKETS == PAWN_BUCKETS * KING_BUCKETS, "bucket grid mismatch");
     constexpr int POOL_STRIDE = 8;
     constexpr int QSCALE = 1024;
     constexpr int QLOG2 = 10;  /* log2(QSCALE), for shift-based requantization */
     static_assert((1 << QLOG2) == QSCALE, "QLOG2 must be log2(QSCALE)");
+
+#if NNUE_L2_INT16
+    /* hidden_2 input (pooled*(1+mod)) and its weights: finer int16 scales than the accumulator */
+    constexpr int AQLOG2 = QLOG2 + 2;
+    constexpr int AQSCALE = 1 << AQLOG2;
+    constexpr int WQLOG2 = QLOG2 + 2;
+    constexpr int WQSCALE = 1 << WQLOG2;
+#endif /* NNUE_L2_INT16 */
 
     /* bit index of the side-to-move feature within one-hot encoding */
     constexpr int TURN_INDEX = 768;
 
     INLINE int pawn_bucket(const State& state)
     {
-        const int p = chess::popcount(state.pawns);
-        return p <= 4 ? 0 : std::min<int>((p - 1) / 4, 3);
+        return chess::pawn_bucket(state.pawns);
     }
 
     INLINE int king_bucket(const State& state)
@@ -369,40 +379,6 @@ namespace nnue
     INLINE Vec8s relu<Vec8s>(Vec8s v) { return max(v, v8_zero); }
 
 
-#if 0
-    template <int N>
-    INLINE void activate(const int16_t (&input)[N], float (&output)[N])
-    {
-        constexpr float QSCALE_RECIP = 1.0f / QSCALE;
-
-#if __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC
-        /* Vec8f supported only on FP16 (half-precision) Neon */
-        #pragma clang loop vectorize(enable)
-        for (int i = 0; i != N; ++i)
-            output[i] = std::max<float>(0, float(input[i]) * QSCALE_RECIP);
-#else
-    #if INSTRSET < 9
-        using VF = Vec8f;
-        using VS = Vec8s;
-    #else
-        using VF = Vec16f;
-        using VS = Vec16s;
-    #endif /* AVX512 */
-
-        static_assert(N % VF::size() == 0);
-
-        const VF v_scale(QSCALE_RECIP);
-
-        for (size_t i = 0; i < N; i += VF::size())
-        {
-            VF v = to_float(extend(relu(VS().load_a(&input[i]))));
-            (v * v_scale).store_a(&output[i]);
-        }
-#endif /* __ARM__ && !__ARM_FEATURE_FP16_VECTOR_ARITHMETIC */
-    }
-#endif /* 0 */
-
-
     /** Dequantize int16/QSCALE to float, no activation (linear layer). */
     template <int N>
     INLINE void dequantize(const int16_t (&input)[N], float (&output)[N])
@@ -510,7 +486,8 @@ namespace nnue
         using Base::INPUTS;
         using Base::OUTPUTS;
         using Base::_b;
-        using Base::_wt;
+
+        static constexpr int SCALE = Scale;
 
         Layer() = default;
 
@@ -536,13 +513,20 @@ namespace nnue
             {
                 for (int j = 0; j != OUTPUTS; ++j)
                 {
+                    T v;
                     if constexpr (Scale == 1)
-                        _wt[j][i] = w[i][j];
+                        v = w[i][j];
                     else
-                        _wt[j][i] = std::round(w[i][j] * Scale);
+                    {
+                        const auto q = std::round(w[i][j] * Scale);
+                        if (q > std::numeric_limits<T>::max() || q < std::numeric_limits<T>::lowest())
+                            throw std::runtime_error("weight " + std::to_string(w[i][j]) + " exceeds range at scale " + std::to_string(Scale));
+                        v = q;
+                    }
 
+                    this->_wt[j][i] = v;
                     if constexpr (Incremental)
-                        this->_w[i][j] = _wt[j][i];
+                        this->_w[i][j] = v;
                 }
             }
             /* padding, if needed */
@@ -550,9 +534,9 @@ namespace nnue
             {
                 for (int j = 0; j != OUTPUTS; ++j)
                 {
+                    this->_wt[j][i] = 0;
                     if constexpr (Incremental)
                         this->_w[i][j] = 0;
-                    _wt[j][i] = 0;
                 }
             }
         }
@@ -607,7 +591,7 @@ namespace nnue
 
                     for (int k = 0; k != N; ++k)
                     {
-                        vw.load(&_wt[j + k][i + base]);
+                        vw.load(&this->_wt[j + k][i + base]);
                         sum[k] = mul_add(in, vw, sum[k]);
                     }
                 }
@@ -668,46 +652,237 @@ namespace nnue
         template <size_t N, typename U, typename V>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS]) const
         {
-            dot(input, output, _b, _wt, [](const Vector& v) { return v; }, 0);
+            dot(input, output, _b, this->_wt, [](const Vector& v) { return v; }, 0);
         }
 
         template <size_t N, typename U, typename V>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], size_t base) const
         {
-            dot(input, output, _b, _wt, [](const Vector& v) { return v; }, base);
+            dot(input, output, _b, this->_wt, [](const Vector& v) { return v; }, base);
         }
 
         template <size_t N, typename U, typename V, typename ACTIVATION>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], ACTIVATION activate) const
         {
-            dot(input, output, _b, _wt, activate, 0);
+            dot(input, output, _b, this->_wt, activate, 0);
         }
 
         template <size_t N, typename U, typename V, typename ACTIVATION>
         INLINE void dot(const U (&input)[N], V (&output)[OUTPUTS], ACTIVATION activate, size_t base) const
         {
-            dot(input, output, _b, _wt, activate, base);
+            dot(input, output, _b, this->_wt, activate, base);
         }
     };
 
 
+    /* Learned pooling weights, one set per side to move; defaults to average pooling. */
+    template <int N>
+    struct PoolLayer
+    {
+        static constexpr size_t param_count() { return 2 * N; }
+
+#if NNUE_L2_INT16
+        ALIGN int16_t _wq[2][N]; /* weights at WQSCALE */
+
+        PoolLayer()
+        {
+            for (auto& w : _wq)
+                std::fill(std::begin(w), std::end(w), int16_t(WQSCALE / POOL_STRIDE));
+        }
+
+        void load_weights(std::istream& file)
+        {
+            float w[2][N];
+            file.read(reinterpret_cast<char*>(w), sizeof(w));
+
+            for (int s = 0; s != 2; ++s)
+                for (int i = 0; i != N; ++i)
+                {
+                    const auto q = std::round(w[s][i] * WQSCALE);
+                    if (q > INT16_MAX || q < INT16_MIN)
+                        throw std::runtime_error("pool weight " + std::to_string(w[s][i]) + " exceeds int16 at scale " + std::to_string(WQSCALE));
+                    _wq[s][i] = int16_t(q);
+                }
+
+            /* int32 group sums must hold for any int16 accumulator values */
+            for (const auto& wq : _wq)
+                for (int i = 0; i != N; i += POOL_STRIDE)
+                {
+                    int64_t sum = 0;
+                    for (int k = 0; k != POOL_STRIDE; ++k)
+                        sum += std::abs(wq[i + k]);
+                    if (sum * INT16_MAX > INT32_MAX)
+                        throw std::runtime_error("pool group " + std::to_string(i / POOL_STRIDE) + " can overflow int32");
+                }
+        }
+#else
+        /* Stored pre-multiplied by 1/QSCALE (exact, power of two), so pool() dequantizes for free */
+        ALIGN float _w[2][N];
+
+        PoolLayer()
+        {
+            for (auto& w : _w)
+                std::fill(std::begin(w), std::end(w), 1.0f / POOL_STRIDE / QSCALE);
+        }
+
+        void load_weights(std::istream& file)
+        {
+            file.read(reinterpret_cast<char*>(_w), sizeof(_w));
+
+            for (auto& w : _w)
+                for (auto& v : w)
+                    v /= QSCALE;
+        }
+#endif /* NNUE_L2_INT16 */
+    };
+
     template <size_t INPUTS, size_t OUTPUTS>
-    INLINE void pool(const int16_t (&in)[INPUTS], float (&out)[OUTPUTS])
+    INLINE void pool(const int16_t (&in)[INPUTS], const float (&w)[INPUTS], float (&out)[OUTPUTS])
     {
         static_assert(INPUTS % OUTPUTS == 0);
         static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
         static_assert(POOL_STRIDE == 8);
 
-        constexpr float SCALE_RECIP = 1.0f / POOL_STRIDE / QSCALE;
-
+        /* w carries the 1/QSCALE factor, see PoolLayer */
+#if __ARM__
+        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
+        {
+            float sum = 0;
+            #pragma clang loop vectorize(enable)
+            for (int k = 0; k != POOL_STRIDE; ++k)
+                sum += float(std::max<int16_t>(0, in[i + k])) * w[i + k];
+            out[j] = sum;
+        }
+#else
         Vec8s v;
+        Vec8f vw;
         for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
         {
             v.load_a(&in[i]);
+            vw.load_a(&w[i]);
             ASSERT(j < OUTPUTS);
-            out[j] = float(::horizontal_add(extend(max(v, v8_zero)))) * SCALE_RECIP;
+            out[j] = ::horizontal_add(to_float(extend(max(v, v8_zero))) * vw);
         }
+#endif /* __ARM__ */
     }
+
+
+#if NNUE_L2_INT16
+    constexpr int QROUND = QSCALE / 2; /* round-half-up before >> QLOG2 */
+    constexpr int AQROUND = AQSCALE / 2;
+    constexpr int POOL_SHIFT = QLOG2 + WQLOG2 - AQLOG2; /* acc at QSCALE times pool at WQSCALE, down to AQSCALE */
+    constexpr int POOL_ROUND = 1 << (POOL_SHIFT - 1);
+
+    /* Integer pool + hidden_1b modulation: relu(acc) . w >> POOL_SHIFT, times (QSCALE + mod) >> QLOG2, saturate to int16 */
+    template <size_t INPUTS, size_t OUTPUTS>
+    INLINE void pool_modulate_q(
+        const int16_t (&in)[INPUTS],
+        const int16_t (&w)[INPUTS],
+        const int16_t (&mod)[OUTPUTS],
+        int16_t (&out)[OUTPUTS])
+    {
+        static_assert(INPUTS / OUTPUTS == POOL_STRIDE);
+        static_assert(POOL_STRIDE == 8);
+        static_assert(OUTPUTS % 16 == 0);
+
+        ALIGN int32_t pooled[OUTPUTS];
+#if __ARM__
+        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
+        {
+            int32_t sum = 0;
+            #pragma clang loop vectorize(enable)
+            for (int k = 0; k != POOL_STRIDE; ++k)
+                sum += int32_t(std::max<int16_t>(0, in[i + k])) * w[i + k];
+            pooled[j] = (sum + POOL_ROUND) >> POOL_SHIFT;
+        }
+        for (size_t j = 0; j != OUTPUTS; ++j)
+        {
+            const int32_t v = (pooled[j] * (QSCALE + mod[j]) + QROUND) >> QLOG2;
+            out[j] = int16_t(std::max<int32_t>(INT16_MIN, std::min<int32_t>(INT16_MAX, v)));
+        }
+#else
+        Vec8s v, vw;
+        for (size_t i = 0, j = 0; i + POOL_STRIDE <= INPUTS; i += POOL_STRIDE, ++j)
+        {
+            v.load_a(&in[i]);
+            vw.load_a(&w[i]);
+            pooled[j] = (::horizontal_add(Vec4i(_mm_madd_epi16(max(v, v8_zero), vw))) + POOL_ROUND) >> POOL_SHIFT;
+        }
+        const Vec8i v_q(QSCALE), v_round(QROUND);
+        for (size_t j = 0; j != OUTPUTS; j += 16)
+        {
+            const Vec8i lo = (Vec8i().load_a(&pooled[j]) * (extend(Vec8s().load_a(&mod[j])) + v_q) + v_round) >> QLOG2;
+            const Vec8i hi = (Vec8i().load_a(&pooled[j + 8]) * (extend(Vec8s().load_a(&mod[j + 8])) + v_q) + v_round) >> QLOG2;
+            compress_saturated(lo, hi).store_a(&out[j]);
+        }
+#endif /* __ARM__ */
+    }
+
+
+    /* hidden_2 in int16: input at AQSCALE, weights at L::SCALE; int32 sums >> AQLOG2, + bias, relu, to float for hidden_3 */
+    template <typename L, size_t INPUT_SIZE>
+    INLINE void dot_q(const L& layer, const int16_t (&input)[INPUT_SIZE], float (&output)[L::OUTPUTS])
+    {
+        constexpr int OUTPUTS = L::OUTPUTS;
+        static_assert(INPUT_SIZE == L::INPUTS);
+        constexpr float out_scale = 1.0f / L::SCALE;
+
+        ALIGN int32_t sums[OUTPUTS];
+#if __ARM__
+        for (int j = 0; j != OUTPUTS; ++j)
+        {
+            int32_t sum = 0;
+            #pragma clang loop vectorize(enable)
+            for (size_t i = 0; i != INPUT_SIZE; ++i)
+                sum += int32_t(input[i]) * layer._wt[j][i];
+            sums[j] = ((sum + AQROUND) >> AQLOG2) + layer._b[j];
+        }
+        for (int j = 0; j != OUTPUTS; ++j)
+            output[j] = std::max<int32_t>(0, sums[j]) * out_scale;
+#else
+    #if INSTRSET >= 9
+        using VS = Vec32s;
+        using VI = Vec16i;
+        using VF = Vec16f;
+    #else
+        using VS = Vec16s;
+        using VI = Vec8i;
+        using VF = Vec8f;
+    #endif /* AVX512 */
+        static_assert(INPUT_SIZE % VS::size() == 0);
+        constexpr int JB = 8;
+        static_assert(OUTPUTS % JB == 0);
+        static_assert(OUTPUTS % VI::size() == 0);
+
+        VS in, vw;
+        for (int j = 0; j != OUTPUTS; j += JB)
+        {
+            VI acc[JB];
+            #pragma unroll JB
+            for (int k = 0; k != JB; ++k)
+                acc[k] = VI(0);
+
+            for (size_t i = 0; i != INPUT_SIZE; i += VS::size())
+            {
+                in.load_a(&input[i]);
+                #pragma unroll JB
+                for (int k = 0; k != JB; ++k)
+                {
+                    vw.load_a(&layer._wt[j + k][i]);
+                    acc[k] = mul_add(in, vw, acc[k]);
+                }
+            }
+            #pragma unroll JB
+            for (int k = 0; k != JB; ++k)
+                sums[j + k] = ((::horizontal_add(acc[k]) + AQROUND) >> AQLOG2) + layer._b[j + k];
+        }
+
+        const VF v_scale(out_scale);
+        for (int j = 0; j != OUTPUTS; j += VI::size())
+            (to_float(max(VI().load_a(&sums[j]), VI(0))) * v_scale).store_a(&output[j]);
+#endif /* __ARM__ */
+    }
+#endif /* NNUE_L2_INT16 */
 
 
     template <int M, int N, int O> struct Accumulator
@@ -759,7 +934,7 @@ namespace nnue
          * equivalence can be checked even when SLOTS == 1 (single-bucket mode)
          */
         uint64_t _ref_hash[NUM_BUCKETS] = { };
-    #endif
+    #endif /* DEBUG_INCREMENTAL */
 
 
         INLINE bool needs_update(const State& state) const
@@ -1125,21 +1300,29 @@ namespace nnue
     };
 
 
-    template <typename A, typename L2, typename L3, typename OUT>
-    INLINE int eval(const A& a, const L2& l2, const L3& l3, const OUT& out)
+    template <typename A, typename P, typename L2, typename L3, typename OUT>
+    INLINE int eval(const A& a, const P& pw, const L2& l2, const L3& l3, const OUT& out, bool turn)
     {
         constexpr int POOL_OUT = A::OUTPUTS_A / POOL_STRIDE;
+        static_assert(P::param_count() == 2 * A::OUTPUTS_A);
         static_assert(POOL_OUT == L2::INPUTS);
         static_assert(A::OUTPUTS_B == POOL_OUT); /* 1b modulates pooled 1:1 */
         static_assert(L2::OUTPUTS == L3::INPUTS);
         static_assert(L3::OUTPUTS == OUT::INPUTS);
 
-        ALIGN float l2_in[POOL_OUT];
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
 
-        pool(a.slot(a._current_bucket).output, l2_in);
+#if NNUE_L2_INT16
+        ALIGN int16_t l2_in[POOL_OUT];
+
+        pool_modulate_q(a.slot(a._current_bucket).output, pw._wq[turn], a._output_b, l2_in);
+        dot_q(l2, l2_in, l2_out);
+#else
+        ALIGN float l2_in[POOL_OUT];
+
+        pool(a.slot(a._current_bucket).output, pw._w[turn], l2_in);
 
         static_assert(POOL_OUT % Vector::size() == 0);
 
@@ -1175,9 +1358,10 @@ namespace nnue
             m.load_a(&mod[i]);
             (v1 * (m + v_one)).store_a(&l2_in[i]);
         }
-#endif
+#endif /* INSTRSET >= 7 */
 
         l2.dot(l2_in, l2_out, [](const Vector& v) { return relu(v); });
+#endif /* NNUE_L2_INT16 */
         l3.dot(l2_out, l3_out, [](const Vector& v) { return relu(v); });
         out.dot(l3_out, output);
         return EVAL_SCALE * output[0];

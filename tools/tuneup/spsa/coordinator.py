@@ -30,7 +30,7 @@ from pathlib import Path
 from config import TuningConfig, WorkItem, WorkResult
 from spsa import SPSAOptimizer, SPSAState
 
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 
 # Per-iteration EWMA alpha for session-ETA smoothing (~3-iter half-life).
 ITER_DURATION_EWMA_ALPHA = 0.3

@@ -1,16 +1,4 @@
 #! /usr/bin/env python3
-"""
-Canonical NNUE test positions and golden evals.
-
-TESTS is the single source of truth for the FEN list shared by test-model.py
-and test/unit_test.py, so the two can never drift out of order again.
-
-Golds are stored in golds.json keyed by FEN (order-independent). Regenerate
-after retraining:
-
-    python tools/nnue/golds.py models\\KP44
-"""
-
 import json
 import os
 
@@ -134,8 +122,15 @@ def _generate_bin(bin_path):
         array = np.asarray([bitboards], dtype=np.uint64).ravel()
         return np.append(array, np.uint64(board.turn))
 
+    size = os.path.getsize(bin_path) // 4
+    base = sum(i * o + b for _, i, o, b in tt._EXPORT)
+    # --predict-moves bins append move_acc (769x256) and move (256x4096) after the eval layers
+    move_head = tt.ACTIVE_INPUTS * 256 + 256 + 256 * 4096 + 4096
+    if size not in (base, base + move_head):
+        raise ValueError(f"{bin_path}: {size} floats does not match any known layout")
+
     model = tt.NNUE()
-    tt.load_bin(model, bin_path)
+    tt.load_bin(model, bin_path, count=base)
     model.eval()
 
     golds = {}
