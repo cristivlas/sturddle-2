@@ -263,7 +263,7 @@ def _layer_params(model, name):
 
 
 def _on_grid(a, scale, qmax):
-    a = np.sign(a) * np.floor(np.abs(a * scale) + 0.5) / scale
+    a = np.sign(a) * np.floor(np.abs(a * scale) + 0.5) / scale + 0.0  # + 0.0: no -0.0, so re-export is byte-identical
     return a if qmax is None else np.clip(a, -qmax, qmax)
 
 

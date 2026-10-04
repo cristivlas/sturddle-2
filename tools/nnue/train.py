@@ -22,25 +22,32 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # uncomment (or set in environment) for newer TF versions (> 2.15.1 ?) that use Keras 3
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
-ACCUMULATOR_SIZE = 2048
-POOL_SIZE = 8
+ACCUMULATOR_SIZE = 1024  # per perspective; hidden_2 sees [black, white] == 2048
 MAIN_BUCKETS = 16  # Number of buckets for hidden_1a / BucketShift (4 pawn x 4 king-file)
+STACKS = 2  # hidden_2 -> hidden_3 -> out, selected by side to move, black first
+HIDDEN_2 = 32
+HIDDEN_3 = 32
 MOVE_ACCUMULATOR_SIZE = 256  # move-prediction sub-accumulator width (own path, decoupled from eval)
+
+# black-view feature index: color swap (64) + rank flip (56)
+PERSPECTIVE_XOR = 120
 
 Q_SCALE = 1024
 
-# Quantization range: use int16_t with Q_SCALE, prevent overflow
-# 32 pieces + 1 side-to-move + 1 bias == 34
-Q_MAX_A = 32767 / Q_SCALE / 34
-Q_MIN_A = -Q_MAX_A
+# Accumulator: int16 at Q_SCALE; 32 pieces + bias == 33 terms, floor(32767 / 33) LSB
+Q_MAX_A = 992 / Q_SCALE
 
-# (8 pawns + 1 king) x 2 + 1 bias == 19
-Q_MAX_B = 32767  / Q_SCALE / 19
-Q_MIN_B = -Q_MAX_B
+# Activation: clamp(acc, 0, 1023) >> 3 in the engine -> u8 in [0, 127] at scale 128
+Q_ACT = 128
+ACT_MAX = 127 / Q_ACT
 
-# 32 occupied + up to 20 bishops (promotions) + 1 bias == 53
-Q_MAX_C = 32767 / Q_SCALE / 53
-Q_MIN_C = -Q_MAX_C
+# hidden_2: s8 weights at scale 64, int32 bias at the product scale
+Q_W2 = 64
+Q_MAX_W2 = 127 / Q_W2
+Q_B2 = Q_ACT * Q_W2
+
+# Move head: int16 at Q_SCALE; 32 pieces + side-to-move + bias == 34
+Q_MAX_MOVE = 32767 / Q_SCALE / 34
 
 SCALE = 100.0
 
@@ -154,31 +161,129 @@ def configure_logging(args):
     return log_level
 
 
-_stm_pool_cls = None
+def round_half_away(x):
+    """Round ties away from zero, like the engine loader's std::round."""
+    return tf.sign(x) * tf.floor(tf.abs(x) + 0.5)
 
-def stm_pool_class():
-    """StmPool, defined lazily (the tensorflow import is deferred); cached so save and reload see one class."""
-    global _stm_pool_cls
-    if _stm_pool_cls is None:
-        @tf.keras.utils.register_keras_serializable(package='sturddle')
-        class StmPool(tf.keras.layers.Layer):
-            """Learned pooling, one weight set per side to move; init 1/POOL_SIZE == average pooling."""
+
+def fake_quant(x, scale):
+    """Round to 1/scale in the forward pass; straight-through gradient."""
+    return x + tf.stop_gradient(round_half_away(x * scale) / scale - x)
+
+
+def fake_floor(x, scale):
+    """Floor to 1/scale in the forward pass (the engine's >> 3); straight-through gradient."""
+    return x + tf.stop_gradient(tf.floor(x * scale) / scale - x)
+
+
+def on_grid(a, scale, qmax):
+    a = np.sign(a) * np.floor(np.abs(a * scale) + 0.5) / scale + 0.0  # + 0.0: no -0.0, so re-export is byte-identical
+    return a if qmax is None else np.clip(a, -qmax, qmax)
+
+
+# on-grid export: layer name prefix -> (kernel scale, bias scale, kernel clamp, bias clamp)
+QUANT = {
+    'hidden_1a': (Q_SCALE, Q_SCALE, Q_MAX_A, Q_MAX_A),
+    'hidden_2': (Q_W2, Q_B2, Q_MAX_W2, None),
+}
+
+
+_custom_layers = None
+
+def custom_layers():
+    """Custom layers, defined lazily (the tensorflow import is deferred); cached so save and reload see one class each."""
+    global _custom_layers
+    if _custom_layers is None:
+        register = tf.keras.utils.register_keras_serializable(package='sturddle')
+
+        @register
+        class Clamp(tf.keras.constraints.Constraint):
+            def __init__(self, qmax):
+                self.qmax = qmax
+
+            def __call__(self, w):
+                return tf.clip_by_value(w, -self.qmax, self.qmax)
+
+            def get_config(self):
+                return {'qmax': self.qmax}
+
+        @register
+        class QDense(tf.keras.layers.Layer):
+            """Dense layer with QAT: fake-quantized kernel and bias when qat, and always at inference."""
+            def __init__(self, units, activation=None, kernel_scale=0, bias_scale=0, kernel_max=None, bias_max=None,
+                         qat=False, kernel_initializer='he_normal', **kwargs):
+                super().__init__(**kwargs)
+                self.units = units
+                self.activation = tf.keras.activations.get(activation)
+                self.kernel_scale = kernel_scale
+                self.bias_scale = bias_scale
+                self.kernel_max = kernel_max
+                self.bias_max = bias_max
+                self.qat = qat
+                self.kernel_initializer = tf.keras.initializers.get(kernel_initializer)
+                self.kernel_constraint = Clamp(kernel_max) if kernel_max else None
+                self.bias_constraint = Clamp(bias_max) if bias_max else None
+
             def build(self, input_shape):
-                self.pool = self.add_weight(
-                    name='pool',
-                    shape=(2, ACCUMULATOR_SIZE // POOL_SIZE, POOL_SIZE),
-                    initializer=tf.keras.initializers.Constant(1.0 / POOL_SIZE),
-                )
+                self.kernel = self.add_weight(
+                    name='kernel', shape=(int(input_shape[-1]), self.units),
+                    initializer=self.kernel_initializer, constraint=self.kernel_constraint)
+                self.bias = self.add_weight(
+                    name='bias', shape=(self.units,), initializer='zeros', constraint=self.bias_constraint)
 
+            def call(self, inputs, training=None):
+                kernel, bias = self.kernel, self.bias
+                if self.kernel_scale and (self.qat or not training):
+                    kernel, bias = fake_quant(kernel, self.kernel_scale), fake_quant(bias, self.bias_scale)
+                x = tf.matmul(tf.cast(inputs, self.compute_dtype), tf.cast(kernel, self.compute_dtype))
+                x = x + tf.cast(bias, self.compute_dtype)
+                return self.activation(x) if self.activation else x
+
+            def get_config(self):
+                config = super().get_config()
+                config.update({
+                    'units': self.units,
+                    'activation': tf.keras.activations.serialize(self.activation),
+                    'kernel_scale': self.kernel_scale,
+                    'bias_scale': self.bias_scale,
+                    'kernel_max': self.kernel_max,
+                    'bias_max': self.bias_max,
+                    'qat': self.qat,
+                    'kernel_initializer': tf.keras.initializers.serialize(self.kernel_initializer),
+                })
+                return config
+
+        @register
+        class ClippedReLU(tf.keras.layers.Layer):
+            """Clamp to [0, ACT_MAX]; floor to 1/Q_ACT when qat, and always at inference."""
+            def __init__(self, qat=False, **kwargs):
+                super().__init__(**kwargs)
+                self.qat = qat
+
+            def call(self, x, training=None):
+                x = tf.clip_by_value(x, 0.0, ACT_MAX)
+                return fake_floor(x, Q_ACT) if (self.qat or not training) else x
+
+            def get_config(self):
+                config = super().get_config()
+                config['qat'] = self.qat
+                return config
+
+        @register
+        class BlackView(tf.keras.layers.Layer):
+            """White-view features -> black-view features (colors swapped, ranks flipped)."""
+            def call(self, features):
+                return tf.gather(features, [j ^ PERSPECTIVE_XOR for j in range(12 * 64)], axis=1)
+
+        @register
+        class SelectStack(tf.keras.layers.Layer):
+            """Per row, the stack output picked by side to move (0 = black)."""
             def call(self, inputs):
-                x, turn = inputs
-                stm = tf.cast(tf.reshape(turn, [-1]), tf.int32)  # 0 = black to move, 1 = white
-                w = tf.gather(self.pool, stm)  # (batch, POOLED, POOL_SIZE)
-                reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
-                return tf.reduce_sum(reshaped * tf.cast(w, x.dtype), axis=-1)
+                black, white, turn = inputs
+                return tf.where(tf.cast(turn, tf.bool), white, black)
 
-        _stm_pool_cls = StmPool
-    return _stm_pool_cls
+        _custom_layers = {cls.__name__: cls for cls in (Clamp, QDense, ClippedReLU, BlackView, SelectStack)}
+    return _custom_layers
 
 
 def make_model(args, strategy):
@@ -275,10 +380,7 @@ def make_model(args, strategy):
             self.num_outputs = num_outputs
 
         def call(self, packed):
-            bitboards, turn = packed[:, :12], packed[:,-1:]
-
-            f = tf.concat([tf_unpack_bits(bitboards), turn], axis=1)
-            return tf.cast(f, tf.float32)
+            return tf.cast(tf_unpack_bits(packed[:, :12]), tf.float32)
 
     class BucketShift(tf.keras.layers.Layer):
         def __init__(self, num_buckets, **kwargs):
@@ -339,81 +441,60 @@ def make_model(args, strategy):
         # Define the input layer
         input_layer = Input(shape=(13,), dtype=tf.uint64, name='input')
         unpack_layer = Unpack(args.hot_encoding, name='unpack')(input_layer)
+        turn = Lambda(lambda x: tf.cast(x[:, -1:], tf.float32), name='turn')(input_layer)
 
-        # Apply bucketing
-        bucketed = BucketShift(MAIN_BUCKETS, name='bucket_shift')(unpack_layer)
+        layers = custom_layers()
+        QDense, ClippedReLU = layers['QDense'], layers['ClippedReLU']
 
-        constr_a = QConstraint(Q_MIN_A, Q_MAX_A)
-        hidden_1a = Dense(
+        # QAT keeps the integer-grid region fp32; inference on a float-run model under mixed precision is not exact
+        exact = 'float32' if args.quantize_round else None
+
+        # Perspectives: one bucketed hidden_1a shared by the white and black views
+        black_view = layers['BlackView'](name='black_view')(unpack_layer)
+        bucket_shift = BucketShift(MAIN_BUCKETS, name='bucket_shift')
+
+        hidden_1a = QDense(
             ACCUMULATOR_SIZE,
-            activation=ACTIVATION,
+            kernel_scale=Q_SCALE,
+            bias_scale=Q_SCALE,
+            kernel_max=Q_MAX_A,
+            bias_max=Q_MAX_A,
+            qat=args.quantize_round,
+            kernel_initializer=K_INIT(),
             name='hidden_1a',
-            kernel_initializer=K_INIT,
-            kernel_constraint=constr_a,
-            bias_constraint=constr_a,
+            dtype=exact,
             trainable=not args.freeze_eval,
-        )(bucketed)
+        )
+        acc_white = hidden_1a(bucket_shift(unpack_layer))
+        acc_black = hidden_1a(bucket_shift(black_view))
 
-        constr_b = QConstraint(Q_MIN_B, Q_MAX_B)
+        accumulator = Concatenate(name='accumulator', dtype=exact)([acc_black, acc_white])
+        activated = ClippedReLU(qat=args.quantize_round, name='activation', dtype=exact)(accumulator)
 
-        # Hidden layer 1b (kings and pawns) directly modulates the pooled main path.
-        # Output width matches pooled (ACCUMULATOR_SIZE / POOL_SIZE) for 1:1 modulation.
-        input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
-        hidden_1b = Dense(
-            ACCUMULATOR_SIZE // POOL_SIZE,
-            activation=None,
-            name='hidden_1b',
-            kernel_initializer=K_INIT,
-            kernel_constraint=constr_b,
-            bias_constraint=constr_b,
-            trainable=not args.freeze_eval,
-        )(input_1b)
-
-        mod = hidden_1b
-        if args.hidden_1c:
-            # Hidden layer 1c (bishops + per-color occupancy) adds to the 1b modulation.
-            # Zero init: importing pre-1c weights leaves the net unchanged (warm start).
-            constr_c = QConstraint(Q_MIN_C, Q_MAX_C)
-            input_1c = Lambda(
-                lambda x: tf.concat([x[:, 384:512], tf.reduce_sum(tf.reshape(x[:, :768], [-1, 6, 128]), axis=1)], axis=1),
-                name='bishops_and_occupancy',
-            )(unpack_layer)
-            hidden_1c = Dense(
-                ACCUMULATOR_SIZE // POOL_SIZE,
-                activation=None,
-                name='hidden_1c',
-                kernel_initializer='zeros',
-                bias_initializer='zeros',
-                kernel_constraint=constr_c,
-                bias_constraint=constr_c,
+        stack_out = []
+        for s in range(STACKS):
+            x = QDense(
+                HIDDEN_2,
+                activation=ACTIVATION,
+                kernel_scale=Q_W2,
+                bias_scale=Q_B2,
+                kernel_max=Q_MAX_W2,
+                qat=args.quantize_round,
+                kernel_initializer=K_INIT(),
+                name=f'hidden_2_{s}',
+                dtype=exact,
                 trainable=not args.freeze_eval,
-            )(input_1c)
-            mod = Add(name='modulation_sum')([hidden_1b, hidden_1c])
+            )(activated)
+            x = Dense(
+                HIDDEN_3,
+                activation=ACTIVATION,
+                kernel_initializer=K_INIT,
+                name=f'hidden_3_{s}',
+                trainable=not args.freeze_eval,
+            )(x)
+            stack_out.append(Dense(1, name=f'out_{s}', dtype='float32', trainable=not args.freeze_eval)(x))
 
-        turn = Lambda(lambda x: x[:, -1:], name='turn')(unpack_layer)
-        pooled = stm_pool_class()(name='pool', trainable=not args.freeze_eval)([hidden_1a, turn])
-
-        # Modulate pooled by 1b (+ 1c): pooled * (1 + mod)
-        modulation = Multiply(name='modulation')([pooled, mod])
-        residual = Add(name='residual')([pooled, modulation])
-
-        hidden_2 = Dense(
-            16,
-            activation=ACTIVATION,
-            kernel_initializer=K_INIT,
-            name='hidden_2',
-            trainable=not args.freeze_eval,
-        )(residual)
-
-        hidden_3 = Dense(
-            16,
-            activation=ACTIVATION,
-            kernel_initializer=K_INIT,
-            name='hidden_3',
-            trainable=not args.freeze_eval,
-        )(hidden_2)
-
-        eval_output = Dense(1, name='out', dtype='float32', trainable=not args.freeze_eval)(hidden_3)
+        eval_output = layers['SelectStack'](name='out', dtype='float32')([stack_out[0], stack_out[1], turn])
 
         # Add move prediction heads if enabled
         outputs = [eval_output]
@@ -423,7 +504,8 @@ def make_model(args, strategy):
             # share the trunk back-spilled into eval. Own sub-accumulator gives the head
             # depth without that coupling. move_acc is linear-in-inputs before the relu, so
             # the engine can update it incrementally like the eval accumulator.
-            stop_grad = tf.stop_gradient(unpack_layer)
+            constr_a = QConstraint(-Q_MAX_MOVE, Q_MAX_MOVE)
+            stop_grad = tf.stop_gradient(Concatenate(name='move_input')([unpack_layer, turn]))
 
             move_acc = Dense(
                 MOVE_ACCUMULATOR_SIZE,
@@ -588,8 +670,10 @@ def make_model(args, strategy):
     return model
 
 
-def get_layer_weights(layer):
-    """Get layer weights with the layer's constraints applied, so an imported model exports the same as a trained one."""
+def get_layer_weights(layer, quantize_round=False):
+    """Get layer weights with the layer's constraints applied, so an imported model exports the same as a trained one.
+
+    With quantize_round, QAT layers export their on-grid values."""
     params = layer.get_weights()
     if len(params) != 2:
         return None
@@ -598,6 +682,9 @@ def get_layer_weights(layer):
         weights = layer.kernel_constraint(weights).numpy()
     if layer.bias_constraint:
         biases = layer.bias_constraint(biases).numpy()
+    q = QUANT.get(layer.name.rsplit('_', 1)[0] if layer.name.startswith('hidden_2') else layer.name)
+    if quantize_round and q:
+        weights, biases = on_grid(weights, q[0], q[2]), on_grid(biases, q[1], q[3])
     return weights, biases
 
 
@@ -606,11 +693,8 @@ Export weights as C++ code snippet.
 '''
 def write_weigths(args, model, indent=2):
     for layer in model.layers:
-        params = get_layer_weights(layer)
+        params = get_layer_weights(layer, args.quantize_round)
         if not params:
-            if layer.name == 'pool':
-                print('WARNING: pool weights not exported to weights.h; '
-                      'the engine INIT_LAYER path defaults to average pooling', file=sys.stderr)
             continue
         weights, biases = params
         rows, cols = weights.shape
@@ -647,18 +731,16 @@ def write_weigths(args, model, indent=2):
         print('\n};')
 
 
+# Fixed engine load order: hidden_1a, then per stack (black-to-move first) hidden_2, hidden_3, out
+EVAL_ORDER = ['hidden_1a'] + [f'{name}_{s}' for s in range(STACKS) for name in ('hidden_2', 'hidden_3', 'out')]
+
+
 def write_binary_weights(args, model, file):
-    # Fixed engine load order (context.cpp): eval layers, then move head.
-    # model.layers is graph-depth ordered and interleaves the head into the eval layers.
-    order = ['hidden_1a', 'hidden_1b', 'hidden_1c', 'pool', 'hidden_2', 'hidden_3', 'out', 'move_acc', 'move']
+    # Eval layers, then move head. model.layers is graph-depth ordered and interleaves the stacks.
+    order = EVAL_ORDER + ['move_acc', 'move']
     layers = [model.get_layer(n) for n in order if any(l.name == n for l in model.layers)]
     for layer in layers:
-        if layer.name == 'pool':
-            kernel = layer.get_weights()[0]  # (2, POOLED, POOL_SIZE), kernel-only; flattens stm-major
-            print(layer.name, kernel.shape)
-            kernel.astype(np.float32).tofile(file)
-            continue
-        params = get_layer_weights(layer)
+        params = get_layer_weights(layer, args.quantize_round)
         if params:
             kernel, bias = params
             print(layer.name, kernel.shape, bias.shape)
@@ -689,32 +771,20 @@ def export_weights(args, model):
 def load_binary_weights(args, model, file):
     """Load weights from a flat .bin into the eval layers, in C++/torch export order.
 
-    Consumes hidden_1a, 1b, [1c,] pool, 2, 3, out (kernel then bias each). The 'move' head is
-    NOT in the file (eval-only export), so it is skipped by name — importing an
-    eval-only weights.bin into a --predict-moves graph leaves the head untouched.
-    Pre-1c weights import into a --hidden-1c graph with hidden_1c left at its zero init.
+    The 'move' head is NOT in the file (eval-only export), so it is skipped by name: importing
+    an eval-only weights.bin into a --predict-moves graph leaves the head untouched.
     """
-    eval_order = ['hidden_1a', 'hidden_1b', 'hidden_1c', 'pool', 'hidden_2', 'hidden_3', 'out']
     by_name = {l.name: l for l in model.layers}
-
-    def size_of(name):
-        return sum(int(np.prod(w.shape)) for w in by_name[name].get_weights()) if name in by_name else 0
-
     payload = np.fromfile(file, dtype=np.float32)
-    expected = sum(size_of(n) for n in eval_order)
-    if 'hidden_1c' in by_name and payload.size == expected - size_of('hidden_1c'):
-        eval_order.remove('hidden_1c')
-        print('No hidden_1c in weights file, keeping zero init')
-    elif payload.size != expected:
-        raise ValueError(f'{args.import_file}: expected {expected} float32, got {payload.size} (hidden_1c needs --hidden-1c)')
+    expected = sum(int(np.prod(w.shape)) for name in EVAL_ORDER for w in by_name[name].get_weights())
+    if payload.size != expected:
+        raise ValueError(f'{args.import_file}: expected {expected} float32, got {payload.size}')
 
     off = 0
-    for name in eval_order:
-        layer = by_name.get(name)
-        if layer is None:
-            continue
+    for name in EVAL_ORDER:
+        layer = by_name[name]
         new_weights = []
-        for w in layer.get_weights():  # kernel [, bias]; pool is kernel-only
+        for w in layer.get_weights():  # kernel, bias
             size = int(np.prod(w.shape))
             new_weights.append(payload[off:off + size].reshape(w.shape)); off += size
         print(f'Loading {name}: {[w.shape for w in new_weights]}')
@@ -1171,28 +1241,16 @@ def dataset_from_file(args, filepath, strategy, callbacks):
     return make_dataset(), len(generator)
 
 
-def load_model(path, pool_size=None):
+def load_model(path):
     custom_objects = {
         'combined_loss': None,
         'scaled_sparse_categorical_crossentropy': None,
         'top': None,
         'top_3': None,
         'top_5': None,
-        'StmPool': stm_pool_class(),
+        **custom_layers(),
     }
-
-    # Older saved models bind the module-global POOL_SIZE in their 'pool' Lambda;
-    # newer ones use it in StmPool.build and for hidden_1b's width. Either way,
-    # temporarily restore the source model's POOL_SIZE so the saved graph
-    # reconstructs with the correct pooled width.
-    global POOL_SIZE
-    saved = POOL_SIZE
-    if pool_size is not None:
-        POOL_SIZE = pool_size
-    try:
-        return tf.keras.models.load_model(path, custom_objects=custom_objects)
-    finally:
-        POOL_SIZE = saved
+    return tf.keras.models.load_model(path, custom_objects=custom_objects)
 
 
 def set_weights(from_model, to_model):
@@ -1227,7 +1285,7 @@ def main(args):
 
     alt_model = None
     if args.alt_model and os.path.exists(args.alt_model):
-        alt_model = load_model(args.alt_model, pool_size=args.alt_pool_size)
+        alt_model = load_model(args.alt_model)
 
     if args.model and os.path.exists(args.model):
         saved_model = load_model(args.model)
@@ -1350,7 +1408,7 @@ if __name__ == '__main__':
         parser.add_argument('-r', '--learn-rate', type=float, default=1e-4, help='learning rate')
         parser.add_argument('-v', '--debug', action='store_true', help='verbose logging (DEBUG level)')
         parser.add_argument('-o', '--export', help='filename to export weights to (in C++ header file format)')
-        parser.add_argument('-q', '--quantize-round', action='store_true')
+        parser.add_argument('-q', '--quantize-round', action='store_true', help='QAT: fake-quant in the training forward pass, on-grid values on export (off = float run)')
         parser.add_argument('-s', '--outcome-smoothing', type=float, default=0.025)
 
         parser.add_argument('--balance', action='store_true', help='balance white / black wins inside batches')
@@ -1358,7 +1416,6 @@ if __name__ == '__main__':
         parser.add_argument('--bin', action='store_true', help='export weights in binary format')
         parser.add_argument('--freeze-eval', action='store_true')
         parser.add_argument('--hex', action='store_true', help='export weights in hex format')
-        parser.add_argument('--hidden-1c', action='store_true', help='add the hidden_1c (bishops + occupancy) modulation path (engine: NNUE_HIDDEN_1C)')
         parser.add_argument('--import-file', help='import weights from binary file')
         parser.add_argument('--save-model', action='store_true', help='save model immediately, use with --import and/or --alt-model')
 
@@ -1390,7 +1447,6 @@ if __name__ == '__main__':
         parser.add_argument('--clip-norm', type=float, default=1.0, help='gradient clipping norm')
 
         parser.add_argument('--alt-model', help='Path to another model to load/merge weights from')
-        parser.add_argument('--alt-pool-size', type=int, default=POOL_SIZE, help='POOL_SIZE the --alt-model was trained with (for loading its pool Lambda)')
 
         parser.add_argument('--profile', help='JSON dataset profile with per-bucket label scale ratios')
 
