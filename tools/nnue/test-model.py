@@ -6,8 +6,8 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 import numpy as np
-import tensorflow as tf
 
+import train
 from golds import TESTS as tests
 
 
@@ -31,15 +31,7 @@ def encode(board):
 
 def load_model(args):
     path = args.input[0]
-    return tf.keras.models.load_model(path, custom_objects = {
-            'ACCUMULATOR_SIZE': 2048,
-            'POOL_SIZE': 8,
-            'combined_loss': None,
-            'scaled_sparse_categorical_crossentropy': None,
-            'top': None,
-            'top_3': None,
-            'top_5': None,
-        })
+    return train.load_saved_model(path)
 
 
 def run_tests(args, model):

@@ -48,7 +48,7 @@ def _generate(model_path):
     """Run the saved Keras model over TESTS and write golds.json keyed by FEN."""
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
     import numpy as np
-    import tensorflow as tf
+    import train
 
     def encode(board):
         mask_black = board.occupied_co[chess.BLACK]
@@ -67,18 +67,7 @@ def _generate(model_path):
         array = np.asarray([bitboards], dtype=np.uint64).ravel()
         return np.append(array, np.uint64(board.turn))
 
-    model = tf.keras.models.load_model(
-        model_path,
-        custom_objects={
-            "ACCUMULATOR_SIZE": 2048,
-            "POOL_SIZE": 8,
-            "combined_loss": None,
-            "scaled_sparse_categorical_crossentropy": None,
-            "top": None,
-            "top_3": None,
-            "top_5": None,
-        },
-    )
+    model = train.load_saved_model(model_path)
 
     print(
         "EXPORT ORDER:",

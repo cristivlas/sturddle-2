@@ -15,7 +15,7 @@ ranks, flip STM. Engine FENs are synthesized with no castling/ep rights
 Backends (exactly one):
   -e/--engine: UCI engine command; scores from `go depth N` (STM-POV cp,
       converted to white POV). Use a --dev-mode build to expose WeightsFile.
-  -m/--model: weights.bin evaluated with the torch model (float, pre-quant).
+  -m/--model: weights.bin evaluated with the torch model (quantized forward, as in the engine).
 
 Usage:
     ./mirror_check.py mix.h5 --sample 0.001 --limit 5000 -e "./sturddle --dev-mode" -w weights.bin

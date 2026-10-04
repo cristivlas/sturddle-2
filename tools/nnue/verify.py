@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Verify NNUE binary weights for proper clipping and rounding.
-Architecture: 2048-accumulator, hidden_1b + hidden_1c (linear) modulate pooled 1:1, 16-way bucketing (4 pawn x 4 king-file).
+Verify NNUE binary weights for proper clipping and rounding (on-grid, i.e. exported with -q).
+Architecture: perspective accumulator (16 buckets x 768 -> 1024, shared by both views),
+[black, white] -> 2048, two side-to-move stacks 2048 -> 32 -> 32 -> 1.
 """
 import sys
 from pathlib import Path
@@ -11,54 +12,47 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fetch_weights
 
 Q_SCALE = 1024
+Q_MAX_A = 992 / Q_SCALE  # accumulator: 32 pieces + bias == 33 terms fit int16
 
-# Constraint A: for hidden_1a and move layers
-Q_MAX_A = 32767 / Q_SCALE / 34
+Q_W2 = 64  # hidden_2 s8 weights
+Q_MAX_W2 = 127 / Q_W2
+Q_B2 = 128 * Q_W2  # hidden_2 int32 bias, at activation scale x weight scale
+Q_MAX_B2 = (2**31 - 1) / Q_B2
 
-# Constraint B: for hidden_1b layer
-Q_MAX_B = 32767 / Q_SCALE / 19
+Q_MAX_MOVE = 32767 / Q_SCALE / 34  # move head: 32 pieces + side-to-move + bias == 34 terms
 
-# Constraint C: for hidden_1c layer (32 occupied + up to 20 bishops + bias)
-Q_MAX_C = 32767 / Q_SCALE / 53
-
-ACTIVE_INPUTS = 769
-ACCUMULATOR_SIZE = 2048
-POOL_SIZE = 8
-POOLED = ACCUMULATOR_SIZE // POOL_SIZE  # hidden_1b output width (modulates pooled 1:1)
+ACTIVE_INPUTS = 768
+ACCUMULATOR_SIZE = 1024
 MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
+STACKS = 2  # black to move first
+HIDDEN_2 = 32
+HIDDEN_3 = 32
+MOVE_INPUTS = 769
 MOVE_ACCUMULATOR_SIZE = 256
 MOVE_OUTPUTS = 4096  # 64x64 (from, to)
 
-# Layer definitions: (name, kernel_shape, bias_shape, constraint_type)
-# constraint_type: 'A', 'B', 'C', or None
-# ORDER MATTERS - must match export order from trainer
+# constraint: ((kernel scale, kernel max), (bias scale, bias max)), or None for float layers
+ACC = ((Q_SCALE, Q_MAX_A), (Q_SCALE, Q_MAX_A))
+L2 = ((Q_W2, Q_MAX_W2), (Q_B2, Q_MAX_B2))
+MOVE = ((Q_SCALE, Q_MAX_MOVE), (Q_SCALE, Q_MAX_MOVE))
 
-LAYERS = [
-    ('hidden_1a', (ACTIVE_INPUTS * MAIN_BUCKETS, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), 'A'),
-    ('hidden_1b', (256, POOLED), (POOLED,), 'B'),
-    ('hidden_1c', (256, POOLED), (POOLED,), 'C'),  # bishops + occupancy, adds to hidden_1b
-    ('pool', (2 * ACCUMULATOR_SIZE, 1), (0,), None),  # stm-major, kernel-only, float; (0,) -> np.prod == 0, no bias read
-    ('hidden_2', (POOLED, 16), (16,), None),
-    ('hidden_3', (16, 16), (16,), None),
-    ('out', (16, 1), (1,), None),
+# Layer definitions: (name, kernel_shape, bias_shape, constraint)
+# ORDER MATTERS - must match export order from trainer
+LAYERS = [('hidden_1a', (ACTIVE_INPUTS * MAIN_BUCKETS, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), ACC)] + [
+    layer
+    for s in range(STACKS)
+    for layer in (
+        (f'hidden_2_{s}', (2 * ACCUMULATOR_SIZE, HIDDEN_2), (HIDDEN_2,), L2),
+        (f'hidden_3_{s}', (HIDDEN_2, HIDDEN_3), (HIDDEN_3,), None),
+        (f'out_{s}', (HIDDEN_3, 1), (1,), None),
+    )
 ]
 
 # Optional move prediction head: own sub-accumulator, decoupled from eval
 MOVE_LAYERS = [
-    ('move_acc', (ACTIVE_INPUTS, MOVE_ACCUMULATOR_SIZE), (MOVE_ACCUMULATOR_SIZE,), 'A'),
-    ('move', (MOVE_ACCUMULATOR_SIZE, MOVE_OUTPUTS), (MOVE_OUTPUTS,), 'A'),
+    ('move_acc', (MOVE_INPUTS, MOVE_ACCUMULATOR_SIZE), (MOVE_ACCUMULATOR_SIZE,), MOVE),
+    ('move', (MOVE_ACCUMULATOR_SIZE, MOVE_OUTPUTS), (MOVE_OUTPUTS,), MOVE),
 ]
-
-
-def get_constraint_params(constraint_type):
-    if constraint_type == 'A':
-        return Q_MAX_A, Q_SCALE
-    elif constraint_type == 'B':
-        return Q_MAX_B, Q_SCALE
-    elif constraint_type == 'C':
-        return Q_MAX_C, Q_SCALE
-    else:
-        return None, None
 
 
 def check_clipping(weights, qmax, layer_name, weight_type):
@@ -76,30 +70,27 @@ def check_clipping(weights, qmax, layer_name, weight_type):
 
 
 def check_rounding(weights, qscale, qmax, layer_name, weight_type):
-    """Check if all values are multiples of 1/qscale (except clamped edge values)."""
-    rounded = np.round(weights * qscale) / qscale
-    rounded = rounded.astype(np.float32)
-    
-    violations = weights != rounded
-    # Exclude values at the clamp boundaries - these are expected to not be rounded
+    """Check if all values are multiples of 1/qscale (except clamp boundaries that are off the grid)."""
+    scaled = weights.astype(np.float64) * qscale
+    violations = scaled != np.round(scaled)
+    # an off-grid clamp (move head) leaves boundary values unrounded
     at_boundary = np.abs(weights) >= qmax * 0.9999
     violations = violations & ~at_boundary
-    
+
     count = np.sum(violations)
     if count > 0:
         idx = np.where(violations.flat)[0][:5]
-        print(f"  ROUND VIOLATION in {layer_name} {weight_type}: {count} values not rounded to 1/{qscale}")
+        print(f"  ROUND VIOLATION in {layer_name} {weight_type}: {count} values not multiples of 1/{qscale}")
         for i in idx:
             w = weights.flat[i]
-            r = rounded.flat[i]
-            print(f"    [{i}] {w:.10f} should be {r:.10f}, diff={w-r:.2e}")
+            r = np.round(scaled.flat[i]) / qscale
+            print(f"    [{i}] {w:.10f} nearest {r:.10f}, diff={w-r:.2e}")
         return count
-    
-    # Report boundary values for info
-    boundary_count = np.sum(at_boundary)
+
+    boundary_count = np.sum(at_boundary & (scaled != np.round(scaled)))
     if boundary_count > 0:
-        print(f"  (note: {boundary_count} values at boundary ±{qmax:.10f}, rounding not checked)")
-    
+        print(f"  (note: {boundary_count} values at off-grid boundary ±{qmax:.10f}, rounding not checked)")
+
     return 0
 
 
@@ -107,38 +98,32 @@ def verify_layers(data, layers, offset=0):
     """Verify a list of layers starting at given offset. Returns new offset and violation counts."""
     total_clip_violations = 0
     total_round_violations = 0
-    
-    for layer_name, kernel_shape, bias_shape, constraint_type in layers:
+
+    for layer_name, kernel_shape, bias_shape, constraint in layers:
         kernel_size = np.prod(kernel_shape)
         bias_size = np.prod(bias_shape)
         total_size = kernel_size + bias_size
-        
+
         # Check if we have enough data
         if offset + total_size > len(data):
             return offset, total_clip_violations, total_round_violations, False
-        
+
         kernel = data[offset:offset + kernel_size].reshape(kernel_shape)
         offset += kernel_size
-        
+
         bias = data[offset:offset + bias_size].reshape(bias_shape)
         offset += bias_size
-        
-        print(f"{layer_name}: kernel {kernel_shape}, bias {bias_shape}, constraint: {constraint_type}")
-        
-        if constraint_type is None:
-            print(f"  (no constraint)")
+
+        print(f"{layer_name}: kernel {kernel_shape}, bias {bias_shape}")
+
+        if constraint is None:
+            print(f"  (float, no constraint)")
             continue
-        
-        qmax, qscale = get_constraint_params(constraint_type)
-        
-        # Check clipping
-        total_clip_violations += check_clipping(kernel, qmax, layer_name, "kernel")
-        total_clip_violations += check_clipping(bias, qmax, layer_name, "bias")
-        
-        # Check rounding (pass qmax to exclude boundary values)
-        total_round_violations += check_rounding(kernel, qscale, qmax, layer_name, "kernel")
-        total_round_violations += check_rounding(bias, qscale, qmax, layer_name, "bias")
-    
+
+        for values, (qscale, qmax), weight_type in zip((kernel, bias), constraint, ("kernel", "bias")):
+            total_clip_violations += check_clipping(values, qmax, layer_name, weight_type)
+            total_round_violations += check_rounding(values, qscale, qmax, layer_name, weight_type)
+
     return offset, total_clip_violations, total_round_violations, True
 
 
@@ -149,33 +134,22 @@ def main():
 
     filepath = sys.argv[1] if len(sys.argv) == 2 else str(fetch_weights.ensure())
     print(f"Loading: {filepath}")
-    print(f"Q_SCALE = {Q_SCALE}")
-    print(f"Q_MAX_A = {Q_MAX_A:.10f} (hidden_1a, move)")
-    print(f"Q_MAX_B = {Q_MAX_B:.10f} (hidden_1b)")
-    print(f"Q_MAX_C = {Q_MAX_C:.10f} (hidden_1c)")
+    print(f"hidden_1a: 1/{Q_SCALE}, max {Q_MAX_A:.10f}")
+    print(f"hidden_2:  1/{Q_W2} weights, max {Q_MAX_W2:.10f}; 1/{Q_B2} biases")
+    print(f"move head: 1/{Q_SCALE}, max {Q_MAX_MOVE:.10f}")
     print()
-    
+
     data = np.fromfile(filepath, dtype=np.float32)
     print(f"Total values: {len(data)}")
 
+    base_total = sum(np.prod(k) + np.prod(b) for _, k, b, _ in LAYERS)
     move_total = sum(np.prod(k) + np.prod(b) for _, k, b, _ in MOVE_LAYERS)
 
-    # Without hidden_1c (NNUE_HIDDEN_1C off)?
-    layers = LAYERS
-    no_1c = [layer for layer in LAYERS if layer[0] != 'hidden_1c']
-    no_1c_size = sum(np.prod(k) + np.prod(b) for _, k, b, _ in no_1c)
-    if len(data) in (no_1c_size, no_1c_size + move_total):
-        layers = no_1c
-        print("Detected: model WITHOUT hidden_1c")
-
-    # Calculate expected sizes
-    base_total = sum(np.prod(k) + np.prod(b) for _, k, b, _ in layers)
-    
     print(f"Expected (without move): {base_total}")
     print(f"Expected (with move): {base_total + move_total}")
-    
+
     has_move_layer = len(data) == base_total + move_total
-    
+
     if len(data) == base_total:
         print("Detected: model WITHOUT move prediction")
     elif has_move_layer:
@@ -183,16 +157,16 @@ def main():
     else:
         print(f"ERROR: Size mismatch! Got {len(data)}, expected {base_total} or {base_total + move_total}")
         sys.exit(1)
-    
+
     print()
-    
+
     # Verify base layers
-    offset, total_clip_violations, total_round_violations, success = verify_layers(data, layers)
-    
+    offset, total_clip_violations, total_round_violations, success = verify_layers(data, LAYERS)
+
     if not success:
         print("ERROR: Unexpected end of data while reading base layers")
         sys.exit(1)
-    
+
     # Verify move head if present
     if has_move_layer:
         offset, clip_v, round_v, success = verify_layers(data, MOVE_LAYERS, offset)
@@ -202,11 +176,11 @@ def main():
         if not success:
             print("ERROR: Unexpected end of data while reading move head")
             sys.exit(1)
-    
+
     # Verify we consumed all data
     if offset != len(data):
-        print(f"WARNING: {len(data) - offset} bytes remaining after parsing")
-    
+        print(f"WARNING: {len(data) - offset} values remaining after parsing")
+
     print()
     print("=" * 60)
     if total_clip_violations == 0 and total_round_violations == 0:
@@ -214,6 +188,7 @@ def main():
     else:
         print(f"Total clipping violations: {total_clip_violations}")
         print(f"Total rounding violations: {total_round_violations}")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

@@ -8,7 +8,7 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
-import tensorflow as tf
+import train
 
 MATE_SCORE = 3000  # cp value substituted for mate scores
 
@@ -71,15 +71,7 @@ def encode(board):
 
 def load_model(args):
     path = args.input[0]
-    return tf.keras.models.load_model(path, custom_objects = {
-            'ACCUMULATOR_SIZE': 2048,
-            'POOL_SIZE': 8,
-            'combined_loss': None,
-            'scaled_sparse_categorical_crossentropy': None,
-            'top': None,
-            'top_3': None,
-            'top_5': None,
-        })
+    return train.load_saved_model(path)
 
 
 def get_top_moves(move_logits, board, num_moves):

@@ -208,6 +208,77 @@ def custom_layers():
                 return {'qmax': self.qmax}
 
         @register
+        class Unpack(tf.keras.layers.Layer):
+            def __init__(self, num_outputs, **kwargs):
+                super(Unpack, self).__init__(**kwargs)
+                self.num_outputs = num_outputs
+
+            def call(self, packed):
+                return tf.cast(tf_unpack_bits(packed[:, :12]), tf.float32)
+
+            def get_config(self):
+                config = super().get_config()
+                config['num_outputs'] = self.num_outputs
+                return config
+
+        @register
+        class BucketShift(tf.keras.layers.Layer):
+            def __init__(self, num_buckets, **kwargs):
+                super(BucketShift, self).__init__(**kwargs)
+                self.num_buckets = num_buckets
+
+            def call(self, features):
+                # Bitboards are encoded [black, white] per piece (black first).
+                # Each bitboard unpacks to 64 bits, so:
+                # - Piece 0 (black king):  features[:, 0:64]
+                # - Piece 1 (white king):  features[:, 64:128]
+                # - Piece 2 (black pawns): features[:, 128:192]
+                # - Piece 3 (white pawns): features[:, 192:256]
+                pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
+
+                # Count total pawns on the board
+                pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
+
+                # Pawn dimension: fat bucket 0 spans {0,1,2,3,4} pawns; every bucket above spans 4 pawns.
+                pawn_id = tf.cast(
+                    tf.where(
+                        pawn_count <= 4.0,
+                        tf.zeros_like(pawn_count),
+                        tf.minimum((pawn_count - 1.0) // 4.0, 3.0),
+                    ),
+                    tf.int32
+                )
+
+                # King-file dimension: board split into left (files a-d) / right (files e-h).
+                # Feature index idx within a 64-block holds bitboard bit (63 - idx); file = bit % 8.
+                right_mask = tf.constant([1.0 if ((63 - idx) % 8) >= 4 else 0.0 for idx in range(64)], dtype=tf.float32)
+                black_king = tf.cast(features[:, 0:64], tf.float32)
+                white_king = tf.cast(features[:, 64:128], tf.float32)
+                wk_right = tf.cast(tf.reduce_sum(white_king * right_mask, axis=1), tf.int32)
+                bk_right = tf.cast(tf.reduce_sum(black_king * right_mask, axis=1), tf.int32)
+                king_id = wk_right * 2 + bk_right
+
+                # Compose: pawn dimension (4) x king-file dimension (4) = 16 buckets.
+                bucket_id = pawn_id * 4 + king_id
+
+                # tf.print("\nPawn count:", pawn_count, "\nBucket id:", bucket_id)
+
+                # Shift features into N buckets
+                num_features = tf.shape(features)[1]
+                bucket_mask = tf.one_hot(bucket_id, self.num_buckets, dtype=features.dtype)
+                bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
+
+                features_tiled = tf.tile(tf.expand_dims(features, 1), [1, self.num_buckets, 1])
+                sparse = features_tiled * bucket_mask
+
+                return tf.reshape(sparse, [-1, self.num_buckets * num_features])
+
+            def get_config(self):
+                config = super().get_config()
+                config['num_buckets'] = self.num_buckets
+                return config
+
+        @register
         class QDense(tf.keras.layers.Layer):
             """Dense layer with QAT: fake-quantized kernel and bias when qat, and always at inference."""
             def __init__(self, units, activation=None, kernel_scale=0, bias_scale=0, kernel_max=None, bias_max=None,
@@ -276,13 +347,19 @@ def custom_layers():
                 return tf.gather(features, [j ^ PERSPECTIVE_XOR for j in range(12 * 64)], axis=1)
 
         @register
+        class Turn(tf.keras.layers.Layer):
+            """Side to move from the packed input (1 = white)."""
+            def call(self, packed):
+                return tf.cast(packed[:, -1:], tf.float32)
+
+        @register
         class SelectStack(tf.keras.layers.Layer):
             """Per row, the stack output picked by side to move (0 = black)."""
             def call(self, inputs):
                 black, white, turn = inputs
                 return tf.where(tf.cast(turn, tf.bool), white, black)
 
-        _custom_layers = {cls.__name__: cls for cls in (Clamp, QDense, ClippedReLU, BlackView, SelectStack)}
+        _custom_layers = {cls.__name__: cls for cls in (Clamp, Unpack, BucketShift, QDense, ClippedReLU, BlackView, Turn, SelectStack)}
     return _custom_layers
 
 
@@ -374,76 +451,15 @@ def make_model(args, strategy):
         return tf.reduce_mean(loss)
 
 
-    class Unpack(tf.keras.layers.Layer):
-        def __init__(self, num_outputs, **kwargs):
-            super(Unpack, self).__init__(**kwargs)
-            self.num_outputs = num_outputs
-
-        def call(self, packed):
-            return tf.cast(tf_unpack_bits(packed[:, :12]), tf.float32)
-
-    class BucketShift(tf.keras.layers.Layer):
-        def __init__(self, num_buckets, **kwargs):
-            super(BucketShift, self).__init__(**kwargs)
-            self.num_buckets = num_buckets
-
-        def call(self, features):
-            # Bitboards are encoded [black, white] per piece (black first).
-            # Each bitboard unpacks to 64 bits, so:
-            # - Piece 0 (black king):  features[:, 0:64]
-            # - Piece 1 (white king):  features[:, 64:128]
-            # - Piece 2 (black pawns): features[:, 128:192]
-            # - Piece 3 (white pawns): features[:, 192:256]
-            pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
-
-            # Count total pawns on the board
-            pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
-
-            # Pawn dimension: fat bucket 0 spans {0,1,2,3,4} pawns; every bucket above spans 4 pawns.
-            pawn_id = tf.cast(
-                tf.where(
-                    pawn_count <= 4.0,
-                    tf.zeros_like(pawn_count),
-                    tf.minimum((pawn_count - 1.0) // 4.0, 3.0),
-                ),
-                tf.int32
-            )
-
-            # King-file dimension: board split into left (files a-d) / right (files e-h).
-            # Feature index idx within a 64-block holds bitboard bit (63 - idx); file = bit % 8.
-            right_mask = tf.constant([1.0 if ((63 - idx) % 8) >= 4 else 0.0 for idx in range(64)], dtype=tf.float32)
-            black_king = tf.cast(features[:, 0:64], tf.float32)
-            white_king = tf.cast(features[:, 64:128], tf.float32)
-            wk_right = tf.cast(tf.reduce_sum(white_king * right_mask, axis=1), tf.int32)
-            bk_right = tf.cast(tf.reduce_sum(black_king * right_mask, axis=1), tf.int32)
-            king_id = wk_right * 2 + bk_right
-
-            # Compose: pawn dimension (4) x king-file dimension (4) = 16 buckets.
-            bucket_id = pawn_id * 4 + king_id
-
-            # tf.print("\nPawn count:", pawn_count, "\nBucket id:", bucket_id)
-
-            # Shift features into N buckets
-            num_features = tf.shape(features)[1]
-            bucket_mask = tf.one_hot(bucket_id, self.num_buckets, dtype=features.dtype)
-            bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
-
-            features_tiled = tf.tile(tf.expand_dims(features, 1), [1, self.num_buckets, 1])
-            sparse = features_tiled * bucket_mask
-
-            return tf.reshape(sparse, [-1, self.num_buckets * num_features])
-
-
     with strategy.scope():
         ACTIVATION = tf.keras.activations.relu
         K_INIT = tf.keras.initializers.HeNormal
 
         # Define the input layer
         input_layer = Input(shape=(13,), dtype=tf.uint64, name='input')
-        unpack_layer = Unpack(args.hot_encoding, name='unpack')(input_layer)
-        turn = Lambda(lambda x: tf.cast(x[:, -1:], tf.float32), name='turn')(input_layer)
-
         layers = custom_layers()
+        unpack_layer = layers['Unpack'](args.hot_encoding, name='unpack')(input_layer)
+        turn = layers['Turn'](name='turn')(input_layer)
         QDense, ClippedReLU = layers['QDense'], layers['ClippedReLU']
 
         # QAT keeps the integer-grid region fp32; inference on a float-run model under mixed precision is not exact
@@ -451,7 +467,7 @@ def make_model(args, strategy):
 
         # Perspectives: one bucketed hidden_1a shared by the white and black views
         black_view = layers['BlackView'](name='black_view')(unpack_layer)
-        bucket_shift = BucketShift(MAIN_BUCKETS, name='bucket_shift')
+        bucket_shift = layers['BucketShift'](MAIN_BUCKETS, name='bucket_shift')
 
         hidden_1a = QDense(
             ACCUMULATOR_SIZE,
@@ -1242,15 +1258,15 @@ def dataset_from_file(args, filepath, strategy, callbacks):
 
 
 def load_model(path):
-    custom_objects = {
-        'combined_loss': None,
-        'scaled_sparse_categorical_crossentropy': None,
-        'top': None,
-        'top_3': None,
-        'top_5': None,
-        **custom_layers(),
-    }
-    return tf.keras.models.load_model(path, custom_objects=custom_objects)
+    # weights and graph only: make_model rebuilds the training config (losses, metrics)
+    return tf.keras.models.load_model(path, custom_objects=custom_layers(), compile=False)
+
+
+def load_saved_model(path):
+    """For tools: load a saved model of this architecture, importing tensorflow on demand."""
+    global tf
+    import tensorflow as tf
+    return load_model(path)
 
 
 def set_weights(from_model, to_model):

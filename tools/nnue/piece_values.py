@@ -144,20 +144,9 @@ class TFBackend:
 
     def __init__(self, model_path):
         os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
-        import tensorflow as tf
+        import train
 
-        self.model = tf.keras.models.load_model(
-            model_path,
-            custom_objects={
-                "ACCUMULATOR_SIZE": 2048,
-                "POOL_SIZE": 8,
-                "combined_loss": None,
-                "scaled_sparse_categorical_crossentropy": None,
-                "top": None,
-                "top_3": None,
-                "top_5": None,
-            },
-        )
+        self.model = train.load_saved_model(model_path)
 
     def eval_batch(self, packed):
         out = self.model.predict(packed[:, :13], verbose=0)

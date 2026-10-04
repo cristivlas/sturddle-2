@@ -47,23 +47,16 @@ def bucket_ids(x):
 
 def load_models(paths):
     import tensorflow as tf
+    import train
 
-    custom_objects = {
-        "combined_loss": None,
-        "scaled_sparse_categorical_crossentropy": None,
-        "top": None,
-        "top_3": None,
-        "top_5": None,
-    }
     fns = []
     for p in paths:
         try:
-            model = tf.keras.models.load_model(p, custom_objects=custom_objects, compile=False)
+            model = train.load_saved_model(p)
             # compile the forward pass once; fixed batch shape means a single trace
             fns.append(tf.function(lambda x, m=model: m(x, training=False)))
         except Exception as e:
-            # Lambda layers referencing trainer globals (e.g. POOL_SIZE) break keras
-            # deserialization; the raw SavedModel graph needs no Python
+            # keras deserialization can fail across Keras versions; the raw SavedModel graph needs no Python
             print(f"{p}: {e.__class__.__name__} from keras loader, using raw SavedModel graph")
             loaded = tf.saved_model.load(p)
             fns.append(lambda x, m=loaded: m(x, training=False))
