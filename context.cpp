@@ -1757,10 +1757,10 @@ namespace search
                             /* Sub-accumulator depends only on the node position (same for all
                              * moves here), so compute it once when active[] is first filled.
                              */
-                            nnue::move_accumulate(model.LMOVE_ACC, active, active_count, move_acc);
+                            model.move_accumulate(active, active_count, move_acc);
                         }
 
-                        nnue::score_move(model.LMOVES, move_acc, move);
+                        model.score_move(move_acc, move);
                     }
                     else
                 #endif /* USE_MOVE_PREDICTION */

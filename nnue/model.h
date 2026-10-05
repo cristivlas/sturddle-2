@@ -117,7 +117,7 @@ namespace nnue
 
 
         /* The fused L1M output must equal L1B + L1C computed separately */
-        INLINE void check_fused_modulation(const Accumulator& accumulator, const chess::State& state)
+        INLINE void check_fused_modulation(const Accumulator& accumulator, const chess::State& state) const
         {
         #if NNUE_HIDDEN_1C && DEBUG_INCREMENTAL
             ALIGN input_t input_b[round_up<INPUT_STRIDE>(ACTIVE_INPUTS)] = { };
@@ -134,11 +134,28 @@ namespace nnue
         #endif /* NNUE_HIDDEN_1C && DEBUG_INCREMENTAL */
         }
 
+
         INLINE int eval(const Accumulator& acc, bool stm) const
         {
             return ::nnue::eval(acc, POOL, L2, L3, EVAL, stm);
         }
 
+
+    #if USE_MOVE_PREDICTION
+        INLINE void move_accumulate(const int (&active)[MAX_ACTIVE_INPUTS], int active_count, int16_t (&move_acc)[MOVE_ACC]) const
+        {
+            ::nnue::move_accumulate(LMOVE_ACC, active, active_count, move_acc);
+        }
+
+
+        INLINE void score_move(const int16_t (&move_acc)[MOVE_ACC], chess::Move& move) const
+        {
+            ::nnue::score_move(LMOVES, move_acc, move);
+        }
+    #endif /* USE_MOVE_PREDICTION */
+
+
+    private:
         L1AType L1A;
         L1BType L1B;
     #if NNUE_HIDDEN_1C
