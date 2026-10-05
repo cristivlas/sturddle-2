@@ -116,10 +116,6 @@ namespace nnue
     constexpr int ACT_CLAMP = ((ACT_MAX + 1) << ACT_SHIFT) - 1;
     constexpr int ACT_SCALE = QSCALE >> ACT_SHIFT;
 
-    /* move head inputs: piece-square + side to move */
-    constexpr int MOVE_INPUTS = 769;
-    constexpr int TURN_INDEX = 768;
-
     INLINE int pawn_bucket(const State& state)
     {
         return chess::pawn_bucket(state.pawns);
@@ -307,16 +303,6 @@ namespace nnue
                 i += 64;
             }
         }
-    }
-
-    /* move head inputs */
-    template <typename F>
-    static INLINE void for_each_active_input(const State& state, F&& func)
-    {
-        for_each_piece_input(state, func);
-
-        if (state.turn)
-            func(TURN_INDEX);
     }
 
     /** Calculate the piece-square index into the one-hot encoding. */
@@ -915,47 +901,5 @@ namespace nnue
         l3.dot(l2_out, l3_out, [](const Vector& v) { return relu(v); });
         out.dot(l3_out, output);
         return EVAL_SCALE * output[0];
-    }
-
-
-    /* Compute the move head's sub-accumulator once per node: relu(bias + W_acc . active),
-     * kept in the quantized int16 domain (like the eval accumulator, no dequantize). Sparse
-     * gather over active inputs; the result feeds score_move for every move at this node.
-     * LMA is the [MOVE_INPUTS x MOVE_ACC] quantized layer.
-     */
-    template <typename LMA, size_t N>
-    INLINE void move_accumulate(
-        const LMA& layer_acc, const int (&active)[MAX_ACTIVE_INPUTS], int count, int16_t (&acc)[N])
-    {
-        for (size_t j = 0; j < N; ++j)
-        {
-            int sum = layer_acc._b[j];  /* int16 weights/bias, accumulate in int32 */
-            for (int k = 0; k < count; ++k)
-                sum += layer_acc._wt[j][active[k]];
-            /* relu; keep at QSCALE scale (like the eval accumulator), clamp to int16 */
-            sum = std::min<int>(std::numeric_limits<int16_t>::max(), std::max(0, sum));
-            acc[j] = int16_t(sum);
-        }
-    }
-
-    /* Per-move logit: bias[index] + acc . W_move[:, index]. LM is the [MOVE_ACC x 4096]
-     * quantized layer, so _wt[index] is the length-MOVE_ACC column for this (from,to) move.
-     * Stays integer: the 256 int16xint16 products need int64 (worst case ~2.7e11), then a
-     * fixed shift back into int16 range. Move scores are compared only against each other
-     * (Phase 4 LATE_MOVES), so the constant scale is irrelevant; only relative order matters.
-     */
-    template <typename LM, size_t N>
-    INLINE void score_move(const LM& layer_m, const int16_t (&acc)[N], Move& move)
-    {
-        const auto index = move.from_square() * 64 + move.to_square();
-
-        int64_t score = int64_t(layer_m._b[index]) << QLOG2;  /* match the acc.wt product scale */
-        for (size_t j = 0; j < N; ++j)
-            score += int64_t(acc[j]) * int64_t(layer_m._wt[index][j]);
-
-        score >>= QLOG2;  /* one QSCALE factor out; keep ordering, fit int16 */
-        using move_score_t = decltype(move._score);
-        score = std::min<int64_t>(std::numeric_limits<move_score_t>::max(), score);
-        move._score = move_score_t(std::max<int64_t>(std::numeric_limits<move_score_t>::lowest(), score));
     }
 } /* namespace nnue */

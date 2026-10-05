@@ -27,7 +27,6 @@ MAIN_BUCKETS = 16  # Number of buckets for hidden_1a / BucketShift
 STACKS = 2  # hidden_2 -> hidden_3 -> out, selected by side to move, black first
 HIDDEN_2 = 32
 HIDDEN_3 = 32
-MOVE_ACCUMULATOR_SIZE = 256  # move-prediction sub-accumulator width (own path, decoupled from eval)
 
 # black-view feature index: color swap (64) + rank flip (56)
 PERSPECTIVE_XOR = 120
@@ -45,9 +44,6 @@ ACT_MAX = 127 / Q_ACT
 Q_W2 = 64
 Q_MAX_W2 = 127 / Q_W2
 Q_B2 = Q_ACT * Q_W2
-
-# Move head: int16 at Q_SCALE; 32 pieces + side-to-move + bias == 34
-Q_MAX_MOVE = 32767 / Q_SCALE / 34
 
 SCALE = 100.0
 
@@ -478,7 +474,6 @@ def make_model(args, strategy):
             kernel_initializer=K_INIT(),
             name='hidden_1a',
             dtype=exact,
-            trainable=not args.freeze_eval,
         )
         acc_white = hidden_1a(bucket_shift(unpack_layer))
         acc_black = hidden_1a(bucket_shift(black_view))
@@ -498,58 +493,19 @@ def make_model(args, strategy):
                 kernel_initializer=K_INIT(),
                 name=f'hidden_2_{s}',
                 dtype=exact,
-                trainable=not args.freeze_eval,
             )(activated)
             x = Dense(
                 HIDDEN_3,
                 activation=ACTIVATION,
                 kernel_initializer=K_INIT,
                 name=f'hidden_3_{s}',
-                trainable=not args.freeze_eval,
             )(x)
-            stack_out.append(Dense(1, name=f'out_{s}', dtype='float32', trainable=not args.freeze_eval)(x))
+            stack_out.append(Dense(1, name=f'out_{s}', dtype='float32')(x))
 
         eval_output = layers['SelectStack'](name='out', dtype='float32')([stack_out[0], stack_out[1], turn])
 
-        # Add move prediction heads if enabled
-        outputs = [eval_output]
-
-        if args.predict_moves:
-            # Move path is fully decoupled from eval (stop_gradient): a prior attempt to
-            # share the trunk back-spilled into eval. Own sub-accumulator gives the head
-            # depth without that coupling. move_acc is linear-in-inputs before the relu, so
-            # the engine can update it incrementally like the eval accumulator.
-            constr_a = QConstraint(-Q_MAX_MOVE, Q_MAX_MOVE)
-            stop_grad = tf.stop_gradient(Concatenate(name='move_input')([unpack_layer, turn]))
-
-            move_acc = Dense(
-                MOVE_ACCUMULATOR_SIZE,
-                activation=ACTIVATION,
-                kernel_initializer=K_INIT,
-                kernel_constraint=constr_a,
-                bias_constraint=constr_a,
-                name='move_acc',
-                dtype='float32',
-            )(stop_grad)
-
-            # Output layer: 4096 logits for all (from, to) squares (64x64), scored per-move by
-            # column at inference (never densely materialized).
-            move_logits = Dense(
-                4096,
-                activation=None,  # Raw logits, no softmax
-                # Use smaller initialization to prevent gradient explosion
-                kernel_initializer=tf.keras.initializers.RandomNormal(0, 0.01),
-                bias_initializer=tf.keras.initializers.Zeros(),
-                kernel_constraint=constr_a,
-                bias_constraint=constr_a,
-                name='move',
-                dtype='float32'
-            )(move_acc)
-
-            outputs.append(move_logits)
-
         # Create the model
-        model = tf.keras.models.Model(inputs=input_layer, outputs=outputs, name=args.name)
+        model = tf.keras.models.Model(inputs=input_layer, outputs=eval_output, name=args.name)
 
         if args.optimizer in ['adam', 'amsgrad']:
             optimizer=tf.keras.optimizers.Adam(
@@ -596,77 +552,6 @@ def make_model(args, strategy):
         losses = {'out': combined_loss}
         metrics = {'out': [accuracy, mae]}
         loss_weights = {'out': 1.0}
-
-        if args.predict_moves:
-            """Experimental"""
-            @tf.function
-            def scaled_sparse_categorical_crossentropy(y_true, y_pred):
-                """
-                Scaled cross-entropy loss to prevent gradient explosion.
-                Uses label smoothing and temperature scaling.
-
-                Full softmax over all 4096 outputs unless --move-negatives > 0, in which
-                case the normalizer is over the played move + K random negatives (sampled
-                softmax): same objective, ~K logits instead of 4096.
-                """
-                # y_true: move_indices
-                y_true = tf.cast(y_true, tf.int32)
-                y_pred = tf.cast(y_pred, tf.float32)
-
-                # Apply temperature scaling to logits to reduce magnitude
-                temperature = tf.constant(args.move_temperature, dtype=tf.float32)
-                scaled_logits = y_pred / temperature
-
-                # Clip to logits to prevent extreme values
-                max_logit = tf.constant(args.move_logit_clip, dtype=tf.float32)
-                clipped_logits = soft_clip(scaled_logits, max_logit)
-
-                if args.move_negatives:
-                    # Sampled softmax: gather the true logit + K random negative logits per row,
-                    # normalize over that subset. Label is index 0 (the played move).
-                    batch = tf.shape(clipped_logits)[0]
-                    true_idx = tf.reshape(y_true, (batch, 1))
-                    negatives = tf.random.uniform(
-                        (batch, args.move_negatives), maxval=4096, dtype=tf.int32
-                    )
-                    # A negative colliding with the played move would double-count it in the
-                    # normalizer and soften the label; mask those logits to -inf so they vanish.
-                    collide = tf.equal(negatives, true_idx)
-                    cand = tf.concat([true_idx, negatives], axis=1)  # (batch, 1+K); true at col 0
-                    subset = tf.gather(clipped_logits, cand, batch_dims=1)  # (batch, 1+K)
-                    neg_mask = tf.concat([tf.zeros((batch, 1), tf.bool), collide], axis=1)
-                    subset = tf.where(neg_mask, tf.fill(tf.shape(subset), tf.constant(-1e9, subset.dtype)), subset)
-                    labels = tf.zeros((batch,), dtype=tf.int32)
-                    loss = tf.keras.losses.sparse_categorical_crossentropy(labels, subset, from_logits=True)
-                else:
-                    # Compute cross-entropy with label smoothing
-                    loss = tf.keras.losses.sparse_categorical_crossentropy(y_true, clipped_logits, from_logits=True)
-
-                # Scale down the loss to balance with position evaluation
-                return loss * args.move_loss_scale
-
-            @tf.function
-            def top(y_true, y_pred, k=1):
-                """Top-k accuracy for move prediction."""
-                move_indices = tf.cast(y_true, tf.int32)
-                return tf.keras.metrics.sparse_top_k_categorical_accuracy(
-                    move_indices, y_pred, k=k
-                )
-
-            @tf.function
-            def top_3(y_true, y_pred):
-                return top(y_true, y_pred, k=3)
-
-            @tf.function
-            def top_5(y_true, y_pred):
-                return top(y_true, y_pred, k=5)
-
-            # Set up move prediction loss and metrics
-            loss_weights['move'] = args.move_weight
-            loss_weights['out'] = 1 - args.move_weight
-
-            losses['move'] = scaled_sparse_categorical_crossentropy
-            metrics['move'] = [top, top_3, top_5]
 
         model.compile(
             loss=losses,
@@ -751,10 +636,8 @@ EVAL_ORDER = ['hidden_1a'] + [f'{name}_{s}' for s in range(STACKS) for name in (
 
 
 def write_binary_weights(args, model, file):
-    # Eval layers, then move head. model.layers is graph-depth ordered and interleaves the stacks.
-    order = EVAL_ORDER + ['move_acc', 'move']
-    layers = [model.get_layer(n) for n in order if any(l.name == n for l in model.layers)]
-    for layer in layers:
+    # model.layers is graph-depth ordered and interleaves the stacks.
+    for layer in (model.get_layer(n) for n in EVAL_ORDER):
         params = get_layer_weights(layer, args.quantize_round)
         if params:
             kernel, bias = params
@@ -784,11 +667,7 @@ def export_weights(args, model):
 
 
 def load_binary_weights(args, model, file):
-    """Load weights from a flat .bin into the eval layers, in C++/torch export order.
-
-    The 'move' head is NOT in the file (eval-only export), so it is skipped by name: importing
-    an eval-only weights.bin into a --predict-moves graph leaves the head untouched.
-    """
+    """Load weights from a flat .bin into the eval layers, in C++/torch export order."""
     by_name = {l.name: l for l in model.layers}
     payload = np.fromfile(file, dtype=np.float32)
     expected = sum(int(np.prod(w.shape)) for name in EVAL_ORDER for w in by_name[name].get_weights())
@@ -934,7 +813,6 @@ def dataset_from_file(args, filepath, strategy, callbacks):
             self.hf = h5py.File(filepath, 'r')
             self.data = self.hf['data']
 
-            # Calculate the expected columns based on whether move prediction is enabled
             expected_cols = feature_count + 4  # eval, outcome, from_square, to_square
             # Check data shape
             if self.data.shape[1] != expected_cols:
@@ -999,8 +877,6 @@ def dataset_from_file(args, filepath, strategy, callbacks):
 
             y_outcome = y_outcome * (1 - args.outcome_smoothing) + 0.5 * args.outcome_smoothing
 
-            mask = None
-
             if args.no_capture and self.data.shape[1] > self.feature_count + 1:
                 to_square = self.data[start:end, self.feature_count+3]
 
@@ -1063,7 +939,6 @@ def dataset_from_file(args, filepath, strategy, callbacks):
 
             if args.balance:
                 # Create balanced white/black batches by synthesizing symmetrical possitions
-                assert not args.predict_moves, "balance and predict_moves cannot be used at the same time"
                 # Flip positions
                 x_flipped = flip_position(x)
                 x = np.concatenate([x, x_flipped], axis=0)
@@ -1090,25 +965,7 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                 axis=1,
             )  # Shape: (batch_size, 5)
 
-            # Prepare outputs based on whether move prediction is enabled
-            if args.predict_moves and self.data.shape[1] > self.feature_count + 1:
-                # Get move coordinates (from_square, to_square) as indices
-                from_square = self.data[start:end, self.feature_count+2]
-                to_square = self.data[start:end, self.feature_count+3]
-
-                # Convert from/to squares to move index (from_square * 64 + to_square)
-                move_indices = from_square * 64 + to_square
-
-                if mask is not None:
-                    move_indices = tf.boolean_mask(move_indices, mask)
-
-                # Reshape to match expected output shape
-                move_indices = tf.reshape(move_indices, (-1, 1))
-
-                # Return as tuple
-                return x, (y_combined, move_indices)
-            else:
-                return x, y_combined
+            return x, y_combined
 
         def rows(self):
             return self.data.shape[0]
@@ -1151,15 +1008,6 @@ def dataset_from_file(args, filepath, strategy, callbacks):
                         'sampling ratio': args.sample,
                     }
 
-                    # Add move prediction parameters if enabled
-                    if args.predict_moves:
-                        hyperparam.update({
-                            'move_weight': args.move_weight,
-                            'move_temperature': args.move_temperature,
-                            'move_logit_clip': args.move_logit_clip,
-                            'move_loss_scale': args.move_loss_scale,
-                        })
-
                     # Log main loss if available
                     loss = logs.get('loss', math.nan) if logs else math.nan
                     logging.info(f'epoch={epoch} loss={loss:.6f} hyperparam={hyperparam}')
@@ -1172,36 +1020,17 @@ def dataset_from_file(args, filepath, strategy, callbacks):
 
             callbacks.append(CallbackOnEpochEnd(generator))
 
-        # Determine output types and shapes based on whether move prediction is enabled
-        if args.predict_moves:
-            output_types = (
-                np.uint64,
-                (np.float32, np.float32)
-            )
-            output_shapes = (
-                (None, packed_feature_count),
-                ((None, 5), (None, 1))
-            )
-        else:
-            output_types = (np.uint64, np.float32)
-            output_shapes = ((None, packed_feature_count), (None, 5))
-
         dataset = tf.data.Dataset.from_generator(
             generator,
-            output_types=output_types,
-            output_shapes=output_shapes,
+            output_types=(np.uint64, np.float32),
+            output_shapes=((None, packed_feature_count), (None, 5)),
         )
 
         if args.filter:
             @tf.function
             def filter_data(x, y):
-                if args.predict_moves:
-                    combined_y = y[0]
-                    eval_y = combined_y[:, 0:1]
-                    outcome_y = combined_y[:, 1:2]
-                else:
-                    eval_y = y[:, 0:1]
-                    outcome_y = y[:, 1:2]
+                eval_y = y[:, 0:1]
+                outcome_y = y[:, 1:2]
 
                 bound = args.filter / SCALE
                 lower_bound = tf.greater(eval_y, -bound)
@@ -1231,12 +1060,8 @@ def dataset_from_file(args, filepath, strategy, callbacks):
 
                 condition = tf.reshape(condition, [-1])  # Flatten to 1D
 
-                # Apply mask to both input and all outputs
                 filtered_x = tf.boolean_mask(x, condition)
-                if args.predict_moves:
-                    filtered_y = tuple(tf.boolean_mask(y_item, condition) for y_item in y)
-                else:
-                    filtered_y = tf.boolean_mask(y, condition)
+                filtered_y = tf.boolean_mask(y, condition)
 
                 return filtered_x, filtered_y
 
@@ -1277,7 +1102,7 @@ def set_weights(from_model, to_model):
         try:
             to_layer = to_model.get_layer(name)
         except ValueError:
-            # Layer doesn't exist in target model (e.g., move prediction layers)
+            # Layer doesn't exist in target model (e.g., move head layers from older checkpoints)
             logging.warning(f"Layer {name} not found in target model, skipping")
             continue
 
@@ -1429,7 +1254,6 @@ if __name__ == '__main__':
         parser.add_argument('--balance', action='store_true', help='balance white / black wins inside batches')
 
         parser.add_argument('--bin', action='store_true', help='export weights in binary format')
-        parser.add_argument('--freeze-eval', action='store_true')
         parser.add_argument('--hex', action='store_true', help='export weights in hex format')
         parser.add_argument('--import-file', help='import weights from binary file')
         parser.add_argument('--save-model', action='store_true', help='save model immediately, use with --import and/or --alt-model')
@@ -1450,15 +1274,6 @@ if __name__ == '__main__':
         parser.add_argument('--outcome-scale', type=float, default=120.0, help='pred-side sigmoid scale (the net cp units); per-row sidecar S calibrates targets')
         parser.add_argument('--dynamic-outcome-weight', action='store_true', help='scale outcome weight by piece count (more pieces = trust outcome more)')
 
-        # Move prediction related arguments
-        parser.add_argument('--predict-moves', action='store_true', help='enable move prediction')
-        parser.add_argument('--move-weight', type=float, default=0.3, help='blending weight for move prediction loss')
-
-        # Arguments for move prediction stability
-        parser.add_argument('--move-temperature', type=float, default=1.0, help='temperature scaling for move logits')
-        parser.add_argument('--move-logit-clip', type=float, default=10.0, help='clip move logits to prevent extreme values')
-        parser.add_argument('--move-negatives', type=int, default=0, help='sampled-softmax negatives per row (0 = full 4096 softmax)')
-        parser.add_argument('--move-loss-scale', type=float, default=0.1, help='scale factor for move prediction loss')
         parser.add_argument('--clip-norm', type=float, default=1.0, help='gradient clipping norm')
 
         parser.add_argument('--alt-model', help='Path to another model to load/merge weights from')
@@ -1497,19 +1312,6 @@ if __name__ == '__main__':
 
         if args.outcome_weight < 0 or args.outcome_weight > 1:
             parser.error("--outcome-weight must be between 0 and 1 (inclusive)")
-
-        # Validate move_weight
-        if args.predict_moves and (args.move_weight < 0 or args.move_weight > 1):
-            parser.error("--move-weight must be between 0 and 1 (inclusive)")
-
-        # Validate new move prediction parameters
-        if args.predict_moves:
-            if args.move_temperature <= 0:
-                parser.error("--move-temperature must be positive")
-            if args.move_logit_clip <= 0:
-                parser.error("--move-logit-clip must be positive")
-            if args.move_loss_scale <= 0:
-                parser.error("--move-loss-scale must be positive")
 
         # Validate outcome scale parameter
         if args.outcome_scale <= 0:

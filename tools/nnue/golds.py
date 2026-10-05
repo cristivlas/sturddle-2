@@ -113,11 +113,8 @@ def _generate_bin(bin_path):
 
     size = os.path.getsize(bin_path) // 4
     base = sum(i * o + b for _, i, o, b in tt._EXPORT)
-    # --predict-moves bins append move_acc (769x256) and move (256x4096) after the eval layers
-    move_inputs = 769  # absolute piece-square inputs + turn
-    move_head = move_inputs * 256 + 256 + 256 * 4096 + 4096
-    if size not in (base, base + move_head):
-        raise ValueError(f"{bin_path}: {size} floats does not match any known layout")
+    if size != base:
+        raise ValueError(f"{bin_path}: {size} floats does not match the network layout")
 
     model = tt.NNUE()
     tt.load_bin(model, bin_path, count=base)

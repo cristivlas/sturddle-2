@@ -82,10 +82,6 @@ void Model::init()
         L3[s].load_weights(file);
         EVAL[s].load_weights(file);
     }
-#if USE_MOVE_PREDICTION
-    LMOVE_ACC.load_weights(file);
-    LMOVES.load_weights(file);
-#endif
 }
 
 #if defined(__clang__)
@@ -127,11 +123,6 @@ void Model::load_weights(const std::filesystem::path& weights_path)
             L3[s].load_weights(file);
             EVAL[s].load_weights(file);
         }
-
-    #if USE_MOVE_PREDICTION
-        LMOVE_ACC.load_weights(file);
-        LMOVES.load_weights(file);
-    #endif
     }
     catch (const std::exception& e)
     {

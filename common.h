@@ -129,7 +129,6 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 /* Experimental */
 #define USE_BOOK_HINT                       false
-#define USE_MOVE_PREDICTION                 false
 
 /* Support endtable probing with the Fathom library */
 #define USE_ENDTABLES                       true

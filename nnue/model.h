@@ -40,15 +40,6 @@ namespace nnue
 #endif /* USE_BF16 && NNUE_TAIL_BF16 */
     using EVALType = nnue::Layer<HIDDEN_3, 1>;
 
-    /* Move-prediction head (experimental): own 256-wide sub-accumulator off raw inputs
-     * (decoupled from eval), then a bilinear map to the 4096 (from,to) logits scored
-     * per-move by column. Full recompute per node -- only used at early iterations.
-     */
-    constexpr int MOVE_ACC = 256;
-
-    using LMOVEAccType = nnue::Layer<nnue::MOVE_INPUTS, MOVE_ACC, int16_t, nnue::QSCALE>;
-    using LMOVEType = nnue::Layer<MOVE_ACC, 4096, int16_t, nnue::QSCALE>;
-
     struct Model
     {
        /*
@@ -60,12 +51,7 @@ namespace nnue
         static constexpr size_t param_count()
         {
             return L1AType::param_count()
-                + STACKS * (L2Type::param_count() + L3Type::param_count() + EVALType::param_count())
-            #if USE_MOVE_PREDICTION
-                + LMOVEAccType::param_count()
-                + LMOVEType::param_count()
-            #endif /* USE_MOVE_PREDICTION */
-                ;
+                + STACKS * (L2Type::param_count() + L3Type::param_count() + EVALType::param_count());
         }
 
         void init();
@@ -98,10 +84,5 @@ namespace nnue
         L2Type L2[STACKS];
         L3Type L3[STACKS];
         EVALType EVAL[STACKS];
-
-    #if USE_MOVE_PREDICTION
-        LMOVEAccType LMOVE_ACC;
-        LMOVEType LMOVES;
-    #endif /* USE_MOVE_PREDICTION */
     };
 }
