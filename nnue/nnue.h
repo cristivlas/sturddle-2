@@ -110,7 +110,7 @@ namespace nnue
     /* accumulator rows: 32 pieces + bias must not overflow int16 */
     constexpr int ACC_WEIGHT_MAX = INT16_MAX / 33;
 
-    /* activation: clamp(acc, 0, ACT_CLAMP) >> ACT_SHIFT -> u8 in [0, ACT_MAX] at ACT_SCALE */
+    /* activation: cap the accumulator to [0, 1023], divide by 8, giving bytes 0..127 (1.0 == 128) */
     constexpr int ACT_SHIFT = 3;
     constexpr int ACT_MAX = 127;
     constexpr int ACT_CLAMP = ((ACT_MAX + 1) << ACT_SHIFT) - 1;
@@ -316,7 +316,7 @@ namespace nnue
     INLINE Vector relu(Vector v) { return max(v, v_zero); }
 
 
-    /* int8 layer vectors: int16 accumulator lanes, u8 activations, s8 weights, int32 sums */
+    /* SIMD types for the int8 layer: accumulator (int16), activations (u8), weights (s8), sums (int32) */
 #if INSTRSET >= 10 /* AVX-512BW */
     using VecS16 = Vec32s;
     using VecU8 = Vec64uc;
@@ -335,7 +335,7 @@ namespace nnue
 #endif /* INSTRSET */
 
 
-    /* sums[k] = in . wt[k] for R rows, int32 */
+    /** Dot products of the input with R weight rows at once */
     template <int R, int N>
     INLINE void dot_rows(const uint8_t (&in)[N], const int8_t (*wt)[N], int32_t (&sums)[R])
     {
@@ -357,12 +357,11 @@ namespace nnue
             }
         }
 
-        for (int k = 0; k != R; ++k)
-            sums[k] = ::horizontal_add(acc[k]);
+        ::horizontal_add(acc, sums);
     }
 
 
-    /* int16 accumulator at QSCALE -> u8 activations at ACT_SCALE: clamp to [0, ACT_CLAMP], >> ACT_SHIFT */
+    /** Clipped ReLU: cap the int16 accumulator to [0, 1023] and shrink it to bytes 0..127 */
     template <int N>
     INLINE void activate(const int16_t (&in)[N], uint8_t (&out)[N])
     {
@@ -474,23 +473,21 @@ namespace nnue
             set_weights(reinterpret_cast<float(&)[I][OUTPUTS]>(*(w.get())), reinterpret_cast<float(&)[OUTPUTS]>(*(b.get())));
         }
 
-        /* u8 activations x int8 weights: int32 sums + bias, relu, to float */
+        /** Byte activations times int8 weights, summed in int32, then relu and back to float */
         INLINE void dot(const uint8_t (&input)[INPUTS], float (&output)[OUTPUTS]) const
         {
             static_assert(std::is_same_v<T, int8_t> && !Incremental);
 
-            constexpr int R = 4;
+            constexpr int R = 8; /* enough independent sums that the CPU never waits on a dot_add */
             static_assert(OUTPUTS % R == 0);
             constexpr float OUT_SCALE = 1.0f / BIAS_SCALE;
 
+            ALIGN int32_t sums[OUTPUTS / R][R];
             for (int j = 0; j != OUTPUTS; j += R)
-            {
-                int32_t sums[R];
-                dot_rows<R>(input, &this->_wt[j], sums);
+                dot_rows(input, &this->_wt[j], sums[j / R]);
 
-                for (int k = 0; k != R; ++k)
-                    output[j + k] = float(std::max(0, sums[k] + this->_b[j + k])) * OUT_SCALE;
-            }
+            for (int j = 0; j != OUTPUTS; ++j)
+                output[j] = float(std::max(0, sums[j / R][j % R] + this->_b[j])) * OUT_SCALE;
         }
 
         /* hidden, output */
@@ -633,8 +630,8 @@ namespace nnue
         }
 
 
-        /** out = src - rows(remove) + rows(add), both perspectives; with Copy, out2 gets a copy too.
-         * Indices are white-view: the black half uses the mirrored bucket and index ^ PERSPECTIVE_XOR.
+        /** Update both perspectives: subtract the rows of removed pieces, add the new ones; with Copy, out2 gets a copy too.
+         * Indices are from white's view; black's half uses the mirrored bucket and flipped index.
          */
         template <bool Copy = false, typename LA>
         static INLINE void apply_deltas(

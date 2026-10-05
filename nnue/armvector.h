@@ -383,7 +383,19 @@ INLINE int32_t horizontal_add(Vec4i a)
 #else
     const int32x2_t s = vadd_s32(vget_low_s32(a), vget_high_s32(a));
     return vget_lane_s32(vpadd_s32(s, s), 0);
-#endif
+#endif /* __aarch64__ */
+}
+
+/** Sum up each of the 8 vectors */
+INLINE void horizontal_add(const Vec4i (&v)[8], int32_t (&out)[8])
+{
+#if (__arm64__) || (__aarch64__)
+    vst1q_s32(out, vpaddq_s32(vpaddq_s32(v[0], v[1]), vpaddq_s32(v[2], v[3])));
+    vst1q_s32(&out[4], vpaddq_s32(vpaddq_s32(v[4], v[5]), vpaddq_s32(v[6], v[7])));
+#else
+    for (int k = 0; k != 8; ++k)
+        out[k] = horizontal_add(v[k]);
+#endif /* __aarch64__ */
 }
 
 /* Signed saturation to int8 */
@@ -393,7 +405,7 @@ INLINE Vec16c compress_saturated(Vec8s low, Vec8s high)
     return vcombine_s8(vqmovn_s16(vreinterpretq_s16_s64(low)), vqmovn_s16(vreinterpretq_s16_s64(high)));
 }
 
-/* acc + sums of 4 u8 x s8 products per int32 lane; a <= 127 */
+/** Multiply bytes (u8 x s8), adding each group of 4 products into an int32 lane of acc; a <= 127 */
 INLINE Vec4i dot_add(Vec4i acc, Vec16uc a, Vec16c b)
 {
     const int8x16_t sa = vreinterpretq_s8_u8(a);
