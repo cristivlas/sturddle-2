@@ -135,7 +135,7 @@ namespace win
             throw_last_error("SetThreadSelectedCpuSets");
     }
 
-    /** restrict the process to P cores and stop power throttling; throw std::runtime_error on failure */
+    /** restrict the process to P cores; throw std::runtime_error on failure */
     inline void bind_to_p_cores()
     {
         const auto proc = GetCurrentProcess();
@@ -156,34 +156,25 @@ namespace win
         if (!topology().process_uses_p_cores(proc) && !SetProcessDefaultCpuSets(proc, ids.data(), ULONG(ids.size())))
             throw_last_error("SetProcessDefaultCpuSets");
 
-        /* P cores alone do not help if Windows throttles the engine as a background process */
-        constexpr ULONG speed = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
-        PROCESS_POWER_THROTTLING_STATE state = {};
-        state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
-        if (!GetProcessInformation(proc, ProcessPowerThrottling, &state, sizeof(state))
-            || !(state.ControlMask & speed) || (state.StateMask & speed))
-        {
-            state.ControlMask = speed;
-            state.StateMask = 0; /* never throttle */
-            /* fails on Windows 10 before 1709, which predates hybrid CPUs anyway */
-            if (!SetProcessInformation(proc, ProcessPowerThrottling, &state, sizeof(state)))
-                throw_last_error("SetProcessInformation");
-        }
-
         reset_thread();
     }
 
-    /** let Windows schedule and throttle the process as it sees fit; throw std::runtime_error on failure */
+    /** let Windows schedule the process on any core; throw std::runtime_error on failure */
     inline void unbind()
     {
-        const auto proc = GetCurrentProcess();
-        if (!SetProcessDefaultCpuSets(proc, nullptr, 0))
+        if (!SetProcessDefaultCpuSets(GetCurrentProcess(), nullptr, 0))
             throw_last_error("SetProcessDefaultCpuSets");
+    }
 
-        /* let Windows decide about throttling again */
+    /** keep Windows from slowing the engine down as a background process; throw std::runtime_error on failure */
+    inline void disable_power_throttling()
+    {
         PROCESS_POWER_THROTTLING_STATE state = {};
         state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
-        if (!SetProcessInformation(proc, ProcessPowerThrottling, &state, sizeof(state)))
+        state.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+        state.StateMask = 0; /* never throttle */
+        /* fails on Windows 10 before 1709 */
+        if (!SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state)))
             throw_last_error("SetProcessInformation");
     }
 

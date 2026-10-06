@@ -489,6 +489,7 @@ private:
 
     void set_high_priority(bool);
     void update_cpu_binding();
+    void disable_power_throttling();
     void show_settings();
 
     /** Context callbacks */
@@ -675,6 +676,8 @@ private:
     bool _current_priority = false; /* not high */
     bool _high_priority = DEFAULT_HIGH_PRIORITY;
     bool _allow_e_cores = false; /* true: do not bind search threads to P cores */
+    bool _disable_throttling = true; /* cleared on failure, to prevent future calls */
+
     chess::BaseMove _last_move;
 #if NATIVE_BOOK
     PolyglotBook _opening_book = {};
@@ -1163,6 +1166,27 @@ void UCI::set_high_priority(bool high_priority)
     }
 }
 
+void UCI::disable_power_throttling()
+{
+    if (_disable_throttling)
+    {
+        try
+        {
+        #if _WIN32
+            /* keep Windows from slowing the engine down when it looks like a background process */
+            win::disable_power_throttling();
+        #else
+            /* TODO */
+        #endif /* _WIN32 */
+        }
+        catch (const std::exception& e)
+        {
+            _disable_throttling = false; /* prevent future calls */
+            log_error(std::format("Could not disable power throttling: {}", e.what()));
+        }
+    }
+}
+
 void UCI::update_cpu_binding()
 {
     /* AllowECores: leave scheduling to the OS (unbind if previously bound) */
@@ -1320,6 +1344,8 @@ INLINE score_t UCI::search(F set_time_limit)
 
     set_high_priority(_high_priority);
     auto restore_priority = on_scope_exit([this] { set_high_priority(false); });
+
+    disable_power_throttling();
 
     update_cpu_binding();
 
