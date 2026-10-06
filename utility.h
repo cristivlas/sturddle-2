@@ -21,6 +21,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -28,6 +29,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 #if _WIN32
   #include "ms_windows.h"
@@ -336,8 +338,23 @@ namespace cpu
             }
             _hybrid = min_class < max_class;
         }
+
+        /** true if the process default CPU sets are exactly the P cores */
+        bool process_uses_p_cores(HANDLE proc) const
+        {
+            ULONG ids[MAXIMUM_PROC_PER_GROUP] = {};
+            ULONG count = 0;
+            if (!GetProcessDefaultCpuSets(proc, ids, ULONG(std::size(ids)), &count) || count != _p_cores.size())
+                return false;
+
+            /* Windows may return the IDs in any order, so look each one up */
+            return std::all_of(ids, ids + count, [this](ULONG id) {
+                return std::find(_p_cores.begin(), _p_cores.end(), id) != _p_cores.end();
+            });
+        }
     };
 
+    /* singleton */
     inline const Topology& topology()
     {
         static const Topology t;
@@ -355,81 +372,112 @@ namespace cpu
     #endif /* _WIN32 */
     }
 
-    inline bool bound = false; /* P cores binding in effect */
+    inline std::atomic_bool bound = false; /* P cores binding in effect */
 
 #if _WIN32
-    /* make calling thread follow the process defaults; return failed API name, or nullptr */
-    inline const char* reset_thread()
+    /** throw an error with the failed API name and Windows error code */
+    [[noreturn]] inline void throw_last_error(std::string_view api)
+    {
+        const auto code = GetLastError();
+        throw std::runtime_error(std::string(api) + " failed: " + std::to_string(code));
+    }
+
+    /* make calling thread follow the process defaults */
+    inline void reset_thread()
     {
         const auto thread = GetCurrentThread();
         const auto sys_mask = topology()._sys_mask;
-        /* if a getter fails, assume the state differs and call the setter */
+
+        /* if we can't read the current setting, set it anyway */
         GROUP_AFFINITY ga = {};
         if (sys_mask && (!GetThreadGroupAffinity(thread, &ga) || ga.Mask != sys_mask)
             && !SetThreadAffinityMask(thread, sys_mask))
-            return "SetThreadAffinityMask";
+            throw_last_error("SetThreadAffinityMask");
 
         /* a thread's own CPU sets override the process default;
-         * with a null buffer, the getter fails (insufficient buffer) but reports the count */
+         * with no buffer, this call just tells us how many there are */
         ULONG count = 1;
         GetThreadSelectedCpuSets(thread, nullptr, 0, &count);
         if (count && !SetThreadSelectedCpuSets(thread, nullptr, 0))
-            return "SetThreadSelectedCpuSets";
-
-        return nullptr;
+            throw_last_error("SetThreadSelectedCpuSets");
     }
 #endif /* _WIN32 */
 
     /*
-     * Bind all process threads to P cores (or unbind); on failure return false and set err.
-     * Setters are expensive (~10us each): only call them if the current state differs.
+     * Bind all process threads to P cores (or unbind); throw std::runtime_error on failure.
      */
-    inline bool bind_to_performance_cores([[maybe_unused]] bool bind, [[maybe_unused]] std::string& err)
+    inline void bind_to_performance_cores([[maybe_unused]] bool bind)
     {
         ASSERT_ALWAYS(is_hybrid());
     #if _WIN32
         const auto proc = GetCurrentProcess();
-        const auto fail = [&err](const char* api) {
-            const auto code = GetLastError();
-            err = std::string(api) + " failed: " + std::to_string(code);
-            return false;
-        };
 
         bound = false;
+        /* unbind */
         if (!bind)
-            return SetProcessDefaultCpuSets(proc, nullptr, 0) || fail("SetProcessDefaultCpuSets");
-
-        /* affinity beats CPU sets: undo any external restriction */
-        DWORD_PTR proc_mask = 0, sys_mask = 0;
-        if (!GetProcessAffinityMask(proc, &proc_mask, &sys_mask))
-            return fail("GetProcessAffinityMask");
-        if (proc_mask != sys_mask && !SetProcessAffinityMask(proc, sys_mask))
-            return fail("SetProcessAffinityMask");
-
-        const auto& ids = topology()._p_cores;
-        static std::vector<ULONG> current(ids.size());
-        ULONG count = 0;
-        if (!GetProcessDefaultCpuSets(proc, current.data(), ULONG(current.size()), &count)
-            || count != ids.size() || current != ids)
         {
-            if (!SetProcessDefaultCpuSets(proc, ids.data(), ULONG(ids.size())))
-                return fail("SetProcessDefaultCpuSets");
+            if (!SetProcessDefaultCpuSets(proc, nullptr, 0))
+                throw_last_error("SetProcessDefaultCpuSets");
+
+            /* let Windows decide about throttling again */
+            PROCESS_POWER_THROTTLING_STATE state = {};
+            state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+            if (!SetProcessInformation(proc, ProcessPowerThrottling, &state, sizeof(state)))
+                throw_last_error("SetProcessInformation");
+            return;
         }
 
-        if (const auto api = reset_thread())
-            return fail(api);
+        const auto sys_mask = topology()._sys_mask;
+        DWORD_PTR proc_mask = 0, unused = 0;
+
+        /* only change what differs; setting is slow */
+        if (!GetProcessAffinityMask(proc, &proc_mask, &unused))
+            throw_last_error("GetProcessAffinityMask");
+
+        /* affinity beats CPU sets: if someone restricted us to certain cores,
+         * Windows ignores our P-core choice; allow all cores first
+         */
+        if (proc_mask && proc_mask != sys_mask && !SetProcessAffinityMask(proc, sys_mask))
+            throw_last_error("SetProcessAffinityMask");
+
+        const auto& ids = topology()._p_cores;
+        if (!topology().process_uses_p_cores(proc) && !SetProcessDefaultCpuSets(proc, ids.data(), ULONG(ids.size())))
+            throw_last_error("SetProcessDefaultCpuSets");
+
+        /* P cores alone do not help if Windows throttles the engine as a background process */
+        constexpr ULONG speed = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+        PROCESS_POWER_THROTTLING_STATE state = {};
+        state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+        if (!GetProcessInformation(proc, ProcessPowerThrottling, &state, sizeof(state))
+            || !(state.ControlMask & speed) || (state.StateMask & speed))
+        {
+            state.ControlMask = speed;
+            state.StateMask = 0; /* never throttle */
+            /* fails on Windows 10 before 1709, which predates hybrid CPUs anyway */
+            if (!SetProcessInformation(proc, ProcessPowerThrottling, &state, sizeof(state)))
+                throw_last_error("SetProcessInformation");
+        }
+
+        reset_thread();
 
         bound = true;
     #endif /* _WIN32 */
-        return true;
     }
 
     /* if bound, make calling (helper) thread follow the process defaults */
     inline void update_thread_binding()
     {
     #if _WIN32
-        if (bound)
+        if (!bound)
+            return;
+        try
+        {
             reset_thread();
+        }
+        catch (const std::exception&)
+        {
+            /* best effort: the helper still searches, maybe on an E core */
+        }
     #endif /* _WIN32 */
     }
 } /* namespace cpu */

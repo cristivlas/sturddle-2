@@ -1275,17 +1275,20 @@ void UCI::update_cpu_binding()
         return;
 
     const bool bind = !_allow_e_cores;
-    std::string err;
-    if (cpu::bind_to_performance_cores(bind, err))
-        return;
-
-    const auto msg = std::format("{} performance cores failed: {}", bind ? "bind to" : "unbind from", err);
-    log_error(msg);
-    std::cout << "info string " << msg << std::endl;
-#if !NATIVE_BUILD
-    std::fprintf(stderr, "%s\n", msg.c_str()); /* Python logging may not flush before _Exit */
-#endif
-    std::_Exit(EXIT_FAILURE);
+    try
+    {
+        cpu::bind_to_performance_cores(bind);
+    }
+    catch (const std::runtime_error& e)
+    {
+        const auto msg = std::format("{} performance cores failed: {}", bind ? "bind to" : "unbind from", e.what());
+        log_error(msg);
+        std::cout << "info string " << msg << std::endl;
+    #if !NATIVE_BUILD
+        std::fprintf(stderr, "%s\n", msg.c_str()); /* Python logging may not flush before _Exit */
+    #endif /* !NATIVE_BUILD */
+        std::_Exit(EXIT_FAILURE);
+    }
 }
 
 void UCI::show_settings()
