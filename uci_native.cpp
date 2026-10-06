@@ -24,7 +24,6 @@ using Params = std::unordered_map<std::string, std::string>;
 #include <vector>
 #if _WIN32
   #include <io.h>
-  #include <tlhelp32.h>
 #else
   #include <unistd.h>
   #include <sys/resource.h>
@@ -395,125 +394,21 @@ namespace
 } /* namespace */
 
 
+/* return true if a console was allocated; no action needed on POSIX (TODO: Test on Mac) */
+static bool manage_console()
+{
 #if _WIN32
-/*
- * Helpers for manage_console (see below).
- */
-static DWORD get_parent_pid(DWORD processId)
-{
-    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (hSnapshot == INVALID_HANDLE_VALUE)
-        return 0;
-
-    auto cleanup = on_scope_exit([hSnapshot]() {
-        CloseHandle(hSnapshot);
-    });
-
-    PROCESSENTRY32 pe32 = {};
-    pe32.dwSize = sizeof(PROCESSENTRY32);
-
-    if (!Process32First(hSnapshot, &pe32))
-        return 0;
-
-    do {
-        if (pe32.th32ProcessID == processId)
-        {
-            std::string name(pe32.szExeFile);
-
-            // Running as a python script? bail
-            if (lowercase(name).starts_with("python"))
-                return 0;
-
-            return pe32.th32ParentProcessID;
-        }
-    } while (Process32Next(hSnapshot, &pe32));
-
-    return 0;
-}
-
-static bool ensure_console()
-{
-    if (!GetConsoleWindow())
+    try
     {
-        if (!AllocConsole())
-        {
-            log_error(std::format("Could not allocate console, error: {}", GetLastError()));
-        }
-        else
-        {
-            // Rebind standard handles
-            FILE* fp = nullptr;
-            freopen_s(&fp, "CONIN$",  "r", stdin);
-            freopen_s(&fp, "CONOUT$", "w", stdout);
-            freopen_s(&fp, "CONOUT$", "w", stderr);
-
-            return true;
-        }
+        return win::manage_console();
     }
-    return false;
-}
-
-
-/*
- * An improved solution for: https://github.com/cristivlas/sturddle-2/issues/11
- *
- * Currently the engine runs from under the PyInstaller bootloader, and, under some
- * GUIs such as Shredder, an extra console pops up. The solution for recent Windows 11
- * builds is to use the "detached" setting in a manifest file at build time
- * (https://learn.microsoft.com/en-us/windows/console/console-allocation-policy).
- *
- * On older Windows versions: call FreeConsole if console detected in chess GUI mode.
- *
- * Return true if a console was allocated.
- */
-static bool manage_console()
-{
-    /* Use STDIN handle to detect how the engine is being run. */
-    const HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
-
-    DWORD mode = 0;
-
-    if (GetConsoleMode(h, &mode))
+    catch (const std::exception& e)
     {
-        if (auto wnd = GetConsoleWindow())
-        {
-            DWORD consolePID = 0;
-            GetWindowThreadProcessId(wnd, &consolePID);
-
-            const auto ourPID = GetProcessId(GetCurrentProcess());
-            return (ourPID == consolePID) || get_parent_pid(ourPID) == consolePID;
-        }
+        log_error(std::format("Could not allocate console: {}", e.what()));
     }
-    else if (GetFileType(h) == FILE_TYPE_PIPE)
-    {
-        /* STDIN is attached to a pipe, assume it is running under a chess GUI. */
-        /* GUIs connect pipes to the engine's standard input and output to send */
-        /* UCI command and to read back responses. */
-
-        /* Do away with console window if detected. */
-        if (GetConsoleWindow())
-        {
-            FreeConsole();
-        }
-    }
-    else
-    {
-        /* The engine was likely started by the user double clicking in explorer.exe */
-        /* or in some other file manager. The user likely wants to test the engine by */
-        /* entering UCI commands manually, so make sure that there is a console. */
-        return ensure_console();
-    }
-    return false;
-}
-
-#else
-
-/* No action needed on POSIX. TODO: Test on Mac */
-static bool manage_console()
-{
-    return false;
-}
 #endif /* _WIN32 */
+    return false;
+}
 
 
 class UCI
