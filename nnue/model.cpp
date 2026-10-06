@@ -73,15 +73,7 @@ void Model::init()
     std::istream file(&buf);
     file.exceptions(std::ios::failbit | std::ios::badbit);
 
-    /* Same order as Model::load_weights file-based path */
-    L1A.load_weights(file);
-    Accumulator::check_weights(L1A);
-    for (int s = 0; s != STACKS; ++s)
-    {
-        L2[s].load_weights(file);
-        L3[s].load_weights(file);
-        EVAL[s].load_weights(file);
-    }
+    load_layers(file);
 }
 
 #if defined(__clang__)
@@ -91,6 +83,20 @@ void Model::init()
 #endif
 
 #endif /* !SHARED_WEIGHTS */
+
+
+/* Same order as the trainers export them */
+void Model::load_layers(std::istream& file)
+{
+    L1A.load_weights(file);
+    Accumulator::check_weights(L1A);
+    for (int s = 0; s != STACKS; ++s)
+    {
+        L2[s].load_weights(file);
+        L3[s].load_weights(file);
+        EVAL[s].load_weights(file);
+    }
+}
 
 
 void Model::validate_weights_file(const std::filesystem::path& weights_path)
@@ -114,15 +120,7 @@ void Model::load_weights(const std::filesystem::path& weights_path)
 
     try
     {
-        /* Load layers in the same order that the trainer exports them. */
-        L1A.load_weights(file);
-        Accumulator::check_weights(L1A);
-        for (int s = 0; s != STACKS; ++s)
-        {
-            L2[s].load_weights(file);
-            L3[s].load_weights(file);
-            EVAL[s].load_weights(file);
-        }
+        load_layers(file);
     }
     catch (const std::exception& e)
     {

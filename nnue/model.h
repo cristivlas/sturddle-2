@@ -23,7 +23,24 @@
 
 namespace nnue
 {
-    /* Define the network architecture */
+    /* Define the network architecture
+     *
+     *  768 piece-square inputs (white view)   same inputs, black view (idx ^ 120)
+     *           |  bucket b, rows of L1A                      |  bucket mirror(b)
+     *           v                                             v
+     *    white half: 1024 x int16                      black half: 1024 x int16
+     *           \_____________________________________________/
+     *                                   |
+     *           accumulator [black 1024 | white 1024 ]   int16 at 1/nnue::QSCALE
+     *                                   |  clamp 0..1023, >> 3
+     *                                   v
+     *                         activations  2048 x u8  (1.0 == 128)
+     *                                   |  stack[side to move]
+     *                                   v
+     *              L2  2048 -> 32  s8 weights, int32 sums   ->  relu -> float
+     *              L3    32 -> 32  float                    ->  relu
+     *              EVAL  32 -> 1   float                    ->  centipawns x 100
+     */
     constexpr int INPUTS_A = nnue::ACTIVE_INPUTS * nnue::NUM_BUCKETS;
     constexpr int HIDDEN_1A = 1024; /* per perspective */
     constexpr int HIDDEN_2 = 32;
@@ -56,7 +73,6 @@ namespace nnue
 
         void init();
 
-        void validate_weights_file(const std::filesystem::path& weights_path);
         void load_weights(const std::filesystem::path& weights_path);
 
         std::string default_weights_path;
@@ -66,7 +82,6 @@ namespace nnue
         {
             accumulator.update(L1A, ctxt->state());
         }
-
 
         /* Incremental */
         template <typename Ctxt>
@@ -79,6 +94,10 @@ namespace nnue
         {
             return ::nnue::eval(acc, L2[stm], L3[stm], EVAL[stm]);
         }
+
+    private:
+        void validate_weights_file(const std::filesystem::path& weights_path);
+        void load_layers(std::istream& file);
 
         L1AType L1A;
         L2Type L2[STACKS];

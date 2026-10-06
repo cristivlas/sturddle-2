@@ -95,22 +95,22 @@ namespace nnue
 
     constexpr int ACTIVE_INPUTS = 768; /* piece-square, white view */
     constexpr int EVAL_SCALE = 100;
-    constexpr int MAX_ACTIVE_INPUTS = 33; // 32 pieces + turn (move head)
+    constexpr int MAX_ACTIVE_INPUTS = 32; /* one per piece */
     constexpr int NUM_BUCKETS = 16;
     constexpr int PAWN_BUCKETS = chess::PAWN_BUCKETS;
     constexpr int KING_BUCKETS = 4;
     static_assert(NUM_BUCKETS == PAWN_BUCKETS * KING_BUCKETS, "bucket grid mismatch");
     constexpr int QSCALE = 1024;
-    constexpr int QLOG2 = 10;  /* log2(QSCALE), for shift-based requantization */
-    static_assert((1 << QLOG2) == QSCALE, "QLOG2 must be log2(QSCALE)");
 
     /* black-view input index: color swap (64) + rank flip (56) */
     constexpr int PERSPECTIVE_XOR = 120;
 
     /* accumulator rows: 32 pieces + bias must not overflow int16 */
-    constexpr int ACC_WEIGHT_MAX = INT16_MAX / 33;
+    constexpr int ACC_WEIGHT_MAX = INT16_MAX / (MAX_ACTIVE_INPUTS + 1);
 
-    /* activation: cap the accumulator to [0, 1023], divide by 8, giving bytes 0..127 (1.0 == 128) */
+    /* Activation: cap the accumulator to [0, 1023], divide by 8, giving bytes 0..127 (1.0 == 128) */
+    /* 1024 levels become 128: the int8 dot product needs bytes, so trade precision for throughput */
+
     constexpr int ACT_SHIFT = 3;
     constexpr int ACT_MAX = 127;
     constexpr int ACT_CLAMP = ((ACT_MAX + 1) << ACT_SHIFT) - 1;
@@ -334,12 +334,19 @@ namespace nnue
     using VecI32 = Vec4i;
 #endif /* INSTRSET */
 
+    /* weight rows per pass: enough independent sums that the CPU never waits on a dot_add */
+    constexpr int DOT_ROWS = (INSTRSET >= 10) ? 16 : 8; /* 16 needs the 32 registers of AVX-512 */
 
-    /** Dot products of the input with R weight rows at once */
+
+    /* Dot products of the input with R weight rows at once.
+     * The rows are stored interleaved, chunk by chunk, so that
+     * we can read them as one sequential stream.
+     */
     template <int R, int N>
-    INLINE void dot_rows(const uint8_t (&in)[N], const int8_t (*wt)[N], int32_t (&sums)[R])
+    INLINE void dot_rows(const uint8_t (&in)[N], const int8_t* rows, int32_t (&sums)[R])
     {
-        static_assert(N % VecU8::size() == 0);
+        constexpr int W = VecU8::size();
+        static_assert(N % W == 0 && R % 8 == 0);
 
         VecI32 acc[R];
         for (int k = 0; k != R; ++k)
@@ -347,21 +354,24 @@ namespace nnue
 
         VecU8 a;
         VecS8 w;
-        for (int i = 0; i != N; i += VecU8::size())
+        for (int i = 0; i != N; i += W)
         {
             a.load_a(&in[i]);
             for (int k = 0; k != R; ++k)
             {
-                w.load_a(&wt[k][i]);
+                w.load_a(rows);
+                rows += W;
                 acc[k] = dot_add(acc[k], a, w);
             }
         }
 
-        ::horizontal_add(acc, sums);
+        /* sum up 8 vectors at a time */
+        for (int k = 0; k != R; k += 8)
+            ::horizontal_add(*reinterpret_cast<const VecI32 (*)[8]>(&acc[k]), *reinterpret_cast<int32_t (*)[8]>(&sums[k]));
     }
 
 
-    /** Clipped ReLU: cap the int16 accumulator to [0, 1023] and shrink it to bytes 0..127 */
+    /* Clipped ReLU: cap the int16 accumulator to [0, 1023] and shrink it to bytes 0..127 */
     template <int N>
     INLINE void activate(const int16_t (&in)[N], uint8_t (&out)[N])
     {
@@ -390,6 +400,14 @@ namespace nnue
     };
 
 
+    template <int I, int O, int INPUTS>
+    struct BaseLayer<I, O, int8_t, INPUTS, false>
+    {
+        ALIGN int32_t _b[O]; /* biases */
+        ALIGN int8_t _packed[O * INPUTS]; /* weights in the order dot() reads them, see Layer::packed */
+    };
+
+
     template <int I, int O, typename T, int INPUTS>
     struct BaseLayer<I, O, T, INPUTS, true>
     {
@@ -404,13 +422,38 @@ namespace nnue
     {
         using bias_t = bias_type<T>;
 
-        static constexpr int ROWS = I;
-        static constexpr int COLS = O;
         /* Round up to INPUT_STRIDE to deal with odd inputs. */
         static constexpr int INPUTS = (Scale == 1 || Incremental) ? I : round_up<INPUT_STRIDE>(I);
         static constexpr int OUTPUTS = O;
-        static constexpr int SCALE = Scale;
         static constexpr int BIAS_SCALE = Scale * InScale;
+
+        /* int8 layers store the weights in the order dot() reads them.
+         *
+         *  as trained: one row of 2048 bytes per output, read in vector-sized chunks (c0, c1, ... 64 bytes each on AVX-512)
+         *      row 0:  [ c0 | c1 | c2 | ... ]
+         *      row 1:  [ c0 | c1 | c2 | ... ]
+         *      ...
+         *  as stored: DOT_ROWS rows at a time, chunk by chunk
+         *      [ row0.c0  row1.c0 ... row15.c0 ][ row0.c1  row1.c1 ... row15.c1 ][ ... ]
+         *
+         * dot_rows takes one chunk of activations and multiplies it with the same chunk of DOT_ROWS rows,
+         * then moves to the next chunk. In the trained layout those chunks sit 2KB apart, one stream per
+         * row for the hardware prefetcher to follow; in the stored layout they are adjacent, so a pass
+         * reads memory front to back as one stream.
+         */
+        static constexpr bool PACKED = std::is_same_v<T, int8_t> && !Incremental;
+
+        INLINE T* packed(int j, int i)
+        {
+            constexpr int W = VecU8::size();
+            const int group = j / DOT_ROWS, chunk = i / W;
+            return &this->_packed[((size_t(group) * (INPUTS / W) + chunk) * DOT_ROWS + j % DOT_ROWS) * W + i % W];
+        }
+
+        INLINE const T* packed(int j, int i) const
+        {
+            return const_cast<Layer*>(this)->packed(j, i);
+        }
 
         Layer() = default;
 
@@ -451,6 +494,8 @@ namespace nnue
                     const T v = quantize<T>(w[i][j], Scale);
                     if constexpr (Incremental)
                         this->_w[i][j] = v;
+                    else if constexpr (PACKED)
+                        *packed(j, i) = v;
                     else
                         this->_wt[j][i] = v;
                 }
@@ -459,7 +504,12 @@ namespace nnue
             if constexpr (!Incremental)
                 for (int i = I; i != INPUTS; ++i)
                     for (int j = 0; j != OUTPUTS; ++j)
-                        this->_wt[j][i] = 0;
+                    {
+                        if constexpr (PACKED)
+                            *packed(j, i) = 0;
+                        else
+                            this->_wt[j][i] = 0;
+                    }
         }
 
         void load_weights(std::istream& file)
@@ -476,15 +526,15 @@ namespace nnue
         /** Byte activations times int8 weights, summed in int32, then relu and back to float */
         INLINE void dot(const uint8_t (&input)[INPUTS], float (&output)[OUTPUTS]) const
         {
-            static_assert(std::is_same_v<T, int8_t> && !Incremental);
+            static_assert(PACKED);
 
-            constexpr int R = 8; /* enough independent sums that the CPU never waits on a dot_add */
+            constexpr int R = DOT_ROWS;
             static_assert(OUTPUTS % R == 0);
             constexpr float OUT_SCALE = 1.0f / BIAS_SCALE;
 
             ALIGN int32_t sums[OUTPUTS / R][R];
             for (int j = 0; j != OUTPUTS; j += R)
-                dot_rows(input, &this->_wt[j], sums[j / R]);
+                dot_rows(input, packed(j, 0), sums[j / R]);
 
             for (int j = 0; j != OUTPUTS; ++j)
                 output[j] = float(std::max(0, sums[j / R][j % R] + this->_b[j])) * OUT_SCALE;
@@ -634,8 +684,12 @@ namespace nnue
         static constexpr int DYNAMIC = -1;
 
         /* Update both perspectives: subtract the rows of removed pieces, add the new ones; with Copy, out2 gets a copy too.
-         * Indices are from white's view; black's half uses the mirrored bucket and flipped index.
          * REMOVED and ADDED fix the piece counts at compile time, which turns the loops into straight-line code.
+         *
+         *  piece i (white-view index) in bucket b:
+         *    white half  +=  layer._w[ b         * 768 + i       ]   (1024 values)
+         *    black half  +=  layer._w[ mirror(b) * 768 + (i^120) ]   (1024 values)
+         *                              ^ king bits swapped          ^ color swap (64) + rank flip (56)
          */
         template <int REMOVED = DYNAMIC, int ADDED = DYNAMIC, bool Copy = false, typename LA>
         static INLINE void apply_deltas(

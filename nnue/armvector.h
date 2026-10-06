@@ -412,6 +412,7 @@ INLINE Vec4i dot_add(Vec4i acc, Vec16uc a, Vec16c b)
 #if __ARM_FEATURE_DOTPROD
     return vdotq_s32(acc, sa, b);
 #else
+    /* groups bytes k, k+1, k+8, k+9 per lane, not 4 adjacent ones like vdotq: only the full sum of the lanes is meaningful */
     const int16x8_t p = vmlal_s8(vmull_s8(vget_low_s8(sa), vget_low_s8(b)), vget_high_s8(sa), vget_high_s8(b));
     return vpadalq_s16(acc, p);
 #endif /* __ARM_FEATURE_DOTPROD */

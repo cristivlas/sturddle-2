@@ -104,10 +104,8 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
   #define NATIVE_UCI                        true
 #endif /* NATIVE_UCI */
 
-/* Experimental: bf16 hidden_3 weights on AVX512_BF16 builds; the trainer models fp32 */
-#if !defined(NNUE_TAIL_BF16)
-  #define NNUE_TAIL_BF16                    false
-#endif /* NNUE_TAIL_BF16 */
+/* Experimental: bf16 hidden_3 weights on AVX512_BF16 builds; trade precision for speed */
+  #define NNUE_TAIL_BF16                    true
 
 #define RAZORING                            true
 
