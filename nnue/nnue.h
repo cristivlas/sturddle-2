@@ -683,24 +683,27 @@ namespace nnue
         /* piece count known only at run time */
         static constexpr int DYNAMIC = -1;
 
+        /* empty delta list */
+        static constexpr int NONE[MAX_ACTIVE_INPUTS] = {};
+
         /* Update both perspectives: subtract the rows of removed pieces, add the new ones; with Copy, out2 gets a copy too.
          * REMOVED and ADDED fix the piece counts at compile time, which turns the loops into straight-line code.
          *
          *  piece i (white-view index) in bucket b:
          *    white half  +=  layer._w[ b         * 768 + i       ]   (1024 values)
          *    black half  +=  layer._w[ mirror(b) * 768 + (i^120) ]   (1024 values)
-         *                              ^ king bits swapped          ^ color swap (64) + rank flip (56)
+         *                              ^ king bits swapped ^ color swap (64) + rank flip (56)
          */
         template <int REMOVED = DYNAMIC, int ADDED = DYNAMIC, bool Copy = false, typename LA>
         static INLINE void apply_deltas(
             const LA& layer,
             int bucket,
-            const int16_t* src,
-            int16_t* out,
-            int16_t* out2,
-            const int* remove,
+            const int16_t (&src)[OUTPUTS],
+            int16_t (&out)[OUTPUTS],
+            int16_t (&out2)[OUTPUTS],
+            const int (&remove)[MAX_ACTIVE_INPUTS],
             int r_idx,
-            const int* add,
+            const int (&add)[MAX_ACTIVE_INPUTS],
             int a_idx)
         {
             static_assert(LA::OUTPUTS == HALF);
@@ -750,21 +753,22 @@ namespace nnue
         static INLINE void apply_move(
             const LA& layer,
             int bucket,
-            const int16_t* src,
-            int16_t* out,
-            const int* remove,
+            const int16_t (&src)[OUTPUTS],
+            int16_t (&out)[OUTPUTS],
+            const int (&remove)[MAX_ACTIVE_INPUTS],
             int removed,
-            const int* add,
+            const int (&add)[MAX_ACTIVE_INPUTS],
             int added)
         {
+            /* out2 is unused without Copy */
             if (removed == 1 && added == 1) /* quiet move or promotion */
-                apply_deltas<1, 1>(layer, bucket, src, out, nullptr, remove, removed, add, added);
+                apply_deltas<1, 1>(layer, bucket, src, out, out, remove, removed, add, added);
             else if (removed == 2 && added == 1) /* capture */
-                apply_deltas<2, 1>(layer, bucket, src, out, nullptr, remove, removed, add, added);
+                apply_deltas<2, 1>(layer, bucket, src, out, out, remove, removed, add, added);
             else if (removed == 2 && added == 2) /* castling */
-                apply_deltas<2, 2>(layer, bucket, src, out, nullptr, remove, removed, add, added);
+                apply_deltas<2, 2>(layer, bucket, src, out, out, remove, removed, add, added);
             else
-                apply_deltas(layer, bucket, src, out, nullptr, remove, removed, add, added);
+                apply_deltas(layer, bucket, src, out, out, remove, removed, add, added);
         }
 
 
@@ -780,7 +784,8 @@ namespace nnue
             memcpy(bias, layer._b, sizeof(layer._b));
             memcpy(bias + HALF, layer._b, sizeof(layer._b));
 
-            apply_deltas(layer, bucket, bias, slot(bucket).output, nullptr, nullptr, 0, add_inputs, a_idx);
+            auto& out = slot(bucket).output;
+            apply_deltas(layer, bucket, bias, out, out, NONE, 0, add_inputs, a_idx);
 
             slot(bucket).hash = state.hash();
             _current_bucket = bucket;
@@ -868,8 +873,7 @@ namespace nnue
 
             if (incremental)
             {
-                apply_move(layer, bucket, ancestor.slot(bucket).output, slot(bucket).output,
-                    remove_inputs, r_idx, add_inputs, a_idx);
+                apply_move(layer, bucket, ancestor.slot(bucket).output, slot(bucket).output, remove_inputs, r_idx, add_inputs, a_idx);
             }
             else if (slot(bucket).hash != state.hash())
             {
