@@ -24,7 +24,6 @@ using Params = std::unordered_map<std::string, std::string>;
 #include <vector>
 #if _WIN32
   #include <io.h>
-  #include <tlhelp32.h>
 #else
   #include <unistd.h>
   #include <sys/resource.h>
@@ -395,125 +394,21 @@ namespace
 } /* namespace */
 
 
+/* return true if a console was allocated; no action needed on POSIX (TODO: Test on Mac) */
+static bool manage_console()
+{
 #if _WIN32
-/*
- * Helpers for manage_console (see below).
- */
-static DWORD get_parent_pid(DWORD processId)
-{
-    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (hSnapshot == INVALID_HANDLE_VALUE)
-        return 0;
-
-    auto cleanup = on_scope_exit([hSnapshot]() {
-        CloseHandle(hSnapshot);
-    });
-
-    PROCESSENTRY32 pe32 = {};
-    pe32.dwSize = sizeof(PROCESSENTRY32);
-
-    if (!Process32First(hSnapshot, &pe32))
-        return 0;
-
-    do {
-        if (pe32.th32ProcessID == processId)
-        {
-            std::string name(pe32.szExeFile);
-
-            // Running as a python script? bail
-            if (lowercase(name).starts_with("python"))
-                return 0;
-
-            return pe32.th32ParentProcessID;
-        }
-    } while (Process32Next(hSnapshot, &pe32));
-
-    return 0;
-}
-
-static bool ensure_console()
-{
-    if (!GetConsoleWindow())
+    try
     {
-        if (!AllocConsole())
-        {
-            log_error(std::format("Could not allocate console, error: {}", GetLastError()));
-        }
-        else
-        {
-            // Rebind standard handles
-            FILE* fp = nullptr;
-            freopen_s(&fp, "CONIN$",  "r", stdin);
-            freopen_s(&fp, "CONOUT$", "w", stdout);
-            freopen_s(&fp, "CONOUT$", "w", stderr);
-
-            return true;
-        }
+        return win::manage_console();
     }
-    return false;
-}
-
-
-/*
- * An improved solution for: https://github.com/cristivlas/sturddle-2/issues/11
- *
- * Currently the engine runs from under the PyInstaller bootloader, and, under some
- * GUIs such as Shredder, an extra console pops up. The solution for recent Windows 11
- * builds is to use the "detached" setting in a manifest file at build time
- * (https://learn.microsoft.com/en-us/windows/console/console-allocation-policy).
- *
- * On older Windows versions: call FreeConsole if console detected in chess GUI mode.
- *
- * Return true if a console was allocated.
- */
-static bool manage_console()
-{
-    /* Use STDIN handle to detect how the engine is being run. */
-    const HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
-
-    DWORD mode = 0;
-
-    if (GetConsoleMode(h, &mode))
+    catch (const std::exception& e)
     {
-        if (auto wnd = GetConsoleWindow())
-        {
-            DWORD consolePID = 0;
-            GetWindowThreadProcessId(wnd, &consolePID);
-
-            const auto ourPID = GetProcessId(GetCurrentProcess());
-            return (ourPID == consolePID) || get_parent_pid(ourPID) == consolePID;
-        }
+        log_error(std::format("Could not allocate console: {}", e.what()));
     }
-    else if (GetFileType(h) == FILE_TYPE_PIPE)
-    {
-        /* STDIN is attached to a pipe, assume it is running under a chess GUI. */
-        /* GUIs connect pipes to the engine's standard input and output to send */
-        /* UCI command and to read back responses. */
-
-        /* Do away with console window if detected. */
-        if (GetConsoleWindow())
-        {
-            FreeConsole();
-        }
-    }
-    else
-    {
-        /* The engine was likely started by the user double clicking in explorer.exe */
-        /* or in some other file manager. The user likely wants to test the engine by */
-        /* entering UCI commands manually, so make sure that there is a console. */
-        return ensure_console();
-    }
-    return false;
-}
-
-#else
-
-/* No action needed on POSIX. TODO: Test on Mac */
-static bool manage_console()
-{
-    return false;
-}
 #endif /* _WIN32 */
+    return false;
+}
 
 
 class UCI
@@ -594,6 +489,7 @@ private:
 
     void set_high_priority(bool);
     void update_cpu_binding();
+    void disable_power_throttling();
     void show_settings();
 
     /** Context callbacks */
@@ -780,6 +676,8 @@ private:
     bool _current_priority = false; /* not high */
     bool _high_priority = DEFAULT_HIGH_PRIORITY;
     bool _allow_e_cores = false; /* true: do not bind search threads to P cores */
+    bool _disable_throttling = true; /* cleared on failure, to prevent future calls */
+
     chess::BaseMove _last_move;
 #if NATIVE_BOOK
     PolyglotBook _opening_book = {};
@@ -1268,6 +1166,27 @@ void UCI::set_high_priority(bool high_priority)
     }
 }
 
+void UCI::disable_power_throttling()
+{
+    if (_disable_throttling)
+    {
+        try
+        {
+        #if _WIN32
+            /* keep Windows from slowing the engine down when it looks like a background process */
+            win::disable_power_throttling();
+        #else
+            /* TODO */
+        #endif /* _WIN32 */
+        }
+        catch (const std::exception& e)
+        {
+            _disable_throttling = false; /* prevent future calls */
+            log_error(std::format("Could not disable power throttling: {}", e.what()));
+        }
+    }
+}
+
 void UCI::update_cpu_binding()
 {
     /* AllowECores: leave scheduling to the OS (unbind if previously bound) */
@@ -1275,17 +1194,20 @@ void UCI::update_cpu_binding()
         return;
 
     const bool bind = !_allow_e_cores;
-    std::string err;
-    if (cpu::bind_to_performance_cores(bind, err))
-        return;
-
-    const auto msg = std::format("{} performance cores failed: {}", bind ? "bind to" : "unbind from", err);
-    log_error(msg);
-    std::cout << "info string " << msg << std::endl;
-#if !NATIVE_BUILD
-    std::fprintf(stderr, "%s\n", msg.c_str()); /* Python logging may not flush before _Exit */
-#endif
-    std::_Exit(EXIT_FAILURE);
+    try
+    {
+        cpu::bind_to_performance_cores(bind);
+    }
+    catch (const std::runtime_error& e)
+    {
+        const auto msg = std::format("{} performance cores failed: {}", bind ? "bind to" : "unbind from", e.what());
+        log_error(msg);
+        std::cout << "info string " << msg << std::endl;
+    #if !NATIVE_BUILD
+        std::fprintf(stderr, "%s\n", msg.c_str()); /* Python logging may not flush before _Exit */
+    #endif /* !NATIVE_BUILD */
+        std::_Exit(EXIT_FAILURE);
+    }
 }
 
 void UCI::show_settings()
@@ -1422,6 +1344,8 @@ INLINE score_t UCI::search(F set_time_limit)
 
     set_high_priority(_high_priority);
     auto restore_priority = on_scope_exit([this] { set_high_priority(false); });
+
+    disable_power_throttling();
 
     update_cpu_binding();
 

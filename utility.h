@@ -21,6 +21,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -30,7 +31,7 @@
 #include <string>
 #include <vector>
 #if _WIN32
-  #include "ms_windows.h"
+  #include "winutil.h"
 #endif /* _WIN32 */
 #if !NATIVE_BUILD
   #include "Python.h"
@@ -287,149 +288,48 @@ namespace
  */
 namespace cpu
 {
-#if _WIN32
-    struct Topology
-    {
-        bool _hybrid = false;
-        std::vector<ULONG> _p_cores; /* CPU set IDs of the highest efficiency class */
-        DWORD_PTR _sys_mask = 0; /* zero if the process spans multiple processor groups */
-
-        Topology(const Topology&) = delete;
-        Topology& operator=(const Topology&) = delete;
-
-        Topology()
-        {
-            DWORD_PTR proc_mask = 0;
-            GetProcessAffinityMask(GetCurrentProcess(), &proc_mask, &_sys_mask);
-
-            ULONG len = 0;
-            GetSystemCpuSetInformation(nullptr, 0, &len, GetCurrentProcess(), 0);
-            if (len == 0)
-                return;
-
-            /* uint64_t storage for alignment */
-            std::vector<uint64_t> buf((len + sizeof(uint64_t) - 1) / sizeof(uint64_t));
-            const auto info = reinterpret_cast<const std::byte*>(buf.data());
-            if (!GetSystemCpuSetInformation(
-                    reinterpret_cast<PSYSTEM_CPU_SET_INFORMATION>(buf.data()), len, &len, GetCurrentProcess(), 0))
-                return;
-
-            BYTE min_class = 0xFF, max_class = 0;
-            for (ULONG offset = 0; offset < len; )
-            {
-                const auto entry = reinterpret_cast<const SYSTEM_CPU_SET_INFORMATION*>(info + offset);
-                if (entry->Size == 0)
-                    break;
-                offset += entry->Size;
-                if (entry->Type != CpuSetInformation)
-                    continue;
-
-                const auto cls = entry->CpuSet.EfficiencyClass;
-                min_class = std::min(min_class, cls);
-                if (cls > max_class)
-                {
-                    max_class = cls;
-                    _p_cores.clear();
-                }
-                if (cls == max_class)
-                    _p_cores.push_back(entry->CpuSet.Id);
-            }
-            _hybrid = min_class < max_class;
-        }
-    };
-
-    inline const Topology& topology()
-    {
-        static const Topology t;
-        return t;
-    }
-#endif /* _WIN32 */
-
     /* true if the machine has both P and E cores; detected once */
     inline bool is_hybrid()
     {
     #if _WIN32
-        return topology()._hybrid;
+        return win::topology()._hybrid;
     #else
         return false;
     #endif /* _WIN32 */
     }
 
-    inline bool bound = false; /* P cores binding in effect */
-
-#if _WIN32
-    /* make calling thread follow the process defaults; return failed API name, or nullptr */
-    inline const char* reset_thread()
-    {
-        const auto thread = GetCurrentThread();
-        const auto sys_mask = topology()._sys_mask;
-        /* if a getter fails, assume the state differs and call the setter */
-        GROUP_AFFINITY ga = {};
-        if (sys_mask && (!GetThreadGroupAffinity(thread, &ga) || ga.Mask != sys_mask)
-            && !SetThreadAffinityMask(thread, sys_mask))
-            return "SetThreadAffinityMask";
-
-        /* a thread's own CPU sets override the process default;
-         * with a null buffer, the getter fails (insufficient buffer) but reports the count */
-        ULONG count = 1;
-        GetThreadSelectedCpuSets(thread, nullptr, 0, &count);
-        if (count && !SetThreadSelectedCpuSets(thread, nullptr, 0))
-            return "SetThreadSelectedCpuSets";
-
-        return nullptr;
-    }
-#endif /* _WIN32 */
+    inline std::atomic_bool bound = false; /* P cores binding in effect */
 
     /*
-     * Bind all process threads to P cores (or unbind); on failure return false and set err.
-     * Setters are expensive (~10us each): only call them if the current state differs.
+     * Bind all process threads to P cores (or unbind); throw std::runtime_error on failure.
      */
-    inline bool bind_to_performance_cores([[maybe_unused]] bool bind, [[maybe_unused]] std::string& err)
+    inline void bind_to_performance_cores([[maybe_unused]] bool bind)
     {
         ASSERT_ALWAYS(is_hybrid());
     #if _WIN32
-        const auto proc = GetCurrentProcess();
-        const auto fail = [&err](const char* api) {
-            const auto code = GetLastError();
-            err = std::string(api) + " failed: " + std::to_string(code);
-            return false;
-        };
-
         bound = false;
-        if (!bind)
-            return SetProcessDefaultCpuSets(proc, nullptr, 0) || fail("SetProcessDefaultCpuSets");
-
-        /* affinity beats CPU sets: undo any external restriction */
-        DWORD_PTR proc_mask = 0, sys_mask = 0;
-        if (!GetProcessAffinityMask(proc, &proc_mask, &sys_mask))
-            return fail("GetProcessAffinityMask");
-        if (proc_mask != sys_mask && !SetProcessAffinityMask(proc, sys_mask))
-            return fail("SetProcessAffinityMask");
-
-        const auto& ids = topology()._p_cores;
-        static std::vector<ULONG> current(ids.size());
-        ULONG count = 0;
-        if (!GetProcessDefaultCpuSets(proc, current.data(), ULONG(current.size()), &count)
-            || count != ids.size() || current != ids)
-        {
-            if (!SetProcessDefaultCpuSets(proc, ids.data(), ULONG(ids.size())))
-                return fail("SetProcessDefaultCpuSets");
-        }
-
-        if (const auto api = reset_thread())
-            return fail(api);
-
-        bound = true;
+        if (bind)
+            win::bind_to_p_cores();
+        else
+            win::unbind();
+        bound = bind;
     #endif /* _WIN32 */
-        return true;
     }
 
     /* if bound, make calling (helper) thread follow the process defaults */
     inline void update_thread_binding()
     {
     #if _WIN32
-        if (bound)
-            reset_thread();
+        if (!bound)
+            return;
+        try
+        {
+            win::reset_thread();
+        }
+        catch (const std::exception&)
+        {
+            /* best effort: the helper still searches, maybe on an E core */
+        }
     #endif /* _WIN32 */
     }
 } /* namespace cpu */
