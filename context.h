@@ -817,7 +817,7 @@ namespace search
     #if 0
         return { static_cast<int>(75 * I + pow(I, 1.99)) ... };
     #else
-        return { static_cast<int>(std::min(75.0 * I + pow(I, 1.99), 1289.0 + 200.0 * log(I))) ... };
+        return { static_cast<int>(std::min(125.0 * I + pow(I, 1.99), 1289.0 + 200.0 * log(I))) ... };
     #endif
     }
 

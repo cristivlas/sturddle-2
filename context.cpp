@@ -161,7 +161,7 @@ namespace
 /*
  * Late-move reduction tables (adapted from berserk)
  */
-struct LMR
+static struct LMR
 {
     int _table[PLY_MAX][64] = {};
 
@@ -1247,7 +1247,7 @@ namespace search
         u.i = (u.i & 0x007FFFFF) | 0x3F800000;
         const float m = u.f;
         const float t = m - 1.0f;
-        return exp + t * (1.442695041f + t * (-0.721347520f + t * 0.240449173f));
+        return exp + t * (1.424593877f + t * (-0.589206713f + t * 0.165383787f));
     }
 
 
