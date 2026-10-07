@@ -55,15 +55,6 @@ namespace nnue
     using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
     using EVALType = nnue::Layer<HIDDEN_3, 1>;
 
-    /* Move-prediction head (experimental): own 256-wide sub-accumulator off raw inputs
-     * (decoupled from eval), then a bilinear map to the 4096 (from,to) logits scored
-     * per-move by column. Full recompute per node -- only used at early iterations.
-     */
-    constexpr int MOVE_ACC = 256;
-
-    using LMOVEAccType = nnue::Layer<INPUTS_A / nnue::NUM_BUCKETS, MOVE_ACC, int16_t, nnue::QSCALE>;
-    using LMOVEType = nnue::Layer<MOVE_ACC, 4096, int16_t, nnue::QSCALE>;
-
     struct Model
     {
        /*
@@ -141,20 +132,6 @@ namespace nnue
         }
 
 
-    #if USE_MOVE_PREDICTION
-        INLINE void move_accumulate(const int (&active)[MAX_ACTIVE_INPUTS], int active_count, int16_t (&move_acc)[MOVE_ACC]) const
-        {
-            ::nnue::move_accumulate(LMOVE_ACC, active, active_count, move_acc);
-        }
-
-
-        INLINE void score_move(const int16_t (&move_acc)[MOVE_ACC], chess::Move& move) const
-        {
-            ::nnue::score_move(LMOVES, move_acc, move);
-        }
-    #endif /* USE_MOVE_PREDICTION */
-
-
     private:
         L1AType L1A;
         L1BType L1B;
@@ -166,10 +143,5 @@ namespace nnue
         L2Type L2;
         L3Type L3;
         EVALType EVAL;
-
-    #if USE_MOVE_PREDICTION
-        LMOVEAccType LMOVE_ACC;
-        LMOVEType LMOVES;
-    #endif /* USE_MOVE_PREDICTION */
     };
 }

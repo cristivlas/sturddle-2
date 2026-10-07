@@ -12,7 +12,7 @@ import fetch_weights
 
 Q_SCALE = 1024
 
-# Constraint A: for hidden_1a and move layers
+# Constraint A: for hidden_1a layer
 Q_MAX_A = 32767 / Q_SCALE / 34
 
 # Constraint B: for hidden_1b layer
@@ -26,8 +26,6 @@ ACCUMULATOR_SIZE = 2048
 POOL_SIZE = 8
 POOLED = ACCUMULATOR_SIZE // POOL_SIZE  # hidden_1b output width (modulates pooled 1:1)
 MAIN_BUCKETS = 16
-MOVE_ACCUMULATOR_SIZE = 256
-MOVE_OUTPUTS = 4096  # 64x64 (from, to)
 
 # Layer definitions: (name, kernel_shape, bias_shape, constraint_type)
 # constraint_type: 'A', 'B', 'C', or None
@@ -41,12 +39,6 @@ LAYERS = [
     ('hidden_2', (POOLED, 16), (16,), None),
     ('hidden_3', (16, 16), (16,), None),
     ('out', (16, 1), (1,), None),
-]
-
-# Optional move prediction head: own sub-accumulator, decoupled from eval
-MOVE_LAYERS = [
-    ('move_acc', (ACTIVE_INPUTS, MOVE_ACCUMULATOR_SIZE), (MOVE_ACCUMULATOR_SIZE,), 'A'),
-    ('move', (MOVE_ACCUMULATOR_SIZE, MOVE_OUTPUTS), (MOVE_OUTPUTS,), 'A'),
 ]
 
 
@@ -150,7 +142,7 @@ def main():
     filepath = sys.argv[1] if len(sys.argv) == 2 else str(fetch_weights.ensure())
     print(f"Loading: {filepath}")
     print(f"Q_SCALE = {Q_SCALE}")
-    print(f"Q_MAX_A = {Q_MAX_A:.10f} (hidden_1a, move)")
+    print(f"Q_MAX_A = {Q_MAX_A:.10f} (hidden_1a)")
     print(f"Q_MAX_B = {Q_MAX_B:.10f} (hidden_1b)")
     print(f"Q_MAX_C = {Q_MAX_C:.10f} (hidden_1c)")
     print()
@@ -158,54 +150,32 @@ def main():
     data = np.fromfile(filepath, dtype=np.float32)
     print(f"Total values: {len(data)}")
 
-    move_total = sum(np.prod(k) + np.prod(b) for _, k, b, _ in MOVE_LAYERS)
-
     # Without hidden_1c (NNUE_HIDDEN_1C off)?
     layers = LAYERS
     no_1c = [layer for layer in LAYERS if layer[0] != 'hidden_1c']
     no_1c_size = sum(np.prod(k) + np.prod(b) for _, k, b, _ in no_1c)
-    if len(data) in (no_1c_size, no_1c_size + move_total):
+    if len(data) == no_1c_size:
         layers = no_1c
         print("Detected: model WITHOUT hidden_1c")
 
-    # Calculate expected sizes
     base_total = sum(np.prod(k) + np.prod(b) for _, k, b, _ in layers)
-    
-    print(f"Expected (without move): {base_total}")
-    print(f"Expected (with move): {base_total + move_total}")
-    
-    has_move_layer = len(data) == base_total + move_total
-    
-    if len(data) == base_total:
-        print("Detected: model WITHOUT move prediction")
-    elif has_move_layer:
-        print("Detected: model WITH move prediction")
-    else:
-        print(f"ERROR: Size mismatch! Got {len(data)}, expected {base_total} or {base_total + move_total}")
+    print(f"Expected: {base_total}")
+
+    if len(data) != base_total:
+        print(f"ERROR: Size mismatch! Got {len(data)}, expected {base_total}")
         sys.exit(1)
-    
+
     print()
-    
-    # Verify base layers
+
     offset, total_clip_violations, total_round_violations, success = verify_layers(data, layers)
-    
+
     if not success:
         print("ERROR: Unexpected end of data while reading base layers")
         sys.exit(1)
-    
-    # Verify move head if present
-    if has_move_layer:
-        offset, clip_v, round_v, success = verify_layers(data, MOVE_LAYERS, offset)
-        total_clip_violations += clip_v
-        total_round_violations += round_v
 
-        if not success:
-            print("ERROR: Unexpected end of data while reading move head")
-            sys.exit(1)
-    
     # Verify we consumed all data
     if offset != len(data):
-        print(f"WARNING: {len(data) - offset} bytes remaining after parsing")
+        print(f"WARNING: {len(data) - offset} values remaining after parsing")
     
     print()
     print("=" * 60)

@@ -1640,12 +1640,6 @@ namespace search
         /* Confidence bar for historical scores */
         const double hist_high = (Phase == 3) ? hist_thresholds[ctxt.iteration()] : 0;
 
-    #if USE_MOVE_PREDICTION
-        int active[nnue::MAX_ACTIVE_INPUTS];
-        int active_count = 0;
-        ALIGN int16_t move_acc[nnue::MOVE_ACC];  /* node sub-accumulator, filled with active[] */
-    #endif /* USE_MOVE_PREDICTION */
-
         /********************************************************************/
         /* Iterate over pseudo-legal moves                                  */
         /********************************************************************/
@@ -1745,30 +1739,9 @@ namespace search
                 if (make_move<true>(ctxt, move, futility))
                 {
                     move._group = MoveOrder::LATE_MOVES;
-                #if USE_MOVE_PREDICTION
-                    if (ctxt.iteration() <= MOVE_PREDICTION_MAX_ITER)
-                    {
-                        if (active_count == 0)
-                        {
-                            nnue::for_each_active_input(ctxt.state(), [&](int idx) {
-                                ASSERT(active_count < nnue::MAX_ACTIVE_INPUTS);
-                                active[active_count++] = idx;
-                            });
-                            /* Sub-accumulator depends only on the node position (same for all
-                             * moves here), so compute it once when active[] is first filled.
-                             */
-                            model.move_accumulate(active, active_count, move_acc);
-                        }
-
-                        model.score_move(move_acc, move);
-                    }
-                    else
-                #endif /* USE_MOVE_PREDICTION */
-                    {
-                        incremental_update(move, ctxt);
-                        const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
-                        move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
-                    }
+                    incremental_update(move, ctxt);
+                    const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
+                    move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
                 }
             }
         }
@@ -1822,18 +1795,6 @@ namespace search
             ASSERT(compare_moves_ge(moves_list[i-1], moves_list[i]));
         }
     #endif /* NO_ASSERT */
-
-    #if 0 && USE_MOVE_PREDICTION /* debug */
-        if (_phase == 4 && ctxt.iteration() <= MOVE_PREDICTION_MAX_ITER)
-        {
-            for (const auto& m : moves_list)
-            {
-                if (m._group == MoveOrder::LATE_MOVES)
-                    std::cout << m.uci() << ": " << m._score << " (" << float(m._score) / nnue::QSCALE << ")\n";
-            }
-            std::cout << "\n";
-        }
-    #endif /* USE_MOVE_PREDICTION */
     }
 
 

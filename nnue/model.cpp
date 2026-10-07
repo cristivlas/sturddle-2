@@ -83,10 +83,6 @@ void Model::init()
     L2.load_weights(file);
     L3.load_weights(file);
     EVAL.load_weights(file);
-#if USE_MOVE_PREDICTION
-    LMOVE_ACC.load_weights(file);
-    LMOVES.load_weights(file);
-#endif
 }
 
 #if defined(__clang__)
@@ -109,12 +105,7 @@ void Model::validate_weights_file(const std::filesystem::path& weights_path)
         + PoolType::param_count()
         + L2Type::param_count()
         + L3Type::param_count()
-        + EVALType::param_count()
-    #if USE_MOVE_PREDICTION
-        + LMOVEAccType::param_count()
-        + LMOVEType::param_count()
-    #endif
-        ;
+        + EVALType::param_count();
     constexpr auto expected_size = param_count * sizeof(float);
     const auto file_size = std::filesystem::file_size(weights_path);
     if (file_size != expected_size)
@@ -144,11 +135,6 @@ void Model::load_weights(const std::filesystem::path& weights_path)
         L2.load_weights(file);
         L3.load_weights(file);
         EVAL.load_weights(file);
-
-    #if USE_MOVE_PREDICTION
-        LMOVE_ACC.load_weights(file);
-        LMOVES.load_weights(file);
-    #endif
     }
     catch (const std::exception&)
     {

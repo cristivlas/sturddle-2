@@ -126,14 +126,11 @@ def _generate_bin(bin_path):
     base = sum(i * o + b for _, i, o, b in tt._EXPORT)
     # without hidden_1c (NNUE_HIDDEN_1C off), load_bin keeps it at zero
     no_1c = base - (tt.INPUTS_C * tt.POOLED + tt.POOLED)
-    # --predict-moves bins append move_acc (769x256) and move (256x4096) after the eval layers
-    move_head = tt.ACTIVE_INPUTS * 256 + 256 + 256 * 4096 + 4096
-    count = next((n for n in (base, no_1c) if size in (n, n + move_head)), None)
-    if count is None:
+    if size not in (base, no_1c):
         raise ValueError(f"{bin_path}: {size} floats does not match any known layout")
 
     model = tt.NNUE()
-    tt.load_bin(model, bin_path, count=count)
+    tt.load_bin(model, bin_path)
     model.eval()
 
     golds = {}

@@ -2,7 +2,6 @@
 """
 Add a zero hidden_1c (bishops + occupancy, 256 x POOLED + POOLED bias) between
 hidden_1b and pool, for warm-starting train_torch.py. Bit-exact eval at init.
-Drops the move head, which the torch trainer does not support.
 
 Usage:
     ./add_hidden_1c.py old.bin new.bin
@@ -24,20 +23,19 @@ H1C = 256 * POOLED + POOLED
 POOL = 2 * ACCUMULATOR_SIZE
 TAIL = (POOLED * 16 + 16) + (16 * 16 + 16) + (16 * 1 + 1)  # hidden_2, hidden_3, out
 BASE = H1A + H1B + POOL + TAIL
-MOVE = (ACTIVE_INPUTS * 256 + 256) + (256 * 4096 + 4096)  # move_acc, move
 
 
 def main(src, dst):
     data = np.fromfile(src, dtype=np.float32)
-    if data.size in (BASE + H1C, BASE + H1C + MOVE):
+    if data.size == BASE + H1C:
         sys.exit(f"{src}: already has hidden_1c ({data.size} floats)")
-    if data.size not in (BASE, BASE + MOVE):
-        sys.exit(f"{src}: expected {BASE} or {BASE + MOVE} floats, got {data.size}")
+    if data.size != BASE:
+        sys.exit(f"{src}: expected {BASE} floats, got {data.size}")
 
     cut = H1A + H1B
     h1c = np.zeros(H1C, dtype=np.float32)
-    np.concatenate([data[:cut], h1c, data[cut:BASE]]).tofile(dst)
-    print(f"{dst}: {data.size} -> {BASE + H1C} floats{' (move head dropped)' if data.size > BASE else ''}")
+    np.concatenate([data[:cut], h1c, data[cut:]]).tofile(dst)
+    print(f"{dst}: {data.size} -> {BASE + H1C} floats")
 
 
 if __name__ == "__main__":

@@ -241,9 +241,9 @@ def save_bin(model, path, quantize_round=False):
 
 
 @torch.no_grad()
-def load_bin(model, path, count=-1):
+def load_bin(model, path):
     model = _core(model)
-    data = np.fromfile(path, dtype=np.float32, count=count)
+    data = np.fromfile(path, dtype=np.float32)
     expected = sum(i * o + bn for _, i, o, bn in _EXPORT)
     skip_1c = data.size == expected - (INPUTS_C * POOLED + POOLED)
     if skip_1c:
@@ -251,9 +251,7 @@ def load_bin(model, path, count=-1):
         model.hidden_1c.weight.zero_()
         model.hidden_1c.bias.zero_()
     elif data.size != expected:
-        raise ValueError(
-            f"{path}: expected {expected} floats, got {data.size} (with a move head: see add_hidden_1c.py)"
-        )
+        raise ValueError(f"{path}: expected {expected} floats, got {data.size}")
     off = 0
     for name, i, o, bn in _EXPORT:
         if name == "hidden_1c" and skip_1c:
