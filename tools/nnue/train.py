@@ -22,9 +22,9 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # uncomment (or set in environment) for newer TF versions (> 2.15.1 ?) that use Keras 3
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
 
-ACCUMULATOR_SIZE = 1024  # per perspective; hidden_2 sees [black, white] == 2048
+ACCUMULATOR_SIZE = 2048  # per perspective
 MAIN_BUCKETS = 16  # Number of buckets for hidden_1a / BucketShift
-STACKS = 2  # hidden_2 -> hidden_3 -> out, selected by side to move, black first
+STACKS = 16  # piece count x side to move
 HIDDEN_2 = 32
 HIDDEN_3 = 32
 
@@ -36,9 +36,9 @@ Q_SCALE = 1024
 # Accumulator: int16 at Q_SCALE; 32 pieces + bias == 33 terms, floor(32767 / 33) LSB
 Q_MAX_A = 992 / Q_SCALE
 
-# Activation: clamp(acc, 0, 1023) >> 3 in the engine -> u8 in [0, 127] at scale 128
+# Activation: bytes 0..127 at scale 128
+ACT_CLAMP = 1023 / Q_SCALE
 Q_ACT = 128
-ACT_MAX = 127 / Q_ACT
 
 # hidden_2: s8 weights at scale 64, int32 bias at the product scale
 Q_W2 = 64
@@ -320,14 +320,15 @@ def custom_layers():
                 return config
 
         @register
-        class ClippedReLU(tf.keras.layers.Layer):
-            """Clamp to [0, ACT_MAX]; floor to 1/Q_ACT when qat, and always at inference."""
+        class Pairwise(tf.keras.layers.Layer):
+            """Per view, clamped halves multiplied; floor to 1/Q_ACT when qat, and always at inference."""
             def __init__(self, qat=False, **kwargs):
                 super().__init__(**kwargs)
                 self.qat = qat
 
             def call(self, x, training=None):
-                x = tf.clip_by_value(x, 0.0, ACT_MAX)
+                b_lo, b_hi, w_lo, w_hi = tf.split(tf.clip_by_value(x, 0.0, ACT_CLAMP), 4, axis=1)
+                x = tf.concat([b_lo * b_hi, w_lo * w_hi], axis=1)
                 return fake_floor(x, Q_ACT) if (self.qat or not training) else x
 
             def get_config(self):
@@ -342,19 +343,19 @@ def custom_layers():
                 return tf.gather(features, [j ^ PERSPECTIVE_XOR for j in range(12 * 64)], axis=1)
 
         @register
-        class Turn(tf.keras.layers.Layer):
-            """Side to move from the packed input (1 = white)."""
-            def call(self, packed):
-                return tf.cast(packed[:, -1:], tf.float32)
+        class StackIndex(tf.keras.layers.Layer):
+            def call(self, inputs):
+                features, packed = inputs
+                pieces = tf.cast(tf.reduce_sum(features, axis=1), tf.int32)
+                return (pieces - 1) // 4 * 2 + tf.cast(packed[:, -1], tf.int32)
 
         @register
         class SelectStack(tf.keras.layers.Layer):
-            """Per row, the stack output picked by side to move (0 = black)."""
             def call(self, inputs):
-                black, white, turn = inputs
-                return tf.where(tf.cast(turn, tf.bool), white, black)
+                *outs, stack = inputs
+                return tf.gather(tf.concat(outs, axis=1), stack[:, None], axis=1, batch_dims=1)
 
-        _custom_layers = {cls.__name__: cls for cls in (Clamp, Unpack, BucketShift, QDense, ClippedReLU, BlackView, Turn, SelectStack)}
+        _custom_layers = {cls.__name__: cls for cls in (Clamp, Unpack, BucketShift, QDense, Pairwise, BlackView, StackIndex, SelectStack)}
     return _custom_layers
 
 
@@ -454,8 +455,8 @@ def make_model(args, strategy):
         input_layer = Input(shape=(13,), dtype=tf.uint64, name='input')
         layers = custom_layers()
         unpack_layer = layers['Unpack'](args.hot_encoding, name='unpack')(input_layer)
-        turn = layers['Turn'](name='turn')(input_layer)
-        QDense, ClippedReLU = layers['QDense'], layers['ClippedReLU']
+        stack = layers['StackIndex'](name='stack')([unpack_layer, input_layer])
+        QDense, Pairwise = layers['QDense'], layers['Pairwise']
 
         # QAT keeps the integer-grid region fp32; inference on a float-run model under mixed precision is not exact
         exact = 'float32' if args.quantize_round else None
@@ -479,7 +480,7 @@ def make_model(args, strategy):
         acc_black = hidden_1a(bucket_shift(black_view))
 
         accumulator = Concatenate(name='accumulator', dtype=exact)([acc_black, acc_white])
-        activated = ClippedReLU(qat=args.quantize_round, name='activation', dtype=exact)(accumulator)
+        activated = Pairwise(qat=args.quantize_round, name='activation', dtype=exact)(accumulator)
 
         stack_out = []
         for s in range(STACKS):
@@ -502,7 +503,7 @@ def make_model(args, strategy):
             )(x)
             stack_out.append(Dense(1, name=f'out_{s}', dtype='float32')(x))
 
-        eval_output = layers['SelectStack'](name='out', dtype='float32')([stack_out[0], stack_out[1], turn])
+        eval_output = layers['SelectStack'](name='out', dtype='float32')([*stack_out, stack])
 
         # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=eval_output, name=args.name)
@@ -631,7 +632,7 @@ def write_weigths(args, model, indent=2):
         print('\n};')
 
 
-# Fixed engine load order: hidden_1a, then per stack (black-to-move first) hidden_2, hidden_3, out
+# Fixed engine load order: hidden_1a, then per stack hidden_2, hidden_3, out
 EVAL_ORDER = ['hidden_1a'] + [f'{name}_{s}' for s in range(STACKS) for name in ('hidden_2', 'hidden_3', 'out')]
 
 

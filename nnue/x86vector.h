@@ -1,8 +1,28 @@
 #pragma once
 /*
- * Extend vectorclass with int8 dot products, which VCL2 does not provide.
+ * Extend vectorclass with int8 dot products and int16 mul_hi, which VCL2 does not provide.
  */
 #include "vectorclass.h"
+
+/** High 16 bits of the signed 16 x 16 products */
+#if INSTRSET >= 10
+INLINE Vec32s mul_hi(Vec32s const a, Vec32s const b)
+{
+    return _mm512_mulhi_epi16(a, b);
+}
+#endif /* INSTRSET >= 10 */
+
+#if INSTRSET >= 8
+INLINE Vec16s mul_hi(Vec16s const a, Vec16s const b)
+{
+    return _mm256_mulhi_epi16(a, b);
+}
+#endif /* INSTRSET >= 8 */
+
+INLINE Vec8s mul_hi(Vec8s const a, Vec8s const b)
+{
+    return _mm_mulhi_epi16(a, b);
+}
 
 /**
  * Multiply bytes (u8 x s8), adding each group of 4 products into one int32 lane of acc.

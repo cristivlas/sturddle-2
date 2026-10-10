@@ -315,6 +315,20 @@ INLINE Vec8s operator >> (Vec8s a, int b)
     return _mm_srai_epi16(a, b);
 }
 
+INLINE Vec8s operator << (Vec8s a, int b)
+{
+    return _mm_slli_epi16(a, b);
+}
+
+/** High 16 bits of the signed 16 x 16 products; not vqdmulh, which doubles them */
+INLINE Vec8s mul_hi(Vec8s a, Vec8s b)
+{
+    const int16x8_t x = vreinterpretq_s16_s64(a), y = vreinterpretq_s16_s64(b);
+    const int16x4_t lo = vshrn_n_s32(vmull_s16(vget_low_s16(x), vget_low_s16(y)), 16);
+    const int16x4_t hi = vshrn_n_s32(vmull_s16(vget_high_s16(x), vget_high_s16(y)), 16);
+    return __m128i(vreinterpretq_s64_s16(vcombine_s16(lo, hi)));
+}
+
 
 class Vec16c
 {

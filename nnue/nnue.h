@@ -108,12 +108,11 @@ namespace nnue
     /* accumulator rows: 32 pieces + bias must not overflow int16 */
     constexpr int ACC_WEIGHT_MAX = INT16_MAX / (MAX_ACTIVE_INPUTS + 1);
 
-    /* Activation: cap the accumulator to [0, 1023], divide by 8, giving bytes 0..127 (1.0 == 128) */
-    /* 1024 levels become 128: the int8 dot product needs bytes, so trade precision for throughput */
+    /* Activation: multiply pairs of accumulator values capped to [0, 1023], giving bytes 0..127 (1.0 == 128) */
 
     constexpr int ACT_SHIFT = 3;
     constexpr int ACT_MAX = 127;
-    constexpr int ACT_CLAMP = ((ACT_MAX + 1) << ACT_SHIFT) - 1;
+    constexpr int ACT_CLAMP = QSCALE - 1;
     constexpr int ACT_SCALE = QSCALE >> ACT_SHIFT;
 
     INLINE int pawn_bucket(const State& state)
@@ -131,6 +130,16 @@ namespace nnue
     INLINE int get_bucket(const State& state)
     {
         return pawn_bucket(state) * KING_BUCKETS + king_bucket(state);
+    }
+
+    INLINE int piece_bucket(const State& state)
+    {
+        return (popcount(state.occupied()) - 1) / 4;
+    }
+
+    INLINE int stack_index(const State& state)
+    {
+        return piece_bucket(state) * 2 + state.turn;
     }
 
     /* black-view bucket: the color swap exchanges the two king bits */
@@ -371,21 +380,32 @@ namespace nnue
     }
 
 
-    /* Clipped ReLU: cap the int16 accumulator to [0, 1023] and shrink it to bytes 0..127 */
+    /* Per view: cap both halves to [0, 1023] and multiply them pairwise into bytes 0..127 */
     template <int N>
-    INLINE void activate(const int16_t (&in)[N], uint8_t (&out)[N])
+    INLINE void activate(const int16_t (&in)[2 * N], uint8_t (&out)[N])
     {
         constexpr int W = VecS16::size();
-        static_assert(2 * W == VecU8::size() && N % (2 * W) == 0);
+        constexpr int HALF = N / 2;
+        static_assert(2 * W == VecU8::size() && HALF % (2 * W) == 0);
 
-        const VecS16 lo(0), hi(ACT_CLAMP);
-        for (int i = 0; i != N; i += 2 * W)
+        const VecS16 zero(0), top(ACT_CLAMP);
+
+        /* (a << ACT_SHIFT) * b >> 16 must rescale 1/QSCALE^2 to 1/ACT_SCALE */
+        static_assert((1 << (16 - ACT_SHIFT)) == QSCALE << ACT_SHIFT);
+
+        const auto product = [&](int i)
         {
-            const VecS16 a = min(max(VecS16().load_a(&in[i]), lo), hi) >> ACT_SHIFT;
-            const VecS16 b = min(max(VecS16().load_a(&in[i + W]), lo), hi) >> ACT_SHIFT;
-            /* values are in [0, ACT_MAX], so the signed saturating pack is exact */
-            VecU8(compress_saturated(a, b)).store_a(&out[i]);
-        }
+            const VecS16 a = min(max(VecS16().load_a(&in[i]), zero), top) << ACT_SHIFT;
+            const VecS16 b = min(max(VecS16().load_a(&in[i + HALF]), zero), top);
+            return mul_hi(a, b);
+        };
+
+        for (int view = 0; view != 2; ++view)
+            for (int i = 0; i != HALF; i += 2 * W)
+            {
+                /* values are in [0, ACT_MAX], so the signed saturating pack is exact */
+                VecU8(compress_saturated(product(view * N + i), product(view * N + i + W))).store_a(&out[view * HALF + i]);
+            }
     }
 
 
@@ -690,8 +710,8 @@ namespace nnue
          * REMOVED and ADDED fix the piece counts at compile time, which turns the loops into straight-line code.
          *
          *  piece i (white-view index) in bucket b:
-         *    white half  +=  layer._w[ b         * 768 + i       ]   (1024 values)
-         *    black half  +=  layer._w[ mirror(b) * 768 + (i^120) ]   (1024 values)
+         *    white half  +=  layer._w[ b         * 768 + i       ]   (2048 values)
+         *    black half  +=  layer._w[ mirror(b) * 768 + (i^120) ]   (2048 values)
          *                              ^ king bits swapped ^ color swap (64) + rank flip (56)
          */
         template <int REMOVED = DYNAMIC, int ADDED = DYNAMIC, bool Copy = false, typename LA>
@@ -973,11 +993,11 @@ namespace nnue
     template <typename A, typename L2, typename L3, typename OUT>
     INLINE int eval(const A& a, const L2& l2, const L3& l3, const OUT& out)
     {
-        static_assert(A::OUTPUTS == L2::INPUTS);
+        static_assert(A::OUTPUTS / 2 == L2::INPUTS);
         static_assert(L2::OUTPUTS == L3::INPUTS);
         static_assert(L3::OUTPUTS == OUT::INPUTS);
 
-        ALIGN uint8_t l2_in[A::OUTPUTS];
+        ALIGN uint8_t l2_in[A::OUTPUTS / 2];
         ALIGN float l2_out[L2::OUTPUTS];
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval

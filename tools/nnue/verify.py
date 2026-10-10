@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
 Verify NNUE binary weights for proper clipping and rounding (on-grid, i.e. exported with -q).
-Architecture: perspective accumulator (16 buckets x 768 -> 1024, shared by both views),
-[black, white] -> 2048, two side-to-move stacks 2048 -> 32 -> 32 -> 1.
 """
 import sys
 from pathlib import Path
@@ -20,9 +18,9 @@ Q_B2 = 128 * Q_W2  # hidden_2 int32 bias, at activation scale x weight scale
 Q_MAX_B2 = (2**31 - 1) / Q_B2
 
 ACTIVE_INPUTS = 768
-ACCUMULATOR_SIZE = 1024
+ACCUMULATOR_SIZE = 2048
 MAIN_BUCKETS = 16
-STACKS = 2  # black to move first
+STACKS = 16
 HIDDEN_2 = 32
 HIDDEN_3 = 32
 
@@ -36,7 +34,7 @@ LAYERS = [('hidden_1a', (ACTIVE_INPUTS * MAIN_BUCKETS, ACCUMULATOR_SIZE), (ACCUM
     layer
     for s in range(STACKS)
     for layer in (
-        (f'hidden_2_{s}', (2 * ACCUMULATOR_SIZE, HIDDEN_2), (HIDDEN_2,), L2),
+        (f'hidden_2_{s}', (ACCUMULATOR_SIZE, HIDDEN_2), (HIDDEN_2,), L2),
         (f'hidden_3_{s}', (HIDDEN_2, HIDDEN_3), (HIDDEN_3,), None),
         (f'out_{s}', (HIDDEN_3, 1), (1,), None),
     )

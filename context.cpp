@@ -378,7 +378,7 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     auto& acc = NNUE_data[tid()][_ply];
     ASSERT(!acc.needs_update(state()));
 
-    _eval_raw = model.eval(acc, state().turn);
+    _eval_raw = model.eval(acc, nnue::stack_index(state()));
 
     if (stm_perspective)
     {

@@ -28,28 +28,28 @@ namespace nnue
      *  768 piece-square inputs (white view)   same inputs, black view (idx ^ 120)
      *           |  bucket b, rows of L1A                      |  bucket mirror(b)
      *           v                                             v
-     *    white half: 1024 x int16                      black half: 1024 x int16
+     *    white half: 2048 x int16                      black half: 2048 x int16
      *           \_____________________________________________/
      *                                   |
-     *           accumulator [black 1024 | white 1024 ]   int16 at 1/nnue::QSCALE
-     *                                   |  clamp 0..1023, >> 3
+     *           accumulator [black 2048 | white 2048 ]   int16 at 1/nnue::QSCALE
+     *                                   |  per view: clamp 0..1023, lo[j] * hi[j] >> 13
      *                                   v
      *                         activations  2048 x u8  (1.0 == 128)
-     *                                   |  stack[side to move]
+     *                                   |  stack[piece_bucket * 2 + side to move]
      *                                   v
      *              L2  2048 -> 32  s8 weights, int32 sums   ->  relu -> float
      *              L3    32 -> 32  float                    ->  relu
      *              EVAL  32 -> 1   float                    ->  centipawns x 100
      */
     constexpr int INPUTS_A = nnue::ACTIVE_INPUTS * nnue::NUM_BUCKETS;
-    constexpr int HIDDEN_1A = 1024; /* per perspective */
+    constexpr int HIDDEN_1A = 2048; /* per perspective */
     constexpr int HIDDEN_2 = 32;
     constexpr int HIDDEN_3 = 32;
-    constexpr int STACKS = 2; /* selected by side to move, black first */
+    constexpr int STACKS = 16; /* piece bucket x side to move */
     constexpr int L2_SCALE = 64; /* hidden_2 s8 weights */
 
     using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
-    using L2Type = nnue::Layer<2 * HIDDEN_1A, HIDDEN_2, int8_t, L2_SCALE, false, nnue::ACT_SCALE>;
+    using L2Type = nnue::Layer<HIDDEN_1A, HIDDEN_2, int8_t, L2_SCALE, false, nnue::ACT_SCALE>;
 #if USE_BF16 && NNUE_TAIL_BF16
     using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3, __bf16>;
 #else
@@ -61,7 +61,7 @@ namespace nnue
     {
        /*
         * The accumulator holds both perspectives of L1A, [black view, white view];
-        * the side to move selects one of the L2 -> L3 -> EVAL stacks.
+        * piece count and side to move select one of the L2 -> L3 -> EVAL stacks.
         */
         using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A>;
 
@@ -90,9 +90,9 @@ namespace nnue
             accumulator.update(L1A, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc, refresh);
         }
 
-        INLINE int eval(const Accumulator& acc, bool stm) const
+        INLINE int eval(const Accumulator& acc, int stack) const
         {
-            return ::nnue::eval(acc, L2[stm], L3[stm], EVAL[stm]);
+            return ::nnue::eval(acc, L2[stack], L3[stack], EVAL[stack]);
         }
 
     private:

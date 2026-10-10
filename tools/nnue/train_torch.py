@@ -2,17 +2,6 @@
 """
 PyTorch trainer for the Sturddle Chess engine's NNUE.
 Copyright (c) 2023 - 2026 Cristian Vlasceanu.
-
-Primary optimizer is SGD+momentum.
-
-Perspective accumulator: one bucketed hidden_1a (768 inputs -> 1024) shared by the
-white view and the black view (idx ^ 120: color swap + rank flip), concatenated
-[black, white] -> 2048, clipped relu, then one of two 2048 -> 32 -> 32 -> 1 stacks
-selected by side to move. Target is white POV.
-
-Layer export order (must match the C++ load order):
-    hidden_1a, then per stack (black-to-move first): hidden_2, hidden_3, out
-Each layer: kernel (in, out) float32 row-major, then bias (out,) float32.
 """
 
 import argparse
@@ -32,10 +21,10 @@ import torch.nn.functional as F
 
 # ---- architecture constants (keep in sync with nnue.h / model.h) ----
 ACTIVE_INPUTS = 768
-ACCUMULATOR_SIZE = 1024  # per perspective
-L1_INPUTS = 2 * ACCUMULATOR_SIZE  # [black, white]
+ACCUMULATOR_SIZE = 2048  # per perspective
+L1_INPUTS = 2048  # 2 views x 1024 products
 MAIN_BUCKETS = 16
-STACKS = 2  # selected by side to move, black first
+STACKS = 16  # piece count x side to move
 HIDDEN_2 = 32
 HIDDEN_3 = 32
 
@@ -46,7 +35,8 @@ Q_SCALE = 1024
 # 32 pieces + bias == 33 terms; floor(32767 / 33) LSB so the bound is exact
 Q_MAX_A = 992 / Q_SCALE
 
-# activation: clamp(acc, 0, 1023) >> 3 in the engine -> u8 in [0, 127] at scale 128
+# activation: bytes 0..127 at scale 128
+ACT_CLAMP = 1023 / Q_SCALE
 Q_ACT = 128
 ACT_MAX = 127 / Q_ACT
 
@@ -101,6 +91,16 @@ def compute_bucket_id(features):
     bk_right = (features[:, 0:64] * right_mask).sum(dim=1).long()
     king_id = wk_right * 2 + bk_right
     return pawn_id * 4 + king_id
+
+
+def stack_index(packed):
+    pieces = unpack_bits(packed).sum(dim=1).long()
+    return (pieces - 1) // 4 * 2 + packed[:, 12]
+
+
+def pairwise(acc):
+    lo, hi = torch.clamp(acc, 0.0, ACT_CLAMP).chunk(2, dim=1)
+    return lo * hi
 
 
 def round_half_away(x):
@@ -162,7 +162,7 @@ class BucketedDense(nn.Module):
 class Stacked(nn.Module):
     """STACKS independent dense layers; each row uses the one its stack index selects.
 
-    Weight (STACKS, in, out) matches the .bin (in, out) layout per stack. Both stacks
+    Weight (STACKS, in, out) matches the .bin (in, out) layout per stack. All stacks
     run as one matmul (no per-sample weight gather), then rows are selected."""
 
     def __init__(self, in_features, units, init_std=None):
@@ -176,12 +176,12 @@ class Stacked(nn.Module):
         else:
             nn.init.normal_(self.weight, std=init_std)
 
-    def forward(self, x, stm, w=None, b=None):
+    def forward(self, x, stack, w=None, b=None):
         w = self.weight if w is None else w
         b = self.bias if b is None else b
         w_cat = w.permute(1, 0, 2).reshape(w.shape[1], STACKS * self.units)  # (in, STACKS * out)
         y = (x @ w_cat).view(-1, STACKS, self.units) + b
-        return torch.where(stm.view(-1, 1).bool(), y[:, 1], y[:, 0])
+        return y[torch.arange(y.shape[0], device=y.device), stack]
 
 
 class NNUE(nn.Module):
@@ -203,19 +203,19 @@ class NNUE(nn.Module):
 
     def forward(self, packed):
         quant = self.qat or not self.training
-        stm = packed[:, 12]  # 0 = black to move, 1 = white
+        stack = stack_index(packed)
 
         with exact_fp32(packed.device, quant):
             acc_w, acc_b = self.accumulator(packed, quant)
-            a = torch.clamp(torch.cat([acc_b, acc_w], dim=1), 0.0, ACT_MAX)
+            a = torch.cat([pairwise(acc_b), pairwise(acc_w)], dim=1)
             w2, b2 = self.hidden_2.weight, self.hidden_2.bias
             if quant:
                 a = fake_floor(a, Q_ACT)
                 w2, b2 = fake_quant(w2, Q_W2), fake_quant(b2, Q_B2)
-            x = F.relu(self.hidden_2(a, stm, w2, b2))
+            x = F.relu(self.hidden_2(a, stack, w2, b2))
 
-        x = F.relu(self.hidden_3(x, stm))
-        return self.out(x, stm)  # (B, 1)
+        x = F.relu(self.hidden_3(x, stack))
+        return self.out(x, stack)  # (B, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +238,7 @@ def apply_constraints(model):
 # Flat weights.bin load / save (C++-compatible: kernel (in, out) then bias)
 # ---------------------------------------------------------------------------
 # (name, in, out, bias count); BucketedDense uses num_buckets*in as the stored row count.
-# Stacked layers are named "<layer>.<stack>", stack 0 = black to move.
+# Stacked layers are named "<layer>.<stack>".
 _EXPORT = [("hidden_1a", MAIN_BUCKETS * ACTIVE_INPUTS, ACCUMULATOR_SIZE, ACCUMULATOR_SIZE)] + [
     (f"{name}.{s}", i, o, o)
     for s in range(STACKS)
