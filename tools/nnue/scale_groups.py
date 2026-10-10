@@ -1,27 +1,4 @@
 #!/usr/bin/env python3
-"""
-Group h5 files into scale-compatible training lists using label_check reports.
-
-Reads label_check summary tables (ratio/corr/flag per checked file), extends
-each verdict to that file's whole source bin (same binning as label_check:
-folder+prefix, guids global), and splits a full candidate list into groups of
-similar label scale:
-
-    <prefix>_1.txt ... <prefix>_N.txt   ascending scale ratio
-    <prefix>_excluded.txt               corr < --min-corr (broken labels)
-    <prefix>_unknown.txt                bin has no checked representative
-
-Group boundaries are found automatically: bins are sorted by ratio and cut
-wherever consecutive ratios jump by --gap or more. Pass --split to set manual
-boundaries instead (one or more values).
-
-Multiple reports (e.g. one per reference engine) are averaged (ratio) and
-min-ed (corr). Output lists feed optmix / the mix builder directly.
-
-Usage:
-    ./scale_groups.py all_files.txt -r label_report_1.txt label_report_2.txt --out-prefix scale
-"""
-
 import argparse
 import bisect
 import math

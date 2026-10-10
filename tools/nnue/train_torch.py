@@ -3,16 +3,10 @@
 PyTorch trainer for the Sturddle Chess engine's NNUE.
 Copyright (c) 2023 - 2026 Cristian Vlasceanu.
 
-Primary optimizer is SGD+momentum.
-
 Perspective accumulator: one bucketed hidden_1a (768 inputs -> 1024) shared by the
 white view and the black view (idx ^ 120: color swap + rank flip), concatenated
 [black, white] -> 2048, clipped relu, then one of two 2048 -> 32 -> 32 -> 1 stacks
 selected by side to move. Target is white POV.
-
-Layer export order (must match the C++ load order):
-    hidden_1a, then per stack (black-to-move first): hidden_2, hidden_3, out
-Each layer: kernel (in, out) float32 row-major, then bias (out,) float32.
 """
 
 import argparse

@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""
-Per-bucket report for the pawn x king-file bucketing (16 buckets).
-
-Histogram of training samples per bucket, and optionally per-bucket eval error
-for one or more trained models. Buckets match the engine (nnue.h get_bucket)
-and the trainer (train-x.py compute_bucket_id).
-
-Usage:
-    python bucket_report.py data.h5                       # histogram only
-    python bucket_report.py data.h5 -m models/AWD models/DDAY --sample 0.05
-"""
-
 import argparse
 import queue
 import threading
