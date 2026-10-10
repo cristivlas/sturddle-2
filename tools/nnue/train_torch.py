@@ -40,8 +40,8 @@ ACT_CLAMP = 1023 / Q_SCALE
 Q_ACT = 128
 ACT_MAX = 127 / Q_ACT
 
-# hidden_2: s8 weights at scale 64, int32 bias at the product scale
-Q_W2 = 64
+# hidden_2: s8 weights at scale 128, int32 bias at the product scale
+Q_W2 = 128
 Q_MAX_W2 = 127 / Q_W2
 Q_B2 = Q_ACT * Q_W2
 

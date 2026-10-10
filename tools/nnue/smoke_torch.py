@@ -73,7 +73,7 @@ def check_autocast(model, x):
     assert a.dtype == torch.float32 and w2.dtype == torch.float32, "autocast: hidden_2 inputs downcast"
     if model.qat:
         assert torch.equal(a * tt.Q_ACT, torch.round(a * tt.Q_ACT)), "activation off the 1/128 grid"
-        assert torch.equal(w2 * tt.Q_W2, torch.round(w2 * tt.Q_W2)), "hidden_2 weights off the 1/64 grid"
+        assert torch.equal(w2 * tt.Q_W2, torch.round(w2 * tt.Q_W2)), "hidden_2 weights off the 1/Q_W2 grid"
         assert a.max().item() <= tt.ACT_MAX, "activation above 127/128"
 
     pred.float().sum().backward()

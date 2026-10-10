@@ -12,7 +12,7 @@ import fetch_weights
 Q_SCALE = 1024
 Q_MAX_A = 992 / Q_SCALE  # accumulator: 32 pieces + bias == 33 terms fit int16
 
-Q_W2 = 64  # hidden_2 s8 weights
+Q_W2 = 128  # hidden_2 s8 weights
 Q_MAX_W2 = 127 / Q_W2
 Q_B2 = 128 * Q_W2  # hidden_2 int32 bias, at activation scale x weight scale
 Q_MAX_B2 = (2**31 - 1) / Q_B2
