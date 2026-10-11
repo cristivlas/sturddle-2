@@ -1,21 +1,4 @@
 #!/usr/bin/env python3
-"""
-Assess label quality of h5 training data against a reference UCI engine.
-
-Takes h5 files and/or text list files of h5 paths. For each file, stratified-
-samples positions per pawn band (0-4, 5-8, 9-12, 13-16), has the engine
-evaluate each, and compares stored labels to engine scores in WDL space --
-broken down by the 16 pawn x king-file buckets. Reports per-file scale ratio
-(mean |label| / mean |engine|) and flags files whose scale diverges across
-buckets (max/min bucket ratio > --divergence).
-
-Castling rights and en-passant are not stored in the data; both are assumed
-absent.
-
-Usage:
-    ./label_check.py files.txt -e ./stockfish --per-band 250 --depth 12
-"""
-
 import argparse
 import logging
 import math
@@ -280,7 +263,11 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description="Compare h5 eval labels against a reference engine, per bucket. "
+        "Castling and en passant are not stored, so positions are analysed without them.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument("input", nargs="+", help="h5 file(s) and/or text file(s) listing h5 paths")
     parser.add_argument("-e", "--engine", required=True, help="path to UCI engine used as reference")
     parser.add_argument("--per-band", type=int, default=250, help="positions to evaluate per pawn band per file")

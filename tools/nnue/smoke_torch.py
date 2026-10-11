@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""
-CPU smoke checks for train_torch.py:
-  - flip: for flip_position(x), the accumulator halves equal the original's, swapped, bit for bit
-  - buckets: black-view bucket id == white-view id with the king bits swapped
-  - autocast: with QAT, accumulator / activation / hidden_2 stay fp32 under CPU bf16 autocast;
-    a float run keeps mixed precision there
-  - export: on-grid weights.bin round-trips to identical eval() outputs
-
-Usage:
-    python tools/nnue/smoke_torch.py data.h5 [-n ROWS]
-"""
-
 import argparse
 import os
 import sys
@@ -112,7 +100,9 @@ def check_export(model, x):
 
 
 def main():
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(
+        description="CPU self-checks for train_torch: perspective flip, bucket ids, autocast precision, export round trip."
+    )
     p.add_argument("input", help="h5 dataset path")
     p.add_argument("-n", "--rows", type=int, default=4096)
     args = p.parse_args()
