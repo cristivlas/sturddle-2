@@ -111,7 +111,7 @@ def analyse_file(path, engine, limit, args, watchdog):
     records = []
     scanned = 0
 
-    progress = tqdm(total=args.per_band * 4, unit="pos", desc=path.rsplit("/", 1)[-1]) if tqdm else None
+    progress = tqdm(total=args.per_band * 4, unit="pos", desc=os.path.basename(path)) if tqdm else None
 
     with h5py.File(path, "r") as hf:
         data = hf["data"]
@@ -148,6 +148,8 @@ def analyse_file(path, engine, limit, args, watchdog):
                 watchdog.begin(board)
                 # fresh game key -> ucinewgame between positions, keeps analyses TT-independent
                 info = engine.analyse(board, limit, game=object())
+            except chess.engine.EngineTerminatedError:
+                raise
             except chess.engine.EngineError:
                 continue
             finally:
@@ -271,7 +273,7 @@ def main(args):
     finally:
         engine.quit()
 
-    if len(summary) > 1:
+    if summary:
         print(f"\n{'ratio':>6} {'corr':>6} {'flag':>6}  file")
         for path, ratio, corr, divergent in sorted(summary, key=lambda s: (math.isnan(s[1]), -s[1])):
             print(f"{ratio:>6.2f} {corr:>6.3f} {'DIVRG' if divergent else '':>6}  {path}")

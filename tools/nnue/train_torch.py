@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# ---- architecture constants (keep in sync with nnue.h / model.h) ----
+# Architecture constants (keep in sync with nnue.h / model.h)
 ACTIVE_INPUTS = 768
 ACCUMULATOR_SIZE = 2048  # per perspective
 L1_INPUTS = 2048  # 2 views x 1024 products

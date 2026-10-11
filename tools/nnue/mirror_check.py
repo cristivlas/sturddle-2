@@ -1,27 +1,4 @@
 #!/usr/bin/env python3
-"""
-Color-mirror symmetry check: eval(pos) vs -eval(color-mirrored pos).
-
-The net standardizes evals to white POV, so perfect color symmetry means
-eval(mirror) == -eval(pos). Per position pair this reports
-bias = (eval(pos) + eval(mirror)) / 2 in centipawns; a positive mean says
-the evaluation is systematically white-optimistic.
-
-Positions come from an .h5 training set (batch-sampled like outcome_scale)
-or an EPD/FEN file. Mirroring is the trainer's flip: swap colors, mirror
-ranks, flip STM. Engine FENs are synthesized with no castling/ep rights
-(the net ignores them; both sides of a pair are treated identically).
-
-Backends (exactly one):
-  -e/--engine: UCI engine command; scores from `go depth N` (STM-POV cp,
-      converted to white POV). Use a --dev-mode build to expose WeightsFile.
-  -m/--model: weights.bin evaluated with the torch model (quantized forward, as in the engine).
-
-Usage:
-    ./mirror_check.py mix.h5 --sample 0.001 --limit 5000 -e "./sturddle --dev-mode" -w weights.bin
-    ./mirror_check.py mix.h5 --sample 0.01 -m weights.bin
-"""
-
 import argparse
 import os
 import shlex
@@ -281,7 +258,7 @@ if __name__ == "__main__":
     parser.add_argument("positions", help=".h5 training set, or EPD/FEN file with one position per line")
     parser.add_argument("-e", "--engine", help="UCI engine command (quote to pass flags, e.g. --dev-mode)")
     parser.add_argument("-m", "--model", help="weights.bin for the torch model backend")
-    parser.add_argument("-w", "--weights", help="engine WeightsFile (needs a --dev-mode build)")
+    parser.add_argument("-w", "--weights", help="engine WeightsFile (native build with --dev-mode)")
     parser.add_argument("-d", "--depth", type=int, default=1, help="engine search depth")
     parser.add_argument("--sample", type=float, help="h5 batch sampling ratio, like outcome_scale")
     parser.add_argument("--limit", type=int, default=100_000, help="max positions, 0 = all (random thinning)")

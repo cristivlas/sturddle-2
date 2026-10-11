@@ -30,17 +30,20 @@ ROW_RGX = re.compile(
     r"^\s+(\d+)\s+\S+\s+(?:QQ|QK|KQ|KK)\s+(\d+)\s+"
     r"[-+.\dnan]+\s+[-+.\dnan]+\s+[-+.\dnan]+\s+(\d+)\s+(\d+)\s+[.\dnan]+\s*$"
 )
+SUMMARY_RGX = re.compile(r"^\s*([0-9.]+|nan)\s+(-?[0-9.]+|nan)\s")
 
 
 def parse_reports(reports):
     """{file path: ([label sums], [engine sums], [counts]) per bucket}."""
     tables = {}
-    current = None
+    source = {}
     for rp in reports:
+        current = None
         for line in open(rp):
-            if line[:1] not in ("", " ", "\t", "\n") and line.rstrip().endswith(".h5"):
+            if line[:1] not in ("", " ", "\t", "\n") and line.rstrip().endswith(".h5") and not SUMMARY_RGX.match(line):
                 current = line.strip()
                 tables.setdefault(current, ([0.0] * BUCKETS, [0.0] * BUCKETS, [0] * BUCKETS))
+                source[current] = rp
                 continue
             m = ROW_RGX.match(line)
             if not m or current is None:
@@ -50,6 +53,9 @@ def parse_reports(reports):
             label[b] += n * ml
             engine[b] += n * me
             counts[b] += n
+    empty = [f for f, (_, _, counts) in tables.items() if not sum(counts)]
+    if empty:
+        sys.exit("\n".join(f"{source[f]}: no bucket rows for {f}" for f in empty))
     return tables
 
 
@@ -124,8 +130,9 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("reports", nargs="+", help="label_check report file(s)")
-    parser.add_argument("--match", nargs="*", help="only use report files whose path contains any of these substrings")
-    parser.add_argument("--files", nargs="*", help="only use report files exactly listed in these text file(s)")
+    select = parser.add_mutually_exclusive_group()
+    select.add_argument("--match", nargs="*", help="only use report files whose path contains any of these substrings")
+    select.add_argument("--files", nargs="*", help="only use report files exactly listed in these text file(s)")
     parser.add_argument(
         "--reference",
         nargs="*",

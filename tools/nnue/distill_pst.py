@@ -42,6 +42,9 @@ def _parse_engine_constants():
     weight = [int(v) for v in values[0 if grading else 1].split(",")]
     assert len(weight) == 7, weight
 
+    if not grading:
+        return weight, [[0] * 7 for _ in range(buckets)], buckets, endgame
+
     macro = chess[chess.index("#define GRADING_ADJUST") :]
     macro = macro[: re.search(r"\n[^\\\n]*\n", macro).start()]  # macro ends with the last '\'-continued line
     macro = re.sub(r"/\*.*?\*/", "", macro, flags=re.S)
