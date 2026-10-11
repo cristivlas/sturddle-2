@@ -148,7 +148,7 @@ def main(args):
                 block = data[start : start + args.batch_size, : FEATURE_COUNT + 2]
                 cp = block[:, FEATURE_COUNT].astype(np.int64)  # STM POV
                 y = block[:, FEATURE_COUNT + 1].astype(np.float32) / 2.0  # STM POV: 0=loss, 0.5=draw, 1=win
-                mask = np.abs(cp) <= args.filter if args.filter else np.ones(len(cp), dtype=bool)
+                mask = np.abs(cp) < args.filter if args.filter else np.ones(len(cp), dtype=bool)
                 buckets = bucket_ids(block[:, :FEATURE_COUNT])[mask]
                 member_ids = (
                     np.searchsorted(member_starts, np.arange(start, start + len(block))[mask], side="right") - 1
@@ -251,7 +251,7 @@ if __name__ == "__main__":
     parser.add_argument("input", nargs="+", help="h5 data file(s); the fit pools all of them")
     parser.add_argument("-b", "--batch-size", type=int, default=16384)
     parser.add_argument("--sample", type=float, help="sampling ratio, same as the trainers")
-    parser.add_argument("--filter", type=int, help="drop rows with |raw eval| above this, like the trainers' -F")
+    parser.add_argument("--filter", type=int, help="drop rows with |raw eval| >= this, like the trainers' -F")
     parser.add_argument("--max-rows", type=int, default=20_000_000, help="cap on pooled rows (random thinning)")
     parser.add_argument("--raw", action="store_true", help="ignore sidecar profiles, fit on raw labels")
     parser.add_argument(

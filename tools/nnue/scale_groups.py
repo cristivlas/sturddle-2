@@ -4,6 +4,7 @@ import bisect
 import math
 import os
 import re
+import sys
 
 
 def bin_key(path):
@@ -32,6 +33,8 @@ def parse_reports(report_paths):
                 continue
             ratio, corr, path = float(m.group(1)), float(m.group(2)), m.group(4)
             checked.setdefault(path, []).append((ratio, corr))
+        if not in_summary:
+            sys.exit(f"{rp}: no summary section")
     return checked
 
 
