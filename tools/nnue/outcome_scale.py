@@ -1,22 +1,4 @@
 #!/usr/bin/env python3
-"""
-Fit the optimal --outcome-scale from training data.
-
-The blend loss calibrates evals to game outcomes via P(win) = sigmoid(eval / S).
-This tool fits S directly: single-parameter logistic regression (Newton on
-beta = 1/S) minimizing cross-entropy between sigmoid(beta * cp) and the
-recorded outcome, overall and per bucket. Evals and outcomes are both STM-POV,
-matching the loss. S is also reported split by side-to-move (report only;
-sidecars are unchanged).
-
-Evals are first divided by the same per-bucket label-scale ratios the trainers
-apply: per-member sidecar profiles (<member>.h5.profile.json) are auto-resolved
-for virtual datasets, so the fitted S is directly the value to train with.
-
-Usage:
-    ./outcome_scale.py mix.h5 --sample 0.02
-"""
-
 import argparse
 import json
 import os
@@ -247,7 +229,10 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description="Fit the outcome sigmoid scale S from game results, per bucket, after applying sidecar ratios.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument("input", nargs="+", help="h5 data file(s); the fit pools all of them")
     parser.add_argument("-b", "--batch-size", type=int, default=16384)
     parser.add_argument("--sample", type=float, help="sampling ratio, same as the trainers")

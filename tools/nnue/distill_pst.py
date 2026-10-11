@@ -1,18 +1,4 @@
 #!/usr/bin/env python3
-"""
-Distill piece-square tables from a trained NNUE.
-
-Runs batched white-POV inference over H5 training positions, subtracts the
-graded material component (WEIGHT + ADJUST[pawn_bucket], duplicated from
-chess.h), and fits the residual onto signed piece-square occupancy features
-by streaming least squares. Output has the exact tables.h shape: 6 x 64
-SQUARE_TABLE plus ENDGAME_KING_SQUARE_TABLE, with the king routed to the
-endgame table when total piece count <= ENDGAME_PIECE_COUNT.
-
-Usage:
-    python tools/nnue/distill_pst.py -m weights.bin data.h5 [more.h5 ...] [-o tables_out.h]
-"""
-
 import argparse
 import os
 import re
@@ -168,7 +154,9 @@ def emit(tables, out):
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = argparse.ArgumentParser(
+        description="Fit piece-square tables to a trained net's evals, minus material, and write them in tables.h format."
+    )
     p.add_argument("data", nargs="+", help="H5 training data file(s)")
     p.add_argument("-m", "--model", default="weights.bin", help="weights.bin")
     p.add_argument("-o", "--output", help="output file (default: stdout)")

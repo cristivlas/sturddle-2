@@ -1,24 +1,4 @@
 #!/usr/bin/env python3
-"""
-Build a per-bucket label-scale profile (JSON) from label_check report(s).
-
-Parses the per-file bucket tables, aggregates |label| and |engine| sums
-weighted by sample count, and emits ratio = sum|label| / sum|engine| per
-bucket. Buckets with fewer than --min-n samples fall back to the overall
-ratio. The output feeds train.py --profile.
-
-With --reference, ratios are normalized per bucket by a reference dataset's
-ratios (selected from the same reports, --match-style substrings): the
-referee's own scale cancels out, so labels land in the reference's units
-rather than the referee's. --amplify scales the resulting evals uniformly
-(ratios are divided by it; the trainers divide labels by ratio).
-
-Usage:
-    ./mkprofile.py report.txt [more_reports...] --match leela T80 --out profile.json
-    ./mkprofile.py report.txt --files group.txt --out group.h5.profile.json
-    ./mkprofile.py report.txt --match T80 --reference spsa --out T80.h5.profile.json
-"""
-
 import argparse
 import json
 import os
@@ -128,7 +108,10 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description="Build per-bucket label scale ratios (sidecar JSON) from label_check reports.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument("reports", nargs="+", help="label_check report file(s)")
     select = parser.add_mutually_exclusive_group()
     select.add_argument("--match", nargs="*", help="only use report files whose path contains any of these substrings")
