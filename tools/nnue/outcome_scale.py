@@ -46,7 +46,15 @@ def load_ratios(path):
     return ratios
 
 
-def member_profile_table(data, filepath):
+def find_sidecar(path, alt_dir):
+    if alt_dir:
+        alt = os.path.join(alt_dir, os.path.basename(path) + ".profile.json")
+        if os.path.exists(alt):
+            return alt
+    return path + ".profile.json"
+
+
+def member_profile_table(data, filepath, alt_dir):
     """(member start rows, (members x 16) ratio matrix, member paths) — same resolution as
     the trainers: per-member sidecar, else the container's sidecar, else all-ones. One level."""
     if data.is_virtual:
@@ -62,17 +70,20 @@ def member_profile_table(data, filepath):
     assert members[0][0] == 0, "first member must start at row 0"
 
     default = np.ones(16, dtype=np.float32)
-    own_sidecar = filepath + ".profile.json"
+    own_sidecar = find_sidecar(filepath, alt_dir)
     if os.path.exists(own_sidecar):
         container = load_ratios(own_sidecar)
         if container is not None:
             default = container
 
     cache = {}
+    owners = {own_sidecar: filepath}
     matched = 0
     profiles = []
     for _, path in members:
-        sidecar = path + ".profile.json"
+        sidecar = find_sidecar(path, alt_dir)
+        if owners.setdefault(sidecar, path) != path:
+            raise ValueError(f"{sidecar}: ambiguous, matches {owners[sidecar]} and {path}")
         if sidecar not in cache:
             own = load_ratios(sidecar) if (path != filepath and os.path.exists(sidecar)) else None
             # A member sidecar without ratios (e.g. an outcome_scale-only file this tool wrote)
@@ -117,7 +128,7 @@ def main(args):
                 member_profiles = np.ones((1, 16), dtype=np.float32)
                 member_paths = [path]
             else:
-                member_starts, member_profiles, member_paths = member_profile_table(data, path)
+                member_starts, member_profiles, member_paths = member_profile_table(data, path, args.alt_profile_dir)
             num_batches = max(1, len(data) // args.batch_size)
             indices = np.arange(num_batches)
             if args.sample:
@@ -182,6 +193,15 @@ def main(args):
 
     if args.update_profile:
         # Fit each member on its own rows and write its sidecar (thin buckets -> member overall)
+        sidecars = [mpath + ".profile.json" for mpath in member_paths]
+        if args.alt_profile_dir:
+            sidecars = [os.path.join(args.alt_profile_dir, os.path.basename(s)) for s in sidecars]
+            container = args.input[0]
+            owners = {os.path.join(args.alt_profile_dir, os.path.basename(container) + ".profile.json"): container}
+            for sidecar, mpath in zip(sidecars, member_paths):
+                if owners.setdefault(sidecar, mpath) != mpath:
+                    raise ValueError(f"{sidecar}: ambiguous, matches {owners[sidecar]} and {mpath}")
+            os.makedirs(args.alt_profile_dir, exist_ok=True)
         for m, mpath in enumerate(member_paths):
             msel = member_ids == m
             if not msel.any():
@@ -198,7 +218,7 @@ def main(args):
                 sel = msel & (buckets == b)
                 sb = fit_scale(cp[sel], y[sel]) if sel.sum() >= args.min_n else float("nan")
                 scales.append(round(float(sb if np.isfinite(sb) else ms), 1))
-            sidecar = mpath + ".profile.json"
+            sidecar = sidecars[m]
             profile = {}
             if os.path.exists(sidecar):
                 with open(sidecar) as f:
@@ -240,6 +260,9 @@ if __name__ == "__main__":
     parser.add_argument("--max-rows", type=int, default=20_000_000, help="cap on pooled rows (random thinning)")
     parser.add_argument("--raw", action="store_true", help="ignore sidecar profiles, fit on raw labels")
     parser.add_argument(
+        "--alt-profile-dir", help="look up <file>.profile.json here first, then next to the data; write here"
+    )
+    parser.add_argument(
         "--update-profile",
         action="store_true",
         help="fit each VDS member separately and write outcome_scale into its sidecar",
@@ -249,6 +272,8 @@ if __name__ == "__main__":
 
     if args.update_profile and (args.raw or len(args.input) != 1):
         parser.error("--update-profile requires a single input file and no --raw (S must be in corrected domain)")
+    if args.alt_profile_dir and not args.update_profile and not os.path.isdir(args.alt_profile_dir):
+        parser.error(f"--alt-profile-dir: {args.alt_profile_dir} not found")
 
     if args.sample:
         args.sample = max(1e-3, min(1.0, args.sample))

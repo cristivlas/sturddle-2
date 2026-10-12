@@ -357,6 +357,7 @@ class H5Batches(torch.utils.data.Dataset):
         self,
         path,
         batch_size,
+        alt_profile_dir,
         sample=None,
         smoothing=0.025,
         filter=None,
@@ -377,7 +378,7 @@ class H5Batches(torch.utils.data.Dataset):
             n = hf["data"].shape[0]
             self.cols = hf["data"].shape[1]
             self.member_starts, self.member_profiles, self.member_oscales = member_profile_table(
-                hf["data"], path, profile_ratios, outcome_scale
+                hf["data"], path, profile_ratios, outcome_scale, alt_profile_dir
             )
         self.trivial_profiles = bool(np.all(self.member_profiles == 1.0)) and bool(
             np.all(self.member_oscales == self.member_oscales.flat[0])
@@ -545,13 +546,22 @@ def load_outcome_scale(path, default):
     return scales
 
 
-def member_profile_table(data, filepath, profile_ratios, outcome_scale):
+def find_sidecar(path, alt_dir):
+    if alt_dir:
+        alt = os.path.join(alt_dir, os.path.basename(path) + ".profile.json")
+        if os.path.exists(alt):
+            return alt
+    return path + ".profile.json"
+
+
+def member_profile_table(data, filepath, profile_ratios, outcome_scale, alt_dir):
     """Per-member profiles: (member start rows, ratio matrix, outcome-scale matrix), both (members x buckets).
 
     An explicit profile overrides everything (and keeps --outcome-scale). Otherwise
     each member of a virtual dataset (or the file itself if not virtual) uses the
-    <member>.profile.json sidecar when present, falling back to the container's
-    sidecar, then to all-ones ratios / --outcome-scale. One level, not recursive.
+    <member>.profile.json sidecar when present (alt_dir first, then side-by-side),
+    falling back to the container's sidecar, then to all-ones ratios / --outcome-scale.
+    One level, not recursive.
     """
     default_os = np.full(MAIN_BUCKETS, outcome_scale, dtype=np.float32)
     if profile_ratios is not None:
@@ -570,17 +580,20 @@ def member_profile_table(data, filepath, profile_ratios, outcome_scale):
     assert members[0][0] == 0, "first member must start at row 0"
 
     default = np.ones(MAIN_BUCKETS, dtype=np.float32)
-    own_sidecar = filepath + ".profile.json"
+    own_sidecar = find_sidecar(filepath, alt_dir)
     if os.path.exists(own_sidecar):
         default = load_profile(own_sidecar)
         default_os = load_outcome_scale(own_sidecar, outcome_scale)
         print(f"{filepath}: default profile {own_sidecar}")
 
     cache = {}
+    owners = {own_sidecar: filepath}
     matched = 0
     profiles, oscales = [], []
     for start, path in members:
-        sidecar = path + ".profile.json"
+        sidecar = find_sidecar(path, alt_dir)
+        if owners.setdefault(sidecar, path) != path:
+            raise ValueError(f"{sidecar}: ambiguous, matches {owners[sidecar]} and {path}")
         if sidecar not in cache:
             if path != filepath and os.path.exists(sidecar):
                 cache[sidecar] = (load_profile(sidecar), load_outcome_scale(sidecar, outcome_scale))
@@ -697,6 +710,7 @@ def main(args):
     ds = H5Batches(
         args.input,
         args.batch_size,
+        alt_profile_dir=args.alt_profile_dir,
         sample=args.sample,
         smoothing=args.outcome_smoothing,
         filter=args.filter,
@@ -834,6 +848,7 @@ if __name__ == "__main__":
     p.add_argument("--huber-delta", type=float, default=1.5)
     p.add_argument("--focal-gamma", type=float, default=0.0, help="focal modulation of the outcome loss term (0 = off)")
     p.add_argument("--profile", help="JSON dataset profile with per-bucket label scale ratios")
+    p.add_argument("--alt-profile-dir", help="look up <file>.profile.json here first, then next to the data")
     p.add_argument("--sample", type=float)
     p.add_argument("-F", "--filter", type=int, help="drop positions with |eval| >= this (centipawns)")
     p.add_argument("--balance", action="store_true", help="augment each batch with color-mirrored positions")
@@ -864,4 +879,6 @@ if __name__ == "__main__":
         p.error("--focal-gamma must be >= 0")
     if sum((args.loss_mae, args.loss_bce, args.loss_blend)) > 1:
         p.error("--loss-mae, --loss-bce and --loss-blend are mutually exclusive")
+    if args.alt_profile_dir and not os.path.isdir(args.alt_profile_dir):
+        p.error(f"--alt-profile-dir: {args.alt_profile_dir} not found")
     main(args)
