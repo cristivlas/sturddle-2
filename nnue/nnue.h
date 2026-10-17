@@ -93,13 +93,30 @@ namespace nnue
     constexpr int EVAL_SCALE = 100;
     constexpr int MAX_ACTIVE_INPUTS = 32; /* one per piece */
     constexpr int NUM_BUCKETS = 16;
-    constexpr int PAWN_BUCKETS = chess::PAWN_BUCKETS;
-    constexpr int KING_BUCKETS = 4;
-    static_assert(NUM_BUCKETS == PAWN_BUCKETS * KING_BUCKETS, "bucket grid mismatch");
     constexpr int QSCALE = 1024;
+
+    /* own king square, a1 = 0 -> L1A weight block */
+    constexpr int KING_BUCKETS[64] = {
+         0,  1,  2,  3,  3,  2,  1,  0,
+         4,  5,  6,  7,  7,  6,  5,  4,
+         8,  9, 10, 11, 11, 10,  9,  8,
+         8,  9, 10, 11, 11, 10,  9,  8,
+        12, 12, 13, 13, 13, 13, 12, 12,
+        12, 12, 13, 13, 13, 13, 12, 12,
+        14, 14, 15, 15, 15, 15, 14, 14,
+        14, 14, 15, 15, 15, 15, 14, 14,
+    };
+
+    static_assert(std::all_of(std::begin(KING_BUCKETS), std::end(KING_BUCKETS), [](int b) { return b >= 0 && b < NUM_BUCKETS; }));
 
     /* black-view input index: color swap (64) + rank flip (56) */
     constexpr int PERSPECTIVE_XOR = 120;
+
+    /* mirrored-view input index: file flip */
+    constexpr int MIRROR_XOR = 7;
+
+    /* per view: king bucket x 2 + mirrored */
+    constexpr int VIEW_KEYS = NUM_BUCKETS * 2;
 
     /* accumulator rows: 32 pieces + bias must not overflow int16 */
     constexpr int ACC_WEIGHT_MAX = INT16_MAX / (MAX_ACTIVE_INPUTS + 1);
@@ -111,21 +128,12 @@ namespace nnue
     constexpr int ACT_CLAMP = QSCALE - 1;
     constexpr int ACT_SCALE = QSCALE >> ACT_SHIFT;
 
-    INLINE int pawn_bucket(const State& state)
+    /* own king on files e-h mirrors the view */
+    INLINE int view_key(const State& state, Color view)
     {
-        return chess::pawn_bucket(state.pawns);
-    }
-
-    INLINE int king_bucket(const State& state)
-    {
-        const int wk_right = square_file(state.king(WHITE)) >= 4;
-        const int bk_right = square_file(state.king(BLACK)) >= 4;
-        return wk_right * 2 + bk_right;
-    }
-
-    INLINE int get_bucket(const State& state)
-    {
-        return pawn_bucket(state) * KING_BUCKETS + king_bucket(state);
+        const int sq = view == WHITE ? state.king(WHITE) : square_mirror(state.king(BLACK));
+        const int mirrored = square_file(sq) >= 4;
+        return KING_BUCKETS[mirrored ? sq ^ MIRROR_XOR : sq] * 2 + mirrored;
     }
 
     INLINE int piece_bucket(const State& state)
@@ -136,12 +144,6 @@ namespace nnue
     INLINE int stack_index(const State& state)
     {
         return piece_bucket(state) * 2 + state.turn;
-    }
-
-    /* black-view bucket: the color swap exchanges the two king bits */
-    INLINE constexpr int mirror_bucket(int bucket)
-    {
-        return (bucket & ~3) | ((bucket & 1) << 1) | ((bucket >> 1) & 1);
     }
 
     #if INSTRSET >= 9
@@ -378,7 +380,7 @@ namespace nnue
 
     /* Per view: cap both halves to [0, 1023] and multiply them pairwise into bytes 0..127 */
     template <int N>
-    INLINE void activate(const int16_t (&in)[2 * N], uint8_t (&out)[N])
+    INLINE void activate(const int16_t (&in)[2][N], uint8_t (&out)[N])
     {
         constexpr int W = VecS16::size();
         constexpr int HALF = N / 2;
@@ -389,10 +391,10 @@ namespace nnue
         /* (a << ACT_SHIFT) * b >> 16 must rescale 1/QSCALE^2 to 1/ACT_SCALE */
         static_assert((1 << (16 - ACT_SHIFT)) == QSCALE << ACT_SHIFT);
 
-        const auto product = [&](int i)
+        const auto product = [&](const int16_t (&half)[N], int i)
         {
-            const VecS16 a = min(max(VecS16().load_a(&in[i]), zero), top) << ACT_SHIFT;
-            const VecS16 b = min(max(VecS16().load_a(&in[i + HALF]), zero), top);
+            const VecS16 a = min(max(VecS16().load_a(&half[i]), zero), top) << ACT_SHIFT;
+            const VecS16 b = min(max(VecS16().load_a(&half[i + HALF]), zero), top);
             return mul_hi(a, b);
         };
 
@@ -400,7 +402,7 @@ namespace nnue
             for (int i = 0; i != HALF; i += 2 * W)
             {
                 /* values are in [0, ACT_MAX], so the signed saturating pack is exact */
-                VecU8(compress_saturated(product(view * N + i), product(view * N + i + W))).store_a(&out[view * HALF + i]);
+                VecU8(compress_saturated(product(in[view], i), product(in[view], i + W))).store_a(&out[view * HALF + i]);
             }
     }
 
@@ -630,27 +632,27 @@ namespace nnue
     #endif /* __ARM__ */
         static_assert(HALF % VecShort::size() == 0);
 
-        /* Per-thread cache: last accumulator computed in each bucket, plus its
-         * piece bitboards, so bucket changes refresh by diffing pieces against
-         * a same-bucket position instead of rebuilding all active inputs.
+        /* Per-thread cache: last half computed for each view and key, plus its
+         * piece bitboards, so key changes refresh by diffing pieces against
+         * a same-key position instead of rebuilding all active inputs.
          */
         struct RefreshEntry
         {
-            ALIGN int16_t output[OUTPUTS];
+            ALIGN int16_t output[HALF];
             Bitboard pieces[6][2] = { };
             bool valid = false;
         };
 
         struct RefreshTable
         {
-            RefreshEntry entry[NUM_BUCKETS];
+            RefreshEntry entry[2][VIEW_KEYS];
         };
 
-        ALIGN int16_t _output[OUTPUTS] = { };
+        ALIGN int16_t _output[2][HALF] = { }; /* [black view, white view] */
         uint64_t _hash = 0;
-        int _current_bucket = 0;
+        int _key[2] = { };
 
-        INLINE const int16_t (&output() const)[OUTPUTS] { return _output; }
+        INLINE const int16_t (&output() const)[2][HALF] { return _output; }
 
     #if DEBUG_INCREMENTAL
         /* remember previous inputs, for debugging */
@@ -686,21 +688,27 @@ namespace nnue
         /* empty delta list */
         static constexpr int NONE[MAX_ACTIVE_INPUTS] = {};
 
-        /* Update both perspectives: subtract the rows of removed pieces, add the new ones; with Copy, out2 gets a copy too.
+        static INLINE int view_xor(Color view, int key)
+        {
+            return (key & 1 ? MIRROR_XOR : 0) ^ (view == WHITE ? 0 : PERSPECTIVE_XOR);
+        }
+
+        /* Update one perspective: subtract the rows of removed pieces, add the new ones; with Copy, out2 gets a copy too.
          * REMOVED and ADDED fix the piece counts at compile time, which turns the loops into straight-line code.
          *
-         *  piece i (white-view index) in bucket b:
-         *    white half  +=  layer._w[ b         * 768 + i       ]   (HALF values)
-         *    black half  +=  layer._w[ mirror(b) * 768 + (i^120) ]   (HALF values)
-         *                              ^ king bits swapped ^ color swap (64) + rank flip (56)
+         *  piece i (white-view index), view key = bucket * 2 + mirrored:
+         *    white half  +=  layer._w[ bucket * 768 + (i ^ m)       ]   (HALF values)
+         *    black half  +=  layer._w[ bucket * 768 + (i ^ 120 ^ m) ]   (HALF values)
+         *  m: file flip (7) if mirrored, else 0; 120: color swap (64) + rank flip (56)
          */
         template <int REMOVED = DYNAMIC, int ADDED = DYNAMIC, bool Copy = false, typename LA>
         static INLINE void apply_deltas(
             const LA& layer,
-            int bucket,
-            const int16_t (&src)[OUTPUTS],
-            int16_t (&out)[OUTPUTS],
-            int16_t (&out2)[OUTPUTS],
+            Color view,
+            int key,
+            const int16_t (&src)[HALF],
+            int16_t (&out)[HALF],
+            int16_t (&out2)[HALF],
             const int (&remove)[MAX_ACTIVE_INPUTS],
             int r_idx,
             const int (&add)[MAX_ACTIVE_INPUTS],
@@ -712,38 +720,80 @@ namespace nnue
             const int added = (ADDED == DYNAMIC) ? a_idx : ADDED;
             ASSERT(removed == r_idx && added == a_idx);
 
-            const size_t base_w = size_t(bucket) * ACTIVE_INPUTS;
-            const size_t base_b = size_t(mirror_bucket(bucket)) * ACTIVE_INPUTS;
+            const size_t base = size_t(key >> 1) * ACTIVE_INPUTS;
+            const int x = view_xor(view, key);
+
+            VecShort acc, v;
+            for (int j = 0; j != HALF; j += VecShort::size())
+            {
+                acc.load_a(&src[j]);
+
+                for (int i = 0; i < removed; ++i)
+                {
+                    v.load_a(&layer._w[base + (remove[i] ^ x)][j]);
+                    acc -= v;
+                }
+
+                for (int i = 0; i < added; ++i)
+                {
+                    v.load_a(&layer._w[base + (add[i] ^ x)][j]);
+                    acc += v;
+                }
+
+                acc.store_a(&out[j]);
+                if constexpr (Copy)
+                    acc.store_a(&out2[j]);
+            }
+        }
+
+
+        /* Both perspectives in one pass, for moves that change neither view key; not shared with the per-view version, which measured slower */
+        template <int REMOVED = DYNAMIC, int ADDED = DYNAMIC, typename LA>
+        static INLINE void apply_deltas(
+            const LA& layer,
+            const int (&key)[2],
+            const int16_t (&src)[2][HALF],
+            int16_t (&out)[2][HALF],
+            const int (&remove)[MAX_ACTIVE_INPUTS],
+            int r_idx,
+            const int (&add)[MAX_ACTIVE_INPUTS],
+            int a_idx)
+        {
+            static_assert(LA::OUTPUTS == HALF);
+
+            const int removed = (REMOVED == DYNAMIC) ? r_idx : REMOVED;
+            const int added = (ADDED == DYNAMIC) ? a_idx : ADDED;
+            ASSERT(removed == r_idx && added == a_idx);
+
+            const size_t base_b = size_t(key[BLACK] >> 1) * ACTIVE_INPUTS;
+            const size_t base_w = size_t(key[WHITE] >> 1) * ACTIVE_INPUTS;
+            const int x_b = view_xor(BLACK, key[BLACK]);
+            const int x_w = view_xor(WHITE, key[WHITE]);
 
             VecShort vb, vw, v;
             for (int j = 0; j != HALF; j += VecShort::size())
             {
-                vb.load_a(&src[j]);
-                vw.load_a(&src[HALF + j]);
+                vb.load_a(&src[BLACK][j]);
+                vw.load_a(&src[WHITE][j]);
 
                 for (int i = 0; i < removed; ++i)
                 {
-                    v.load_a(&layer._w[base_b + (remove[i] ^ PERSPECTIVE_XOR)][j]);
+                    v.load_a(&layer._w[base_b + (remove[i] ^ x_b)][j]);
                     vb -= v;
-                    v.load_a(&layer._w[base_w + remove[i]][j]);
+                    v.load_a(&layer._w[base_w + (remove[i] ^ x_w)][j]);
                     vw -= v;
                 }
 
                 for (int i = 0; i < added; ++i)
                 {
-                    v.load_a(&layer._w[base_b + (add[i] ^ PERSPECTIVE_XOR)][j]);
+                    v.load_a(&layer._w[base_b + (add[i] ^ x_b)][j]);
                     vb += v;
-                    v.load_a(&layer._w[base_w + add[i]][j]);
+                    v.load_a(&layer._w[base_w + (add[i] ^ x_w)][j]);
                     vw += v;
                 }
 
-                vb.store_a(&out[j]);
-                vw.store_a(&out[HALF + j]);
-                if constexpr (Copy)
-                {
-                    vb.store_a(&out2[j]);
-                    vw.store_a(&out2[HALF + j]);
-                }
+                vb.store_a(&out[BLACK][j]);
+                vw.store_a(&out[WHITE][j]);
             }
         }
 
@@ -752,9 +802,10 @@ namespace nnue
         template <typename LA>
         static INLINE void apply_move(
             const LA& layer,
-            int bucket,
-            const int16_t (&src)[OUTPUTS],
-            int16_t (&out)[OUTPUTS],
+            Color view,
+            int key,
+            const int16_t (&src)[HALF],
+            int16_t (&out)[HALF],
             const int (&remove)[MAX_ACTIVE_INPUTS],
             int removed,
             const int (&add)[MAX_ACTIVE_INPUTS],
@@ -762,32 +813,52 @@ namespace nnue
         {
             /* out2 is unused without Copy */
             if (removed == 1 && added == 1) /* quiet move or promotion */
-                apply_deltas<1, 1>(layer, bucket, src, out, out, remove, removed, add, added);
+                apply_deltas<1, 1>(layer, view, key, src, out, out, remove, removed, add, added);
             else if (removed == 2 && added == 1) /* capture */
-                apply_deltas<2, 1>(layer, bucket, src, out, out, remove, removed, add, added);
+                apply_deltas<2, 1>(layer, view, key, src, out, out, remove, removed, add, added);
             else if (removed == 2 && added == 2) /* castling */
-                apply_deltas<2, 2>(layer, bucket, src, out, out, remove, removed, add, added);
+                apply_deltas<2, 2>(layer, view, key, src, out, out, remove, removed, add, added);
             else
-                apply_deltas(layer, bucket, src, out, out, remove, removed, add, added);
+                apply_deltas(layer, view, key, src, out, out, remove, removed, add, added);
+        }
+
+        template <typename LA>
+        static INLINE void apply_move(
+            const LA& layer,
+            const int (&key)[2],
+            const int16_t (&src)[2][HALF],
+            int16_t (&out)[2][HALF],
+            const int (&remove)[MAX_ACTIVE_INPUTS],
+            int removed,
+            const int (&add)[MAX_ACTIVE_INPUTS],
+            int added)
+        {
+            if (removed == 1 && added == 1) /* quiet move or promotion */
+                apply_deltas<1, 1>(layer, key, src, out, remove, removed, add, added);
+            else if (removed == 2 && added == 1) /* capture */
+                apply_deltas<2, 1>(layer, key, src, out, remove, removed, add, added);
+            else if (removed == 2 && added == 2) /* castling */
+                apply_deltas<2, 2>(layer, key, src, out, remove, removed, add, added);
+            else
+                apply_deltas(layer, key, src, out, remove, removed, add, added);
         }
 
 
         /** Compute 1st layer output from scratch at root */
         template <typename LA>
-        INLINE void full_update(const LA& layer, const State& state, int bucket)
+        INLINE void full_update(const LA& layer, const State& state)
         {
             int add_inputs[MAX_ACTIVE_INPUTS];
             int a_idx = 0;
             for_each_piece_input(state, [&](int i) { add_inputs[a_idx++] = i; });
 
-            ALIGN int16_t bias[OUTPUTS];
-            memcpy(bias, layer._b, sizeof(layer._b));
-            memcpy(bias + HALF, layer._b, sizeof(layer._b));
-
-            apply_deltas(layer, bucket, bias, _output, _output, NONE, 0, add_inputs, a_idx);
+            for (const auto view : { BLACK, WHITE })
+            {
+                _key[view] = view_key(state, view);
+                apply_deltas(layer, view, _key[view], layer._b, _output[view], _output[view], NONE, 0, add_inputs, a_idx);
+            }
 
             _hash = state.hash();
-            _current_bucket = bucket;
         #if DEBUG_INCREMENTAL
             memset(&_input, 0, sizeof(_input));
             one_hot_encode(state, _input);
@@ -799,8 +870,38 @@ namespace nnue
         {
             if (needs_update(state))
             {
-                full_update(layer, state, get_bucket(state));
+                full_update(layer, state);
             }
+        }
+
+        /** Rebuild one half by diffing pieces against the last position seen with the same view key */
+        template <typename LA>
+        INLINE void refresh_view(const LA& layer, const State& state, Color view, int key, RefreshEntry& entry)
+        {
+            if (!entry.valid)
+            {
+                /* empty-board entry: the diff below rebuilds from bias + all pieces */
+                memcpy(entry.output, layer._b, sizeof(layer._b));
+                entry.valid = true;
+            }
+
+            int rem[MAX_ACTIVE_INPUTS], add[MAX_ACTIVE_INPUTS];
+            int nr = 0, na = 0;
+
+            const Bitboard bbs[6] = { state.kings, state.pawns, state.knights, state.bishops, state.rooks, state.queens };
+            int i = 63;
+            for (int t = 0; t != 6; ++t)
+                for (int c = 0; c != 2; ++c)
+                {
+                    const Bitboard bb = bbs[t] & state._occupied_co[c];
+                    const Bitboard old = entry.pieces[t][c];
+                    for_each_square_r(old & ~bb, [&](Square sq) { rem[nr++] = i - sq; });
+                    for_each_square_r(bb & ~old, [&](Square sq) { add[na++] = i - sq; });
+                    entry.pieces[t][c] = bb;
+                    i += 64;
+                }
+
+            apply_deltas<DYNAMIC, DYNAMIC, true>(layer, view, key, entry.output, entry.output, _output[view], rem, nr, add, na);
         }
 
         /** Utility for incremental updates */
@@ -821,19 +922,6 @@ namespace nnue
         {
             ASSERT(needs_update(state));
             ASSERT(ancestor._hash == prev.hash());
-
-            const int bucket = get_bucket(state);
-            const int prev_bucket = ancestor._current_bucket;
-            const bool incremental = (bucket == prev_bucket);
-
-        #if DEBUG_INCREMENTAL
-            {
-                static std::atomic<bool> seen[NUM_BUCKETS][NUM_BUCKETS];
-                if (!seen[prev_bucket][bucket].exchange(true))
-                    std::cerr << "[nnue] bucket " << prev_bucket << " -> " << bucket << (bucket == prev_bucket ? " same" : " cross") << std::endl;
-            }
-        #endif /* DEBUG_INCREMENTAL */
-
             ASSERT(prev.turn != state.turn);
 
             int remove_inputs[MAX_ACTIVE_INPUTS];
@@ -864,50 +952,50 @@ namespace nnue
                 ASSERT_ALWAYS(_input[i] == temp[i]);
         #endif /* DEBUG_INCREMENTAL */
 
-            if (incremental)
+            int key[2] = { ancestor._key[BLACK], ancestor._key[WHITE] };
+            if (move && (prev.kings & BB_SQUARES[move.from_square()]))
+                key[prev.turn] = view_key(state, prev.turn);
+
+        #if DEBUG_INCREMENTAL
+            for (const auto view : { BLACK, WHITE })
             {
-                apply_move(layer, bucket, ancestor._output, _output, remove_inputs, r_idx, add_inputs, a_idx);
+                const int prev_key = ancestor._key[view];
+                static std::atomic<bool> seen[2][VIEW_KEYS][VIEW_KEYS];
+                if (!seen[view][prev_key][key[view]].exchange(true))
+                    std::cerr << "[nnue] view " << int(view) << " key " << prev_key << " -> " << key[view] << (key[view] == prev_key ? " same" : " cross") << std::endl;
+            }
+        #endif /* DEBUG_INCREMENTAL */
+
+            if (key[BLACK] == ancestor._key[BLACK] && key[WHITE] == ancestor._key[WHITE])
+            {
+                apply_move(layer, key, ancestor._output, _output, remove_inputs, r_idx, add_inputs, a_idx);
             }
             else
             {
-                auto& entry = refresh.entry[bucket];
-
-                if (!entry.valid)
+                for (const auto view : { BLACK, WHITE })
                 {
-                    /* empty-board entry: the diff below rebuilds from bias + all pieces */
-                    memcpy(entry.output, layer._b, sizeof(layer._b));
-                    memcpy(entry.output + HALF, layer._b, sizeof(layer._b));
-                    entry.valid = true;
+                    if (key[view] == ancestor._key[view])
+                        apply_move(layer, view, key[view], ancestor._output[view], _output[view], remove_inputs, r_idx, add_inputs, a_idx);
+                    else
+                        refresh_view(layer, state, view, key[view], refresh.entry[view][key[view]]);
                 }
-
-                int rem[MAX_ACTIVE_INPUTS], add[MAX_ACTIVE_INPUTS];
-                int nr = 0, na = 0;
-
-                const Bitboard bbs[6] = { state.kings, state.pawns, state.knights, state.bishops, state.rooks, state.queens };
-                int i = 63;
-                for (int t = 0; t != 6; ++t)
-                    for (int c = 0; c != 2; ++c)
-                    {
-                        const Bitboard bb = bbs[t] & state._occupied_co[c];
-                        const Bitboard old = entry.pieces[t][c];
-                        for_each_square_r(old & ~bb, [&](Square sq) { rem[nr++] = i - sq; });
-                        for_each_square_r(bb & ~old, [&](Square sq) { add[na++] = i - sq; });
-                        entry.pieces[t][c] = bb;
-                        i += 64;
-                    }
-
-                apply_deltas<DYNAMIC, DYNAMIC, true>(layer, bucket, entry.output, entry.output, _output, rem, nr, add, na);
             }
 
+            _key[BLACK] = key[BLACK];
+            _key[WHITE] = key[WHITE];
+
             _hash = state.hash();
-            _current_bucket = bucket;
 
         #if DEBUG_INCREMENTAL
             // Validate the incremental result against a full recompute
             Accumulator full;
-            full.full_update(layer, state, bucket);
-            for (int i = 0; i != OUTPUTS; ++i)
-                ASSERT_ALWAYS(full._output[i] == _output[i]);
+            full.full_update(layer, state);
+            for (const auto view : { BLACK, WHITE })
+            {
+                ASSERT_ALWAYS(full._key[view] == _key[view]);
+                for (int i = 0; i != HALF; ++i)
+                    ASSERT_ALWAYS(full._output[view][i] == _output[view][i]);
+            }
         #endif /* DEBUG_INCREMENTAL */
         }
 

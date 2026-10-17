@@ -26,7 +26,8 @@ namespace nnue
     /* Define the network architecture
      *
      *  768 piece-square inputs (white view)   same inputs, black view (idx ^ 120)
-     *           |  bucket b, rows of L1A                      |  bucket mirror(b)
+     *           |  own king bucket, rows of L1A               |  own king bucket
+     *           |  king on e-h: files flipped (idx ^ 7)       |  king on e-h: files flipped (idx ^ 7)
      *           v                                             v
      *    white half: 1536 x int16                      black half: 1536 x int16
      *           \_____________________________________________/

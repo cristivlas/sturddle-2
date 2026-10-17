@@ -44,7 +44,7 @@ def popcount64(a):
 
 
 def compute_buckets(packed):
-    """Pawn dimension of nnue.h get_bucket(); the king dimension tracks position quality, not material."""
+    """Pawn-count buckets, as chess::pawn_bucket()."""
     pawns = popcount64(packed[:, COL_WP]) + popcount64(packed[:, COL_BP])
     return np.where(pawns <= 4, 0, np.minimum((pawns - 1) // 4, 3))
 

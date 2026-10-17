@@ -454,7 +454,7 @@ namespace chess
     }
 
 
-    /* Pawn-count bucket, shared with the NNUE bucketing (nnue.h get_bucket) */
+    /* Pawn-count bucket, for piece grading */
     INLINE int pawn_bucket(Bitboard pawns)
     {
         const int p = popcount(pawns);
