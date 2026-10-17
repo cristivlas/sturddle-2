@@ -81,10 +81,6 @@
     #define DEBUG_INCREMENTAL false
 #endif
 
-#ifndef NNUE_SINGLE_BUCKET
-    #define NNUE_SINGLE_BUCKET true
-#endif
-
 namespace nnue
 {
     static const std::string instrset = ARCH ARCH_FMA ARCH_VNNI ARCH_BF16;
@@ -634,12 +630,6 @@ namespace nnue
     #endif /* __ARM__ */
         static_assert(HALF % VecShort::size() == 0);
 
-        struct Bucket
-        {
-            ALIGN int16_t output[OUTPUTS] = { };
-            uint64_t hash = 0;
-        };
-
         /* Per-thread cache: last accumulator computed in each bucket, plus its
          * piece bitboards, so bucket changes refresh by diffing pieces against
          * a same-bucket position instead of rebuilding all active inputs.
@@ -656,31 +646,21 @@ namespace nnue
             RefreshEntry entry[NUM_BUCKETS];
         };
 
-        /* Single slot trades the per-bucket output cache for a smaller footprint. */
-        static constexpr int SLOTS = NNUE_SINGLE_BUCKET ? 1 : NUM_BUCKETS;
-
-        Bucket _bucket[SLOTS];
+        ALIGN int16_t _output[OUTPUTS] = { };
+        uint64_t _hash = 0;
         int _current_bucket = 0;
 
-        INLINE Bucket& slot(int bucket) { return _bucket[NNUE_SINGLE_BUCKET ? 0 : bucket]; }
-        INLINE const Bucket& slot(int bucket) const { return _bucket[NNUE_SINGLE_BUCKET ? 0 : bucket]; }
-
-        INLINE const int16_t (&output() const)[OUTPUTS] { return slot(_current_bucket).output; }
+        INLINE const int16_t (&output() const)[OUTPUTS] { return _output; }
 
     #if DEBUG_INCREMENTAL
         /* remember previous inputs, for debugging */
         ALIGN input_t _input[ACTIVE_INPUTS] = { }; /* one-hot encoding */
-
-        /* full-width shadow of the per-bucket hashes, so the bucket-vs-hash
-         * equivalence can be checked even when SLOTS == 1 (single-bucket mode)
-         */
-        uint64_t _ref_hash[NUM_BUCKETS] = { };
     #endif /* DEBUG_INCREMENTAL */
 
 
         INLINE bool needs_update(const State& state) const
         {
-            return state.hash() != slot(_current_bucket).hash;
+            return state.hash() != _hash;
         }
 
         /* 32 pieces + bias per output must not overflow int16 */
@@ -804,15 +784,13 @@ namespace nnue
             memcpy(bias, layer._b, sizeof(layer._b));
             memcpy(bias + HALF, layer._b, sizeof(layer._b));
 
-            auto& out = slot(bucket).output;
-            apply_deltas(layer, bucket, bias, out, out, NONE, 0, add_inputs, a_idx);
+            apply_deltas(layer, bucket, bias, _output, _output, NONE, 0, add_inputs, a_idx);
 
-            slot(bucket).hash = state.hash();
+            _hash = state.hash();
             _current_bucket = bucket;
         #if DEBUG_INCREMENTAL
             memset(&_input, 0, sizeof(_input));
             one_hot_encode(state, _input);
-            _ref_hash[bucket] = state.hash();
         #endif
         }
 
@@ -842,18 +820,13 @@ namespace nnue
             RefreshTable& refresh)
         {
             ASSERT(needs_update(state));
-            ASSERT(ancestor.slot(ancestor._current_bucket).hash == prev.hash());
+            ASSERT(ancestor._hash == prev.hash());
 
             const int bucket = get_bucket(state);
             const int prev_bucket = ancestor._current_bucket;
             const bool incremental = (bucket == prev_bucket);
 
         #if DEBUG_INCREMENTAL
-            /* bucket==prev_bucket must match the per-bucket-hash predicate; _ref_hash shadows it for SLOTS==1 */
-            ASSERT_ALWAYS(incremental == (ancestor._ref_hash[bucket] == prev.hash()));
-          #if !NNUE_SINGLE_BUCKET
-            ASSERT_ALWAYS(ancestor._ref_hash[bucket] == ancestor._bucket[bucket].hash);
-          #endif /* !NNUE_SINGLE_BUCKET */
             {
                 static std::atomic<bool> seen[NUM_BUCKETS][NUM_BUCKETS];
                 if (!seen[prev_bucket][bucket].exchange(true))
@@ -893,9 +866,9 @@ namespace nnue
 
             if (incremental)
             {
-                apply_move(layer, bucket, ancestor.slot(bucket).output, slot(bucket).output, remove_inputs, r_idx, add_inputs, a_idx);
+                apply_move(layer, bucket, ancestor._output, _output, remove_inputs, r_idx, add_inputs, a_idx);
             }
-            else if (slot(bucket).hash != state.hash())
+            else
             {
                 auto& entry = refresh.entry[bucket];
 
@@ -923,20 +896,18 @@ namespace nnue
                         i += 64;
                     }
 
-                apply_deltas<DYNAMIC, DYNAMIC, true>(layer, bucket, entry.output, entry.output, slot(bucket).output, rem, nr, add, na);
+                apply_deltas<DYNAMIC, DYNAMIC, true>(layer, bucket, entry.output, entry.output, _output, rem, nr, add, na);
             }
 
-            slot(bucket).hash = state.hash();
+            _hash = state.hash();
             _current_bucket = bucket;
 
         #if DEBUG_INCREMENTAL
-            _ref_hash[bucket] = state.hash();
-
             // Validate the incremental result against a full recompute
             Accumulator full;
             full.full_update(layer, state, bucket);
             for (int i = 0; i != OUTPUTS; ++i)
-                ASSERT_ALWAYS(full.slot(bucket).output[i] == slot(bucket).output[i]);
+                ASSERT_ALWAYS(full._output[i] == _output[i]);
         #endif /* DEBUG_INCREMENTAL */
         }
 
