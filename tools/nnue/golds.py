@@ -7,7 +7,7 @@ import chess
 GOLDS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golds.json")
 
 # Pawn dimension: 0 -> 0-4, 1 -> 5-8, 2 -> 9-12, 3 -> 13-16 pawns.
-# King-file dimension (composed x4): both-left, W-left/B-right, W-right/B-left, both-right.
+# King-side dimension (composed x4): both-left, W-left/B-right, W-right/B-left, both-right.
 TESTS = [
     # Pawn bucket 3 (13-16 pawns): opening/early middlegame
     chess.STARTING_FEN,  # 16 pawns
@@ -28,7 +28,7 @@ TESTS = [
     "8/8/4k3/4p3/4P3/4K3/8/8 w - - 0 1",  # 2 pawns
     "8/5k2/8/3p4/3P4/2K1P3/8/8 w - - 0 1",  # 3 pawns
     "4k3/8/8/8/8/8/4K3/4R3 w - - 0 1",  # 0 pawns - K+R vs K
-    # King-file coverage (all in pawn bucket 0, so composed bucket == king bucket):
+    # King-side coverage (all in pawn bucket 0, so composed bucket == king bucket):
     "1k6/3p4/8/8/8/8/3P4/2K5 w - - 0 1",  # king bucket 0: both left (WK c1, BK b8)
     "6k1/3p4/8/8/8/8/3P4/2K5 w - - 0 1",  # king bucket 1: W left, B right (WK c1, BK g8)
     "1k6/3p4/8/8/8/8/3P4/6K1 w - - 0 1",  # king bucket 2: W right, B left (WK g1, BK b8)
@@ -46,9 +46,8 @@ def load_golds():
 
 def _generate(model_path):
     """Run the saved Keras model over TESTS and write golds.json keyed by FEN."""
-    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
     import numpy as np
-    import tensorflow as tf
+    import train
 
     def encode(board):
         mask_black = board.occupied_co[chess.BLACK]
@@ -67,18 +66,7 @@ def _generate(model_path):
         array = np.asarray([bitboards], dtype=np.uint64).ravel()
         return np.append(array, np.uint64(board.turn))
 
-    model = tf.keras.models.load_model(
-        model_path,
-        custom_objects={
-            "ACCUMULATOR_SIZE": 2048,
-            "POOL_SIZE": 8,
-            "combined_loss": None,
-            "scaled_sparse_categorical_crossentropy": None,
-            "top": None,
-            "top_3": None,
-            "top_5": None,
-        },
-    )
+    model = train.load_saved_model(model_path)
 
     print(
         "EXPORT ORDER:",

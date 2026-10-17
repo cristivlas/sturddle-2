@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""
-Per-bucket report for the pawn x king-file bucketing (16 buckets).
-
-Histogram of training samples per bucket, and optionally per-bucket eval error
-for one or more trained models. Buckets match the engine (nnue.h get_bucket)
-and the trainer (train-x.py compute_bucket_id).
-
-Usage:
-    python bucket_report.py data.h5                       # histogram only
-    python bucket_report.py data.h5 -m models/AWD models/DDAY --sample 0.05
-"""
-
 import argparse
 import queue
 import threading
@@ -47,23 +35,16 @@ def bucket_ids(x):
 
 def load_models(paths):
     import tensorflow as tf
+    import train
 
-    custom_objects = {
-        "combined_loss": None,
-        "scaled_sparse_categorical_crossentropy": None,
-        "top": None,
-        "top_3": None,
-        "top_5": None,
-    }
     fns = []
     for p in paths:
         try:
-            model = tf.keras.models.load_model(p, custom_objects=custom_objects, compile=False)
+            model = train.load_saved_model(p)
             # compile the forward pass once; fixed batch shape means a single trace
             fns.append(tf.function(lambda x, m=model: m(x, training=False)))
         except Exception as e:
-            # Lambda layers referencing trainer globals (e.g. POOL_SIZE) break keras
-            # deserialization; the raw SavedModel graph needs no Python
+            # raw SavedModel graph, no keras layers needed
             print(f"{p}: {e.__class__.__name__} from keras loader, using raw SavedModel graph")
             loaded = tf.saved_model.load(p)
             fns.append(lambda x, m=loaded: m(x, training=False))

@@ -1,22 +1,4 @@
 #!/usr/bin/env python3
-"""
-Fit the optimal --outcome-scale from training data.
-
-The blend loss calibrates evals to game outcomes via P(win) = sigmoid(eval / S).
-This tool fits S directly: single-parameter logistic regression (Newton on
-beta = 1/S) minimizing cross-entropy between sigmoid(beta * cp) and the
-recorded outcome, overall and per bucket. Evals and outcomes are both STM-POV,
-matching the loss. S is also reported split by side-to-move (report only;
-sidecars are unchanged).
-
-Evals are first divided by the same per-bucket label-scale ratios the trainers
-apply: per-member sidecar profiles (<member>.h5.profile.json) are auto-resolved
-for virtual datasets, so the fitted S is directly the value to train with.
-
-Usage:
-    ./outcome_scale.py mix.h5 --sample 0.02
-"""
-
 import argparse
 import json
 import os
@@ -64,7 +46,15 @@ def load_ratios(path):
     return ratios
 
 
-def member_profile_table(data, filepath):
+def find_sidecar(path, alt_dir):
+    if alt_dir:
+        alt = os.path.join(alt_dir, os.path.basename(path) + ".profile.json")
+        if os.path.exists(alt):
+            return alt
+    return path + ".profile.json"
+
+
+def member_profile_table(data, filepath, alt_dir):
     """(member start rows, (members x 16) ratio matrix, member paths) — same resolution as
     the trainers: per-member sidecar, else the container's sidecar, else all-ones. One level."""
     if data.is_virtual:
@@ -80,17 +70,20 @@ def member_profile_table(data, filepath):
     assert members[0][0] == 0, "first member must start at row 0"
 
     default = np.ones(16, dtype=np.float32)
-    own_sidecar = filepath + ".profile.json"
+    own_sidecar = find_sidecar(filepath, alt_dir)
     if os.path.exists(own_sidecar):
         container = load_ratios(own_sidecar)
         if container is not None:
             default = container
 
     cache = {}
+    owners = {own_sidecar: filepath}
     matched = 0
     profiles = []
     for _, path in members:
-        sidecar = path + ".profile.json"
+        sidecar = find_sidecar(path, alt_dir)
+        if owners.setdefault(sidecar, path) != path:
+            raise ValueError(f"{sidecar}: ambiguous, matches {owners[sidecar]} and {path}")
         if sidecar not in cache:
             own = load_ratios(sidecar) if (path != filepath and os.path.exists(sidecar)) else None
             # A member sidecar without ratios (e.g. an outcome_scale-only file this tool wrote)
@@ -135,7 +128,7 @@ def main(args):
                 member_profiles = np.ones((1, 16), dtype=np.float32)
                 member_paths = [path]
             else:
-                member_starts, member_profiles, member_paths = member_profile_table(data, path)
+                member_starts, member_profiles, member_paths = member_profile_table(data, path, args.alt_profile_dir)
             num_batches = max(1, len(data) // args.batch_size)
             indices = np.arange(num_batches)
             if args.sample:
@@ -148,7 +141,7 @@ def main(args):
                 block = data[start : start + args.batch_size, : FEATURE_COUNT + 2]
                 cp = block[:, FEATURE_COUNT].astype(np.int64)  # STM POV
                 y = block[:, FEATURE_COUNT + 1].astype(np.float32) / 2.0  # STM POV: 0=loss, 0.5=draw, 1=win
-                mask = np.abs(cp) <= args.filter if args.filter else np.ones(len(cp), dtype=bool)
+                mask = np.abs(cp) < args.filter if args.filter else np.ones(len(cp), dtype=bool)
                 buckets = bucket_ids(block[:, :FEATURE_COUNT])[mask]
                 member_ids = (
                     np.searchsorted(member_starts, np.arange(start, start + len(block))[mask], side="right") - 1
@@ -200,6 +193,15 @@ def main(args):
 
     if args.update_profile:
         # Fit each member on its own rows and write its sidecar (thin buckets -> member overall)
+        sidecars = [mpath + ".profile.json" for mpath in member_paths]
+        if args.alt_profile_dir:
+            sidecars = [os.path.join(args.alt_profile_dir, os.path.basename(s)) for s in sidecars]
+            container = args.input[0]
+            owners = {os.path.join(args.alt_profile_dir, os.path.basename(container) + ".profile.json"): container}
+            for sidecar, mpath in zip(sidecars, member_paths):
+                if owners.setdefault(sidecar, mpath) != mpath:
+                    raise ValueError(f"{sidecar}: ambiguous, matches {owners[sidecar]} and {mpath}")
+            os.makedirs(args.alt_profile_dir, exist_ok=True)
         for m, mpath in enumerate(member_paths):
             msel = member_ids == m
             if not msel.any():
@@ -216,7 +218,7 @@ def main(args):
                 sel = msel & (buckets == b)
                 sb = fit_scale(cp[sel], y[sel]) if sel.sum() >= args.min_n else float("nan")
                 scales.append(round(float(sb if np.isfinite(sb) else ms), 1))
-            sidecar = mpath + ".profile.json"
+            sidecar = sidecars[m]
             profile = {}
             if os.path.exists(sidecar):
                 with open(sidecar) as f:
@@ -247,13 +249,17 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description="Fit the outcome sigmoid scale S from game results, per bucket, after applying sidecar ratios.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument("input", nargs="+", help="h5 data file(s); the fit pools all of them")
     parser.add_argument("-b", "--batch-size", type=int, default=16384)
     parser.add_argument("--sample", type=float, help="sampling ratio, same as the trainers")
-    parser.add_argument("--filter", type=int, help="drop rows with |raw eval| above this, like the trainers' -F")
+    parser.add_argument("--filter", type=int, help="drop rows with |raw eval| >= this, like the trainers' -F")
     parser.add_argument("--max-rows", type=int, default=20_000_000, help="cap on pooled rows (random thinning)")
     parser.add_argument("--raw", action="store_true", help="ignore sidecar profiles, fit on raw labels")
+    parser.add_argument("--alt-profile-dir", help="read <file>.profile.json here first, else next to data; write here")
     parser.add_argument(
         "--update-profile",
         action="store_true",
@@ -264,6 +270,8 @@ if __name__ == "__main__":
 
     if args.update_profile and (args.raw or len(args.input) != 1):
         parser.error("--update-profile requires a single input file and no --raw (S must be in corrected domain)")
+    if args.alt_profile_dir and not args.update_profile and not os.path.isdir(args.alt_profile_dir):
+        parser.error(f"--alt-profile-dir: {args.alt_profile_dir} not found")
 
     if args.sample:
         args.sample = max(1e-3, min(1.0, args.sample))

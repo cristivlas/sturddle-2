@@ -17,7 +17,7 @@ import h5py
 import numpy as np
 
 # https://stackoverflow.com/questions/35911252/disable-tensorflow-debugging-information
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
 
 # uncomment (or set in environment) for newer TF versions (> 2.15.1 ?) that use Keras 3
 # os.environ['TF_USE_LEGACY_KERAS'] = '1'
@@ -47,12 +47,12 @@ SCALE = 100.0
 LIGHT_SQUARES = np.uint64(0x55AA55AA55AA55AA)
 DARK_SQUARES = np.uint64(0xAA55AA55AA55AA55)
 
-# Squares on files e-h, for king-file bucketing
+# Squares on files e-h, for king-side bucketing
 FILES_EFGH = np.uint64(0xF0F0F0F0F0F0F0F0)
 
 
 def scale_buckets(x):
-    """Per-sample pawn x king-file bucket ids, same scheme as BucketShift / nnue.h get_bucket."""
+    """Per-sample pawn x king-side bucket ids, same scheme as BucketShift / nnue.h get_bucket."""
     pawns = popcount(x[:, 2]) + popcount(x[:, 3])
     pawn_id = np.where(pawns <= 4, 0, np.minimum((pawns - 1) // 4, 3))
     wk_right = (x[:, 1] & FILES_EFGH) != 0
@@ -153,13 +153,104 @@ def configure_logging(args):
     return log_level
 
 
-_stm_pool_cls = None
+_custom_layers = None
 
-def stm_pool_class():
-    """StmPool, defined lazily (the tensorflow import is deferred); cached so save and reload see one class."""
-    global _stm_pool_cls
-    if _stm_pool_cls is None:
-        @tf.keras.utils.register_keras_serializable(package='sturddle')
+def custom_layers():
+    # lazy because tensorflow is imported on demand; cached so save and reload share classes
+    global _custom_layers
+    if _custom_layers is None:
+        register = tf.keras.utils.register_keras_serializable(package='sturddle')
+
+        @register
+        class QConstraint(tf.keras.constraints.Constraint):
+            def __init__(self, qmin, qmax, quantize_round):
+                self.qmin = qmin
+                self.qmax = qmax
+                self.quantize_round = quantize_round
+
+            def __call__(self, w):
+                if self.quantize_round:
+                    w = tf.round(w * Q_SCALE) / Q_SCALE
+                w = tf.clip_by_value(w, self.qmin, self.qmax)
+                return w
+
+            def get_config(self):
+                return {'qmin': self.qmin, 'qmax': self.qmax, 'quantize_round': self.quantize_round}
+
+        @register
+        class Unpack(tf.keras.layers.Layer):
+            def call(self, packed):
+                bitboards, turn = packed[:, :12], packed[:,-1:]
+
+                f = tf.concat([tf_unpack_bits(bitboards), turn], axis=1)
+                return tf.cast(f, tf.float32)
+
+        @register
+        class BucketShift(tf.keras.layers.Layer):
+            def __init__(self, num_buckets, **kwargs):
+                super().__init__(**kwargs)
+                self.num_buckets = num_buckets
+
+            def call(self, features):
+                # 64 features per bitboard, [black, white] per piece: kings 0:128, pawns 128:256
+                pawn_bits = features[:, 128:256]
+                pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
+
+                # Pawn dimension: fat bucket 0 spans {0,1,2,3,4} pawns; every bucket above spans 4 pawns.
+                pawn_id = tf.cast(
+                    tf.where(
+                        pawn_count <= 4.0,
+                        tf.zeros_like(pawn_count),
+                        tf.minimum((pawn_count - 1.0) // 4.0, 3.0),
+                    ),
+                    tf.int32
+                )
+
+                # King-side dimension: feature idx holds bitboard bit 63 - idx; files e-h are kingside
+                right_mask = tf.constant([1.0 if ((63 - idx) % 8) >= 4 else 0.0 for idx in range(64)], dtype=tf.float32)
+                black_king = tf.cast(features[:, 0:64], tf.float32)
+                white_king = tf.cast(features[:, 64:128], tf.float32)
+                wk_right = tf.cast(tf.reduce_sum(white_king * right_mask, axis=1), tf.int32)
+                bk_right = tf.cast(tf.reduce_sum(black_king * right_mask, axis=1), tf.int32)
+                king_id = wk_right * 2 + bk_right
+
+                bucket_id = pawn_id * 4 + king_id
+
+                num_features = tf.shape(features)[1]
+                bucket_mask = tf.one_hot(bucket_id, self.num_buckets, dtype=features.dtype)
+                bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
+
+                features_tiled = tf.tile(tf.expand_dims(features, 1), [1, self.num_buckets, 1])
+                sparse = features_tiled * bucket_mask
+
+                return tf.reshape(sparse, [-1, self.num_buckets * num_features])
+
+            def get_config(self):
+                config = super().get_config()
+                config['num_buckets'] = self.num_buckets
+                return config
+
+        @register
+        class Columns(tf.keras.layers.Layer):
+            def __init__(self, start, stop, **kwargs):
+                super().__init__(**kwargs)
+                self.start = start
+                self.stop = stop
+
+            def call(self, x):
+                return x[:, self.start:self.stop]
+
+            def get_config(self):
+                config = super().get_config()
+                config.update({'start': self.start, 'stop': self.stop})
+                return config
+
+        @register
+        class BishopsAndOccupancy(tf.keras.layers.Layer):
+            def call(self, x):
+                return tf.concat([x[:, 384:512], tf.reduce_sum(tf.reshape(x[:, :768], [-1, 6, 128]), axis=1)], axis=1)
+
+        @register
         class StmPool(tf.keras.layers.Layer):
             """Learned pooling, one weight set per side to move; init 1/POOL_SIZE == average pooling."""
             def build(self, input_shape):
@@ -176,23 +267,13 @@ def stm_pool_class():
                 reshaped = tf.reshape(x, (-1, tf.shape(x)[1] // POOL_SIZE, POOL_SIZE))
                 return tf.reduce_sum(reshaped * tf.cast(w, x.dtype), axis=-1)
 
-        _stm_pool_cls = StmPool
-    return _stm_pool_cls
+        _custom_layers = {
+            cls.__name__: cls for cls in (QConstraint, Unpack, BucketShift, Columns, BishopsAndOccupancy, StmPool)
+        }
+    return _custom_layers
 
 
 def make_model(args, strategy):
-    class QConstraint(tf.keras.constraints.Constraint):
-        def __init__(self, qmin, qmax, quantize_round=args.quantize_round):
-            self.qmin = qmin
-            self.qmax = qmax
-            self.quantize_round = quantize_round
-
-        def __call__(self, w):
-            if self.quantize_round:
-                w = tf.round(w * Q_SCALE) / Q_SCALE
-            w = tf.clip_by_value(w, self.qmin, self.qmax)
-            return w
-
     @tf.function
     def soft_clip(x, clip_value):
         ALPHA = 0.1
@@ -267,81 +348,19 @@ def make_model(args, strategy):
         loss = loss_eval * eval_weight + loss_outcome * outcome_weight
         return tf.reduce_mean(loss)
 
-
-    class Unpack(tf.keras.layers.Layer):
-        def __init__(self, num_outputs, **kwargs):
-            super(Unpack, self).__init__(**kwargs)
-            self.num_outputs = num_outputs
-
-        def call(self, packed):
-            bitboards, turn = packed[:, :12], packed[:,-1:]
-
-            f = tf.concat([tf_unpack_bits(bitboards), turn], axis=1)
-            return tf.cast(f, tf.float32)
-
-    class BucketShift(tf.keras.layers.Layer):
-        def __init__(self, num_buckets, **kwargs):
-            super(BucketShift, self).__init__(**kwargs)
-            self.num_buckets = num_buckets
-
-        def call(self, features):
-            # Bitboards are encoded [black, white] per piece (black first).
-            # Each bitboard unpacks to 64 bits, so:
-            # - Piece 0 (black king):  features[:, 0:64]
-            # - Piece 1 (white king):  features[:, 64:128]
-            # - Piece 2 (black pawns): features[:, 128:192]
-            # - Piece 3 (white pawns): features[:, 192:256]
-            pawn_bits = features[:, 128:256]  # Shape: (batch, 128)
-
-            # Count total pawns on the board
-            pawn_count = tf.reduce_sum(tf.cast(pawn_bits, tf.float32), axis=1)
-
-            # Pawn dimension: fat bucket 0 spans {0,1,2,3,4} pawns; every bucket above spans 4 pawns.
-            pawn_id = tf.cast(
-                tf.where(
-                    pawn_count <= 4.0,
-                    tf.zeros_like(pawn_count),
-                    tf.minimum((pawn_count - 1.0) // 4.0, 3.0),
-                ),
-                tf.int32
-            )
-
-            # King-file dimension: board split into left (files a-d) / right (files e-h).
-            # Feature index idx within a 64-block holds bitboard bit (63 - idx); file = bit % 8.
-            right_mask = tf.constant([1.0 if ((63 - idx) % 8) >= 4 else 0.0 for idx in range(64)], dtype=tf.float32)
-            black_king = tf.cast(features[:, 0:64], tf.float32)
-            white_king = tf.cast(features[:, 64:128], tf.float32)
-            wk_right = tf.cast(tf.reduce_sum(white_king * right_mask, axis=1), tf.int32)
-            bk_right = tf.cast(tf.reduce_sum(black_king * right_mask, axis=1), tf.int32)
-            king_id = wk_right * 2 + bk_right
-
-            bucket_id = pawn_id * 4 + king_id
-
-            # tf.print("\nPawn count:", pawn_count, "\nBucket id:", bucket_id)
-
-            # Shift features into N buckets
-            num_features = tf.shape(features)[1]
-            bucket_mask = tf.one_hot(bucket_id, self.num_buckets, dtype=features.dtype)
-            bucket_mask = tf.tile(tf.expand_dims(bucket_mask, 2), [1, 1, num_features])
-
-            features_tiled = tf.tile(tf.expand_dims(features, 1), [1, self.num_buckets, 1])
-            sparse = features_tiled * bucket_mask
-
-            return tf.reshape(sparse, [-1, self.num_buckets * num_features])
-
+    layers = custom_layers()
+    QConstraint, Columns = layers['QConstraint'], layers['Columns']
 
     with strategy.scope():
         ACTIVATION = tf.keras.activations.relu
         K_INIT = tf.keras.initializers.HeNormal
 
-        # Define the input layer
         input_layer = Input(shape=(13,), dtype=tf.uint64, name='input')
-        unpack_layer = Unpack(args.hot_encoding, name='unpack')(input_layer)
+        unpack_layer = layers['Unpack'](name='unpack')(input_layer)
 
-        # Apply bucketing
-        bucketed = BucketShift(MAIN_BUCKETS, name='bucket_shift')(unpack_layer)
+        bucketed = layers['BucketShift'](MAIN_BUCKETS, name='bucket_shift')(unpack_layer)
 
-        constr_a = QConstraint(Q_MIN_A, Q_MAX_A)
+        constr_a = QConstraint(Q_MIN_A, Q_MAX_A, args.quantize_round)
         hidden_1a = Dense(
             ACCUMULATOR_SIZE,
             activation=ACTIVATION,
@@ -351,11 +370,11 @@ def make_model(args, strategy):
             bias_constraint=constr_a,
         )(bucketed)
 
-        constr_b = QConstraint(Q_MIN_B, Q_MAX_B)
+        constr_b = QConstraint(Q_MIN_B, Q_MAX_B, args.quantize_round)
 
         # Hidden layer 1b (kings and pawns) directly modulates the pooled main path.
         # Output width matches pooled (ACCUMULATOR_SIZE / POOL_SIZE) for 1:1 modulation.
-        input_1b = Lambda(lambda x: x[:, :256], name='kings_and_pawns')(unpack_layer)
+        input_1b = Columns(0, 256, name='kings_and_pawns')(unpack_layer)
         hidden_1b = Dense(
             ACCUMULATOR_SIZE // POOL_SIZE,
             activation=None,
@@ -369,11 +388,8 @@ def make_model(args, strategy):
         if args.hidden_1c:
             # Hidden layer 1c (bishops + per-color occupancy) adds to the 1b modulation.
             # Zero init: importing pre-1c weights leaves the net unchanged (warm start).
-            constr_c = QConstraint(Q_MIN_C, Q_MAX_C)
-            input_1c = Lambda(
-                lambda x: tf.concat([x[:, 384:512], tf.reduce_sum(tf.reshape(x[:, :768], [-1, 6, 128]), axis=1)], axis=1),
-                name='bishops_and_occupancy',
-            )(unpack_layer)
+            constr_c = QConstraint(Q_MIN_C, Q_MAX_C, args.quantize_round)
+            input_1c = layers['BishopsAndOccupancy'](name='bishops_and_occupancy')(unpack_layer)
             hidden_1c = Dense(
                 ACCUMULATOR_SIZE // POOL_SIZE,
                 activation=None,
@@ -385,8 +401,8 @@ def make_model(args, strategy):
             )(input_1c)
             mod = Add(name='modulation_sum')([hidden_1b, hidden_1c])
 
-        turn = Lambda(lambda x: x[:, -1:], name='turn')(unpack_layer)
-        pooled = stm_pool_class()(name='pool')([hidden_1a, turn])
+        turn = Columns(-1, None, name='turn')(unpack_layer)
+        pooled = layers['StmPool'](name='pool')([hidden_1a, turn])
 
         # Modulate pooled by 1b (+ 1c): pooled * (1 + mod)
         modulation = Multiply(name='modulation')([pooled, mod])
@@ -408,7 +424,6 @@ def make_model(args, strategy):
 
         eval_output = Dense(1, name='out', dtype='float32')(hidden_3)
 
-        # Create the model
         model = tf.keras.models.Model(inputs=input_layer, outputs=eval_output, name=args.name)
 
         if args.optimizer in ['adam', 'amsgrad']:
@@ -1001,27 +1016,22 @@ def dataset_from_file(args, filepath, strategy, callbacks):
 
 
 def load_model(path, pool_size=None):
-    custom_objects = {
-        'combined_loss': None,
-        'scaled_sparse_categorical_crossentropy': None,
-        'top': None,
-        'top_3': None,
-        'top_5': None,
-        'StmPool': stm_pool_class(),
-    }
-
-    # Older saved models bind the module-global POOL_SIZE in their 'pool' Lambda;
-    # newer ones use it in StmPool.build and for hidden_1b's width. Either way,
-    # temporarily restore the source model's POOL_SIZE so the saved graph
-    # reconstructs with the correct pooled width.
+    # StmPool.build reads POOL_SIZE
     global POOL_SIZE
     saved = POOL_SIZE
     if pool_size is not None:
         POOL_SIZE = pool_size
     try:
-        return tf.keras.models.load_model(path, custom_objects=custom_objects)
+        return tf.keras.models.load_model(path, custom_objects=custom_layers(), compile=False)
     finally:
         POOL_SIZE = saved
+
+
+def load_saved_model(path):
+    # for tools; imports tensorflow on demand
+    global tf
+    import tensorflow as tf
+    return load_model(path)
 
 
 def set_weights(from_model, to_model):
@@ -1207,7 +1217,7 @@ if __name__ == '__main__':
         parser.add_argument('--clip-norm', type=float, default=1.0, help='gradient clipping norm')
 
         parser.add_argument('--alt-model', help='Path to another model to load/merge weights from')
-        parser.add_argument('--alt-pool-size', type=int, default=POOL_SIZE, help='POOL_SIZE the --alt-model was trained with (for loading its pool Lambda)')
+        parser.add_argument('--alt-pool-size', type=int, default=POOL_SIZE, help='POOL_SIZE the --alt-model was trained with')
 
         parser.add_argument('--profile', help='JSON dataset profile with per-bucket label scale ratios')
 

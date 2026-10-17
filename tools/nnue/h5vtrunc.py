@@ -77,7 +77,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('input_file', help='Input HDF5 file')
-    parser.add_argument('-n', '--num-records', type=int, help='Number of records to keep')
+    parser.add_argument('-n', '--num-records', type=int, required=True, help='Number of records to keep')
     parser.add_argument('-o', '--output-file', help='Output file (default: input_truncated.h5)')
     parser.add_argument('-d', '--dataset-name', nargs='?', default='data', help='Dataset name (default: data)')
 

@@ -1,24 +1,4 @@
 #!/usr/bin/env python3
-"""
-Build a per-bucket label-scale profile (JSON) from label_check report(s).
-
-Parses the per-file bucket tables, aggregates |label| and |engine| sums
-weighted by sample count, and emits ratio = sum|label| / sum|engine| per
-bucket. Buckets with fewer than --min-n samples fall back to the overall
-ratio. The output feeds train.py --profile.
-
-With --reference, ratios are normalized per bucket by a reference dataset's
-ratios (selected from the same reports, --match-style substrings): the
-referee's own scale cancels out, so labels land in the reference's units
-rather than the referee's. --amplify scales the resulting evals uniformly
-(ratios are divided by it; the trainers divide labels by ratio).
-
-Usage:
-    ./mkprofile.py report.txt [more_reports...] --match leela T80 --out profile.json
-    ./mkprofile.py report.txt --files group.txt --out group.h5.profile.json
-    ./mkprofile.py report.txt --match T80 --reference spsa --out T80.h5.profile.json
-"""
-
 import argparse
 import json
 import os
@@ -26,21 +6,25 @@ import re
 import sys
 
 BUCKETS = 16
+BAND_BUCKETS = 4  # QQ/QK/KQ/KK king sides per pawn band
 ROW_RGX = re.compile(
     r"^\s+(\d+)\s+\S+\s+(?:QQ|QK|KQ|KK)\s+(\d+)\s+"
     r"[-+.\dnan]+\s+[-+.\dnan]+\s+[-+.\dnan]+\s+(\d+)\s+(\d+)\s+[.\dnan]+\s*$"
 )
+SUMMARY_RGX = re.compile(r"^\s*([0-9.]+|nan)\s+(-?[0-9.]+|nan)\s")
 
 
 def parse_reports(reports):
     """{file path: ([label sums], [engine sums], [counts]) per bucket}."""
     tables = {}
-    current = None
+    source = {}
     for rp in reports:
+        current = None
         for line in open(rp):
-            if line[:1] not in ("", " ", "\t", "\n") and line.rstrip().endswith(".h5"):
+            if line[:1] not in ("", " ", "\t", "\n") and line.rstrip().endswith(".h5") and not SUMMARY_RGX.match(line):
                 current = line.strip()
                 tables.setdefault(current, ([0.0] * BUCKETS, [0.0] * BUCKETS, [0] * BUCKETS))
+                source[current] = rp
                 continue
             m = ROW_RGX.match(line)
             if not m or current is None:
@@ -50,13 +34,14 @@ def parse_reports(reports):
             label[b] += n * ml
             engine[b] += n * me
             counts[b] += n
+    empty = [f for f, (_, _, counts) in tables.items() if not sum(counts)]
+    if empty:
+        sys.exit("\n".join(f"{source[f]}: no bucket rows for {f}" for f in empty))
     return tables
 
 
-def aggregate(tables, files, min_n, what):
-    """Count-weighted per-bucket ratios over a set of files; thin/degenerate buckets fall back to overall.
-
-    Returns (ratios, counts, overall, fell_back) — fell_back marks buckets holding the overall ratio."""
+def aggregate(tables, files, min_n, blend, what):
+    """Count-weighted per-bucket ratios; thin buckets fall back to overall, or shrink toward their pawn band with blend."""
     label = [sum(tables[f][0][b] for f in files) for b in range(BUCKETS)]
     engine = [sum(tables[f][1][b] for f in files) for b in range(BUCKETS)]
     counts = [sum(tables[f][2][b] for f in files) for b in range(BUCKETS)]
@@ -64,7 +49,21 @@ def aggregate(tables, files, min_n, what):
     overall = sum(label) / sum(engine) if sum(engine) and sum(label) else 1.0
     ratios, fell_back = [], []
     for b in range(BUCKETS):
-        degenerate = counts[b] < min_n or engine[b] == 0 or label[b] == 0
+        has_data = engine[b] != 0 and label[b] != 0
+        if blend:
+            # prior from the band's other buckets, so a bucket's own samples aren't counted twice
+            band = [i for i in range(b - b % BAND_BUCKETS, b - b % BAND_BUCKETS + BAND_BUCKETS) if i != b]
+            band_label, band_engine = sum(label[i] for i in band), sum(engine[i] for i in band)
+            band_n = sum(counts[i] for i in band)
+            use_band = band_n >= min_n and band_engine != 0 and band_label != 0
+            prior = band_label / band_engine if use_band else overall
+            n = counts[b] if has_data else 0
+            if n < min_n:
+                print(f"{what} bucket {b}: n={n}, blending toward {prior:.3f}", file=sys.stderr)
+            ratios.append((n * (label[b] / engine[b] if n else 0.0) + min_n * prior) / (n + min_n))
+            fell_back.append(n == 0 and not use_band)
+            continue
+        degenerate = not has_data or counts[b] < min_n
         if degenerate:
             print(f"{what} bucket {b}: n={counts[b]}, falling back to overall ratio {overall:.3f}", file=sys.stderr)
         ratios.append(overall if degenerate else label[b] / engine[b])
@@ -87,7 +86,7 @@ def main(args):
         sys.exit("no report files matched")
     print(f"using {len(files)} report file(s)", file=sys.stderr)
 
-    ratios, counts, overall, thin = aggregate(tables, files, args.min_n, "target")
+    ratios, counts, overall, thin = aggregate(tables, files, args.min_n, args.blend, "target")
 
     if args.reference:
         ref_files = [f for f in tables if any(m in f for m in args.reference)]
@@ -97,7 +96,7 @@ def main(args):
         if both:
             print(f"warning: {len(both)} file(s) in both target and reference sets: {' '.join(both)}", file=sys.stderr)
         print(f"reference: {len(ref_files)} report file(s)", file=sys.stderr)
-        ref_ratios, _, ref_overall, _ = aggregate(tables, ref_files, args.min_n, "reference")
+        ref_ratios, _, ref_overall, _ = aggregate(tables, ref_files, args.min_n, args.blend, "reference")
         # a thin target bucket holds the target overall — divide by the reference overall, not a per-bucket ratio
         ratios = [overall / ref_overall if t else r / ref for r, ref, t in zip(ratios, ref_ratios, thin)]
 
@@ -106,7 +105,8 @@ def main(args):
     profile = {
         "comment": f"generated by mkprofile.py from {', '.join(args.reports)}"
         + (f", reference {' '.join(args.reference)}" if args.reference else "")
-        + (f", amplify {args.amplify}" if args.amplify != 1.0 else ""),
+        + (f", amplify {args.amplify}" if args.amplify != 1.0 else "")
+        + (f", blend {args.min_n}" if args.blend else ""),
         "files": len(files),
         "positions": counts,
         "ratios": ratios,
@@ -122,23 +122,30 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description="Build per-bucket label scale ratios (sidecar JSON) from label_check reports.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument("reports", nargs="+", help="label_check report file(s)")
-    parser.add_argument("--match", nargs="*", help="only use report files whose path contains any of these substrings")
-    parser.add_argument("--files", nargs="*", help="only use report files exactly listed in these text file(s)")
+    select = parser.add_mutually_exclusive_group()
+    select.add_argument("--match", nargs="*", help="only use report files whose path contains any of these substrings")
+    select.add_argument("--files", nargs="*", help="only use report files exactly listed in these text file(s)")
     parser.add_argument(
         "--reference",
         nargs="*",
         help="normalize per-bucket by the ratios of report files matching these substrings (referee scale cancels)",
     )
     parser.add_argument("--amplify", type=float, default=1.0, help="uniform eval scale-up (divides all ratios)")
-    parser.add_argument("--min-n", type=int, default=50, help="buckets with fewer samples fall back to overall ratio")
+    parser.add_argument("--min-n", type=int, default=50, help="min samples per bucket (--blend: prior weight)")
+    parser.add_argument("--blend", action="store_true", help="shrink buckets toward their pawn band, no hard fallback")
     parser.add_argument("--out", help="write profile JSON here (default: print to stdout)")
     parser.add_argument("--force", action="store_true", help="overwrite existing --out file")
     args = parser.parse_args()
 
     if args.amplify <= 0:
         parser.error("--amplify must be positive")
+    if args.blend and args.min_n <= 0:
+        parser.error("--blend requires --min-n > 0")
     if args.reference is not None and not args.reference:
         parser.error("--reference requires at least one substring")
 
