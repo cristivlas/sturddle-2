@@ -6,7 +6,7 @@ import re
 import sys
 
 BUCKETS = 16
-BAND_BUCKETS = 4  # buckets per pawn band (4 king-file combos)
+BAND_BUCKETS = 4  # QQ/QK/KQ/KK king sides per pawn band
 ROW_RGX = re.compile(
     r"^\s+(\d+)\s+\S+\s+(?:QQ|QK|KQ|KK)\s+(\d+)\s+"
     r"[-+.\dnan]+\s+[-+.\dnan]+\s+[-+.\dnan]+\s+(\d+)\s+(\d+)\s+[.\dnan]+\s*$"
@@ -41,11 +41,7 @@ def parse_reports(reports):
 
 
 def aggregate(tables, files, min_n, blend, what):
-    """Count-weighted per-bucket ratios over a set of files.
-
-    Thin/degenerate buckets fall back to overall; with blend, every bucket is instead shrunk toward the
-    pooled ratio of the other buckets in its pawn band (overall if those are thin) with weight min_n.
-    Returns (ratios, counts, overall, fell_back) — fell_back marks buckets holding the overall ratio."""
+    """Count-weighted per-bucket ratios; thin buckets fall back to overall, or shrink toward their pawn band with blend."""
     label = [sum(tables[f][0][b] for f in files) for b in range(BUCKETS)]
     engine = [sum(tables[f][1][b] for f in files) for b in range(BUCKETS)]
     counts = [sum(tables[f][2][b] for f in files) for b in range(BUCKETS)]
@@ -63,7 +59,7 @@ def aggregate(tables, files, min_n, blend, what):
             prior = band_label / band_engine if use_band else overall
             n = counts[b] if has_data else 0
             if n < min_n:
-                print(f"{what} bucket {b}: n={counts[b]}, blending toward {prior:.3f}", file=sys.stderr)
+                print(f"{what} bucket {b}: n={n}, blending toward {prior:.3f}", file=sys.stderr)
             ratios.append((n * (label[b] / engine[b] if n else 0.0) + min_n * prior) / (n + min_n))
             fell_back.append(n == 0 and not use_band)
             continue
@@ -140,17 +136,8 @@ if __name__ == "__main__":
         help="normalize per-bucket by the ratios of report files matching these substrings (referee scale cancels)",
     )
     parser.add_argument("--amplify", type=float, default=1.0, help="uniform eval scale-up (divides all ratios)")
-    parser.add_argument(
-        "--min-n",
-        type=int,
-        default=50,
-        help="buckets with fewer samples fall back to overall ratio (--blend: prior weight)",
-    )
-    parser.add_argument(
-        "--blend",
-        action="store_true",
-        help="shrink every bucket toward its pawn band's other buckets instead of a hard fallback",
-    )
+    parser.add_argument("--min-n", type=int, default=50, help="min samples per bucket (--blend: prior weight)")
+    parser.add_argument("--blend", action="store_true", help="shrink buckets toward their pawn band, no hard fallback")
     parser.add_argument("--out", help="write profile JSON here (default: print to stdout)")
     parser.add_argument("--force", action="store_true", help="overwrite existing --out file")
     args = parser.parse_args()

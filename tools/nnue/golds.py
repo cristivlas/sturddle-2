@@ -7,7 +7,7 @@ import chess
 GOLDS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golds.json")
 
 # Pawn dimension: 0 -> 0-4, 1 -> 5-8, 2 -> 9-12, 3 -> 13-16 pawns.
-# King-file dimension (composed x4): both-left, W-left/B-right, W-right/B-left, both-right.
+# King-side dimension (composed x4): both-left, W-left/B-right, W-right/B-left, both-right.
 TESTS = [
     # Pawn bucket 3 (13-16 pawns): opening/early middlegame
     chess.STARTING_FEN,  # 16 pawns
@@ -28,7 +28,7 @@ TESTS = [
     "8/8/4k3/4p3/4P3/4K3/8/8 w - - 0 1",  # 2 pawns
     "8/5k2/8/3p4/3P4/2K1P3/8/8 w - - 0 1",  # 3 pawns
     "4k3/8/8/8/8/8/4K3/4R3 w - - 0 1",  # 0 pawns - K+R vs K
-    # King-file coverage (all in pawn bucket 0, so composed bucket == king bucket):
+    # King-side coverage (all in pawn bucket 0, so composed bucket == king bucket):
     "1k6/3p4/8/8/8/8/3P4/2K5 w - - 0 1",  # king bucket 0: both left (WK c1, BK b8)
     "6k1/3p4/8/8/8/8/3P4/2K5 w - - 0 1",  # king bucket 1: W left, B right (WK c1, BK g8)
     "1k6/3p4/8/8/8/8/3P4/6K1 w - - 0 1",  # king bucket 2: W right, B left (WK g1, BK b8)

@@ -259,9 +259,7 @@ if __name__ == "__main__":
     parser.add_argument("--filter", type=int, help="drop rows with |raw eval| >= this, like the trainers' -F")
     parser.add_argument("--max-rows", type=int, default=20_000_000, help="cap on pooled rows (random thinning)")
     parser.add_argument("--raw", action="store_true", help="ignore sidecar profiles, fit on raw labels")
-    parser.add_argument(
-        "--alt-profile-dir", help="look up <file>.profile.json here first, then next to the data; write here"
-    )
+    parser.add_argument("--alt-profile-dir", help="read <file>.profile.json here first, else next to data; write here")
     parser.add_argument(
         "--update-profile",
         action="store_true",

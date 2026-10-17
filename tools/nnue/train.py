@@ -51,12 +51,12 @@ SCALE = 100.0
 LIGHT_SQUARES = np.uint64(0x55AA55AA55AA55AA)
 DARK_SQUARES = np.uint64(0xAA55AA55AA55AA55)
 
-# Squares on files e-h, for king-file bucketing
+# Squares on files e-h, for king-side bucketing
 FILES_EFGH = np.uint64(0xF0F0F0F0F0F0F0F0)
 
 
 def scale_buckets(x):
-    """Per-sample pawn x king-file bucket ids, same scheme as BucketShift / nnue.h get_bucket."""
+    """Per-sample pawn x king-side bucket ids, same scheme as BucketShift / nnue.h get_bucket."""
     pawns = popcount(x[:, 2]) + popcount(x[:, 3])
     pawn_id = np.where(pawns <= 4, 0, np.minimum((pawns - 1) // 4, 3))
     wk_right = (x[:, 1] & FILES_EFGH) != 0
@@ -245,8 +245,7 @@ def custom_layers():
                     tf.int32
                 )
 
-                # King-file dimension: board split into left (files a-d) / right (files e-h).
-                # Feature index idx within a 64-block holds bitboard bit (63 - idx); file = bit % 8.
+                # King-side dimension: feature idx holds bitboard bit 63 - idx; files e-h are kingside
                 right_mask = tf.constant([1.0 if ((63 - idx) % 8) >= 4 else 0.0 for idx in range(64)], dtype=tf.float32)
                 black_king = tf.cast(features[:, 0:64], tf.float32)
                 white_king = tf.cast(features[:, 64:128], tf.float32)

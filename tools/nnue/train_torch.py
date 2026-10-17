@@ -504,12 +504,12 @@ else:
         return ((bb * np.uint64(0x0101010101010101)) >> np.uint64(56)).astype(np.float32)
 
 
-# Squares on files e-h, for king-file bucketing
+# Squares on files e-h, for king-side bucketing
 FILES_EFGH = np.uint64(0xF0F0F0F0F0F0F0F0)
 
 
 def scale_buckets(x):
-    """Per-sample pawn x king-file bucket ids from raw bitboards, same scheme as compute_bucket_id."""
+    """Per-sample pawn x king-side bucket ids from raw bitboards, same scheme as compute_bucket_id."""
     xu = x.astype(np.uint64)
     pawns = popcount(xu[:, 2]) + popcount(xu[:, 3])
     pawn_id = np.where(pawns <= 4, 0, np.minimum((pawns - 1) // 4, 3))
@@ -848,7 +848,7 @@ if __name__ == "__main__":
     p.add_argument("--huber-delta", type=float, default=1.5)
     p.add_argument("--focal-gamma", type=float, default=0.0, help="focal modulation of the outcome loss term (0 = off)")
     p.add_argument("--profile", help="JSON dataset profile with per-bucket label scale ratios")
-    p.add_argument("--alt-profile-dir", help="look up <file>.profile.json here first, then next to the data")
+    p.add_argument("--alt-profile-dir", help="read <file>.profile.json here first, else next to data")
     p.add_argument("--sample", type=float)
     p.add_argument("-F", "--filter", type=int, help="drop positions with |eval| >= this (centipawns)")
     p.add_argument("--balance", action="store_true", help="augment each batch with color-mirrored positions")
