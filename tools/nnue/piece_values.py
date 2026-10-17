@@ -139,21 +139,6 @@ class TorchBackend:
         return out.float().cpu().numpy().astype(np.float64) * 100.0
 
 
-class TFBackend:
-    name = "tf"
-
-    def __init__(self, model_path):
-        os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
-        import train
-
-        self.model = train.load_saved_model(model_path)
-
-    def eval_batch(self, packed):
-        out = self.model.predict(packed[:, :13], verbose=0)
-        res = out[0] if isinstance(out, (list, tuple)) else out
-        return np.asarray(res).reshape(-1).astype(np.float64) * 100.0
-
-
 class EngineBackend:
     name = "engine"
 
@@ -170,10 +155,6 @@ class EngineBackend:
 def make_backend(args):
     if args.backend == "torch":
         return TorchBackend(args.weights, args.device)
-    if args.backend == "tf":
-        if not args.model:
-            sys.exit("--backend tf requires --model <keras dir>")
-        return TFBackend(args.model)
     return EngineBackend()
 
 
@@ -383,9 +364,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("h5", help="H5 dataset (or virtual dataset) to sample from")
     p.add_argument("-n", "--count", type=int, default=200000, help="positions to sample (default: 200000)")
-    p.add_argument("--backend", choices=("torch", "engine", "tf"), default="torch", help="eval backend")
+    p.add_argument("--backend", choices=("torch", "engine"), default="torch", help="eval backend")
     p.add_argument("--weights", default="weights.bin", help="flat weights.bin for --backend torch")
-    p.add_argument("--model", help="Keras model dir for --backend tf")
     p.add_argument("--device", help="torch device override (default: cuda if available)")
     p.add_argument(
         "--anchor-value",

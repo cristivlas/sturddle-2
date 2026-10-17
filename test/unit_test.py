@@ -326,7 +326,7 @@ def test_nnue_eval():
     import golds as nnue_golds
 
     gold = nnue_golds.load_golds()
-    assert gold is not None, 'tools/nnue/golds.json missing; run: python tools/nnue/golds.py <model_dir>'
+    assert gold is not None, 'tools/nnue/golds.json missing; run: python tools/nnue/golds.py <weights.bin>'
 
     for fen in nnue_golds.TESTS:
         assert fen in gold, f'no gold for {fen}; regenerate golds.json'

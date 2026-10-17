@@ -49,7 +49,7 @@ SCALE = 100.0
 
 
 # ---------------------------------------------------------------------------
-# Feature unpacking and bucketing (mirror tools/nnue/train.py exactly)
+# Feature unpacking and bucketing
 # ---------------------------------------------------------------------------
 def unpack_bits(packed):
     """packed: (B, 13) int64 [12 bitboards + turn] -> (B, 768) float32 white-view features.
@@ -624,7 +624,7 @@ def summary(model):
 
 @torch.no_grad()
 def metrics(pred, y, outcome_scale):
-    """Match TF: accuracy = 1 - MAE(sigmoid(cp/scale), outcome); mae = MAE(eval) * SCALE/100."""
+    """accuracy = 1 - MAE(sigmoid(cp/scale), outcome); mae = MAE(eval) * SCALE/100."""
     eval_t, out_t = y[:, 0:1] / y[:, 2:3], y[:, 1:2]
     probs = torch.sigmoid(pred * SCALE / outcome_scale)
     acc = 1.0 - (probs - out_t).abs().mean().item()
@@ -657,7 +657,7 @@ def main(args):
 
     print(f"QAT {'on' if args.quant_round else 'off (float run)'}")
 
-    # Multi-GPU: split each global batch across all visible GPUs (like TF MirroredStrategy).
+    # Multi-GPU: split each global batch across all visible GPUs
     if use_dp:
         model = nn.DataParallel(model)
         print(f"DataParallel over {torch.cuda.device_count()} GPUs")

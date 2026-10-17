@@ -34,20 +34,21 @@ def bucket_ids(x):
 
 
 def load_models(paths):
-    import tensorflow as tf
-    import train
+    import torch
+    import train_torch as tt
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    @torch.no_grad()
+    def predict(model, x):
+        return model(torch.from_numpy(x.astype(np.int64)).to(device))[:, 0].float().cpu().numpy()
 
     fns = []
     for p in paths:
-        try:
-            model = train.load_saved_model(p)
-            # compile the forward pass once; fixed batch shape means a single trace
-            fns.append(tf.function(lambda x, m=model: m(x, training=False)))
-        except Exception as e:
-            # keras deserialization can fail across Keras versions; the raw SavedModel graph needs no Python
-            print(f"{p}: {e.__class__.__name__} from keras loader, using raw SavedModel graph")
-            loaded = tf.saved_model.load(p)
-            fns.append(lambda x, m=loaded: m(x, training=False))
+        model = tt.NNUE()
+        tt.load_bin(model, p)
+        model.eval().to(device)
+        fns.append(lambda x, m=model: predict(m, x))
     return fns
 
 
@@ -120,9 +121,6 @@ def main(args):
 
             for m, fn in enumerate(predict):
                 pred = fn(x)
-                if isinstance(pred, (list, tuple)):
-                    pred = pred[0]
-                pred = np.squeeze(pred.numpy(), axis=-1)
                 wdl_pred = 1.0 / (1.0 + np.exp(-pred * SCALE / args.outcome_scale))
                 err = np.abs(wdl_pred - wdl_target)
                 err_sum[m] += np.bincount(buckets, weights=err, minlength=16)
@@ -167,10 +165,10 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("input", nargs="+", help="h5 data file(s); stats are aggregated across all")
-    parser.add_argument("-m", "--model", nargs="*", help="model checkpoint path(s) for per-bucket eval error")
+    parser.add_argument("-m", "--model", nargs="*", help="weights.bin file(s) for per-bucket eval error")
     parser.add_argument("-b", "--batch-size", type=int, default=16384)
     parser.add_argument("--sample", type=float, help="sampling ratio, same as the trainers")
-    parser.add_argument("--outcome-scale", type=float, default=400.0)
+    parser.add_argument("--outcome-scale", type=float, default=120.0, help="sigmoid scale, as in the trainers")
     parser.add_argument("--extreme", type=int, default=1260, help="centipawn threshold for the ext%% column")
     parser.add_argument(
         "--mid", type=int, nargs=2, default=[50, 500], help="centipawn range for the mid%% (graded eval) column"

@@ -44,51 +44,7 @@ def load_golds():
         return json.load(f)
 
 
-def _generate(model_path):
-    """Run the saved Keras model over TESTS and write golds.json keyed by FEN."""
-    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-    import numpy as np
-    import train
-
-    def encode(board):
-        mask_black = board.occupied_co[chess.BLACK]
-        mask_white = board.occupied_co[chess.WHITE]
-        bitboards = [
-            [pcs & mask_black, pcs & mask_white]
-            for pcs in (
-                board.kings,
-                board.pawns,
-                board.knights,
-                board.bishops,
-                board.rooks,
-                board.queens,
-            )
-        ]
-        array = np.asarray([bitboards], dtype=np.uint64).ravel()
-        return np.append(array, np.uint64(board.turn))
-
-    model = train.load_saved_model(model_path)
-
-    print(
-        "EXPORT ORDER:",
-        [(l.name, [w.shape for w in l.get_weights()]) for l in model.layers if l.get_weights()],
-    )
-
-    golds = {}
-    for fen in TESTS:
-        board = chess.Board(fen=fen)
-        assert board.is_valid(), f"Invalid position: {fen}"
-        encoding = encode(board).T.reshape((1, 13))
-        out = model.predict(encoding, verbose=0)
-        res = out[0][0][0] if len(out) > 1 else out[0][0]
-        golds[fen] = float(res) * 100
-
-    with open(GOLDS_JSON, "w") as f:
-        json.dump(golds, f, indent=2)
-    print(f"Wrote {len(golds)} golds to {GOLDS_JSON}")
-
-
-def _generate_bin(bin_path):
+def _generate(bin_path):
     """Run a flat weights.bin through the torch NNUE over TESTS, write golds.json."""
     import numpy as np
     import torch
@@ -111,13 +67,8 @@ def _generate_bin(bin_path):
         array = np.asarray([bitboards], dtype=np.uint64).ravel()
         return np.append(array, np.uint64(board.turn))
 
-    size = os.path.getsize(bin_path) // 4
-    base = sum(i * o + b for _, i, o, b in tt._EXPORT)
-    if size != base:
-        raise ValueError(f"{bin_path}: {size} floats does not match the network layout")
-
     model = tt.NNUE()
-    tt.load_bin(model, bin_path, count=base)
+    tt.load_bin(model, bin_path)
     model.eval()  # quantized forward, matches the engine
 
     golds = {}
@@ -138,7 +89,5 @@ if __name__ == "__main__":
     import argparse
 
     p = argparse.ArgumentParser()
-    p.add_argument("model", help="Keras model dir, or a weights.bin with --bin")
-    p.add_argument("--bin", action="store_true", help="treat model as a flat weights.bin (torch)")
-    a = p.parse_args()
-    (_generate_bin if a.bin else _generate)(a.model)
+    p.add_argument("weights", help="weights.bin")
+    _generate(p.parse_args().weights)
