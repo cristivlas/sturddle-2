@@ -18,7 +18,7 @@ Q_B2 = 128 * Q_W2  # hidden_2 int32 bias, at activation scale x weight scale
 Q_MAX_B2 = (2**31 - 1) / Q_B2
 
 ACTIVE_INPUTS = 768
-ACCUMULATOR_SIZE = 2048
+ACCUMULATOR_SIZE = 1536
 MAIN_BUCKETS = 16
 STACKS = 16
 HIDDEN_2 = 32

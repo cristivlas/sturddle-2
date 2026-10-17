@@ -449,7 +449,7 @@ namespace nnue
 
         /* int8 layers store the weights in the order dot() reads them.
          *
-         *  as trained: one row of 2048 bytes per output, read in vector-sized chunks (c0, c1, ... 64 bytes each on AVX-512)
+         *  as trained: one row of INPUTS bytes per output, read in vector-sized chunks (c0, c1, ... 64 bytes each on AVX-512)
          *      row 0:  [ c0 | c1 | c2 | ... ]
          *      row 1:  [ c0 | c1 | c2 | ... ]
          *      ...
@@ -710,8 +710,8 @@ namespace nnue
          * REMOVED and ADDED fix the piece counts at compile time, which turns the loops into straight-line code.
          *
          *  piece i (white-view index) in bucket b:
-         *    white half  +=  layer._w[ b         * 768 + i       ]   (2048 values)
-         *    black half  +=  layer._w[ mirror(b) * 768 + (i^120) ]   (2048 values)
+         *    white half  +=  layer._w[ b         * 768 + i       ]   (HALF values)
+         *    black half  +=  layer._w[ mirror(b) * 768 + (i^120) ]   (HALF values)
          *                              ^ king bits swapped ^ color swap (64) + rank flip (56)
          */
         template <int REMOVED = DYNAMIC, int ADDED = DYNAMIC, bool Copy = false, typename LA>

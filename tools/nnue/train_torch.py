@@ -21,8 +21,8 @@ import torch.nn.functional as F
 
 # Architecture constants (keep in sync with nnue.h / model.h)
 ACTIVE_INPUTS = 768
-ACCUMULATOR_SIZE = 2048  # per perspective
-L1_INPUTS = 2048  # 2 views x 1024 products
+ACCUMULATOR_SIZE = 1536  # per perspective
+L1_INPUTS = ACCUMULATOR_SIZE  # 2 views x half the accumulator
 MAIN_BUCKETS = 16
 STACKS = 16  # piece count x side to move
 HIDDEN_2 = 32

@@ -28,21 +28,21 @@ namespace nnue
      *  768 piece-square inputs (white view)   same inputs, black view (idx ^ 120)
      *           |  bucket b, rows of L1A                      |  bucket mirror(b)
      *           v                                             v
-     *    white half: 2048 x int16                      black half: 2048 x int16
+     *    white half: 1536 x int16                      black half: 1536 x int16
      *           \_____________________________________________/
      *                                   |
-     *           accumulator [black 2048 | white 2048 ]   int16 at 1/nnue::QSCALE
+     *           accumulator [black 1536 | white 1536 ]   int16 at 1/nnue::QSCALE
      *                                   |  per view: clamp 0..1023, lo[j] * hi[j] >> 13
      *                                   v
-     *                         activations  2048 x u8  (1.0 == 128)
+     *                         activations  1536 x u8  (1.0 == 128)
      *                                   |  stack[piece_bucket * 2 + side to move]
      *                                   v
-     *              L2  2048 -> 32  s8 weights, int32 sums   ->  relu -> float
+     *              L2  1536 -> 32  s8 weights, int32 sums   ->  relu -> float
      *              L3    32 -> 32  float                    ->  relu
      *              EVAL  32 -> 1   float                    ->  centipawns x 100
      */
     constexpr int INPUTS_A = nnue::ACTIVE_INPUTS * nnue::NUM_BUCKETS;
-    constexpr int HIDDEN_1A = 2048; /* per perspective */
+    constexpr int HIDDEN_1A = 1536; /* per perspective */
     constexpr int HIDDEN_2 = 32;
     constexpr int HIDDEN_3 = 32;
     constexpr int STACKS = 16; /* piece bucket x side to move */
