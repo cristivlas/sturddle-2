@@ -344,37 +344,38 @@ namespace nnue
     /* weight rows per pass: enough independent sums that the CPU never waits on a dot_add */
     constexpr int DOT_ROWS = (INSTRSET >= 10) ? 16 : 8; /* 16 needs the 32 registers of AVX-512 */
 
+    /* bytes per vector chunk of activations and weights */
+    constexpr int DOT_CHUNK = VecU8::size();
+
 
     /* Dot products of the input with R weight rows at once.
      * The rows are stored interleaved, chunk by chunk, so that
      * we can read them as one sequential stream.
      */
     template <int R, int N>
-    INLINE void dot_rows(const uint8_t (&in)[N], const int8_t* rows, int32_t (&sums)[R])
+    INLINE void dot_rows(const uint8_t (&in)[N], const int8_t (&rows)[N / DOT_CHUNK][R][DOT_CHUNK], int32_t (&sums)[R / 8][8])
     {
-        constexpr int W = VecU8::size();
-        static_assert(N % W == 0 && R % 8 == 0);
+        static_assert(N % DOT_CHUNK == 0 && R % 8 == 0);
 
-        VecI32 acc[R];
+        VecI32 acc[R / 8][8];
         for (int k = 0; k != R; ++k)
-            acc[k] = VecI32(0);
+            acc[k / 8][k % 8] = VecI32(0);
 
         VecU8 a;
         VecS8 w;
-        for (int i = 0; i != N; i += W)
+        for (int i = 0; i != N; i += DOT_CHUNK)
         {
             a.load_a(&in[i]);
             for (int k = 0; k != R; ++k)
             {
-                w.load_a(rows);
-                rows += W;
-                acc[k] = dot_add(acc[k], a, w);
+                w.load_a(rows[i / DOT_CHUNK][k]);
+                acc[k / 8][k % 8] = dot_add(acc[k / 8][k % 8], a, w);
             }
         }
 
         /* sum up 8 vectors at a time */
-        for (int k = 0; k != R; k += 8)
-            ::horizontal_add(*reinterpret_cast<const VecI32 (*)[8]>(&acc[k]), *reinterpret_cast<int32_t (*)[8]>(&sums[k]));
+        for (int g = 0; g != R / 8; ++g)
+            ::horizontal_add(acc[g], sums[g]);
     }
 
 
@@ -421,8 +422,10 @@ namespace nnue
     template <int I, int O, int INPUTS>
     struct BaseLayer<I, O, int8_t, INPUTS, false>
     {
+        static_assert(O % DOT_ROWS == 0 && INPUTS % DOT_CHUNK == 0);
+
         ALIGN int32_t _b[O]; /* biases */
-        ALIGN int8_t _packed[O * INPUTS]; /* weights in the order dot() reads them, see Layer::packed */
+        ALIGN int8_t _packed[O / DOT_ROWS][INPUTS / DOT_CHUNK][DOT_ROWS][DOT_CHUNK]; /* weights in the order dot() reads them */
     };
 
 
@@ -455,22 +458,15 @@ namespace nnue
          *      [ row0.c0  row1.c0 ... row15.c0 ][ row0.c1  row1.c1 ... row15.c1 ][ ... ]
          *
          * dot_rows takes one chunk of activations and multiplies it with the same chunk of DOT_ROWS rows,
-         * then moves to the next chunk. In the trained layout those chunks sit 2KB apart, one stream per
+         * then moves to the next chunk. In the trained layout those chunks sit INPUTS bytes apart, one stream per
          * row for the hardware prefetcher to follow; in the stored layout they are adjacent, so a pass
          * reads memory front to back as one stream.
          */
         static constexpr bool PACKED = std::is_same_v<T, int8_t> && !Incremental;
 
-        INLINE T* packed(int j, int i)
+        INLINE T& packed(int j, int i)
         {
-            constexpr int W = VecU8::size();
-            const int group = j / DOT_ROWS, chunk = i / W;
-            return &this->_packed[((size_t(group) * (INPUTS / W) + chunk) * DOT_ROWS + j % DOT_ROWS) * W + i % W];
-        }
-
-        INLINE const T* packed(int j, int i) const
-        {
-            return const_cast<Layer*>(this)->packed(j, i);
+            return this->_packed[j / DOT_ROWS][i / DOT_CHUNK][j % DOT_ROWS][i % DOT_CHUNK];
         }
 
         Layer() = default;
@@ -513,7 +509,7 @@ namespace nnue
                     if constexpr (Incremental)
                         this->_w[i][j] = v;
                     else if constexpr (PACKED)
-                        *packed(j, i) = v;
+                        packed(j, i) = v;
                     else
                         this->_wt[j][i] = v;
                 }
@@ -524,7 +520,7 @@ namespace nnue
                     for (int j = 0; j != OUTPUTS; ++j)
                     {
                         if constexpr (PACKED)
-                            *packed(j, i) = 0;
+                            packed(j, i) = 0;
                         else
                             this->_wt[j][i] = 0;
                     }
@@ -550,12 +546,12 @@ namespace nnue
             static_assert(OUTPUTS % R == 0);
             constexpr float OUT_SCALE = 1.0f / BIAS_SCALE;
 
-            ALIGN int32_t sums[OUTPUTS / R][R];
+            ALIGN int32_t sums[OUTPUTS / R][R / 8][8];
             for (int j = 0; j != OUTPUTS; j += R)
-                dot_rows(input, packed(j, 0), sums[j / R]);
+                dot_rows(input, this->_packed[j / R], sums[j / R]);
 
             for (int j = 0; j != OUTPUTS; ++j)
-                output[j] = float(std::max(0, sums[j / R][j % R] + this->_b[j])) * OUT_SCALE;
+                output[j] = float(std::max(0, sums[j / R][j % R / 8][j % 8] + this->_b[j])) * OUT_SCALE;
         }
 
         /* hidden, output */
