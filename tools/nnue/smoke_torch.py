@@ -20,13 +20,41 @@ def check_flip(model, x):
     print("flip: ok")
 
 
-def check_buckets(x):
+def check_buckets():
+    # white king, black king -> (bucket, mirrored) for the white view, then the black view
+    cases = [
+        (0, 56, (0, False), (0, False)),  # a1, a8
+        (4, 60, (3, True), (3, True)),  # e1, e8
+        (6, 57, (1, True), (1, False)),  # g1, b8
+        (27, 7, (11, False), (14, True)),  # d4, h1
+        (53, 34, (15, True), (10, False)),  # f7, c5
+    ]
+    x = torch.zeros(len(cases), 13, dtype=torch.int64)
+    for i, (wk, bk, _, _) in enumerate(cases):
+        x[i, 1], x[i, 0] = 1 << wk, 1 << bk
     white = tt.unpack_bits(x)
-    ids = tt.compute_bucket_id(white)
-    swapped = (ids & ~3) | ((ids & 1) << 1) | ((ids >> 1) & 1)
-    assert torch.equal(tt.compute_bucket_id(tt.black_view(white)), swapped), "buckets: king bits not swapped"
-    assert torch.equal(ids, torch.from_numpy(tt.scale_buckets(x.numpy()))), "buckets: differ from scale_buckets"
+    for view, col in ((white, 2), (tt.black_view(white), 3)):
+        bucket, mirrored = tt.king_bucket(view)
+        expected = [c[col] for c in cases]
+        assert [(int(b), bool(m)) for b, m in zip(bucket, mirrored)] == expected, "buckets: wrong king bucket"
     print("buckets: ok")
+
+
+def horizontal_mirror(bb):
+    b = bb.astype(np.uint64)
+    for shift, mask in ((1, 0x5555555555555555), (2, 0x3333333333333333), (4, 0x0F0F0F0F0F0F0F0F)):
+        s, m = np.uint64(shift), np.uint64(mask)
+        b = ((b >> s) & m) | ((b & m) << s)
+    return b
+
+
+def check_mirror(model, x):
+    w, b = model.accumulator(x, quant=True)
+    m = x.numpy().copy()
+    m[:, :12] = horizontal_mirror(m[:, :12]).astype(m.dtype)
+    mw, mb = model.accumulator(torch.from_numpy(m), quant=True)
+    assert torch.equal(mw, w) and torch.equal(mb, b), "mirror: accumulator halves differ"
+    print("mirror: ok")
 
 
 def _autocast_on():
@@ -101,7 +129,7 @@ def check_export(model, x):
 
 def main():
     p = argparse.ArgumentParser(
-        description="CPU self-checks for train_torch: perspective flip, bucket ids, autocast precision, export round trip."
+        description="CPU self-checks for train_torch: king buckets, file mirror, perspective flip, autocast precision, export round trip."
     )
     p.add_argument("input", help="h5 dataset path")
     p.add_argument("-n", "--rows", type=int, default=4096)
@@ -112,7 +140,8 @@ def main():
         x = torch.from_numpy(hf["data"][: args.rows, :13].astype(np.int64))
 
     model = tt.NNUE(qat=True)
-    check_buckets(x)
+    check_buckets()
+    check_mirror(model, x)
     check_flip(model, x)
     check_autocast(model, x)
     check_float_autocast(x)

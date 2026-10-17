@@ -69,28 +69,34 @@ def black_view(features):
     return features[:, _PERSPECTIVE_PERM.to(features.device)]
 
 
-# right half = files e-h: feature idx where (63 - idx) % 8 >= 4
-_RIGHT_MASK = torch.tensor([1.0 if ((63 - idx) % 8) >= 4 else 0.0 for idx in range(64)], dtype=torch.float32)
+# own king square, a1 = 0 -> hidden_1a weight block
+# fmt: off
+KING_BUCKETS = [
+     0,  1,  2,  3,  3,  2,  1,  0,
+     4,  5,  6,  7,  7,  6,  5,  4,
+     8,  9, 10, 11, 11, 10,  9,  8,
+     8,  9, 10, 11, 11, 10,  9,  8,
+    12, 12, 13, 13, 13, 13, 12, 12,
+    12, 12, 13, 13, 13, 13, 12, 12,
+    14, 14, 15, 15, 15, 15, 14, 14,
+    14, 14, 15, 15, 15, 15, 14, 14,
+]
+# fmt: on
+
+_KING_BUCKETS = torch.tensor(KING_BUCKETS)
+_MIRROR_PERM = torch.arange(ACTIVE_INPUTS) ^ 7
 
 
-def compute_bucket_id(features):
-    """features: (B, 768) -> (B,) bucket id = pawn_id * 4 + king_id.
+def king_bucket(features):
+    """(B, 768) view -> (king bucket, mirrored) per row, from the view's own king at [64:128]."""
+    sq = 63 - features[:, 64:128].argmax(dim=1)
+    mirrored = sq % 8 >= 4
+    return _KING_BUCKETS.to(features.device)[torch.where(mirrored, sq ^ 7, sq)], mirrored
 
-    On black-view features the king bits come out swapped, as the engine expects."""
-    right_mask = _RIGHT_MASK.to(features.device)
-    # black king [0:64], white king [64:128], black pawns [128:192], white pawns [192:256]
-    pawn_count = features[:, 128:256].sum(dim=1)
-    pawn_id = torch.where(
-        pawn_count <= 4.0,
-        torch.zeros_like(pawn_count),
-        torch.clamp(torch.floor((pawn_count - 1.0) / 4.0), max=3.0),
-    )
-    pawn_id = pawn_id.long()
 
-    wk_right = (features[:, 64:128] * right_mask).sum(dim=1).long()
-    bk_right = (features[:, 0:64] * right_mask).sum(dim=1).long()
-    king_id = wk_right * 2 + bk_right
-    return pawn_id * 4 + king_id
+def mirror_files(features, mirrored):
+    features[mirrored] = features[mirrored][:, _MIRROR_PERM.to(features.device)]
+    return features
 
 
 def stack_index(packed):
@@ -140,11 +146,10 @@ class BucketedDense(nn.Module):
         self.bias = nn.Parameter(torch.zeros(units))
         nn.init.kaiming_normal_(self.weight, nonlinearity="relu")
 
-    def forward(self, features, quant):
+    def forward(self, features, bucket_id, quant):
         w, b = self.weight, self.bias
         if quant:
             w, b = fake_quant(w, Q_SCALE), fake_quant(b, Q_SCALE)
-        bucket_id = compute_bucket_id(features)  # (B,)
         blocks = w.view(self.num_buckets, self.in_features, self.units)
         out = None
         for k in range(self.num_buckets):
@@ -196,8 +201,10 @@ class NNUE(nn.Module):
     def accumulator(self, packed, quant):
         """Linear accumulator halves (white view, black view), each (B, ACCUMULATOR_SIZE)."""
         white = unpack_bits(packed)
+        views = torch.cat([white, black_view(white)], dim=0)
+        bucket, mirrored = king_bucket(views)
         with exact_fp32(packed.device, quant):
-            both = self.hidden_1a(torch.cat([white, black_view(white)], dim=0), quant)
+            both = self.hidden_1a(mirror_files(views, mirrored), bucket, quant)
         n = packed.shape[0]
         return both[:n], both[n:]
 
@@ -443,12 +450,12 @@ class H5Batches(torch.utils.data.Dataset):
                 member_ids = member_ids[keep]
 
         # Label/outcome scales reflect how the source labeled the original position,
-        # so compute before balance mirroring (which QK<->KQ swaps the bucket)
+        # so compute before balance mirroring (which QK<->KQ swaps the profile bucket)
         if self.trivial_profiles:
             label_scale = np.ones(x.shape[0], dtype=np.float32)
             outcome_scale = np.full(x.shape[0], self.member_oscales.flat[0], dtype=np.float32)
         else:
-            b = scale_buckets(x)
+            b = profile_buckets(x)
             label_scale = self.member_profiles[member_ids, b]
             outcome_scale = self.member_oscales[member_ids, b]
 
@@ -504,12 +511,12 @@ else:
         return ((bb * np.uint64(0x0101010101010101)) >> np.uint64(56)).astype(np.float32)
 
 
-# Squares on files e-h, for king-side bucketing
+# Squares on files e-h, for king-side profile buckets
 FILES_EFGH = np.uint64(0xF0F0F0F0F0F0F0F0)
 
 
-def scale_buckets(x):
-    """Per-sample pawn x king-side bucket ids from raw bitboards, same scheme as compute_bucket_id."""
+def profile_buckets(x):
+    """Per-sample pawn x king-side profile bucket ids from raw bitboards."""
     xu = x.astype(np.uint64)
     pawns = popcount(xu[:, 2]) + popcount(xu[:, 3])
     pawn_id = np.where(pawns <= 4, 0, np.minimum((pawns - 1) // 4, 3))
