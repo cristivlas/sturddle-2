@@ -363,6 +363,8 @@ public:
 
     Vec16uc(Vec16c x) : v(vreinterpretq_u8_s8(x)) {}
 
+    Vec16uc(int32x4_t x) : v(vreinterpretq_u8_s32(x)) {}
+
     INLINE operator uint8x16_t() const { return v; }
 
     INLINE Vec16uc & load_a(void const * p)
@@ -388,7 +390,33 @@ public:
     Vec4i(int i) : v(vdupq_n_s32(i)) {}
 
     INLINE operator int32x4_t() const { return v; }
+
+    INLINE Vec4i & load_a(void const * p)
+    {
+        v = vld1q_s32((const int32_t*)p);
+        return *this;
+    }
+
+    INLINE void store_a(void * p) const { vst1q_s32((int32_t*)p, v); }
 };
+
+INLINE Vec4i operator + (Vec4i a, Vec4i b)
+{
+    return vaddq_s32(a, b);
+}
+
+/* Append base + k for each non-zero lane k of v at out[count]; count <= base keeps writes in bounds */
+template <size_t N> INLINE int append_nonzero_lanes(int32_t (&out)[N], int count, int base, Vec4i v)
+{
+    alignas(16) int32_t lane[4];
+    v.store_a(lane);
+    for (int k = 0; k != 4; ++k)
+    {
+        out[count] = base + k;
+        count += (lane[k] != 0);
+    }
+    return count;
+}
 
 INLINE int32_t horizontal_add(Vec4i a)
 {
@@ -400,6 +428,7 @@ INLINE int32_t horizontal_add(Vec4i a)
 #endif /* __aarch64__ */
 }
 
+#if 0 /* unused since the sparse int8 dot */
 /** Sum up each of the 8 vectors */
 INLINE void horizontal_add(const Vec4i (&v)[8], int32_t (&out)[8])
 {
@@ -411,6 +440,7 @@ INLINE void horizontal_add(const Vec4i (&v)[8], int32_t (&out)[8])
         out[k] = horizontal_add(v[k]);
 #endif /* __aarch64__ */
 }
+#endif /* unused */
 
 /* Signed saturation to int8 */
 INLINE Vec16c compress_saturated(Vec8s low, Vec8s high)
@@ -426,9 +456,14 @@ INLINE Vec4i dot_add(Vec4i acc, Vec16uc a, Vec16c b)
 #if __ARM_FEATURE_DOTPROD
     return vdotq_s32(acc, sa, b);
 #else
-    /* groups bytes k, k+1, k+8, k+9 per lane, not 4 adjacent ones like vdotq: only the full sum of the lanes is meaningful */
-    const int16x8_t p = vmlal_s8(vmull_s8(vget_low_s8(sa), vget_low_s8(b)), vget_high_s8(sa), vget_high_s8(b));
-    return vpadalq_s16(acc, p);
+    /* pairs of adjacent products, then pairs of pairs: 4 adjacent bytes per lane, like vdotq */
+    const int32x4_t lo = vpaddlq_s16(vmull_s8(vget_low_s8(sa), vget_low_s8(b)));
+    const int32x4_t hi = vpaddlq_s16(vmull_s8(vget_high_s8(sa), vget_high_s8(b)));
+  #if (__arm64__) || (__aarch64__)
+    return vaddq_s32(acc, vpaddq_s32(lo, hi));
+  #else
+    return vaddq_s32(acc, vcombine_s32(vpadd_s32(vget_low_s32(lo), vget_high_s32(lo)), vpadd_s32(vget_low_s32(hi), vget_high_s32(hi))));
+  #endif /* __aarch64__ */
 #endif /* __ARM_FEATURE_DOTPROD */
 }
 

@@ -341,41 +341,21 @@ namespace nnue
     using VecI32 = Vec4i;
 #endif /* INSTRSET */
 
-    /* weight rows per pass: enough independent sums that the CPU never waits on a dot_add */
-    constexpr int DOT_ROWS = (INSTRSET >= 10) ? 16 : 8; /* 16 needs the 32 registers of AVX-512 */
-
-    /* bytes per vector chunk of activations and weights */
-    constexpr int DOT_CHUNK = VecU8::size();
+    /* independent sets of sums in the sparse dot, so consecutive dot_adds don't wait on each other */
+    constexpr int DOT_SETS = (INSTRSET >= 10) ? 4 : (INSTRSET >= 8) ? 2 : 1;
 
 
-    /* Dot products of the input with R weight rows at once.
-     * The rows are stored interleaved, chunk by chunk, so that
-     * we can read them as one sequential stream.
-     */
-    template <int R, int N>
-    INLINE void dot_rows(const uint8_t (&in)[N], const int8_t (&rows)[N / DOT_CHUNK][R][DOT_CHUNK], int32_t (&sums)[R / 8][8])
+    /** Indices of the 4-byte input blocks that are not all zero, in order; returns their count */
+    template <int N>
+    INLINE int find_nonzero_blocks(const uint8_t (&in)[N], int32_t (&blocks)[N / 4])
     {
-        static_assert(N % DOT_CHUNK == 0 && R % 8 == 0);
+        constexpr int W = VecI32::size();
+        static_assert(N % (4 * W) == 0);
 
-        VecI32 acc[R / 8][8];
-        for (int k = 0; k != R; ++k)
-            acc[k / 8][k % 8] = VecI32(0);
-
-        VecU8 a;
-        VecS8 w;
-        for (int i = 0; i != N; i += DOT_CHUNK)
-        {
-            a.load_a(&in[i]);
-            for (int k = 0; k != R; ++k)
-            {
-                w.load_a(rows[i / DOT_CHUNK][k]);
-                acc[k / 8][k % 8] = dot_add(acc[k / 8][k % 8], a, w);
-            }
-        }
-
-        /* sum up 8 vectors at a time */
-        for (int g = 0; g != R / 8; ++g)
-            ::horizontal_add(acc[g], sums[g]);
+        int count = 0;
+        for (int i = 0; i != N / 4; i += W)
+            count = append_nonzero_lanes(blocks, count, i, VecI32().load_a(&in[4 * i]));
+        return count;
     }
 
 
@@ -422,10 +402,10 @@ namespace nnue
     template <int I, int O, int INPUTS>
     struct BaseLayer<I, O, int8_t, INPUTS, false>
     {
-        static_assert(O % DOT_ROWS == 0 && INPUTS % DOT_CHUNK == 0);
+        static_assert(INPUTS % 4 == 0);
 
         ALIGN int32_t _b[O]; /* biases */
-        ALIGN int8_t _packed[O / DOT_ROWS][INPUTS / DOT_CHUNK][DOT_ROWS][DOT_CHUNK]; /* weights in the order dot() reads them */
+        ALIGN int8_t _packed[INPUTS / 4][O][4]; /* weights in the order dot() reads them */
     };
 
 
@@ -448,25 +428,12 @@ namespace nnue
         static constexpr int OUTPUTS = O;
         static constexpr int BIAS_SCALE = Scale * InScale;
 
-        /* int8 layers store the weights in the order dot() reads them.
-         *
-         *  as trained: one row of INPUTS bytes per output, read in vector-sized chunks (c0, c1, ... 64 bytes each on AVX-512)
-         *      row 0:  [ c0 | c1 | c2 | ... ]
-         *      row 1:  [ c0 | c1 | c2 | ... ]
-         *      ...
-         *  as stored: DOT_ROWS rows at a time, chunk by chunk
-         *      [ row0.c0  row1.c0 ... row15.c0 ][ row0.c1  row1.c1 ... row15.c1 ][ ... ]
-         *
-         * dot_rows takes one chunk of activations and multiplies it with the same chunk of DOT_ROWS rows,
-         * then moves to the next chunk. In the trained layout those chunks sit INPUTS bytes apart, one stream per
-         * row for the hardware prefetcher to follow; in the stored layout they are adjacent, so a pass
-         * reads memory front to back as one stream.
-         */
+        /* int8 weights by blocks of 4 inputs, so dot() can skip blocks whose activations are all zero */
         static constexpr bool PACKED = std::is_same_v<T, int8_t> && !Incremental;
 
         INLINE T& packed(int j, int i)
         {
-            return this->_packed[j / DOT_ROWS][i / DOT_CHUNK][j % DOT_ROWS][i % DOT_CHUNK];
+            return this->_packed[i / 4][j][i % 4];
         }
 
         Layer() = default;
@@ -537,21 +504,55 @@ namespace nnue
             set_weights(reinterpret_cast<float(&)[I][OUTPUTS]>(*(w.get())), reinterpret_cast<float(&)[OUTPUTS]>(*(b.get())));
         }
 
-        /** Byte activations times int8 weights, summed in int32, then relu and back to float */
+        /** Byte activations times int8 weights over the non-zero input blocks, summed in int32, then relu and back to float */
         INLINE void dot(const uint8_t (&input)[INPUTS], float (&output)[OUTPUTS]) const
         {
             static_assert(PACKED);
 
-            constexpr int R = DOT_ROWS;
-            static_assert(OUTPUTS % R == 0);
+            constexpr int W = VecI32::size();
+            constexpr int ACCS = OUTPUTS / W;
+            static_assert(OUTPUTS % W == 0 && VecS8::size() == 4 * W);
             constexpr float OUT_SCALE = 1.0f / BIAS_SCALE;
 
-            ALIGN int32_t sums[OUTPUTS / R][R / 8][8];
-            for (int j = 0; j != OUTPUTS; j += R)
-                dot_rows(input, this->_packed[j / R], sums[j / R]);
+            int32_t blocks[INPUTS / 4];
+            const int count = find_nonzero_blocks(input, blocks);
+
+            VecI32 acc[DOT_SETS][ACCS];
+            for (int s = 0; s != DOT_SETS; ++s)
+                for (int k = 0; k != ACCS; ++k)
+                    acc[s][k] = VecI32(0);
+
+            const auto accumulate = [&](VecI32 (&sums)[ACCS], int b)
+            {
+                int32_t four;
+                memcpy(&four, &input[4 * b], 4);
+                const VecU8 a = VecU8(VecI32(four));
+
+                VecS8 w;
+                for (int k = 0; k != ACCS; ++k)
+                {
+                    w.load_a(this->_packed[b][k * W]);
+                    sums[k] = dot_add(sums[k], a, w);
+                }
+            };
+
+            int n = 0;
+            for (; n + DOT_SETS <= count; n += DOT_SETS)
+                for (int s = 0; s != DOT_SETS; ++s)
+                    accumulate(acc[s], blocks[n + s]);
+            for (; n != count; ++n)
+                accumulate(acc[0], blocks[n]);
+
+            ALIGN int32_t sums[OUTPUTS];
+            for (int k = 0; k != ACCS; ++k)
+            {
+                for (int s = 1; s != DOT_SETS; ++s)
+                    acc[0][k] += acc[s][k];
+                acc[0][k].store_a(&sums[k * W]);
+            }
 
             for (int j = 0; j != OUTPUTS; ++j)
-                output[j] = float(std::max(0, sums[j / R][j % R / 8][j % 8] + this->_b[j])) * OUT_SCALE;
+                output[j] = float(std::max(0, sums[j] + this->_b[j])) * OUT_SCALE;
         }
 
         /* hidden, output */
