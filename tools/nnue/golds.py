@@ -7,7 +7,7 @@ import chess
 GOLDS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golds.json")
 
 # King bucket per view: own king square, files e-h mirrored onto a-d (nnue.h KING_BUCKETS).
-# Comments: king square (bucket, m = mirrored) for each view.
+# Comments: king square (bucket, m = mirrored, q = opponent has a queen) for each view.
 
 # Left-right mirror pair: golds must match
 MIRROR_PAIR = (
@@ -46,6 +46,13 @@ TESTS = [
     "8/p7/5K2/8/8/1k6/7P/8 w - - 0 1",  # WK f6 (13m), BK b3 (12)
     "8/6K1/8/8/3p4/8/k7/8 w - - 0 1",  # WK g7 (14m), BK a2 (14)
     "7K/8/8/8/8/8/3p4/7k w - - 0 1",  # WK h8 (14m), BK h1 (14m)
+    # Opponent queen per view
+    "1k6/3pq3/8/8/8/8/3P4/2K5 w - - 0 1",  # WK c1 (2q), BK b8 (1)
+    "1k6/3p4/8/8/8/8/3PQ3/2K5 w - - 0 1",  # WK c1 (2), BK b8 (1q)
+    "6k1/3pq3/8/8/8/8/3P4/6K1 w - - 0 1",  # WK g1 (1mq), BK g8 (1m)
+    # One queen capture apart: Qxe7
+    "1k6/3pq3/8/8/8/8/3PQ3/2K5 w - - 0 1",  # WK c1 (2q), BK b8 (1q)
+    "1k6/3pQ3/8/8/8/8/3P4/2K5 b - - 0 1",  # WK c1 (2), BK b8 (1q)
 ]
 
 

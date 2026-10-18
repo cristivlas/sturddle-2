@@ -92,10 +92,10 @@ namespace nnue
     constexpr int ACTIVE_INPUTS = 768; /* piece-square, white view */
     constexpr int EVAL_SCALE = 100;
     constexpr int MAX_ACTIVE_INPUTS = 32; /* one per piece */
-    constexpr int NUM_BUCKETS = 16;
+    constexpr int NUM_BUCKETS = 32; /* king bucket x opponent queen */
     constexpr int QSCALE = 1024;
 
-    /* own king square, a1 = 0 -> L1A weight block */
+    /* own king square, a1 = 0 -> king bucket */
     constexpr int KING_BUCKETS[64] = {
          0,  1,  2,  3,  3,  2,  1,  0,
          4,  5,  6,  7,  7,  6,  5,  4,
@@ -107,7 +107,7 @@ namespace nnue
         14, 14, 15, 15, 15, 15, 14, 14,
     };
 
-    static_assert(std::all_of(std::begin(KING_BUCKETS), std::end(KING_BUCKETS), [](int b) { return b >= 0 && b < NUM_BUCKETS; }));
+    static_assert(std::all_of(std::begin(KING_BUCKETS), std::end(KING_BUCKETS), [](int b) { return b >= 0 && b < NUM_BUCKETS / 2; }));
 
     /* black-view input index: color swap (64) + rank flip (56) */
     constexpr int PERSPECTIVE_XOR = 120;
@@ -115,7 +115,7 @@ namespace nnue
     /* mirrored-view input index: file flip */
     constexpr int MIRROR_XOR = 7;
 
-    /* per view: king bucket x 2 + mirrored */
+    /* per view: L1A block x 2 + mirrored */
     constexpr int VIEW_KEYS = NUM_BUCKETS * 2;
 
     /* accumulator rows: 32 pieces + bias must not overflow int16 */
@@ -133,7 +133,8 @@ namespace nnue
     {
         const int sq = view == WHITE ? state.king(WHITE) : square_mirror(state.king(BLACK));
         const int mirrored = square_file(sq) >= 4;
-        return KING_BUCKETS[mirrored ? sq ^ MIRROR_XOR : sq] * 2 + mirrored;
+        const int queen = bool(state.queens & state.occupied_co(!view));
+        return (KING_BUCKETS[mirrored ? sq ^ MIRROR_XOR : sq] * 2 + queen) * 2 + mirrored;
     }
 
     INLINE int piece_bucket(const State& state)
@@ -696,9 +697,9 @@ namespace nnue
         /* Update one perspective: subtract the rows of removed pieces, add the new ones; with Copy, out2 gets a copy too.
          * REMOVED and ADDED fix the piece counts at compile time, which turns the loops into straight-line code.
          *
-         *  piece i (white-view index), view key = bucket * 2 + mirrored:
-         *    white half  +=  layer._w[ bucket * 768 + (i ^ m)       ]   (HALF values)
-         *    black half  +=  layer._w[ bucket * 768 + (i ^ 120 ^ m) ]   (HALF values)
+         *  piece i (white-view index), view key = block * 2 + mirrored:
+         *    white half  +=  layer._w[ block * 768 + (i ^ m)       ]   (HALF values)
+         *    black half  +=  layer._w[ block * 768 + (i ^ 120 ^ m) ]   (HALF values)
          *  m: file flip (7) if mirrored, else 0; 120: color swap (64) + rank flip (56)
          */
         template <int REMOVED = DYNAMIC, int ADDED = DYNAMIC, bool Copy = false, typename LA>
@@ -953,8 +954,13 @@ namespace nnue
         #endif /* DEBUG_INCREMENTAL */
 
             int key[2] = { ancestor._key[BLACK], ancestor._key[WHITE] };
-            if (move && (prev.kings & BB_SQUARES[move.from_square()]))
-                key[prev.turn] = view_key(state, prev.turn);
+            if (move)
+            {
+                if ((prev.kings & BB_SQUARES[move.from_square()]) || (prev.queens & BB_SQUARES[move.to_square()]))
+                    key[prev.turn] = view_key(state, prev.turn);
+                if (move.promotion() == PieceType::QUEEN)
+                    key[!prev.turn] = view_key(state, !prev.turn);
+            }
 
         #if DEBUG_INCREMENTAL
             for (const auto view : { BLACK, WHITE })
