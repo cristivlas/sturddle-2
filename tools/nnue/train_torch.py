@@ -21,9 +21,11 @@ import torch.nn.functional as F
 
 # Architecture constants (keep in sync with nnue.h / model.h)
 ACTIVE_INPUTS = 768
-ACCUMULATOR_SIZE = 1536  # per perspective
+MAX_PIECES = 32
+ACCUMULATOR_SIZE = 1024  # per perspective
 L1_INPUTS = ACCUMULATOR_SIZE  # 2 views x half the accumulator
-MAIN_BUCKETS = 16
+KING_BLOCKS = 32  # king bucket x opponent queen
+MAIN_BUCKETS = 16  # dataset profile buckets, not network blocks
 STACKS = 16  # piece count x side to move
 HIDDEN_2 = 32
 HIDDEN_3 = 32
@@ -69,7 +71,7 @@ def black_view(features):
     return features[:, _PERSPECTIVE_PERM.to(features.device)]
 
 
-# own king square, a1 = 0 -> hidden_1a weight block
+# own king square, a1 = 0 -> king bucket
 # fmt: off
 KING_BUCKETS = [
      0,  1,  2,  3,  3,  2,  1,  0,
@@ -87,11 +89,12 @@ _KING_BUCKETS = torch.tensor(KING_BUCKETS)
 _MIRROR_PERM = torch.arange(ACTIVE_INPUTS) ^ 7
 
 
-def king_bucket(features):
-    """(B, 768) view -> (king bucket, mirrored) per row, from the view's own king at [64:128]."""
+def king_block(features):
+    """(B, 768) view -> (hidden_1a block, mirrored) per row, from own king [64:128] and opponent queens [640:704]."""
     sq = 63 - features[:, 64:128].argmax(dim=1)
     mirrored = sq % 8 >= 4
-    return _KING_BUCKETS.to(features.device)[torch.where(mirrored, sq ^ 7, sq)], mirrored
+    queen = features[:, 640:704].any(dim=1).long()
+    return _KING_BUCKETS.to(features.device)[torch.where(mirrored, sq ^ 7, sq)] * 2 + queen, mirrored
 
 
 def mirror_files(features, mirrored):
@@ -130,38 +133,27 @@ def exact_fp32(device, quant):
 
 
 class BucketedDense(nn.Module):
-    """hidden_1a: per-row bucket selects a (ACTIVE_INPUTS, units) weight block.
+    """hidden_1a: per-row block selects a (ACTIVE_INPUTS, units) weight block.
 
-    Kernel stored as one (num_buckets * ACTIVE_INPUTS, units) tensor, bucket-major,
-    matching the C++ inference convention base = bucket * ACTIVE_INPUTS and the flat
+    Kernel stored as one (num_blocks * ACTIVE_INPUTS, units) tensor, block-major,
+    matching the C++ inference convention base = block * ACTIVE_INPUTS and the flat
     weights.bin layout. Returns the linear accumulator (no activation)."""
 
-    def __init__(self, num_buckets, in_features, units):
+    def __init__(self, num_blocks, in_features, units):
         super().__init__()
-        self.num_buckets = num_buckets
         self.in_features = in_features
-        self.units = units
-        # weight laid out (num_buckets * in_features, units) to match .bin (in, out)
-        self.weight = nn.Parameter(torch.empty(num_buckets * in_features, units))
+        # weight laid out (num_blocks * in_features, units) to match .bin (in, out)
+        self.weight = nn.Parameter(torch.empty(num_blocks * in_features, units))
         self.bias = nn.Parameter(torch.zeros(units))
         nn.init.kaiming_normal_(self.weight, nonlinearity="relu")
 
-    def forward(self, features, bucket_id, quant):
+    def forward(self, features, block, quant):
         w, b = self.weight, self.bias
         if quant:
             w, b = fake_quant(w, Q_SCALE), fake_quant(b, Q_SCALE)
-        blocks = w.view(self.num_buckets, self.in_features, self.units)
-        out = None
-        for k in range(self.num_buckets):
-            rows = (bucket_id == k).nonzero(as_tuple=True)[0]
-            if rows.numel():
-                r = features[rows] @ blocks[k]
-                if out is None:  # match matmul dtype (AMP -> Half)
-                    out = r.new_zeros(features.shape[0], self.units)
-                out[rows] = r
-        if out is None:
-            out = features.new_zeros(features.shape[0], self.units)
-        return out + b
+        present, inputs = features.topk(MAX_PIECES, dim=1)
+        rows = block.unsqueeze(1) * self.in_features + inputs
+        return F.embedding_bag(rows, w, mode="sum", per_sample_weights=present) + b
 
 
 class Stacked(nn.Module):
@@ -193,7 +185,7 @@ class NNUE(nn.Module):
     def __init__(self, qat=False):
         super().__init__()
         self.qat = qat  # fake-quant in training; always on in eval()
-        self.hidden_1a = BucketedDense(MAIN_BUCKETS, ACTIVE_INPUTS, ACCUMULATOR_SIZE)
+        self.hidden_1a = BucketedDense(KING_BLOCKS, ACTIVE_INPUTS, ACCUMULATOR_SIZE)
         self.hidden_2 = Stacked(L1_INPUTS, HIDDEN_2, init_std=math.sqrt(2.0 / L1_INPUTS))
         self.hidden_3 = Stacked(HIDDEN_2, HIDDEN_3, init_std=math.sqrt(2.0 / HIDDEN_2))
         self.out = Stacked(HIDDEN_3, 1)
@@ -202,9 +194,9 @@ class NNUE(nn.Module):
         """Linear accumulator halves (white view, black view), each (B, ACCUMULATOR_SIZE)."""
         white = unpack_bits(packed)
         views = torch.cat([white, black_view(white)], dim=0)
-        bucket, mirrored = king_bucket(views)
+        block, mirrored = king_block(views)
         with exact_fp32(packed.device, quant):
-            both = self.hidden_1a(mirror_files(views, mirrored), bucket, quant)
+            both = self.hidden_1a(mirror_files(views, mirrored), block, quant)
         n = packed.shape[0]
         return both[:n], both[n:]
 
@@ -244,9 +236,9 @@ def apply_constraints(model):
 # ---------------------------------------------------------------------------
 # Flat weights.bin load / save (C++-compatible: kernel (in, out) then bias)
 # ---------------------------------------------------------------------------
-# (name, in, out, bias count); BucketedDense uses num_buckets*in as the stored row count.
+# (name, in, out, bias count); BucketedDense uses num_blocks*in as the stored row count.
 # Stacked layers are named "<layer>.<stack>".
-_EXPORT = [("hidden_1a", MAIN_BUCKETS * ACTIVE_INPUTS, ACCUMULATOR_SIZE, ACCUMULATOR_SIZE)] + [
+_EXPORT = [("hidden_1a", KING_BLOCKS * ACTIVE_INPUTS, ACCUMULATOR_SIZE, ACCUMULATOR_SIZE)] + [
     (f"{name}.{s}", i, o, o)
     for s in range(STACKS)
     for name, i, o in (("hidden_2", L1_INPUTS, HIDDEN_2), ("hidden_3", HIDDEN_2, HIDDEN_3), ("out", HIDDEN_3, 1))

@@ -34,7 +34,7 @@ def check_buckets():
         x[i, 1], x[i, 0] = 1 << wk, 1 << bk
     white = tt.unpack_bits(x)
     for view, col in ((white, 2), (tt.black_view(white), 3)):
-        bucket, mirrored = tt.king_bucket(view)
+        bucket, mirrored = tt.king_block(view)
         expected = [c[col] for c in cases]
         assert [(int(b), bool(m)) for b, m in zip(bucket, mirrored)] == expected, "buckets: wrong king bucket"
     print("buckets: ok")
