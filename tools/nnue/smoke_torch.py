@@ -21,22 +21,28 @@ def check_flip(model, x):
 
 
 def check_buckets():
-    # white king, black king -> (bucket, mirrored) for the white view, then the black view
+    # white king, black king, white queens, black queens -> (block, mirrored) for the white view, then the black view
     cases = [
-        (0, 56, (0, False), (0, False)),  # a1, a8
-        (4, 60, (3, True), (3, True)),  # e1, e8
-        (6, 57, (1, True), (1, False)),  # g1, b8
-        (27, 7, (11, False), (14, True)),  # d4, h1
-        (53, 34, (15, True), (10, False)),  # f7, c5
+        (0, 56, (), (), (0, False), (0, False)),  # a1, a8
+        (4, 60, (), (), (6, True), (6, True)),  # e1, e8
+        (6, 57, (), (), (2, True), (2, False)),  # g1, b8
+        (27, 7, (), (), (22, False), (28, True)),  # d4, h1
+        (53, 34, (), (), (30, True), (20, False)),  # f7, c5
+        (0, 56, (), (59,), (1, False), (0, False)),  # a1, a8, Qd8
+        (4, 60, (3,), (), (6, True), (7, True)),  # e1, e8, Qd1
+        (27, 7, (3,), (59,), (23, False), (29, True)),  # d4, h1, Qd1, Qd8
+        (6, 57, (), (45, 18), (3, True), (2, False)),  # g1, b8, Qf6, Qc3
+        (53, 34, (47, 30), (), (30, True), (21, False)),  # f7, c5, Qh6, Qg4
     ]
     x = torch.zeros(len(cases), 13, dtype=torch.int64)
-    for i, (wk, bk, _, _) in enumerate(cases):
+    for i, (wk, bk, wq, bq, _, _) in enumerate(cases):
         x[i, 1], x[i, 0] = 1 << wk, 1 << bk
+        x[i, 11], x[i, 10] = sum(1 << sq for sq in wq), sum(1 << sq for sq in bq)
     white = tt.unpack_bits(x)
-    for view, col in ((white, 2), (tt.black_view(white), 3)):
-        bucket, mirrored = tt.king_block(view)
+    for view, col in ((white, 4), (tt.black_view(white), 5)):
+        block, mirrored = tt.king_block(view)
         expected = [c[col] for c in cases]
-        assert [(int(b), bool(m)) for b, m in zip(bucket, mirrored)] == expected, "buckets: wrong king bucket"
+        assert [(int(b), bool(m)) for b, m in zip(block, mirrored)] == expected, "buckets: wrong king block"
     print("buckets: ok")
 
 
