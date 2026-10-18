@@ -52,6 +52,26 @@ template <size_t N> INLINE int append_nonzero_lanes(int32_t (&out)[N], int count
     return count + std::popcount(unsigned(mask));
 }
 
+/* Saturate signed 16-bit to unsigned 8-bit, low then high, in order: negatives become 0 */
+#if INSTRSET >= 10
+INLINE Vec64uc compress_saturated_s2u(Vec32s const low, Vec32s const high)
+{
+    return _mm512_permutexvar_epi64(_mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7), _mm512_packus_epi16(low, high));
+}
+#endif /* INSTRSET >= 10 */
+
+#if INSTRSET >= 8
+INLINE Vec32uc compress_saturated_s2u(Vec16s const low, Vec16s const high)
+{
+    return _mm256_permute4x64_epi64(_mm256_packus_epi16(low, high), 0xD8);
+}
+#endif /* INSTRSET >= 8 */
+
+INLINE Vec16uc compress_saturated_s2u(Vec8s const low, Vec8s const high)
+{
+    return _mm_packus_epi16(low, high);
+}
+
 /** High 16 bits of the signed 16 x 16 products */
 #if INSTRSET >= 10
 INLINE Vec32s mul_hi(Vec32s const a, Vec32s const b)

@@ -345,6 +345,7 @@ namespace nnue
     constexpr int DOT_SETS = (INSTRSET >= 10) ? 4 : (INSTRSET >= 8) ? 2 : 1;
 
 
+#if 0 /* superseded by the non-zero blocks recorded in activate */
     /** Indices of the 4-byte input blocks that are not all zero, in order; returns their count */
     template <int N>
     INLINE int find_nonzero_blocks(const uint8_t (&in)[N], int32_t (&blocks)[N / 4])
@@ -357,34 +358,39 @@ namespace nnue
             count = append_nonzero_lanes(blocks, count, i, VecI32().load_a(&in[4 * i]));
         return count;
     }
+#endif /* superseded */
 
 
-    /* Per view: cap both halves to [0, 1023] and multiply them pairwise into bytes 0..127 */
+    /* Per view: multiply the capped halves pairwise into bytes 0..127; lists the non-zero 4-byte blocks, returns their count */
     template <int N>
-    INLINE void activate(const int16_t (&in)[2][N], uint8_t (&out)[N])
+    INLINE int activate(const int16_t (&in)[2][N], uint8_t (&out)[N], int32_t (&blocks)[N / 4])
     {
         constexpr int W = VecS16::size();
         constexpr int HALF = N / 2;
-        static_assert(2 * W == VecU8::size() && HALF % (2 * W) == 0);
+        static_assert(2 * W == VecU8::size() && HALF % (2 * W) == 0 && VecI32::size() * 4 == VecU8::size());
 
         const VecS16 zero(0), top(ACT_CLAMP);
 
         /* (a << ACT_SHIFT) * b >> 16 must rescale 1/QSCALE^2 to 1/ACT_SCALE */
         static_assert((1 << (16 - ACT_SHIFT)) == QSCALE << ACT_SHIFT);
 
+        /* b is not capped below: with a >= 0, a negative b gives a product <= 0, which the unsigned pack turns into 0 */
         const auto product = [&](const int16_t (&half)[N], int i)
         {
             const VecS16 a = min(max(VecS16().load_a(&half[i]), zero), top) << ACT_SHIFT;
-            const VecS16 b = min(max(VecS16().load_a(&half[i + HALF]), zero), top);
+            const VecS16 b = min(VecS16().load_a(&half[i + HALF]), top);
             return mul_hi(a, b);
         };
 
+        int count = 0;
         for (int view = 0; view != 2; ++view)
             for (int i = 0; i != HALF; i += 2 * W)
             {
-                /* values are in [0, ACT_MAX], so the signed saturating pack is exact */
-                VecU8(compress_saturated(product(in[view], i), product(in[view], i + W))).store_a(&out[view * HALF + i]);
+                const VecU8 bytes = compress_saturated_s2u(product(in[view], i), product(in[view], i + W));
+                bytes.store_a(&out[view * HALF + i]);
+                count = append_nonzero_lanes(blocks, count, (view * HALF + i) / 4, VecI32(bytes));
             }
+        return count;
     }
 
 
@@ -505,7 +511,7 @@ namespace nnue
         }
 
         /** Byte activations times int8 weights over the non-zero input blocks, summed in int32, then relu and back to float */
-        INLINE void dot(const uint8_t (&input)[INPUTS], float (&output)[OUTPUTS]) const
+        INLINE void dot(const uint8_t (&input)[INPUTS], const int32_t (&blocks)[INPUTS / 4], int count, float (&output)[OUTPUTS]) const
         {
             static_assert(PACKED);
 
@@ -513,9 +519,6 @@ namespace nnue
             constexpr int ACCS = OUTPUTS / W;
             static_assert(OUTPUTS % W == 0 && VecS8::size() == 4 * W);
             constexpr float OUT_SCALE = 1.0f / BIAS_SCALE;
-
-            int32_t blocks[INPUTS / 4];
-            const int count = find_nonzero_blocks(input, blocks);
 
             VecI32 acc[DOT_SETS][ACCS];
             for (int s = 0; s != DOT_SETS; ++s)
@@ -1058,8 +1061,9 @@ namespace nnue
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
 
-        activate(a.output(), l2_in);
-        l2.dot(l2_in, l2_out);
+        int32_t blocks[L2::INPUTS / 4];
+        const int count = activate(a.output(), l2_in, blocks);
+        l2.dot(l2_in, blocks, count, l2_out);
         l3.dot(l2_out, l3_out, [](const Vector& v) { return relu(v); });
         out.dot(l3_out, output);
         return EVAL_SCALE * output[0];

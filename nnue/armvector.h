@@ -389,6 +389,8 @@ public:
 
     Vec4i(int i) : v(vdupq_n_s32(i)) {}
 
+    Vec4i(Vec16uc x) : v(vreinterpretq_s32_u8(x)) {}
+
     INLINE operator int32x4_t() const { return v; }
 
     INLINE Vec4i & load_a(void const * p)
@@ -447,6 +449,12 @@ INLINE Vec16c compress_saturated(Vec8s low, Vec8s high)
 {
     /* on NEON, simde's __m128i is int64x2_t */
     return vcombine_s8(vqmovn_s16(vreinterpretq_s16_s64(low)), vqmovn_s16(vreinterpretq_s16_s64(high)));
+}
+
+/* Saturate signed 16-bit to unsigned 8-bit: negatives become 0 */
+INLINE Vec16uc compress_saturated_s2u(Vec8s low, Vec8s high)
+{
+    return vcombine_u8(vqmovun_s16(vreinterpretq_s16_s64(low)), vqmovun_s16(vreinterpretq_s16_s64(high)));
 }
 
 /** Multiply bytes (u8 x s8), adding each group of 4 products into an int32 lane of acc; a <= 127 */
