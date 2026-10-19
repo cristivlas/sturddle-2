@@ -707,9 +707,9 @@ namespace nnue
         }
 
 
-        /* Both perspectives in one pass, for moves that change neither view key;
+        /* Both perspectives in one pass, for moves that change neither view key.
          * There is some duplication with the per-view version, factoring it out
-         * lead to slighly slower code. TODO: take another pass at DRY-ing out.
+         * led to slightly slower code. TODO: take another pass at DRY-ing out.
          */
         template <int REMOVED = DYNAMIC, int ADDED = DYNAMIC, typename LA>
         static INLINE void apply_deltas(
