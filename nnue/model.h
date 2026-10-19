@@ -42,7 +42,7 @@ namespace nnue
      *              L3    32 -> 32  float                    ->  relu
      *              EVAL  32 -> 1   float                    ->  centipawns x 100
      */
-    constexpr int INPUTS_A = nnue::ACTIVE_INPUTS * nnue::NUM_BUCKETS;
+    constexpr int INPUTS_A = nnue::ACTIVE_INPUTS * nnue::NUM_BLOCKS;
     constexpr int HIDDEN_1A = 1024; /* per perspective */
     constexpr int HIDDEN_2 = 32;
     constexpr int HIDDEN_3 = 32;

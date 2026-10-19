@@ -92,7 +92,7 @@ namespace nnue
     constexpr int ACTIVE_INPUTS = 768; /* piece-square, white view */
     constexpr int EVAL_SCALE = 100;
     constexpr int MAX_ACTIVE_INPUTS = 32; /* one per piece */
-    constexpr int NUM_BUCKETS = 32; /* king bucket x opponent queen */
+    constexpr int NUM_BLOCKS = 32; /* king bucket x opponent queen */
     constexpr int QSCALE = 1024;
 
     /* own king square, a1 = 0 -> king bucket */
@@ -107,7 +107,7 @@ namespace nnue
         14, 14, 15, 15, 15, 15, 14, 14,
     };
 
-    static_assert(std::all_of(std::begin(KING_BUCKETS), std::end(KING_BUCKETS), [](int b) { return b >= 0 && b < NUM_BUCKETS / 2; }));
+    static_assert(std::all_of(std::begin(KING_BUCKETS), std::end(KING_BUCKETS), [](int b) { return b >= 0 && b < NUM_BLOCKS / 2; }));
 
     /* black-view input index: color swap (64) + rank flip (56) */
     constexpr int PERSPECTIVE_XOR = 120;
@@ -116,7 +116,7 @@ namespace nnue
     constexpr int MIRROR_XOR = 7;
 
     /* per view: L1A block x 2 + mirrored */
-    constexpr int VIEW_KEYS = NUM_BUCKETS * 2;
+    constexpr int VIEW_KEYS = NUM_BLOCKS * 2;
 
     /* accumulator rows: 32 pieces + bias must not overflow int16 */
     constexpr int ACC_WEIGHT_MAX = INT16_MAX / (MAX_ACTIVE_INPUTS + 1);
@@ -621,7 +621,7 @@ namespace nnue
 
     template <int M, int N> struct Accumulator
     {
-        static_assert(ACTIVE_INPUTS * NUM_BUCKETS == M);
+        static_assert(ACTIVE_INPUTS * NUM_BLOCKS == M);
 
         static constexpr int HALF = N; /* one perspective */
         static constexpr int OUTPUTS = 2 * N; /* [black view, white view] */
