@@ -19,7 +19,7 @@ Q_MAX_B2 = (2**31 - 1) / Q_B2
 
 ACTIVE_INPUTS = 768
 ACCUMULATOR_SIZE = 1024
-MAIN_BUCKETS = 32
+KING_BLOCKS = 32
 STACKS = 16
 HIDDEN_2 = 32
 HIDDEN_3 = 32
@@ -30,7 +30,7 @@ L2 = ((Q_W2, Q_MAX_W2), (Q_B2, Q_MAX_B2))
 
 # Layer definitions: (name, kernel_shape, bias_shape, constraint)
 # ORDER MATTERS - must match export order from trainer
-LAYERS = [('hidden_1a', (ACTIVE_INPUTS * MAIN_BUCKETS, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), ACC)] + [
+LAYERS = [('hidden_1a', (ACTIVE_INPUTS * KING_BLOCKS, ACCUMULATOR_SIZE), (ACCUMULATOR_SIZE,), ACC)] + [
     layer
     for s in range(STACKS)
     for layer in (

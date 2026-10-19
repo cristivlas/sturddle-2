@@ -25,7 +25,7 @@ MAX_PIECES = 32
 ACCUMULATOR_SIZE = 1024  # per perspective
 L1_INPUTS = ACCUMULATOR_SIZE  # 2 views x half the accumulator
 KING_BLOCKS = 32  # king bucket x opponent queen
-MAIN_BUCKETS = 16  # dataset profile buckets, not network blocks
+PROFILE_BUCKETS = 16  # pawn count x king side
 STACKS = 16  # piece count x side to move
 HIDDEN_2 = 32
 HIDDEN_3 = 32
@@ -522,8 +522,8 @@ def load_profile(path):
     with open(path) as f:
         profile = json.load(f)
     ratios = profile["ratios"] if isinstance(profile, dict) else profile
-    if not isinstance(ratios, list) or len(ratios) != MAIN_BUCKETS:
-        raise ValueError(f"{path}: expected a list of {MAIN_BUCKETS} bucket ratios")
+    if not isinstance(ratios, list) or len(ratios) != PROFILE_BUCKETS:
+        raise ValueError(f"{path}: expected a list of {PROFILE_BUCKETS} bucket ratios")
     ratios = np.array(ratios, dtype=np.float32)
     if not np.all(np.isfinite(ratios)) or np.any(ratios <= 0):
         raise ValueError(f"{path}: ratios must be positive and finite")
@@ -537,10 +537,10 @@ def load_outcome_scale(path, default):
         profile = json.load(f)
     scales = profile.get("outcome_scale") if isinstance(profile, dict) else None
     if scales is None:
-        return np.full(MAIN_BUCKETS, default, dtype=np.float32)
+        return np.full(PROFILE_BUCKETS, default, dtype=np.float32)
     scales = np.array(scales, dtype=np.float32)
-    if scales.shape != (MAIN_BUCKETS,) or not np.all(np.isfinite(scales)) or np.any(scales <= 0):
-        raise ValueError(f"{path}: outcome_scale must be {MAIN_BUCKETS} positive values")
+    if scales.shape != (PROFILE_BUCKETS,) or not np.all(np.isfinite(scales)) or np.any(scales <= 0):
+        raise ValueError(f"{path}: outcome_scale must be {PROFILE_BUCKETS} positive values")
     logging.info("outcome_scale %s: %s", path, " ".join(f"{s:.0f}" for s in scales))
     return scales
 
@@ -562,7 +562,7 @@ def member_profile_table(data, filepath, profile_ratios, outcome_scale, alt_dir)
     falling back to the container's sidecar, then to all-ones ratios / --outcome-scale.
     One level, not recursive.
     """
-    default_os = np.full(MAIN_BUCKETS, outcome_scale, dtype=np.float32)
+    default_os = np.full(PROFILE_BUCKETS, outcome_scale, dtype=np.float32)
     if profile_ratios is not None:
         return np.zeros(1, dtype=np.int64), profile_ratios[np.newaxis, :], default_os[np.newaxis, :]
 
@@ -578,7 +578,7 @@ def member_profile_table(data, filepath, profile_ratios, outcome_scale, alt_dir)
         members = [(0, filepath)]
     assert members[0][0] == 0, "first member must start at row 0"
 
-    default = np.ones(MAIN_BUCKETS, dtype=np.float32)
+    default = np.ones(PROFILE_BUCKETS, dtype=np.float32)
     own_sidecar = find_sidecar(filepath, alt_dir)
     if os.path.exists(own_sidecar):
         default = load_profile(own_sidecar)
