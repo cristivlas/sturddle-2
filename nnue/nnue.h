@@ -608,6 +608,15 @@ namespace nnue
     #if DEBUG_INCREMENTAL
         /* remember previous inputs, for debugging */
         ALIGN input_t _input[ACTIVE_INPUTS] = { }; /* one-hot encoding */
+
+        static INLINE void trace_key_change(Color view, int from, int to)
+        {
+            static std::atomic<bool> seen[2][VIEW_KEYS][VIEW_KEYS];
+            if (!seen[view][from][to].exchange(true))
+                std::cerr << "[nnue] view " << int(view)
+                          << " key " << from << " -> " << to
+                          << (from == to ? " same" : " cross") << std::endl;
+        }
     #endif /* DEBUG_INCREMENTAL */
 
 
@@ -752,7 +761,7 @@ namespace nnue
         }
 
 
-        /* Update after a move; the usual moves get their own compile-time version of apply_deltas */
+        /** Update after a move; the usual moves get their own compile-time version of apply_deltas */
         template <typename LA>
         static INLINE void apply_move(
             const LA& layer,
@@ -917,12 +926,7 @@ namespace nnue
 
         #if DEBUG_INCREMENTAL
             for (const auto view : { BLACK, WHITE })
-            {
-                const int prev_key = ancestor._key[view];
-                static std::atomic<bool> seen[2][VIEW_KEYS][VIEW_KEYS];
-                if (!seen[view][prev_key][key[view]].exchange(true))
-                    std::cerr << "[nnue] view " << int(view) << " key " << prev_key << " -> " << key[view] << (key[view] == prev_key ? " same" : " cross") << std::endl;
-            }
+                trace_key_change(view, ancestor._key[view], key[view]);
         #endif /* DEBUG_INCREMENTAL */
 
             if (key[BLACK] == ancestor._key[BLACK] && key[WHITE] == ancestor._key[WHITE])
