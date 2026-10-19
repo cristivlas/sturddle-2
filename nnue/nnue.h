@@ -29,11 +29,6 @@
 
 #if (__amd64__) || (__x86_64__) || (__i386__) || (_M_AMD64) || (_M_X64) || (_M_IX86)
     #include "x86vector.h"
-    #if defined(__AVX512BF16__) && defined(__AVX512VL__)
-        #define USE_BF16 true
-    #else
-        #define USE_BF16 false
-    #endif
 #elif (__arm__) || (__arm64__) || (__aarch64__)
     #define __ARM__ true
     #include "armvector.h"
@@ -183,54 +178,9 @@ namespace nnue
     template<typename T> struct Vec { using type = Vector; };
 
 #if USE_BF16
-    class Vec32_bf16
-    {
-        __m512bh v;
-
-    public:
-        static constexpr size_t size() { return 32; }
-
-        Vec32_bf16() = default;
-        Vec32_bf16(__m512bh x) : v(x) {}
-
-        operator __m512bh() const { return v; }
-
-        INLINE void load_a(const float *p)
-        {
-            Vec16f low, high;
-            low.load_a(p);
-            high.load_a(p + 16);
-            // float32 to bf16 using dedicated conversion instruction (with rounding)
-            v = _mm512_cvtne2ps_pbh(high, low);
-        }
-
-        INLINE void load_a(const __bf16 *p)
-        {
-            v = (__m512bh)_mm512_load_si512((const __m512i*)p);
-        }
-    };
-
-    INLINE Vec16f mul_add(const Vec32_bf16& a, const Vec32_bf16& b, Vec16f acc)
-    {
-        return Vec16f(_mm512_dpbf16_ps(acc, a, b));
-    }
-
     template<> struct Vec<__bf16> { using type = Vec32_bf16; };
-
-    template <int N> INLINE void load_partial(Vec16f& v, const __bf16* p)
-    {
-        if constexpr (N == Vec16f::size())
-        {
-            __m256bh vh = (__m256bh)_mm256_load_si256((const __m256i*)p);
-            // bf16 to float32: zero-extend to 32 bits, shift left by 16
-            v = _mm512_castsi512_ps(_mm512_slli_epi32(_mm512_cvtepu16_epi32(vh), 16));
-        }
-        else
-        {
-            static_assert(false);
-        }
-    }
 #endif /* USE_BF16 */
+
 
     INLINE Vector horizontal_add(const Vector (&v)[1])
     {
@@ -748,7 +698,10 @@ namespace nnue
         }
 
 
-        /* Both perspectives in one pass, for moves that change neither view key; not shared with the per-view version, which measured slower */
+        /* Both perspectives in one pass, for moves that change neither view key;
+         * There is some duplication with the per-view version, factoring it out
+         * lead to slighly slower code. TODO: take another pass at DRY-ing out.
+         */
         template <int REMOVED = DYNAMIC, int ADDED = DYNAMIC, typename LA>
         static INLINE void apply_deltas(
             const LA& layer,
