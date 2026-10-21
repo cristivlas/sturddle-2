@@ -20,6 +20,34 @@ def check_flip(model, x):
     print("flip: ok")
 
 
+def check_color_flip(model, x):
+    model.eval()
+    fx = torch.from_numpy(tt.flip_position(x.numpy()))
+    with torch.no_grad():
+        assert torch.equal(model(fx), model(x)), "color flip: eval differs"
+    print("color flip: ok")
+
+
+def check_stacks():
+    # side to move, white queens, black queens, white pawns -> stack
+    cases = [
+        (1, (), (), (), 0),
+        (1, (3,), (), (), 2),
+        (0, (3,), (), (), 1),
+        (0, (3,), (59,), (), 3),
+        (1, (3,), (59,), (8, 9), 7),
+        (1, (), (59,), (8, 9, 10, 11), 5),
+        (0, (), (59,), (8, 9, 10, 11), 6),
+    ]
+    x = torch.zeros(len(cases), 13, dtype=torch.int64)
+    for i, (turn, wq, bq, wp, _) in enumerate(cases):
+        x[i, 1], x[i, 0] = 1 << 4, 1 << 60
+        x[i, 11], x[i, 10] = sum(1 << sq for sq in wq), sum(1 << sq for sq in bq)
+        x[i, 3], x[i, 12] = sum(1 << sq for sq in wp), turn
+    assert tt.stack_index(x).tolist() == [c[-1] for c in cases], "stacks: wrong index"
+    print("stacks: ok")
+
+
 def check_buckets():
     # white king, black king, white queens, black queens -> (block, mirrored) for the white view, then the black view
     cases = [
@@ -135,7 +163,7 @@ def check_export(model, x):
 
 def main():
     p = argparse.ArgumentParser(
-        description="CPU self-checks for train_torch: king buckets, file mirror, perspective flip, autocast precision, export round trip."
+        description="CPU self-checks for train_torch: king buckets, stacks, file mirror, perspective flip, color symmetry, autocast precision, export round trip."
     )
     p.add_argument("input", help="h5 dataset path")
     p.add_argument("-n", "--rows", type=int, default=4096)
@@ -147,8 +175,10 @@ def main():
 
     model = tt.NNUE(qat=True)
     check_buckets()
+    check_stacks()
     check_mirror(model, x)
     check_flip(model, x)
+    check_color_flip(model, x)
     check_autocast(model, x)
     check_float_autocast(x)
     check_export(model, x)
