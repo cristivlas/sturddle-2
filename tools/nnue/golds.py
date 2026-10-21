@@ -53,6 +53,9 @@ TESTS = [
     # One queen capture apart: Qxe7
     "1k6/3pq3/8/8/8/8/3PQ3/2K5 w - - 0 1",  # WK c1 (2q), BK b8 (1q)
     "1k6/3pQ3/8/8/8/8/3P4/2K5 b - - 0 1",  # WK c1 (2), BK b8 (1q)
+    # Queen states with black to move
+    "1k6/3p4/8/8/8/8/3P4/2K5 b - - 0 1",  # WK c1 (2), BK b8 (1)
+    "1k6/3pq3/8/8/8/8/3P4/2K5 b - - 0 1",  # WK c1 (2q), BK b8 (1)
 ]
 
 
@@ -98,7 +101,7 @@ def _generate(bin_path):
             assert board.is_valid(), f"Invalid position: {fen}"
             x = torch.from_numpy(encode(board).astype(np.int64)).reshape(1, 13)
             res = model(x)[0, 0].item()
-            golds[fen] = res * 100
+            golds[fen] = res * 100 if board.turn else -res * 100
 
     assert golds[MIRROR_PAIR[0]] == golds[MIRROR_PAIR[1]], "mirror pair golds differ"
 

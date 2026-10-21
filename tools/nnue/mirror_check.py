@@ -198,7 +198,7 @@ class ModelBackend:
             for i in tqdm(range(0, len(rows), 4096), desc="eval"):
                 x = self.torch.from_numpy(x_all[i : i + 4096]).to(self.device)
                 out[i : i + 4096] = self.model(x).cpu().numpy().ravel() * 100.0
-        return out
+        return np.where(rows[:, 12] == 1, out, -out)
 
     def close(self):
         pass

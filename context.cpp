@@ -369,7 +369,7 @@ void search::Context::update_accumulators()
 }
 
 
-score_t search::Context::eval_nnue_raw(bool stm_perspective)
+score_t search::Context::eval_nnue_raw(bool side_to_move_pov)
 {
     ASSERT(!is_valid(_eval_raw));
 
@@ -378,9 +378,9 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     auto& acc = NNUE_data[tid()][_ply];
     ASSERT(!acc.needs_update(state()));
 
-    _eval_raw = model.eval(acc, nnue::stack_index(state()));
+    _eval_raw = model.eval(acc, state());
 
-    if (stm_perspective)
+    if (!side_to_move_pov)
     {
         _eval_raw *= SIGN[state().turn];
     }

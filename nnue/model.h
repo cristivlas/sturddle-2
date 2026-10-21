@@ -35,18 +35,18 @@ namespace nnue
      *           accumulator [black 1024 | white 1024 ]   int16 at 1/nnue::QSCALE
      *                                   |  per view: clamp 0..1023, lo[j] * hi[j] >> 13
      *                                   v
-     *                         activations  1024 x u8  (1.0 == 128)
-     *                                   |  stack[piece_bucket * 2 + side to move]
+     *              activations [mover 512 | other 512] x u8  (1.0 == 128)
+     *                                   |  stack[piece_bucket * 4 + mover queen * 2 + other queen]
      *                                   v
      *              L2  1024 -> 32  s8 weights, int32 sums   ->  relu -> float
      *              L3    32 -> 32  float                    ->  relu
-     *              EVAL  32 -> 1   float                    ->  centipawns x 100
+     *              EVAL  32 -> 1   float                    ->  centipawns x 100, mover's view
      */
     constexpr int INPUTS_A = nnue::ACTIVE_INPUTS * nnue::NUM_BLOCKS;
     constexpr int HIDDEN_1A = 1024; /* per perspective */
     constexpr int HIDDEN_2 = 32;
     constexpr int HIDDEN_3 = 32;
-    constexpr int STACKS = 16; /* piece bucket x side to move */
+    constexpr int STACKS = 32; /* piece bucket x queens (mover, other) */
     constexpr int L2_SCALE = 128; /* hidden_2 s8 weights */
 
     using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
@@ -62,7 +62,7 @@ namespace nnue
     {
        /*
         * The accumulator holds both perspectives of L1A, [black view, white view];
-        * piece count and side to move select one of the L2 -> L3 -> EVAL stacks.
+        * piece count and queens select one of the L2 -> L3 -> EVAL stacks.
         */
         using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A>;
 
@@ -91,9 +91,11 @@ namespace nnue
             accumulator.update(L1A, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc, refresh);
         }
 
-        INLINE int eval(const Accumulator& acc, int stack) const
+        /** Eval from the mover's point of view */
+        INLINE int eval(const Accumulator& acc, const State& state) const
         {
-            return ::nnue::eval(acc, L2[stack], L3[stack], EVAL[stack]);
+            const int stack = stack_index(state);
+            return ::nnue::eval(acc, state.turn, L2[stack], L3[stack], EVAL[stack]);
         }
 
     private:

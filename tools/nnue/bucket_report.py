@@ -121,6 +121,7 @@ def main(args):
 
             for m, fn in enumerate(predict):
                 pred = fn(x)
+                pred = np.where(white_to_move, pred, -pred)
                 wdl_pred = 1.0 / (1.0 + np.exp(-pred * SCALE / args.outcome_scale))
                 err = np.abs(wdl_pred - wdl_target)
                 err_sum[m] += np.bincount(buckets, weights=err, minlength=16)

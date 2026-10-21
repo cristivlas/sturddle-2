@@ -189,6 +189,7 @@ def main():
                     rows = data[s : s + args.batch_size]
                     packed = rows[:, :13].astype(np.int64)
                     y_nn = model(torch.from_numpy(packed).to(args.device))[:, 0].cpu().numpy() * 100.0
+                    y_nn = np.where(packed[:, 12] == 1, y_nn, -y_nn)
 
                     x, material = features_and_material(rows)
                     y = y_nn.astype(np.float64) - material

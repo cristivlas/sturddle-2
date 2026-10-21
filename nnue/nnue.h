@@ -143,7 +143,9 @@ namespace nnue
 
     INLINE int stack_index(const State& state)
     {
-        return piece_bucket(state) * 2 + state.turn;
+        const int mover_queen = bool(state.queens & state.occupied_co(state.turn));
+        const int other_queen = bool(state.queens & state.occupied_co(!state.turn));
+        return piece_bucket(state) * 4 + mover_queen * 2 + other_queen;
     }
 
     #if INSTRSET >= 9
@@ -316,9 +318,11 @@ namespace nnue
 #endif /* superseded */
 
 
-    /* Per view: multiply the capped halves pairwise into bytes 0..127; lists the non-zero 4-byte blocks, returns their count */
+    /* Per view, mover first: multiply the capped halves pairwise into bytes 0..127
+     * list the non-zero 4-byte blocks, return their count
+     */
     template <int N>
-    INLINE int activate(const int16_t (&in)[2][N], uint8_t (&out)[N], int32_t (&blocks)[N / 4])
+    INLINE int activate(const int16_t (&in)[2][N], Color mover, uint8_t (&out)[N], int32_t (&blocks)[N / 4])
     {
         constexpr int W = VecS16::size();
         constexpr int HALF = N / 2;
@@ -337,14 +341,17 @@ namespace nnue
             return mul_hi(a, b);
         };
 
-        int count = 0;
-        for (int view = 0; view != 2; ++view)
+        int count = 0, offset = 0;
+        for (const auto view : { mover, !mover })
+        {
             for (int i = 0; i != HALF; i += 2 * W)
             {
                 const VecU8 bytes = compress_saturated_s2u(product(in[view], i), product(in[view], i + W));
-                bytes.store_a(&out[view * HALF + i]);
-                count = append_nonzero_lanes(blocks, count, (view * HALF + i) / 4, VecI32(bytes));
+                bytes.store_a(&out[offset + i]);
+                count = append_nonzero_lanes(blocks, count, (offset + i) / 4, VecI32(bytes));
             }
+            offset += HALF;
+        }
         return count;
     }
 
@@ -1040,7 +1047,7 @@ namespace nnue
 
 
     template <typename A, typename L2, typename L3, typename OUT>
-    INLINE int eval(const A& a, const L2& l2, const L3& l3, const OUT& out)
+    INLINE int eval(const A& a, Color mover, const L2& l2, const L3& l3, const OUT& out)
     {
         static_assert(A::OUTPUTS / 2 == L2::INPUTS);
         static_assert(L2::OUTPUTS == L3::INPUTS);
@@ -1052,7 +1059,7 @@ namespace nnue
         ALIGN float output[1]; // eval
 
         int32_t blocks[L2::INPUTS / 4];
-        const int count = activate(a.output(), l2_in, blocks);
+        const int count = activate(a.output(), mover, l2_in, blocks);
         l2.dot(l2_in, blocks, count, l2_out);
         l3.dot(l2_out, l3_out, [](const Vector& v) { return relu(v); });
         out.dot(l3_out, output);
