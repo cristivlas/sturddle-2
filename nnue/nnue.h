@@ -76,6 +76,10 @@
     #define DEBUG_INCREMENTAL false
 #endif
 
+#ifndef REFRESH_SYNC_INTERVAL
+    #define REFRESH_SYNC_INTERVAL 16
+#endif
+
 namespace nnue
 {
     static const std::string instrset = ARCH ARCH_FMA ARCH_VNNI ARCH_BF16;
@@ -592,6 +596,7 @@ namespace nnue
             ALIGN int16_t output[HALF];
             Bitboard pieces[6][2] = { };
             bool valid = false;
+            int updates = 0; /* incremental updates under this key since the entry was saved */
         };
 
         struct RefreshTable
@@ -865,6 +870,23 @@ namespace nnue
                 }
 
             apply_deltas<DYNAMIC, DYNAMIC, true>(layer, view, key, entry.output, entry.output, _output[view], rem, nr, add, na);
+            entry.updates = 0;
+        }
+
+        /** Save the current half into the refresh entry every REFRESH_SYNC_INTERVAL updates, to keep later diffs short */
+        INLINE void count_update(const State& state, Color view, RefreshEntry& entry) const
+        {
+            if (++entry.updates < REFRESH_SYNC_INTERVAL)
+                return;
+
+            entry.updates = 0;
+            memcpy(entry.output, _output[view], sizeof(entry.output));
+
+            const Bitboard bbs[6] = { state.kings, state.pawns, state.knights, state.bishops, state.rooks, state.queens };
+            for (int t = 0; t != 6; ++t)
+                for (int c = 0; c != 2; ++c)
+                    entry.pieces[t][c] = bbs[t] & state._occupied_co[c];
+            entry.valid = true;
         }
 
         /** Utility for incremental updates */
@@ -932,13 +954,18 @@ namespace nnue
             if (key[BLACK] == ancestor._key[BLACK] && key[WHITE] == ancestor._key[WHITE])
             {
                 apply_move(layer, key, ancestor._output, _output, remove_inputs, r_idx, add_inputs, a_idx);
+                count_update(state, BLACK, refresh.entry[BLACK][key[BLACK]]);
+                count_update(state, WHITE, refresh.entry[WHITE][key[WHITE]]);
             }
             else
             {
                 for (const auto view : { BLACK, WHITE })
                 {
                     if (key[view] == ancestor._key[view])
+                    {
                         apply_move(layer, view, key[view], ancestor._output[view], _output[view], remove_inputs, r_idx, add_inputs, a_idx);
+                        count_update(state, view, refresh.entry[view][key[view]]);
+                    }
                     else
                         refresh_view(layer, state, view, key[view], refresh.entry[view][key[view]]);
                 }
