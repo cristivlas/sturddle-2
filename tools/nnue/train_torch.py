@@ -26,7 +26,7 @@ ACCUMULATOR_SIZE = 1024  # per perspective
 L1_INPUTS = ACCUMULATOR_SIZE  # 2 views x half the accumulator
 KING_BLOCKS = 32  # king bucket x opponent queen
 PROFILE_BUCKETS = 16  # pawn count x king side
-STACKS = 16  # piece count x side to move
+STACKS = 32  # piece count x queens (mover, other)
 HIDDEN_2 = 32
 HIDDEN_3 = 32
 
@@ -104,7 +104,11 @@ def mirror_files(features, mirrored):
 
 def stack_index(packed):
     pieces = unpack_bits(packed).sum(dim=1).long()
-    return (pieces - 1) // 4 * 2 + packed[:, 12]
+    wtm = packed[:, 12] == 1
+    black_q, white_q = packed[:, 10] != 0, packed[:, 11] != 0
+    mover_q = torch.where(wtm, white_q, black_q).long()
+    other_q = torch.where(wtm, black_q, white_q).long()
+    return (pieces - 1) // 4 * 4 + mover_q * 2 + other_q
 
 
 def pairwise(acc):
@@ -206,7 +210,9 @@ class NNUE(nn.Module):
 
         with exact_fp32(packed.device, quant):
             acc_w, acc_b = self.accumulator(packed, quant)
-            a = torch.cat([pairwise(acc_b), pairwise(acc_w)], dim=1)
+            pw_w, pw_b = pairwise(acc_w), pairwise(acc_b)
+            wtm = packed[:, 12:13] == 1
+            a = torch.cat([torch.where(wtm, pw_w, pw_b), torch.where(wtm, pw_b, pw_w)], dim=1)
             w2, b2 = self.hidden_2.weight, self.hidden_2.bias
             if quant:
                 a = fake_floor(a, Q_ACT)
@@ -361,7 +367,6 @@ class H5Batches(torch.utils.data.Dataset):
         smoothing=0.025,
         filter=None,
         no_capture=False,
-        balance=False,
         profile_ratios=None,
         outcome_scale=400.0,
     ):
@@ -371,7 +376,6 @@ class H5Batches(torch.utils.data.Dataset):
         self.smoothing = smoothing
         self.filter = filter
         self.no_capture = no_capture
-        self.balance = balance
         print(f"Loading dataset {path}")
         with h5py.File(path, "r") as hf:
             n = hf["data"].shape[0]
@@ -408,7 +412,6 @@ class H5Batches(torch.utils.data.Dataset):
         rows = data[s:e]  # (B, cols) uint64
 
         x = rows[:, : self.feature_count].astype(np.int64)
-        wtm = x[:, 12] == 1
 
         # Member (source file) of each row, for per-member label-scale profiles
         member_ids = None
@@ -416,11 +419,7 @@ class H5Batches(torch.utils.data.Dataset):
             member_ids = np.searchsorted(self.member_starts, np.arange(s, e), side="right") - 1
 
         y_eval = rows[:, self.feature_count].astype(np.int64).astype(np.float32) / SCALE
-        y_eval = np.where(wtm, y_eval, -y_eval)
-
-        y_out = rows[:, self.feature_count + 1].astype(np.float32) - 1.0  # 0,1,2 -> -1,0,1
-        y_out = np.where(wtm, y_out, -y_out)
-        y_out = (y_out + 1.0) / 2.0  # -> 0,0.5,1
+        y_out = rows[:, self.feature_count + 1].astype(np.float32) / 2.0  # loss, draw, win
         s_ = self.smoothing
         y_out = y_out * (1 - s_) + 0.5 * s_
 
@@ -441,8 +440,6 @@ class H5Batches(torch.utils.data.Dataset):
             if member_ids is not None:
                 member_ids = member_ids[keep]
 
-        # Label/outcome scales reflect how the source labeled the original position,
-        # so compute before balance mirroring (which QK<->KQ swaps the profile bucket)
         if self.trivial_profiles:
             label_scale = np.ones(x.shape[0], dtype=np.float32)
             outcome_scale = np.full(x.shape[0], self.member_oscales.flat[0], dtype=np.float32)
@@ -450,14 +447,6 @@ class H5Batches(torch.utils.data.Dataset):
             b = profile_buckets(x)
             label_scale = self.member_profiles[member_ids, b]
             outcome_scale = self.member_oscales[member_ids, b]
-
-        if self.balance:
-            # Synthesize color-mirrored positions: swap colors + vertical mirror + flip STM.
-            x = np.concatenate([x, flip_position(x)], axis=0)
-            y_eval = np.concatenate([y_eval, -y_eval], axis=0)  # negate eval
-            y_out = np.concatenate([y_out, 1.0 - y_out], axis=0)  # swap win/loss, keep draws
-            label_scale = np.concatenate([label_scale, label_scale])
-            outcome_scale = np.concatenate([outcome_scale, outcome_scale])
 
         y = np.stack([y_eval, y_out, label_scale, outcome_scale], axis=1).astype(np.float32)
         return torch.from_numpy(x), torch.from_numpy(y)
@@ -714,7 +703,6 @@ def main(args):
         smoothing=args.outcome_smoothing,
         filter=args.filter,
         no_capture=args.no_capture,
-        balance=args.balance,
         profile_ratios=profile_ratios,
         outcome_scale=args.outcome_scale,
     )
@@ -850,7 +838,6 @@ if __name__ == "__main__":
     p.add_argument("--alt-profile-dir", help="read <file>.profile.json here first, else next to data")
     p.add_argument("--sample", type=float)
     p.add_argument("-F", "--filter", type=int, help="drop positions with |eval| >= this (centipawns)")
-    p.add_argument("--balance", action="store_true", help="augment each batch with color-mirrored positions")
     p.add_argument("--no-capture", action="store_true", help="exclude positions whose move is a capture")
     p.add_argument("--mem-limit", type=int, default=0, help="GPU memory limit in MB (0 = unlimited)")
     p.add_argument("--schedule", action="store_true")
