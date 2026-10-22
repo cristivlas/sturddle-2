@@ -416,6 +416,11 @@ namespace nnue
             return (I + 1) * O;
         }
 
+        static std::runtime_error out_of_range(float v, double max, int scale)
+        {
+            return std::runtime_error("weight " + std::to_string(v) + " exceeds " + std::to_string(int64_t(max)) + "/" + std::to_string(scale));
+        }
+
         template <typename V>
         static V quantize(float v, int scale)
         {
@@ -423,10 +428,11 @@ namespace nnue
                 return v;
             else
             {
+                constexpr double max = std::numeric_limits<V>::max();
                 const auto q = std::round(double(v) * scale);
                 /* symmetric: int8 -128 is rejected */
-                if (std::abs(q) > std::numeric_limits<V>::max())
-                    throw std::runtime_error("weight " + std::to_string(v) + " exceeds range at scale " + std::to_string(scale));
+                if (std::abs(q) > max)
+                    throw out_of_range(v, max, scale);
                 return V(q);
             }
         }
