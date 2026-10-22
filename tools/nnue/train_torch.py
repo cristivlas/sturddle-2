@@ -597,17 +597,22 @@ def member_profile_table(data, filepath, profile_ratios, outcome_scale, alt_dir)
     return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles), np.stack(oscales)
 
 
-def summary(model):
-    print(f'{"layer":<12}{"shape (in, out)":<22}{"params":>12}')
-    print("-" * 46)
+def summary(model, layers):
+    if layers:
+        print(f'{"layer":<12}{"shape (in, out)":<22}{"params":>12}')
+        print("-" * 46)
     total = 0
     for name, _, _, _ in _EXPORT:
         k, b = _layer_params(model, name)
         n = k.numel() + b.numel()
         total += n
-        print(f"{name:<12}{str(tuple(k.shape)):<22}{n:>12,}")
-    print("-" * 46)
-    print(f'{"total":<34}{total:>12,}')
+        if layers:
+            print(f"{name:<12}{str(tuple(k.shape)):<22}{n:>12,}")
+    if layers:
+        print("-" * 46)
+        print(f'{"total":<34}{total:>12,}')
+    else:
+        print(f"total params: {total:,}")
 
 
 @torch.no_grad()
@@ -709,7 +714,7 @@ def main(args):
     pin = device.type == "cuda"
     loader = torch.utils.data.DataLoader(ds, batch_size=None, num_workers=args.workers, shuffle=False, pin_memory=pin)
 
-    summary(model)
+    summary(model, args.show_layers)
 
     try:
         from tqdm import tqdm
@@ -857,6 +862,7 @@ if __name__ == "__main__":
     p.add_argument("--mixed-precision", dest="mixed_precision", action="store_true", default=True)
     p.add_argument("--no-mixed-precision", dest="mixed_precision", action="store_false")
     p.add_argument("--show-scale", action="store_true", help="show AMP GradScaler scale in progress bar")
+    p.add_argument("--show-layers", action="store_true", help="print per-layer shapes and parameter counts")
     args = p.parse_args()
 
     if not args.input and not args.export:
