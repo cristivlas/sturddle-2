@@ -43,8 +43,9 @@ Q_ACT = 128
 ACT_MAX = 127 / Q_ACT
 
 # hidden_2: s8 weights at scale 128, int32 bias at the product scale
+# |w| <= 64: two 4-byte blocks summed in int16 cannot saturate (AVX2 without VNNI)
 Q_W2 = 128
-Q_MAX_W2 = 127 / Q_W2
+Q_MAX_W2 = 64 / Q_W2
 Q_B2 = Q_ACT * Q_W2
 
 SCALE = 100.0

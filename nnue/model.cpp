@@ -85,6 +85,23 @@ void Model::init()
 #endif /* !SHARED_WEIGHTS */
 
 
+#ifndef CHECK_DOT_PAIRS
+    #define CHECK_DOT_PAIRS false
+#endif
+
+#if DOT_PAIRS && CHECK_DOT_PAIRS
+/* larger weights may saturate the paired dot_add */
+static void check_pair_weights(const L2Type& layer, int stack)
+{
+    for (const auto& block : layer._packed)
+        for (const auto& out : block)
+            for (const auto w : out)
+                if (std::abs(int(w)) > DOT_PAIR_MAX)
+                    throw std::runtime_error("L2[" + std::to_string(stack) + "] weight " + std::to_string(w) + " exceeds " + std::to_string(DOT_PAIR_MAX));
+}
+#endif /* DOT_PAIRS && CHECK_DOT_PAIRS */
+
+
 /* Same order as the trainers export them */
 void Model::load_layers(std::istream& file)
 {
@@ -93,6 +110,9 @@ void Model::load_layers(std::istream& file)
     for (int s = 0; s != STACKS; ++s)
     {
         L2[s].load_weights(file);
+    #if DOT_PAIRS && CHECK_DOT_PAIRS
+        check_pair_weights(L2[s], s);
+    #endif
         L3[s].load_weights(file);
         EVAL[s].load_weights(file);
     }

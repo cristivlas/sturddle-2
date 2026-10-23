@@ -14,9 +14,9 @@
 #endif
 
 /* Positions of the set bits of each W-bit mask, lowest first */
-template <int W> struct SetBitsTable
+template <int W, typename T = int32_t> struct SetBitsTable
 {
-    int32_t index[1 << W][W] = { };
+    T index[1 << W][W] = { };
 
     constexpr SetBitsTable()
     {
@@ -26,6 +26,13 @@ template <int W> struct SetBitsTable
                     index[m][n++] = k;
     }
 };
+
+/* Indices of the non-zero input blocks: 16-bit on AVX2 halves the table and the stores */
+#if INSTRSET >= 8 && INSTRSET < 10
+using block_t = uint16_t;
+#else
+using block_t = int32_t;
+#endif /* INSTRSET */
 
 /* Append base + k for each non-zero lane k of v at out[count]; count <= base keeps the full-vector store in bounds */
 #if INSTRSET >= 10
@@ -39,12 +46,12 @@ template <size_t N> INLINE int append_nonzero_lanes(int32_t (&out)[N], int count
 #endif /* INSTRSET >= 10 */
 
 #if INSTRSET >= 8
-inline constexpr SetBitsTable<8> SET_BITS_8;
+inline constexpr SetBitsTable<8, uint16_t> SET_BITS_8;
 
-template <size_t N> INLINE int append_nonzero_lanes(int32_t (&out)[N], int count, int base, Vec8i const v)
+template <size_t N> INLINE int append_nonzero_lanes(uint16_t (&out)[N], int count, int base, Vec8i const v)
 {
     const auto mask = to_bits(v != 0);
-    (Vec8i().load(SET_BITS_8.index[mask]) + base).store(&out[count]);
+    (Vec8us().load(SET_BITS_8.index[mask]) + uint16_t(base)).store(&out[count]);
     return count + std::popcount(unsigned(mask));
 }
 #endif /* INSTRSET >= 8 */
@@ -57,6 +64,26 @@ template <size_t N> INLINE int append_nonzero_lanes(int32_t (&out)[N], int count
     (Vec4i().load(SET_BITS_4.index[mask]) + base).store(&out[count]);
     return count + std::popcount(unsigned(mask));
 }
+
+#if INSTRSET >= 7 && INSTRSET < 9
+INLINE Vec8f add_halves(Vec8f const a, Vec8f const b)
+{
+    return blend8<0, 1, 2, 3, 8, 9, 10, 11>(a, b) + blend8<4, 5, 6, 7, 12, 13, 14, 15>(a, b);
+}
+
+INLINE Vec8f add_pairs(Vec8f const a, Vec8f const b)
+{
+    return blend8<0, 1, 8, 9, 4, 5, 12, 13>(a, b) + blend8<2, 3, 10, 11, 6, 7, 14, 15>(a, b);
+}
+
+/* Sum each of the 8 vectors, adding in the same order as horizontal_add(Vec8f) */
+INLINE Vec8f horizontal_add(Vec8f const (&v)[8])
+{
+    const Vec8f p01 = add_pairs(add_halves(v[0], v[4]), add_halves(v[1], v[5]));
+    const Vec8f p23 = add_pairs(add_halves(v[2], v[6]), add_halves(v[3], v[7]));
+    return blend8<0, 2, 8, 10, 4, 6, 12, 14>(p01, p23) + blend8<1, 3, 9, 11, 5, 7, 13, 15>(p01, p23);
+}
+#endif /* INSTRSET >= 7 && INSTRSET < 9 */
 
 /* Saturate signed 16-bit to unsigned 8-bit, low then high, in order: negatives become 0 */
 #if INSTRSET >= 10
@@ -125,6 +152,22 @@ INLINE Vec8i dot_add(Vec8i const acc, Vec32uc const a, Vec32c const b)
   #endif /* __AVXVNNI__ */
 }
 #endif /* INSTRSET >= 8 */
+
+/**
+ * AVX2 without VNNI: two blocks per widening, their pair sums added in int16.
+ * Exact for |b| <= DOT_PAIR_MAX; beyond that the sum saturates, it never wraps.
+ */
+#if INSTRSET >= 8 && INSTRSET < 10 && !__AVXVNNI__ && !(__AVX512VNNI__ && __AVX512VL__)
+#define DOT_PAIRS true
+
+constexpr int DOT_PAIR_MAX = 64;
+
+INLINE Vec8i dot_add(Vec8i const acc, Vec32uc const a0, Vec32c const b0, Vec32uc const a1, Vec32c const b1)
+{
+    const Vec16s sum = add_saturated(Vec16s(_mm256_maddubs_epi16(a0, b0)), Vec16s(_mm256_maddubs_epi16(a1, b1)));
+    return acc + Vec8i(_mm256_madd_epi16(sum, _mm256_set1_epi16(1)));
+}
+#endif /* DOT_PAIRS */
 
 INLINE Vec4i dot_add(Vec4i const acc, Vec16uc const a, Vec16c const b)
 {

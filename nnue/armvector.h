@@ -143,6 +143,13 @@ INLINE float horizontal_add(Vec8f x)
 #endif
 }
 
+INLINE Vec8f horizontal_add(const Vec8f (&v)[8])
+{
+    return Vec8f(
+        horizontal_add(v[0]), horizontal_add(v[1]), horizontal_add(v[2]), horizontal_add(v[3]),
+        horizontal_add(v[4]), horizontal_add(v[5]), horizontal_add(v[6]), horizontal_add(v[7]));
+}
+
 INLINE Vec8f operator + (Vec8f a, Vec8f b)
 {
     return vaddq_f16(a, b);
@@ -407,8 +414,10 @@ INLINE Vec4i operator + (Vec4i a, Vec4i b)
     return vaddq_s32(a, b);
 }
 
+using block_t = int32_t;
+
 /* Append base + k for each non-zero lane k of v at out[count]; count <= base keeps writes in bounds */
-template <size_t N> INLINE int append_nonzero_lanes(int32_t (&out)[N], int count, int base, Vec4i v)
+template <size_t N> INLINE int append_nonzero_lanes(block_t (&out)[N], int count, int base, Vec4i v)
 {
     alignas(16) int32_t lane[4];
     v.store_a(lane);

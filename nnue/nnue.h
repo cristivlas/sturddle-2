@@ -72,6 +72,10 @@
     constexpr int INPUT_STRIDE = 16;
 #endif
 
+#ifndef DOT_PAIRS
+    #define DOT_PAIRS false
+#endif
+
 #ifndef DEBUG_INCREMENTAL
     #define DEBUG_INCREMENTAL false
 #endif
@@ -161,13 +165,6 @@ namespace nnue
         }
     #elif INSTRSET >= 7
         using Vector = Vec8f;
-
-        INLINE Vector horizontal_add(const Vector (&v)[8])
-        {
-            return Vector(
-                horizontal_add(v[0]), horizontal_add(v[1]), horizontal_add(v[2]), horizontal_add(v[3]),
-                horizontal_add(v[4]), horizontal_add(v[5]), horizontal_add(v[6]), horizontal_add(v[7]));
-        }
     #else
         using Vector = Vec4f;
 
@@ -301,6 +298,13 @@ namespace nnue
     /* independent sets of sums in the sparse dot, so consecutive dot_adds don't wait on each other */
     constexpr int DOT_SETS = (INSTRSET >= 10) ? 4 : (INSTRSET >= 8) ? 2 : 1;
 
+    INLINE VecU8 broadcast_block(const uint8_t* p)
+    {
+        int32_t four;
+        memcpy(&four, p, 4);
+        return VecU8(VecI32(four));
+    }
+
 
 #if 0 /* superseded by the non-zero blocks recorded in activate */
     /** Indices of the 4-byte input blocks that are not all zero, in order; returns their count */
@@ -322,7 +326,7 @@ namespace nnue
      * list the non-zero 4-byte blocks, return their count
      */
     template <int N>
-    INLINE int activate(const int16_t (&in)[2][N], Color mover, uint8_t (&out)[N], int32_t (&blocks)[N / 4])
+    INLINE int activate(const int16_t (&in)[2][N], Color mover, uint8_t (&out)[N], block_t (&blocks)[N / 4])
     {
         constexpr int W = VecS16::size();
         constexpr int HALF = N / 2;
@@ -479,7 +483,7 @@ namespace nnue
         }
 
         /** Byte activations times int8 weights over the non-zero input blocks, summed in int32, then relu and back to float */
-        INLINE void dot(const uint8_t (&input)[INPUTS], const int32_t (&blocks)[INPUTS / 4], int count, float (&output)[OUTPUTS]) const
+        INLINE void dot(const uint8_t (&input)[INPUTS], const block_t (&blocks)[INPUTS / 4], int count, float (&output)[OUTPUTS]) const
         {
             static_assert(PACKED);
 
@@ -495,9 +499,7 @@ namespace nnue
 
             const auto accumulate = [&](VecI32 (&sums)[ACCS], int b)
             {
-                int32_t four;
-                memcpy(&four, &input[4 * b], 4);
-                const VecU8 a = VecU8(VecI32(four));
+                const VecU8 a = broadcast_block(&input[4 * b]);
 
                 VecS8 w;
                 for (int k = 0; k != ACCS; ++k)
@@ -508,9 +510,26 @@ namespace nnue
             };
 
             int n = 0;
+        #if DOT_PAIRS
+            for (; n + 2 * DOT_SETS <= count; n += 2 * DOT_SETS)
+                for (int s = 0; s != DOT_SETS; ++s)
+                {
+                    const int b0 = blocks[n + 2 * s], b1 = blocks[n + 2 * s + 1];
+                    const VecU8 a0 = broadcast_block(&input[4 * b0]), a1 = broadcast_block(&input[4 * b1]);
+
+                    VecS8 w0, w1;
+                    for (int k = 0; k != ACCS; ++k)
+                    {
+                        w0.load_a(this->_packed[b0][k * W]);
+                        w1.load_a(this->_packed[b1][k * W]);
+                        acc[s][k] = dot_add(acc[s][k], a0, w0, a1, w1);
+                    }
+                }
+        #else
             for (; n + DOT_SETS <= count; n += DOT_SETS)
                 for (int s = 0; s != DOT_SETS; ++s)
                     accumulate(acc[s], blocks[n + s]);
+        #endif /* DOT_PAIRS */
             for (; n != count; ++n)
                 accumulate(acc[0], blocks[n]);
 
@@ -1064,7 +1083,7 @@ namespace nnue
         ALIGN float l3_out[L3::OUTPUTS];
         ALIGN float output[1]; // eval
 
-        int32_t blocks[L2::INPUTS / 4];
+        block_t blocks[L2::INPUTS / 4];
         const int count = activate(a.output(), mover, l2_in, blocks);
         l2.dot(l2_in, blocks, count, l2_out);
         l3.dot(l2_out, l3_out, [](const Vector& v) { return relu(v); });
