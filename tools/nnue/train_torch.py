@@ -436,11 +436,18 @@ class H5Batches(torch.utils.data.Dataset):
         return torch.from_numpy(x), torch.from_numpy(y)
 
     def read_slices(self, starts):
-        """(x, y, keep) for the slices at row offsets starts; keep: filters and valid positions, over all rows read."""
+        """(x, y, keep) for slices at sorted row offsets starts; keep: filters and valid positions, all rows read."""
+        assert np.all(np.diff(starts) >= self.slice_rows), "starts must be sorted and disjoint"
         if self.hf is None:  # open inside worker
             self.hf = h5py.File(self.path, "r")
         data = self.hf["data"]
-        rows = np.concatenate([data[s : s + self.slice_rows] for s in starts])  # (B, cols) uint64
+        # one read for all slices: a VDS walks every mapping per read call
+        space = data.id.get_space()
+        space.select_none()
+        for s in starts:
+            space.select_hyperslab((int(s), 0), (self.slice_rows, self.cols), op=h5py.h5s.SELECT_OR)
+        rows = np.empty((len(starts) * self.slice_rows, self.cols), dtype=data.dtype)  # (B, cols) uint64
+        data.id.read(h5py.h5s.create_simple(rows.shape), space, rows)
 
         x = rows[:, : self.feature_count].astype(np.int64)
 
@@ -924,7 +931,7 @@ if __name__ == "__main__":
     p.add_argument("--schedule", action="store_true")
     p.add_argument("--patience", type=int, default=3)
     p.add_argument("--sched-threshold", type=float, default=1e-4, help="--schedule: min relative improvement")
-    p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--workers", type=int, default=8)
     p.add_argument("--ncols", type=int, default=120, help="progress bar width (0 = auto/full terminal)")
     p.add_argument("--log-every", type=float, default=30, help="seconds between status lines when tqdm is missing")
     p.add_argument("--gpu", dest="gpu", action="store_true", default=True)
@@ -940,8 +947,8 @@ if __name__ == "__main__":
         p.error("input dataset required (or use --export)")
     if args.focal_gamma < 0:
         p.error("--focal-gamma must be >= 0")
-    if not 0 < args.slice_rows <= args.batch_size:
-        p.error("--slice-rows must be in [1, --batch-size]")
+    if not 0 < args.slice_rows <= args.batch_size or args.batch_size % args.slice_rows:
+        p.error("--slice-rows must divide --batch-size")
     if sum((args.loss_mae, args.loss_bce, args.loss_blend)) > 1:
         p.error("--loss-mae, --loss-bce and --loss-blend are mutually exclusive")
     if args.alt_profile_dir and not os.path.isdir(args.alt_profile_dir):
