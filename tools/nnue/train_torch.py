@@ -659,16 +659,16 @@ def member_profile_table(data, filepath, profile_ratios, outcome_scale, alt_dir)
             raise ValueError(f"{sidecar}: ambiguous, matches {owners[sidecar]} and {path}")
         if sidecar not in cache:
             if path != filepath and os.path.exists(sidecar):
-                cache[sidecar] = (load_profile(sidecar), load_outcome_scale(sidecar, outcome_scale))
+                cache[sidecar] = (load_profile(sidecar), load_outcome_scale(sidecar, outcome_scale), True)
                 print(f"{path}: using profile {sidecar}")
-                matched += 1
             else:
-                cache[sidecar] = (default, default_os)
-        r, o = cache[sidecar]
+                cache[sidecar] = (default, default_os, False)
+        r, o, own = cache[sidecar]
+        matched += own
         profiles.append(r)
         oscales.append(o)
 
-    print(f"{len(members)} member(s), {matched} with own profile")
+    print(f"{len(members)} member(s) from {len(cache)} file(s), {matched} with own profile")
     return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles), np.stack(oscales)
 
 
