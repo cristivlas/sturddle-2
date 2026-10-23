@@ -824,6 +824,7 @@ def main(args):
             model.train()
             total, count = 0.0, 0
             acc_sum, mae_sum = 0.0, 0.0
+            ema_loss, ema_acc, ema_mae = 0.0, 0.0, 0.0  # display: EMA with --ema batch horizon
             ds.reshuffle(device)
             bar = (
                 tqdm(
@@ -849,13 +850,18 @@ def main(args):
                 scaler.step(opt)
                 scaler.update()
                 apply_constraints(model)
-                total += loss.item()
+                step_loss = loss.item()
+                total += step_loss
                 count += 1
                 acc, mae = metrics(pred, y, args.outcome_scale)
                 acc_sum += acc
                 mae_sum += mae
+                alpha = max(1.0 / count, 1.0 / args.ema)  # running mean for the first --ema batches, then EMA
+                ema_loss += alpha * (step_loss - ema_loss)
+                ema_acc += alpha * (acc - ema_acc)
+                ema_mae += alpha * (mae - ema_mae)
                 if tqdm:
-                    post = dict(loss=f"{total/count:.4f}", acc=f"{acc_sum/count:.4f}", mae=f"{mae_sum/count:.4f}")
+                    post = dict(loss=f"{ema_loss:.4f}", acc=f"{ema_acc:.4f}", mae=f"{ema_mae:.4f}")
                     if use_amp and args.show_scale:
                         post["scale"] = f"{scaler.get_scale():.0f}"
                     bar.set_postfix(**post)
@@ -864,7 +870,7 @@ def main(args):
                     rate = count / max(t_last - t0, 1e-9)
                     print(
                         f"epoch {epoch+1}/{args.epochs} step {i+1}/{len(ds)} "
-                        f"loss {total/count:.4f} acc {acc_sum/count:.4f} mae {mae_sum/count:.4f} {rate:.2f} it/s"
+                        f"loss {ema_loss:.4f} acc {ema_acc:.4f} mae {ema_mae:.4f} {rate:.2f} it/s"
                     )
             avg = total / max(count, 1)
             avg_acc = acc_sum / max(count, 1)
@@ -934,6 +940,7 @@ if __name__ == "__main__":
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--ncols", type=int, default=120, help="progress bar width (0 = auto/full terminal)")
     p.add_argument("--log-every", type=float, default=30, help="seconds between status lines when tqdm is missing")
+    p.add_argument("--ema", type=int, default=1000, help="progress display EMA horizon, in batches")
     p.add_argument("--gpu", dest="gpu", action="store_true", default=True)
     p.add_argument("--no-gpu", dest="gpu", action="store_false")
     p.add_argument("--no-data-parallel", action="store_true", help="use a single GPU even if several are visible")
@@ -949,6 +956,8 @@ if __name__ == "__main__":
         p.error("--focal-gamma must be >= 0")
     if not 0 < args.slice_rows <= args.batch_size or args.batch_size % args.slice_rows:
         p.error("--slice-rows must divide --batch-size")
+    if args.ema < 1:
+        p.error("--ema must be >= 1")
     if sum((args.loss_mae, args.loss_bce, args.loss_blend)) > 1:
         p.error("--loss-mae, --loss-bce and --loss-blend are mutually exclusive")
     if args.alt_profile_dir and not os.path.isdir(args.alt_profile_dir):
