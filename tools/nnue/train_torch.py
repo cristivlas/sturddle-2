@@ -355,13 +355,14 @@ def combined_loss(y_pred, y_true, args):
 
 
 # ---------------------------------------------------------------------------
-# H5 dataset: yields whole batches (contiguous slices), shuffled / sampled.
+# H5 dataset: yields batches of random slices, shuffled / sampled.
 # ---------------------------------------------------------------------------
 class H5Batches(torch.utils.data.Dataset):
     def __init__(
         self,
         path,
         batch_size,
+        slice_rows,
         alt_profile_dir,
         sample=None,
         smoothing=0.025,
@@ -371,7 +372,6 @@ class H5Batches(torch.utils.data.Dataset):
         outcome_scale=400.0,
     ):
         self.path = path
-        self.batch_size = batch_size
         self.sample = sample
         self.smoothing = smoothing
         self.filter = filter
@@ -389,16 +389,24 @@ class H5Batches(torch.utils.data.Dataset):
         print(f"{n:,} rows.")
         logging.info("dataset %s: %s rows", path, f"{n:,}")
         self.feature_count = 13
-        self.num_batches = n // batch_size
+        self.slice_rows = slice_rows
+        self.slices_per_batch = batch_size // slice_rows
+        self.num_offsets = slice_rows if slice_rows < batch_size else 1  # contiguous: aligned, as before
+        self.num_slices = (n - self.num_offsets + 1) // slice_rows
+        self.num_batches = self.num_slices // self.slices_per_batch
+        if self.num_batches < 1:
+            raise ValueError(f"{path}: {n:,} rows, less than one batch")
+        print(f"{self.slices_per_batch} slice(s) of {slice_rows} rows per batch")
+        self.indices = np.empty((0, self.slices_per_batch), dtype=np.int64)  # until reshuffle()
+        self.offset = 0
         self.hf = None  # lazy per-worker
-        self.reshuffle()
 
-    def reshuffle(self):
-        if self.sample:
-            k = max(1, int(self.num_batches * self.sample))
-            self.indices = np.random.choice(self.num_batches, k, replace=False)
-        else:
-            self.indices = np.random.permutation(self.num_batches)
+    def reshuffle(self, device):
+        k = max(1, int(self.num_batches * self.sample)) if self.sample else self.num_batches
+        dtype = torch.int32 if self.num_slices <= torch.iinfo(torch.int32).max else torch.int64
+        slices = torch.randperm(self.num_slices, device=device, dtype=dtype)[: k * self.slices_per_batch]
+        self.indices = slices.cpu().numpy().reshape(k, self.slices_per_batch)
+        self.offset = np.random.randint(self.num_offsets)
 
     def __len__(self):
         return len(self.indices)
@@ -407,16 +415,16 @@ class H5Batches(torch.utils.data.Dataset):
         if self.hf is None:  # open inside worker
             self.hf = h5py.File(self.path, "r")
         data = self.hf["data"]
-        i = self.indices[idx]
-        s, e = i * self.batch_size, (i + 1) * self.batch_size
-        rows = data[s:e]  # (B, cols) uint64
+        starts = np.sort(self.indices[idx]).astype(np.int64) * self.slice_rows + self.offset
+        rows = np.concatenate([data[s : s + self.slice_rows] for s in starts])  # (B, cols) uint64
 
         x = rows[:, : self.feature_count].astype(np.int64)
 
         # Member (source file) of each row, for per-member label-scale profiles
         member_ids = None
         if not self.trivial_profiles:
-            member_ids = np.searchsorted(self.member_starts, np.arange(s, e), side="right") - 1
+            positions = (starts[:, np.newaxis] + np.arange(self.slice_rows)).ravel()
+            member_ids = np.searchsorted(self.member_starts, positions, side="right") - 1
 
         y_eval = rows[:, self.feature_count].astype(np.int64).astype(np.float32) / SCALE
         y_out = rows[:, self.feature_count + 1].astype(np.float32) / 2.0  # loss, draw, win
@@ -703,6 +711,7 @@ def main(args):
     ds = H5Batches(
         args.input,
         args.batch_size,
+        args.slice_rows,
         alt_profile_dir=args.alt_profile_dir,
         sample=args.sample,
         smoothing=args.outcome_smoothing,
@@ -712,7 +721,10 @@ def main(args):
         outcome_scale=args.outcome_scale,
     )
     pin = device.type == "cuda"
-    loader = torch.utils.data.DataLoader(ds, batch_size=None, num_workers=args.workers, shuffle=False, pin_memory=pin)
+    # non-persistent workers: re-forked each epoch, so they see reshuffle()
+    loader = torch.utils.data.DataLoader(
+        ds, batch_size=None, num_workers=args.workers, shuffle=False, pin_memory=pin, persistent_workers=False
+    )
 
     summary(model, args.show_layers)
 
@@ -733,7 +745,7 @@ def main(args):
             model.train()
             total, count = 0.0, 0
             acc_sum, mae_sum = 0.0, 0.0
-            ds.reshuffle()
+            ds.reshuffle(device)
             bar = (
                 tqdm(
                     loader,
@@ -786,6 +798,7 @@ def main(args):
             hyperparam = {
                 "learn rate": f"{lr:.2e}",
                 "batch size": args.batch_size,
+                "slice rows": args.slice_rows,
                 "profile": args.profile,
                 "sampling ratio": args.sample,
             }
@@ -806,18 +819,14 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("input", nargs="?", help="h5 dataset path")
     p.add_argument("-b", "--batch-size", type=int, default=16384)
+    p.add_argument("--slice-rows", type=int, default=64, help="rows per random batch slice")
     p.add_argument("-e", "--epochs", type=int, default=100)
     p.add_argument("-m", "--model", help="output weights.bin checkpoint path (best loss)")
     # Defaults below are tuned for SGD (--optimizer sgd). For adam/amsgrad use a
     # much smaller --learn-rate (e.g. 1e-4) and lower --momentum (~0.5).
     p.add_argument("-r", "--learn-rate", type=float, default=1e-2)
     p.add_argument("-o", "--export", help="export weights.bin and exit")
-    p.add_argument(
-        "-q",
-        "--quant-round",
-        action="store_true",
-        help="QAT: fake-quant in the training forward pass, on-grid values on export (off = float run)",
-    )
+    p.add_argument("-q", "--quant-round", action="store_true", help="QAT, on-grid export")
     p.add_argument("-s", "--outcome-smoothing", type=float, default=0.025)
     p.add_argument("-d", "--decay", type=float)
     p.add_argument("-L", "--logfile", default="train_torch.log")
@@ -828,12 +837,7 @@ if __name__ == "__main__":
     p.add_argument("--clip-norm", type=float, default=1.0)
     p.add_argument("--clip-eval", type=int)
     p.add_argument("--outcome-weight", type=float, default=0.1)
-    p.add_argument(
-        "--outcome-scale",
-        type=float,
-        default=120.0,
-        help="pred-side sigmoid scale (the net's cp units); per-row sidecar S calibrates targets",
-    )
+    p.add_argument("--outcome-scale", type=float, default=120.0, help="pred-side sigmoid scale, targets use sidecar S")
     p.add_argument("--loss-mae", action="store_true")
     p.add_argument("--loss-bce", action="store_true")
     p.add_argument("--loss-blend", action="store_true")
@@ -847,13 +851,8 @@ if __name__ == "__main__":
     p.add_argument("--mem-limit", type=int, default=0, help="GPU memory limit in MB (0 = unlimited)")
     p.add_argument("--schedule", action="store_true")
     p.add_argument("--patience", type=int, default=3)
-    p.add_argument(
-        "--sched-threshold",
-        type=float,
-        default=1e-4,
-        help="--schedule: min relative loss improvement that counts as progress (raise when --sample adds noise)",
-    )
-    p.add_argument("--workers", type=int, default=0)
+    p.add_argument("--sched-threshold", type=float, default=1e-4, help="--schedule: min relative improvement")
+    p.add_argument("--workers", type=int, default=4)
     p.add_argument("--ncols", type=int, default=120, help="progress bar width (0 = auto/full terminal)")
     p.add_argument("--log-every", type=float, default=30, help="seconds between status lines when tqdm is missing")
     p.add_argument("--gpu", dest="gpu", action="store_true", default=True)
@@ -869,6 +868,8 @@ if __name__ == "__main__":
         p.error("input dataset required (or use --export)")
     if args.focal_gamma < 0:
         p.error("--focal-gamma must be >= 0")
+    if not 0 < args.slice_rows <= args.batch_size:
+        p.error("--slice-rows must be in [1, --batch-size]")
     if sum((args.loss_mae, args.loss_bce, args.loss_blend)) > 1:
         p.error("--loss-mae, --loss-bce and --loss-blend are mutually exclusive")
     if args.alt_profile_dir and not os.path.isdir(args.alt_profile_dir):
