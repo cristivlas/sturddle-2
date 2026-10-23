@@ -49,6 +49,11 @@ Q_B2 = Q_ACT * Q_W2
 
 SCALE = 100.0
 
+# fitted outcome scale: 95% CI within this fraction of S (~2M rows), small next to the ~30% spread across datasets
+OUTCOME_SCALE_CI = 0.02
+OUTCOME_SCALE_START = 400.0  # Newton start, cp
+FIT_READ_SLICES = 256  # slices per read while fitting
+
 
 # ---------------------------------------------------------------------------
 # Feature unpacking and bucketing
@@ -109,6 +114,15 @@ def stack_index(packed):
     mover_q = torch.where(wtm, white_q, black_q).long()
     other_q = torch.where(wtm, black_q, white_q).long()
     return (pieces - 1) // 4 * 4 + mover_q * 2 + other_q
+
+
+def king_blocks(packed):
+    white = unpack_bits(packed)
+    return king_block(torch.cat([white, black_view(white)], dim=0))[0]
+
+
+# bucket kinds the engine counts (NNUE_COUNTS): name -> (packed -> ids, count); ids: all rows' first view, then the next
+PARTITIONS = {"stack": (stack_index, STACKS), "block": (king_blocks, KING_BLOCKS)}
 
 
 def pairwise(acc):
@@ -383,9 +397,7 @@ class H5Batches(torch.utils.data.Dataset):
             self.member_starts, self.member_profiles, self.member_oscales = member_profile_table(
                 hf["data"], path, profile_ratios, outcome_scale, alt_profile_dir
             )
-        self.trivial_profiles = bool(np.all(self.member_profiles == 1.0)) and bool(
-            np.all(self.member_oscales == self.member_oscales.flat[0])
-        )
+        self.set_default_outcome_scale(outcome_scale)
         print(f"{n:,} rows.")
         logging.info("dataset %s: %s rows", path, f"{n:,}")
         self.feature_count = 13
@@ -399,7 +411,15 @@ class H5Batches(torch.utils.data.Dataset):
         print(f"{self.slices_per_batch} slice(s) of {slice_rows} rows per batch")
         self.indices = np.empty((0, self.slices_per_batch), dtype=np.int64)  # until reshuffle()
         self.offset = 0
+        self.invalid = 0  # rows read without one king per side, per process
         self.hf = None  # lazy per-worker
+
+    def set_default_outcome_scale(self, s):
+        """Outcome scale for members without one in their profile (NaN until known)."""
+        self.member_oscales[np.isnan(self.member_oscales)] = s
+        self.trivial_profiles = bool(np.all(self.member_profiles == 1.0)) and bool(
+            np.all(self.member_oscales == self.member_oscales.flat[0])
+        )
 
     def reshuffle(self, device):
         k = max(1, int(self.num_batches * self.sample)) if self.sample else self.num_batches
@@ -412,10 +432,15 @@ class H5Batches(torch.utils.data.Dataset):
         return len(self.indices)
 
     def __getitem__(self, idx):
+        starts = np.sort(self.indices[idx]).astype(np.int64) * self.slice_rows + self.offset
+        x, y, _ = self.read_slices(starts)
+        return torch.from_numpy(x), torch.from_numpy(y)
+
+    def read_slices(self, starts):
+        """(x, y, keep) for the slices at row offsets starts; keep: filters and valid positions, over all rows read."""
         if self.hf is None:  # open inside worker
             self.hf = h5py.File(self.path, "r")
         data = self.hf["data"]
-        starts = np.sort(self.indices[idx]).astype(np.int64) * self.slice_rows + self.offset
         rows = np.concatenate([data[s : s + self.slice_rows] for s in starts])  # (B, cols) uint64
 
         x = rows[:, : self.feature_count].astype(np.int64)
@@ -443,10 +468,16 @@ class H5Batches(torch.utils.data.Dataset):
             is_capture = (opp_occ & np.left_shift(np.uint64(1), to_square)) != 0
             keep = ~is_capture if keep is None else (keep & ~is_capture)
 
-        if keep is not None:
-            x, y_eval, y_out = x[keep], y_eval[keep], y_out[keep]
-            if member_ids is not None:
-                member_ids = member_ids[keep]
+        valid = (popcount(rows[:, 0]) == 1) & (popcount(rows[:, 1]) == 1)  # one king per side
+        if not valid.all():
+            if not self.invalid:
+                logging.warning("%s: dropping rows without one king per side", self.path)
+            self.invalid += int((~valid).sum())
+        keep = valid if keep is None else (keep & valid)
+
+        x, y_eval, y_out = x[keep], y_eval[keep], y_out[keep]
+        if member_ids is not None:
+            member_ids = member_ids[keep]
 
         if self.trivial_profiles:
             label_scale = np.ones(x.shape[0], dtype=np.float32)
@@ -457,7 +488,44 @@ class H5Batches(torch.utils.data.Dataset):
             outcome_scale = self.member_oscales[member_ids, b]
 
         y = np.stack([y_eval, y_out, label_scale, outcome_scale], axis=1).astype(np.float32)
-        return torch.from_numpy(x), torch.from_numpy(y)
+        return x, y, keep
+
+
+def fit_outcome_scale(ds):
+    """(S, 95% CI half-width): outcome ~ sigmoid(calibrated cp / S) on the trainer's view of ds, logistic in 1/S;
+    random slices in doubling rounds until the slice-clustered CI is within OUTCOME_SCALE_CI of S."""
+    rng = np.random.default_rng()
+    cp, out, cluster = [], [], []
+    num, s, ci = FIT_READ_SLICES, math.nan, math.inf
+    while math.isnan(s) or ci > OUTCOME_SCALE_CI * s:
+        slices = np.sort(rng.choice(ds.num_slices, min(num, ds.num_slices), replace=False)).astype(np.int64)
+        for group in np.array_split(slices, -(-len(slices) // FIT_READ_SLICES)):
+            _, y, keep = ds.read_slices(group * ds.slice_rows)
+            cp.append(y[:, 0] / y[:, 2] * SCALE)
+            out.append((y[:, 1] - 0.5 * ds.smoothing) / (1.0 - ds.smoothing))  # unsmoothed
+            cluster.append(np.repeat(group, ds.slice_rows)[keep])
+        c, o, k = np.concatenate(cp), np.concatenate(out), np.concatenate(cluster)
+        beta = 1.0 / OUTCOME_SCALE_START
+        for _ in range(100):  # Newton; the 1-D logistic loss is convex in beta
+            p = 1.0 / (1.0 + np.exp(-np.clip(beta * c, -30.0, 30.0)))
+            hess = np.dot(p * (1.0 - p), c * c)
+            if not hess > 0:
+                raise ValueError(f"{ds.path}: outcome scale fit: no eval signal")
+            step = np.dot(p - o, c) / hess
+            beta -= step
+            if abs(step) < 1e-12 * abs(beta):
+                break
+        if not beta > 0:
+            raise ValueError(f"{ds.path}: outcome scale fit failed (beta {beta})")
+        g = np.bincount(np.unique(k, return_inverse=True)[1], weights=(p - o) * c)  # per-slice scores
+        s, ci = 1.0 / beta, 1.96 * math.sqrt(np.sum(g * g)) / hess / beta**2  # sandwich SE, delta method
+        if num >= ds.num_slices:
+            break
+        num *= 2
+    if ds.hf is not None:  # no open h5 handle across a fork
+        ds.hf.close()
+        ds.hf = None
+    return s, ci
 
 
 def vertical_mirror(bb):
@@ -718,8 +786,13 @@ def main(args):
         filter=args.filter,
         no_capture=args.no_capture,
         profile_ratios=profile_ratios,
-        outcome_scale=args.outcome_scale,
+        outcome_scale=math.nan if args.outcome_scale is None else args.outcome_scale,
     )
+    if args.outcome_scale is None:
+        args.outcome_scale, ci = fit_outcome_scale(ds)
+        ds.set_default_outcome_scale(args.outcome_scale)
+        print(f"outcome scale {args.outcome_scale:.1f} ±{ci:.1f} (fitted)")
+        logging.info("outcome scale %.1f +-%.1f (fitted)", args.outcome_scale, ci)
     pin = device.type == "cuda"
     # non-persistent workers: re-forked each epoch, so they see reshuffle()
     loader = torch.utils.data.DataLoader(
@@ -837,7 +910,7 @@ if __name__ == "__main__":
     p.add_argument("--clip-norm", type=float, default=1.0)
     p.add_argument("--clip-eval", type=int)
     p.add_argument("--outcome-weight", type=float, default=0.1)
-    p.add_argument("--outcome-scale", type=float, default=120.0, help="pred-side sigmoid scale, targets use sidecar S")
+    p.add_argument("--outcome-scale", type=float, help="pred-side sigmoid scale (default: fitted), targets use sidecar S")
     p.add_argument("--loss-mae", action="store_true")
     p.add_argument("--loss-bce", action="store_true")
     p.add_argument("--loss-blend", action="store_true")
