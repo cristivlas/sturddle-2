@@ -49,8 +49,7 @@ Q_B2 = Q_ACT * Q_W2
 
 SCALE = 100.0
 
-# fitted outcome scale: 95% CI within this fraction of S (~2M rows), small next to the ~30% spread across datasets
-OUTCOME_SCALE_CI = 0.02
+OUTCOME_SCALE_CI = 0.02  # fitted outcome scale: 95% CI as a fraction of S
 OUTCOME_SCALE_START = 400.0  # Newton start, cp
 FIT_READ_SLICES = 256  # slices per read while fitting
 
