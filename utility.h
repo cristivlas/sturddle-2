@@ -32,6 +32,8 @@
 #include <vector>
 #if _WIN32
   #include "winutil.h"
+#else
+  #include <unistd.h>
 #endif /* _WIN32 */
 #if !NATIVE_BUILD
   #include "Python.h"
@@ -185,6 +187,16 @@ namespace
     {
         static thread_local std::mt19937 gen(std::random_device{}());
         return std::uniform_int_distribution<int>(low, high)(gen);
+    }
+
+
+    static INLINE auto get_pid()
+    {
+    #if _WIN32
+        return GetCurrentProcessId();
+    #else
+        return getpid();
+    #endif /* _WIN32 */
     }
 
 

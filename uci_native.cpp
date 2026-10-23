@@ -837,6 +837,9 @@ void UCI::run()
         }
         dispatch(cmd, args);
     }
+#if NNUE_COUNTS
+    nnue::write_counts(); /* quit or EOF */
+#endif
 }
 
 INLINE void UCI::dispatch(std::string &cmd, const Arguments &args)
@@ -1122,6 +1125,9 @@ INLINE void UCI::isready()
 void UCI::newgame()
 {
     stop();
+#if NNUE_COUNTS
+    nnue::write_counts();
+#endif
 
     _tt.init(/* new_game = */ true);
 

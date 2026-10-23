@@ -1714,4 +1714,11 @@ namespace nnue
      * Evaluate FEN from White's point of view, for testing.
      */
     int eval_fen(const std::string&);
+
+#if NNUE_COUNTS
+    /**
+     * Write cumulative stack / L1A block counts of evaluated positions.
+     */
+    void write_counts();
+#endif
 }

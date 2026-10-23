@@ -27,6 +27,7 @@
 #include <iomanip>
 #include <iterator>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <sstream>
 #include "chess.h"
@@ -41,6 +42,7 @@
 #if USE_ENDTABLES
   #include "tbprobe.h"
 #endif
+
 
 using namespace chess;
 using search::TranspositionTable;
@@ -289,6 +291,55 @@ static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
 /* Per-thread bucket-refresh caches */
 static std::vector<Accumulator::RefreshTable> NNUE_refresh(SMP_CORES);
 
+#if NNUE_COUNTS
+/* Per-thread histograms of evaluated positions: stack, and L1A block of both views */
+struct ALIGN NNUECounts
+{
+    uint64_t stack[nnue::STACKS] = {};
+    uint64_t block[nnue::NUM_BLOCKS] = {};
+};
+
+static std::vector<NNUECounts> NNUE_counts(SMP_CORES);
+
+template <size_t N>
+static void write_json_array(std::ostream& out, const char* name, const uint64_t (&a)[N])
+{
+    out << "\"" << name << "\": [";
+    for (size_t i = 0; i != N; ++i)
+        out << (i ? ", " : "") << a[i];
+    out << "]";
+}
+
+void nnue::write_counts()
+{
+    NNUECounts total;
+    uint64_t evals = 0;
+    for (const auto& c : NNUE_counts)
+    {
+        for (int i = 0; i != STACKS; ++i)
+            evals += c.stack[i], total.stack[i] += c.stack[i];
+        for (int i = 0; i != NUM_BLOCKS; ++i)
+            total.block[i] += c.block[i];
+    }
+    if (evals == 0)
+        return;
+
+    const std::filesystem::path path("nnue-counts-" + std::to_string(get_pid()) + ".json");
+    auto tmp = path;
+    tmp += ".tmp";
+    {
+        std::ofstream out(tmp);
+        out << "{";
+        write_json_array(out, "stack", total.stack);
+        out << ", ";
+        write_json_array(out, "block", total.block);
+        out << "}\n";
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec); /* atomic replace of the cumulative totals */
+}
+#endif /* NNUE_COUNTS */
+
 
 static void _load_weights(const std::string& file_path)
 {
@@ -379,6 +430,13 @@ score_t search::Context::eval_nnue_raw(bool side_to_move_pov)
     ASSERT(!acc.needs_update(state()));
 
     _eval_raw = model.eval(acc, state());
+
+#if NNUE_COUNTS
+    auto& counts = NNUE_counts[tid()];
+    ++counts.stack[nnue::stack_index(state())];
+    ++counts.block[nnue::view_key(state(), chess::WHITE) / 2]; /* drop the mirrored bit */
+    ++counts.block[nnue::view_key(state(), chess::BLACK) / 2];
+#endif /* NNUE_COUNTS */
 
     if (!side_to_move_pov)
     {
@@ -668,6 +726,9 @@ namespace search
 
             NNUE_data.resize(n_threads);
             NNUE_refresh.resize(n_threads);
+        #if NNUE_COUNTS
+            NNUE_counts.resize(n_threads);
+        #endif
         }
     }
 

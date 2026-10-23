@@ -104,6 +104,11 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
   #define NATIVE_UCI                        true
 #endif /* NATIVE_UCI */
 
+/* Histogram stacks and L1A blocks of evaluated positions into nnue-counts-<pid>.json */
+#if !defined(NNUE_COUNTS)
+  #define NNUE_COUNTS                       false
+#endif /* NNUE_COUNTS */
+
 /* Experimental: bf16 hidden_3 weights on AVX512_BF16 builds; trade precision for speed */
   #define NNUE_TAIL_BF16                    true
 
