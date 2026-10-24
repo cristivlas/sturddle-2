@@ -232,6 +232,7 @@ def main(args):
         print(f"checking {len(paths)} representative file(s)")
 
     engine = chess.engine.SimpleEngine.popen_uci(args.engine)
+    print(f"engine: {engine.id['name']}", flush=True)  # parsed back from the report; keep the format
     limit = chess.engine.Limit(depth=args.depth) if args.depth else chess.engine.Limit(nodes=args.nodes)
 
     summary = []

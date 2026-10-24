@@ -26,6 +26,7 @@ ACCUMULATOR_SIZE = 1024  # per perspective
 L1_INPUTS = ACCUMULATOR_SIZE  # 2 views x half the accumulator
 KING_BLOCKS = 32  # king bucket x opponent queen
 PROFILE_BUCKETS = 16  # pawn count x king side
+OUTCOME_SIDE_KEYS = ("outcome_scale_wtm", "outcome_scale_btm")  # per-side profile keys, white to move first
 STACKS = 32  # piece count x queens (mover, other)
 HIDDEN_2 = 32
 HIDDEN_3 = 32
@@ -492,7 +493,8 @@ class H5Batches(torch.utils.data.Dataset):
         else:
             b = profile_buckets(x)
             label_scale = self.member_profiles[member_ids, b]
-            outcome_scale = self.member_oscales[member_ids, b]
+            side = np.where(x[:, 12] == 1, 0, 1)  # 0: white to move, 1: black
+            outcome_scale = self.member_oscales[member_ids, side, b]
 
         y = np.stack([y_eval, y_out, label_scale, outcome_scale], axis=1).astype(np.float32)
         return x, y, keep
@@ -604,17 +606,32 @@ def load_profile(path):
 
 
 def load_outcome_scale(path, default):
-    """Per-bucket outcome_scale from a profile sidecar; missing key (legacy profile) -> default."""
+    """Outcome scales from a profile sidecar, shape (sides, buckets), white to move first.
+    Without per-side keys both sides use the pooled outcome_scale; legacy profiles without either get default."""
     with open(path) as f:
         profile = json.load(f)
-    scales = profile.get("outcome_scale") if isinstance(profile, dict) else None
-    if scales is None:
-        return np.full(PROFILE_BUCKETS, default, dtype=np.float32)
-    scales = np.array(scales, dtype=np.float32)
-    if scales.shape != (PROFILE_BUCKETS,) or not np.all(np.isfinite(scales)) or np.any(scales <= 0):
-        raise ValueError(f"{path}: outcome_scale must be {PROFILE_BUCKETS} positive values")
-    logging.info("outcome_scale %s: %s", path, " ".join(f"{s:.0f}" for s in scales))
+    if not isinstance(profile, dict):
+        profile = {}
+    pooled = profile.get("outcome_scale")
+    sides = [profile.get(k, pooled) for k in OUTCOME_SIDE_KEYS]
+    if all(s is None for s in sides):
+        return np.full((len(OUTCOME_SIDE_KEYS), PROFILE_BUCKETS), default, dtype=np.float32)
+    if any(s is None for s in sides):
+        raise ValueError(f"{path}: needs both {' and '.join(OUTCOME_SIDE_KEYS)}, or outcome_scale")
+    scales = np.array(sides, dtype=np.float32)
+    shape = (len(OUTCOME_SIDE_KEYS), PROFILE_BUCKETS)
+    if scales.shape != shape or not np.all(np.isfinite(scales)) or np.any(scales <= 0):
+        raise ValueError(f"{path}: outcome scales must be {PROFILE_BUCKETS} positive values per side")
+    for k, s in zip(OUTCOME_SIDE_KEYS, scales):
+        logging.info("%s %s: %s", k, path, " ".join(f"{v:.0f}" for v in s))
     return scales
+
+
+def load_engine(path):
+    """Engine a profile sidecar was calibrated with; None for legacy (untagged) profiles."""
+    with open(path) as f:
+        profile = json.load(f)
+    return profile.get("engine") if isinstance(profile, dict) else None
 
 
 def find_sidecar(path, alt_dir):
@@ -626,15 +643,15 @@ def find_sidecar(path, alt_dir):
 
 
 def member_profile_table(data, filepath, profile_ratios, outcome_scale, alt_dir):
-    """Per-member profiles: (member start rows, ratio matrix, outcome-scale matrix), both (members x buckets).
+    """Per-member profiles: start rows, ratios (members x buckets), outcome scales (members x sides x buckets).
 
     An explicit profile overrides everything (and keeps --outcome-scale). Otherwise
     each member of a virtual dataset (or the file itself if not virtual) uses the
     <member>.profile.json sidecar when present (alt_dir first, then side-by-side),
     falling back to the container's sidecar, then to all-ones ratios / --outcome-scale.
-    One level, not recursive.
+    One level, not recursive. The sidecars in use must share one engine, or all be legacy (untagged).
     """
-    default_os = np.full(PROFILE_BUCKETS, outcome_scale, dtype=np.float32)
+    default_os = np.full((len(OUTCOME_SIDE_KEYS), PROFILE_BUCKETS), outcome_scale, dtype=np.float32)
     if profile_ratios is not None:
         return np.zeros(1, dtype=np.int64), profile_ratios[np.newaxis, :], default_os[np.newaxis, :]
 
@@ -655,10 +672,12 @@ def member_profile_table(data, filepath, profile_ratios, outcome_scale, alt_dir)
     if os.path.exists(own_sidecar):
         default = load_profile(own_sidecar)
         default_os = load_outcome_scale(own_sidecar, outcome_scale)
+        default_engine = load_engine(own_sidecar)
         print(f"{filepath}: default profile {own_sidecar}")
 
     cache = {}
     owners = {own_sidecar: filepath}
+    engines = {}  # engines in use (None for legacy), each with one sidecar for the error message
     matched = 0
     profiles, oscales = [], []
     for start, path in members:
@@ -668,15 +687,24 @@ def member_profile_table(data, filepath, profile_ratios, outcome_scale, alt_dir)
         if sidecar not in cache:
             if path != filepath and os.path.exists(sidecar):
                 cache[sidecar] = (load_profile(sidecar), load_outcome_scale(sidecar, outcome_scale), True)
+                engines.setdefault(load_engine(sidecar), sidecar)
                 print(f"{path}: using profile {sidecar}")
             else:
                 cache[sidecar] = (default, default_os, False)
+                if os.path.exists(own_sidecar):
+                    engines.setdefault(default_engine, own_sidecar)
         r, o, own = cache[sidecar]
         matched += own
         profiles.append(r)
         oscales.append(o)
 
-    print(f"{len(members)} member(s) from {len(cache)} file(s), {matched} with own profile")
+    if len(engines) > 1:
+        raise ValueError(
+            f"{filepath}: profiles from different engines: "
+            + ", ".join(f"{e or 'legacy (untagged)'} ({s})" for e, s in engines.items())
+        )
+    engine = f", engine {next(iter(engines)) or 'legacy (untagged)'}" if engines else ""
+    print(f"{len(members)} member(s) from {len(cache)} file(s), {matched} with own profile{engine}")
     return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles), np.stack(oscales)
 
 

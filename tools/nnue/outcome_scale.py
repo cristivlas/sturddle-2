@@ -10,6 +10,7 @@ FEATURE_COUNT = 13
 FILES_EFGH = np.uint64(0xF0F0F0F0F0F0F0F0)
 
 KING_LABELS = ["QQ", "QK", "KQ", "KK"]  # white side / black side of the board
+OUTCOME_SIDE_KEYS = ("outcome_scale_wtm", "outcome_scale_btm")  # per-side profile keys, as train_torch
 
 
 def popcount(bb):
@@ -46,6 +47,12 @@ def load_ratios(path):
     return ratios
 
 
+def load_engine(path):
+    with open(path) as f:
+        profile = json.load(f)
+    return profile.get("engine") if isinstance(profile, dict) else None
+
+
 def find_sidecar(path, alt_dir):
     if alt_dir:
         alt = os.path.join(alt_dir, os.path.basename(path) + ".profile.json")
@@ -55,8 +62,8 @@ def find_sidecar(path, alt_dir):
 
 
 def member_profile_table(data, filepath, alt_dir):
-    """(member start rows, (members x 16) ratio matrix, member paths) — same resolution as
-    the trainers: per-member sidecar, else the container's sidecar, else all-ones. One level."""
+    """Member start rows, ratios (members x 16), member paths, and the engine behind each member's ratios.
+    Sidecars resolve as in the trainers: the member's own, else the container's, else all ones. One level."""
     if data.is_virtual:
         # HDF5 resolves relative member paths against the container's directory
         base = os.path.dirname(os.path.abspath(filepath))
@@ -69,17 +76,17 @@ def member_profile_table(data, filepath, alt_dir):
         members = [(0, filepath)]
     assert members[0][0] == 0, "first member must start at row 0"
 
-    default = np.ones(16, dtype=np.float32)
+    default, default_engine = np.ones(16, dtype=np.float32), None
     own_sidecar = find_sidecar(filepath, alt_dir)
     if os.path.exists(own_sidecar):
         container = load_ratios(own_sidecar)
         if container is not None:
-            default = container
+            default, default_engine = container, load_engine(own_sidecar)
 
     cache = {}
     owners = {own_sidecar: filepath}
     matched = 0
-    profiles = []
+    profiles, engines = [], []
     for _, path in members:
         sidecar = find_sidecar(path, alt_dir)
         if owners.setdefault(sidecar, path) != path:
@@ -89,13 +96,14 @@ def member_profile_table(data, filepath, alt_dir):
             # A member sidecar without ratios (e.g. an outcome_scale-only file this tool wrote)
             # must NOT shadow the container ratios used for scale normalization.
             if own is not None:
-                cache[sidecar] = own
+                cache[sidecar] = (own, load_engine(sidecar))
                 matched += 1
             else:
-                cache[sidecar] = default
-        profiles.append(cache[sidecar])
+                cache[sidecar] = (default, default_engine)
+        profiles.append(cache[sidecar][0])
+        engines.append(cache[sidecar][1])
     print(f"{filepath}: {len(members)} member(s), {matched} with own profile")
-    return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles), [m[1] for m in members]
+    return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles), [m[1] for m in members], engines
 
 
 def fit_scale(cp, y, beta=1.0 / 400.0):
@@ -126,9 +134,11 @@ def main(args):
             if args.raw:
                 member_starts = np.zeros(1, dtype=np.int64)
                 member_profiles = np.ones((1, 16), dtype=np.float32)
-                member_paths = [path]
+                member_paths, member_engines = [path], [None]
             else:
-                member_starts, member_profiles, member_paths = member_profile_table(data, path, args.alt_profile_dir)
+                member_starts, member_profiles, member_paths, member_engines = member_profile_table(
+                    data, path, args.alt_profile_dir
+                )
             num_batches = max(1, len(data) // args.batch_size)
             indices = np.arange(num_batches)
             if args.sample:
@@ -213,11 +223,15 @@ def main(args):
             if not np.isfinite(ms):
                 print(f"{mpath}: fit diverged, skipped")
                 continue
-            scales = []
+            scales, sides = [], {k: [] for k in OUTCOME_SIDE_KEYS}
             for b in range(16):
                 sel = msel & (buckets == b)
                 sb = fit_scale(cp[sel], y[sel]) if sel.sum() >= args.min_n else float("nan")
                 scales.append(round(float(sb if np.isfinite(sb) else ms), 1))
+                for k, side in zip(OUTCOME_SIDE_KEYS, (wtm, ~wtm)):  # thin side: the bucket's pooled S
+                    ss = sel & side
+                    s_side = fit_scale(cp[ss], y[ss]) if ss.sum() >= args.min_n else float("nan")
+                    sides[k].append(round(float(s_side if np.isfinite(s_side) else scales[-1]), 1))
             sidecar = sidecars[m]
             profile = {}
             if os.path.exists(sidecar):
@@ -227,7 +241,12 @@ def main(args):
             # (usable standalone as a training member); shadowing the container is then harmless
             # because the shadowing values are the correct ones.
             profile["ratios"] = [round(float(r), 3) for r in member_profiles[m]]
+            if member_engines[m]:  # tag with the engine behind the ratios
+                profile["engine"] = member_engines[m]
+            else:
+                profile.pop("engine", None)
             profile["outcome_scale"] = scales
+            profile.update(sides)
             with open(sidecar, "w") as f:
                 json.dump(profile, f, indent=2)
             print(f"{sidecar}: overall S {ms:.1f}")
