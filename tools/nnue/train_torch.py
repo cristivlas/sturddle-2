@@ -857,7 +857,7 @@ def main(args):
                 acc, mae = metrics(pred, y, args.outcome_scale)
                 acc_sum += acc
                 mae_sum += mae
-                alpha = max(1.0 / count, 1.0 / args.ema)  # running mean for the first --ema batches, then EMA
+                alpha = max(1.0 / count, 1.0 / (args.ema or count))  # running mean for the first --ema batches, then EMA
                 ema_loss += alpha * (step_loss - ema_loss)
                 ema_acc += alpha * (acc - ema_acc)
                 ema_mae += alpha * (mae - ema_mae)
@@ -941,7 +941,7 @@ if __name__ == "__main__":
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--ncols", type=int, default=120, help="progress bar width (0 = auto/full terminal)")
     p.add_argument("--log-every", type=float, default=30, help="seconds between status lines when tqdm is missing")
-    p.add_argument("--ema", type=int, default=1000, help="progress display EMA horizon, in batches")
+    p.add_argument("--ema", type=int, default=1000, help="progress display EMA horizon, in batches (0 = epoch average)")
     p.add_argument("--gpu", dest="gpu", action="store_true", default=True)
     p.add_argument("--no-gpu", dest="gpu", action="store_false")
     p.add_argument("--no-data-parallel", action="store_true", help="use a single GPU even if several are visible")
@@ -957,8 +957,8 @@ if __name__ == "__main__":
         p.error("--focal-gamma must be >= 0")
     if not 0 < args.slice_rows <= args.batch_size or args.batch_size % args.slice_rows:
         p.error("--slice-rows must divide --batch-size")
-    if args.ema < 1:
-        p.error("--ema must be >= 1")
+    if args.ema < 0:
+        p.error("--ema must be >= 0")
     if sum((args.loss_mae, args.loss_bce, args.loss_blend)) > 1:
         p.error("--loss-mae, --loss-bce and --loss-blend are mutually exclusive")
     if args.alt_profile_dir and not os.path.isdir(args.alt_profile_dir):
