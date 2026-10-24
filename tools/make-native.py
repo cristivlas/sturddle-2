@@ -179,7 +179,7 @@ def build_linux(arch, version, define_args):
                 f'-L/usr/lib/llvm-{cc_ver}/lib/',
                 f'-L/usr/lib/llvm-{cc_ver}/lib/{triplet}',
                 '-L/usr/local/opt/llvm/lib/c++',
-                '-stdlib=libc++', '-lc++', '-lc++experimental',
+                '-stdlib=libc++', '-lc++', '-lc++abi', '-lc++experimental',
             ]
         print(' '.join(link_cmd))
         rc = subprocess.call(link_cmd, cwd=REPO_ROOT)

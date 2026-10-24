@@ -29,6 +29,8 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 #if _WIN32
   #include "winutil.h"
@@ -144,6 +146,18 @@ namespace
         }
     };
 #endif /* NATIVE_BUILD */
+
+
+#if __cpp_lib_to_underlying
+    using std::to_underlying;
+#else
+    /* C++23 std::to_underlying polyfill */
+    template<typename E>
+    constexpr std::underlying_type_t<E> to_underlying(E e) noexcept
+    {
+        return static_cast<std::underlying_type_t<E>>(e);
+    }
+#endif /* __cpp_lib_to_underlying */
 
 
     /*

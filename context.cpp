@@ -528,7 +528,7 @@ namespace search
     /*---------------------------------------------------------------------
      * Context
      *---------------------------------------------------------------------*/
-    atomic_bool Context::_cancel(false);
+    std::atomic<uint8_t> Context::_cancel(0);
     int         Context::_tb_cardinality(0);
     bool        Context::_tb_initialized(false);
     atomic_int  Context::_time_limit(-1); /* milliseconds */
@@ -1229,7 +1229,7 @@ namespace search
 
         if (clear_best_move)
             _best_move = BaseMove();
-        _cancel = false;
+        clear_cancel(Cancel::Internal);
         _can_forward_prune = -1;
 
         _counter_move = Move();
@@ -1857,38 +1857,7 @@ namespace search
         }
     #endif /* NO_ASSERT */
     }
-
-
-    score_t Context::eval(bool as_white, int depth, int millisec)
-    {
-        if (millisec > 0)
-            set_time_limit_ms(millisec);
-
-        const auto score = search::iterative(*this, *get_tt(), depth + 1);
-        return as_white ? score * SIGN[turn()] : score;
-    }
 } /* namespace */
-
-
-/* Test */
-score_t eval(const std::string& fen, bool as_white, int depth, int millis)
-{
-    auto ctxt = search::Context();
-    ASSERT(ctxt.tid() == 0);
-    ASSERT(ctxt._ply == 0);
-
-    chess::State state;
-    ctxt._state = &state;
-
-    chess::parse_fen(fen, state);
-    ASSERT(state.piece_count() == chess::popcount(state.occupied()));
-
-    search::TranspositionTable tt;
-    tt.init(true);
-    ctxt.set_tt(&tt);
-
-    return ctxt.eval(as_white, depth, millis);
-}
 
 
 void cancel_search(CancelReason reason)

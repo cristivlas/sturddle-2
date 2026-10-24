@@ -374,8 +374,6 @@ cdef extern from 'context.h':
     map[string, int] _get_params() except+
     map[string, Param] _get_param_info() except+
 
-    score_t cpp_eval "eval"(const string&, bool, int, int) nogil
-
 
 cdef extern from 'context.h' namespace 'search':
     cdef cppclass TimeControl:
@@ -383,10 +381,6 @@ cdef extern from 'context.h' namespace 'search':
         int increments[2]
         int moves
         int score
-
-
-def eval(fen, as_white=False, depth=0, millis=-1):
-    return cpp_eval(fen.encode(), as_white, depth, millis)
 
 
 cdef extern from 'context.h' namespace 'nnue':

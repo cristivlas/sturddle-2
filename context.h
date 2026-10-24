@@ -99,6 +99,12 @@ namespace search
 
     enum POV : bool { US, THEM };
 
+    enum class Cancel : uint8_t
+    {
+        Internal = 1,
+        Stop = 2,     /* UCI "stop"; cleared only at search start */
+    };
+
 
     /* For detecting repeated positions */
     struct History
@@ -350,7 +356,8 @@ namespace search
 
         void        cache_scores(bool force_write /* bypass eviction strategy */ = false);
 
-        static void cancel() { _cancel.store(true, std::memory_order_relaxed); }
+        static void cancel() { _cancel.fetch_or(to_underlying(Cancel::Internal), std::memory_order_relaxed); }
+        static void stop() { _cancel.fetch_or(to_underlying(Cancel::Stop), std::memory_order_relaxed); }
 
         bool        can_forward_prune() const;
         bool        can_probe_endtables() const { return piece_count() <= tb_cardinality(); }
@@ -382,8 +389,6 @@ namespace search
 
         score_t     evaluate_material() const;
 
-        score_t     eval(bool as_white, int depth, int millisec); /* testing and tuning */
-
         score_t     eval_nnue_raw(bool side_to_move_pov);
         void        eval_with_nnue();
 
@@ -410,7 +415,7 @@ namespace search
         static void init(const std::string& exe_dir);
 
         FailHigh    is_beta_cutoff(Context*, score_t);
-        static bool is_cancelled() { return _cancel.load(std::memory_order_relaxed); }
+        static bool is_cancelled() { return _cancel.load(std::memory_order_relaxed) != 0; }
         INLINE bool is_capture() const { return state().is_capture(); }
         INLINE bool is_check() const { return state().is_check(); }
         bool        is_counter_move(const Move&) const;
@@ -537,7 +542,12 @@ namespace search
         TranspositionTable* _tt = nullptr;
 
         /* search can be cancelled from any thread */
-        static atomic_bool  _cancel;
+        static std::atomic<uint8_t> _cancel;
+
+        static INLINE void clear_cancel(Cancel flag)
+        {
+            _cancel.fetch_and(uint8_t(~to_underlying(flag)), std::memory_order_relaxed);
+        }
 
         static size_t       _callback_count;
         static atomic_int   _time_limit; /* milliseconds */
@@ -1239,7 +1249,7 @@ namespace search
 
     /* static */ INLINE void Context::set_start_time()
     {
-        _cancel = false;
+        _cancel.store(0, std::memory_order_relaxed);
         _time_start.store(std::chrono::steady_clock::now(), std::memory_order_relaxed);
         _callback_count = 0;
     }
@@ -1695,7 +1705,6 @@ namespace search
 
 
 /*** Export misc. stuff to Cython ***/
-score_t eval(const std::string& epd, bool as_side_to_move, int depth = 0, int millis = -1);
 
 /* C++ implementation of UCI protocol if NATIVE_UCI is defined,
  * or just a stub otherwise (and the uci.pyx impl is used instead).

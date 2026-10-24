@@ -1397,13 +1397,8 @@ void UCI::setoption(const Arguments &args)
 
 void UCI::stop()
 {
-#if 0
-    search::Context::set_time_limit_ms(0);
-    _compute_pool->wait_for_tasks([] { search::Context::cancel(); });
-#else
-    search::Context::cancel();
+    search::Context::stop();
     _compute_pool->wait_for_tasks();
-#endif
     output_best_move();
 }
 
