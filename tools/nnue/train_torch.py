@@ -941,7 +941,7 @@ if __name__ == "__main__":
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--ncols", type=int, default=120, help="progress bar width (0 = auto/full terminal)")
     p.add_argument("--log-every", type=float, default=30, help="seconds between status lines when tqdm is missing")
-    p.add_argument("--ema", type=int, default=1000, help="progress display EMA horizon, in batches (0 = epoch average)")
+    p.add_argument("--ema", type=int, default=0, help="progress display EMA horizon, in batches (0 = epoch average)")
     p.add_argument("--gpu", dest="gpu", action="store_true", default=True)
     p.add_argument("--no-gpu", dest="gpu", action="store_false")
     p.add_argument("--no-data-parallel", action="store_true", help="use a single GPU even if several are visible")
