@@ -86,7 +86,7 @@ void Model::init()
 
 
 #ifndef CHECK_DOT_PAIRS
-    #define CHECK_DOT_PAIRS false
+  #define CHECK_DOT_PAIRS true
 #endif
 
 #if DOT_PAIRS && CHECK_DOT_PAIRS
