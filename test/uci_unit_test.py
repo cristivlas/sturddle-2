@@ -302,6 +302,60 @@ def test_searchmoves_no_leak(test):
 
 
 '''
+Test the "MultiPV" option. Uses "go depth N" (via analyse) to keep the search
+bounded, same as the searchmoves tests.
+'''
+def first_moves(infos):
+    return [info['pv'][0].uci() for info in infos]
+
+
+def assert_sorted_by_score(infos):
+    scores = [info['score'].relative.score(mate_score=100000) for info in infos]
+    assert scores == sorted(scores, reverse=True), f'lines not sorted by score: {scores}'
+
+
+def test_multipv(test):
+    board = chess.Board()
+    infos = test.engine.analyse(board, chess.engine.Limit(depth=8), multipv=3)
+    moves = first_moves(infos)
+    assert len(moves) == 3, f'expected 3 lines, got {moves}'
+    assert len(set(moves)) == 3, f'duplicate first moves: {moves}'
+    assert [info['multipv'] for info in infos] == [1, 2, 3]
+    assert_sorted_by_score(infos)
+    print(f'multipv 3 ..................... {moves} (ok)')
+
+
+def test_multipv_few_moves(test):
+    board = chess.Board('k7/8/8/8/8/8/8/K7 w - - 0 1') # 3 legal moves
+    infos = test.engine.analyse(board, chess.engine.Limit(depth=8), multipv=5)
+    moves = first_moves(infos)
+    assert sorted(moves) == sorted(m.uci() for m in board.legal_moves), \
+        f'expected one line per legal move, got {moves}'
+    print(f'multipv 5, 3 legal moves ...... {moves} (ok)')
+
+
+def test_multipv_searchmoves(test):
+    board = chess.Board()
+    allowed = [chess.Move.from_uci(m) for m in ('a2a3', 'h2h3')]
+    infos = test.engine.analyse(board, chess.engine.Limit(depth=8), multipv=3, root_moves=allowed)
+    moves = first_moves(infos)
+    assert sorted(moves) == ['a2a3', 'h2h3'], f'expected only the allowed moves, got {moves}'
+    print(f'multipv 3, searchmoves ........ {moves} (ok)')
+
+
+def test_multipv_stop(test):
+    board = chess.Board()
+    with test.engine.analysis(board, multipv=4) as analysis:
+        time.sleep(1)
+        analysis.stop()
+        best = analysis.wait()
+    lines = analysis.multipv
+    assert best.move == lines[0]['pv'][0], \
+        f'bestmove {best.move} does not match line 1 {lines[0]["pv"][0]}'
+    print(f'multipv 4, stop ............... bestmove {best.move} (ok)')
+
+
+'''
 Half-move (fifty-move) clock tests.
 
 The clock is read via the "debug" command, which prints a "halfmove clock: N"
@@ -459,6 +513,10 @@ def run_tests(args):
         test_searchmoves,
         test_searchmoves_terminators,
         test_searchmoves_no_leak,
+        test_multipv,
+        test_multipv_few_moves,
+        test_multipv_searchmoves,
+        test_multipv_stop,
         test_kiwipete,
     ]:
         with EngineTestScope(args) as test_scope:

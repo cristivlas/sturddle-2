@@ -303,6 +303,7 @@ GROUP(Settings)
 #if SMP
     DECLARE_ALIAS( SMP_CORES, Threads,         THREAD_VAL,  1,  THREAD_MAX)
 #endif
+DECLARE_ALIAS(  MULTIPV,  MultiPV,                    1,    1,     256)
 
 DECLARE_CONST(  ASPIRATION_WINDOW,                    1,    0,       1)
 DECLARE_CONST(  DEBUG_CAPTURES,                       0,    0,       1)

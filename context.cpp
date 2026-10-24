@@ -541,6 +541,8 @@ namespace search
     std::vector<MovesCache> _moves_cache(SMP_CORES);
     std::vector<PV> Context::_pvs(SMP_CORES);
     std::vector<chess::BaseMove> Context::_root_filter;
+    std::vector<chess::BaseMove> Context::_root_excluded;
+    bool Context::_root_restricted = false;
 
 #if NATIVE_BUILD
     /* Default sinks so native builds work without Cython-installed callbacks. */

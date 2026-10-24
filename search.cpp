@@ -633,7 +633,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
     if (ctxt.is_root())
     {
-        if (probe_root(ctxt, table))
+        /* MultiPV ranks root moves by searching them */
+        if (MULTIPV == 1 && probe_root(ctxt, table))
             return ctxt._score;
     }
     else
@@ -1333,62 +1334,200 @@ std::vector<TaskData> SMPTasks::_tables;
 
 
 /*
+ * MultiPV: per-line search state, swapped in and out of the root
+ * context and the TT around each pass.
+ */
+struct RootLine
+{
+    score_t         _score = 0;
+    score_t         _prev_score = 0;
+    score_t         _w_alpha = SCORE_MIN;
+    score_t         _w_beta = SCORE_MAX;
+    int             _mate_detected = 0;
+    int             _depth = 0; /* iteration of the last search; 0 if never searched */
+    BaseMove        _best_move;
+    BaseMove        _prev;
+    uint8_t         _path_len = 1;
+    Context::Path   _path;
+
+    void load(Context& ctxt, TranspositionTable& table) const
+    {
+        ctxt._best_move = _best_move;
+        ctxt._prev = _prev;
+        ctxt._mate_detected = _mate_detected;
+        ctxt._path_len = _path_len;
+        ctxt._path = _path;
+        table._w_alpha = _w_alpha;
+        table._w_beta = _w_beta;
+    }
+
+    void save(const Context& ctxt, const TranspositionTable& table)
+    {
+        _best_move = ctxt._best_move;
+        _prev = ctxt._prev;
+        _mate_detected = ctxt._mate_detected;
+        _path_len = ctxt._path_len;
+        _path = ctxt._path;
+        _w_alpha = table._w_alpha;
+        _w_beta = table._w_beta;
+    }
+};
+
+
+static void open_search_window(Context& ctxt, TranspositionTable& table)
+{
+    ctxt._alpha = table._w_alpha = SCORE_MIN;
+    ctxt._beta = table._w_beta = SCORE_MAX;
+}
+
+
+static void sort_by_score(std::vector<RootLine>::iterator first, std::vector<RootLine>::iterator last)
+{
+    std::stable_sort(first, last, [](const RootLine& a, const RootLine& b) { return a._score > b._score; });
+}
+
+
+/*
  * Search with iterative deepening.
  */
 score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter_count)
 {
     ASSERT(ctxt.is_root());
 
-    score_t score = 0, prev_score = 0;
-
     max_iter_count = std::min(PLY_MAX, max_iter_count);
+
+    const size_t max_lines = MULTIPV;
+    const bool multi = max_lines > 1;
+
+    std::vector<RootLine> root_lines(1);
+    if (multi)
+        root_lines.reserve(max_lines);
+
+    bool exhausted = false; /* found fewer root moves than max_lines */
 
     for (int i = 1; i != max_iter_count;)
     {
         table._iteration = i;
         ASSERT(ctxt.iteration() == i);
 
-        ctxt.set_search_window(score, prev_score);
-
-        ctxt.reset();
+        Context::clear_root_exclusions();
 
         bool cancelled = false;
+        bool singleton = false;
 
-        {   /* SMP scope start */
-            SMPTasks tasks(ctxt, table, score);
+        for (size_t k = 0; k != root_lines.size();)
+        {
+            auto& current_line = root_lines[k];
 
-            /* main thread search */
-            const auto completed_best = ctxt._prev;
-            const auto iter_score = search_iteration(ctxt, table, score);
+            /* a line without a usable move from the previous iteration is searched with a full window */
+            const bool fresh = multi && (!current_line._prev || ctxt.is_excluded(current_line._prev));
 
-            cancelled = ctxt.is_cancelled();
-
-            if (cancelled)
+            if (multi)
             {
-                if constexpr(IGNORE_CANCELLED_ITER)
-                    ctxt._best_move = completed_best;
+                current_line.load(ctxt, table);
+                if (fresh)
+                    ctxt._prev = BaseMove();
             }
-            else
-            {
-                score = iter_score; /* retain the score for completed iterations */
 
-                if (table._reset_window)
+            ctxt.set_search_window(current_line._score, current_line._prev_score);
+
+            if (fresh)
+                open_search_window(ctxt, table);
+
+            ctxt.reset();
+
+            {   /* SMP scope start */
+                SMPTasks tasks(ctxt, table, current_line._score);
+
+                /* main thread search */
+                const auto completed_best = ctxt._prev;
+                const auto iter_score = search_iteration(ctxt, table, current_line._score);
+
+                cancelled = ctxt.is_cancelled();
+
+                if (cancelled)
                 {
-                #if 0 /* debug */
-                    std::cout << "WINDOW RESET(" << i << "): " << score << " (";
-                    std::cout << table._w_alpha << ", " << table._w_beta << ")\n";
-                #endif
+                    if constexpr(IGNORE_CANCELLED_ITER)
+                        ctxt._best_move = completed_best;
+                }
+                else
+                {
+                    current_line._score = iter_score; /* retain the score for completed iterations */
 
-                    ctxt.cancel();
-                    table._reset_window = false;
+                    if (table._reset_window)
+                    {
+                    #if 0 /* debug */
+                        std::cout << "WINDOW RESET(" << i << "): " << current_line._score << " (";
+                        std::cout << table._w_alpha << ", " << table._w_beta << ")\n";
+                    #endif
 
-                    continue;
+                        ctxt.cancel();
+                        table._reset_window = false;
+
+                        if (multi)
+                            current_line.save(ctxt, table);
+
+                        continue; /* retry the current line */
+                    }
+
+                    tasks.do_report();
                 }
 
-                tasks.do_report();
+            }   /* SMP scope end */
+
+            if (k == 0)
+                singleton = ctxt._has_singleton;
+
+            if (multi)
+            {
+                if (cancelled || (k && !ctxt._best_move))
+                {
+                    if (cancelled && k == 0)
+                    {
+                        current_line.save(ctxt, table); /* keep partial line, same as MultiPV 1 */
+                        current_line._depth = i;
+                    }
+                    else if (!cancelled) /* all root moves are taken by the lines before */
+                    {
+                        root_lines.resize(k);
+                        exhausted = true;
+                    }
+                    else if (current_line._depth == 0) /* stopped before the new line was ever searched */
+                    {
+                        root_lines.resize(k);
+                    }
+                    if (cancelled)
+                        sort_by_score(root_lines.begin(), root_lines.begin() + k);
+
+                    root_lines[0].load(ctxt, table);
+                    break;
+                }
+
+                current_line.save(ctxt, table);
+                current_line._depth = i;
+
+                if (ctxt._best_move) /* none only if the root has no legal moves */
+                {
+                    Context::exclude_root_move(ctxt._best_move);
+
+                    if (k + 1 == root_lines.size() && root_lines.size() < max_lines && !exhausted)
+                        root_lines.emplace_back();
+                }
             }
 
-        }   /* SMP scope end */
+            if (cancelled)
+                break;
+
+            ++k;
+        }
+
+        if (multi && !cancelled)
+        {
+            sort_by_score(root_lines.begin(), root_lines.end());
+            root_lines[0].load(ctxt, table);
+        }
+
+        const auto score = root_lines[0]._score;
 
         ASSERT(ctxt.iteration());
 
@@ -1398,6 +1537,7 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
         if (Context::_on_iter)
         {
             IterationInfo info = { score, table.nodes(), 0, 0, table.tb_hits() };
+            info.depth = i;
             for (auto& t : SMPTasks::_tables)
             {
                 info.nodes += t._tt.nodes();
@@ -1407,18 +1547,33 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
             info.knps = ms ? decltype(info.knps)(info.nodes) / ms : info.nodes;
             info.milliseconds = ms;
 
-            (*Context::_on_iter)(Context::_engine, &ctxt, &info);
+            if (multi)
+            {
+                for (size_t k = 0; k != root_lines.size(); ++k)
+                {
+                    root_lines[k].load(ctxt, table);
+                    info.score = root_lines[k]._score;
+                    info.multipv = k + 1;
+                    info.depth = root_lines[k]._depth;
+                    (*Context::_on_iter)(Context::_engine, &ctxt, &info);
+                }
+                root_lines[0].load(ctxt, table);
+            }
+            else
+            {
+                (*Context::_on_iter)(Context::_engine, &ctxt, &info);
+            }
         }
 
         if (cancelled)
             break;
 
-        if (ctxt._has_singleton && !table._analysis)
+        if (singleton && !table._analysis)
             break;
 
         if (i++ == 1)
             ctxt.update_root_accumulators();
     }
 
-    return score;
+    return root_lines[0]._score;
 }

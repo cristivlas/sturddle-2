@@ -236,6 +236,8 @@ namespace search
         float   knps;
         int     milliseconds;
         size_t  tbhits;
+        size_t  multipv = 1;
+        int     depth = 0;
     };
 
 
@@ -340,16 +342,28 @@ namespace search
         BaseMove    _excluded;      /* singular extension search */
 
         /* Returns true if this move should be skipped at the current node:
-         * either it's the singular-extension excluded move, or (at root only,
-         * when "go searchmoves" is active) it's not in the user-supplied list.
+         * either it's the singular-extension excluded move, or (at root only)
+         * it's excluded by "go searchmoves" or by an earlier MultiPV line.
          */
         INLINE bool is_excluded(const BaseMove& m) const
         {
             if (m == _excluded)
                 return true;
-            if (!_root_filter.empty() && is_root())
-                return std::find(_root_filter.begin(), _root_filter.end(), m) == _root_filter.end();
+            if (_root_restricted && is_root())
+                return is_root_excluded(m);
             return false;
+        }
+
+        static void exclude_root_move(const BaseMove& m)
+        {
+            _root_excluded.emplace_back(m);
+            _root_restricted = true;
+        }
+
+        static void clear_root_exclusions()
+        {
+            _root_excluded.clear();
+            _root_restricted = !_root_filter.empty();
         }
 
         State*      _state = nullptr;
@@ -530,6 +544,17 @@ namespace search
         static std::vector<chess::BaseMove> _root_filter;
 
     private:
+        static std::vector<chess::BaseMove> _root_excluded;
+        static bool _root_restricted;
+
+        static bool is_root_excluded(const BaseMove& m)
+        {
+            if (std::find(_root_excluded.begin(), _root_excluded.end(), m) != _root_excluded.end())
+                return true;
+            return !_root_filter.empty()
+                && std::find(_root_filter.begin(), _root_filter.end(), m) == _root_filter.end();
+        }
+
         const Move* get_next_move(score_t);
         bool has_cycle(const State&) const;
 

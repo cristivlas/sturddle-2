@@ -708,10 +708,12 @@ struct Info : public search::IterationInfo
         : IterationInfo(info)
         , eval_depth(ctxt.get_tt()->_eval_depth)
         , hashfull(search::TranspositionTable::usage() * 10)
-        , iteration(ctxt.iteration())
+        , iteration(info.depth)
         , brief(milliseconds < TIME_LOW || !ctxt._best_move)
         , pv(brief ? &no_pv : &ctxt.get_pv())
-    {}
+    {
+        ASSERT(MULTIPV > 1 || iteration == ctxt.iteration());
+    }
 };
 
 search::PV Info::no_pv;
@@ -721,7 +723,7 @@ static void INLINE format_info(const Info& info)
     g_out.clear();
     if (info.brief)
     {
-        std::format_to(std::back_inserter(g_out), "info score cp {} depth {}", info.score, info.iteration);
+        std::format_to(std::back_inserter(g_out), "info multipv {} score cp {} depth {}", info.multipv, info.score, info.iteration);
     }
     else
     {
@@ -737,10 +739,11 @@ static void INLINE format_info(const Info& info)
         std::format_to(
             std::back_inserter(g_out),
         #if USE_ENDTABLES
-            "info score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} tbhits {} pv"
+            "info multipv {} score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} tbhits {} pv"
         #else
-            "info score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} pv"
+            "info multipv {} score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} pv"
         #endif
+            , info.multipv
             , score_unit
             , score
             , info.iteration
@@ -1057,6 +1060,8 @@ void UCI::go(const Arguments &args)
     {
         _extended_time = std::max(1, movetime);
         ctxt->set_time_limit_ms(INFINITE);
+
+        ensure_background_thread();
         _compute_pool->push_task([this]{ ponder(); });
     }
     else if (do_analysis && !explicit_movetime)
