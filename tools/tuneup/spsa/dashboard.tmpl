@@ -1414,8 +1414,8 @@
         // Dots read fine up to ~DOT_LIMIT points; beyond that they merge
         // into fat ropes, so draw plain thinner lines. Applied as plain
         // dataset values (cheap, matches charts.tmpl's _pr approach) and
-        // rechecked whenever the data length changes. Length only grows —
-        // the maxHist shift keeps it constant — so this flips at most once.
+        // rechecked whenever the data length changes. Length only grows --
+        // the maxHist shift keeps it constant -- so this flips at most once.
         var DOT_LIMIT = 150;
         function applyChartDensity(chart) {{
             var dense = chart.data.labels.length > DOT_LIMIT;
@@ -1622,7 +1622,7 @@
                         var sq = r * 8 + f;
                         var name = squares[sq];
                         if (name === undefined) {{
-                            html += '<div class="pst-cell pst-na" title="sq ' + sq + ' (not tuned)">–</div>';
+                            html += '<div class="pst-cell pst-na" title="sq ' + sq + ' (not tuned)">-</div>';
                         }} else {{
                             html += '<div class="pst-cell pst-cell-clickable" data-cell="' + p + ':' + sq + '" data-pname="' + name + '" title="' + name + '"></div>';
                         }}
@@ -1835,13 +1835,13 @@
 
             // History: detect reset (--clean) or missed entries, append new
             if (d.history_len < knownHistoryLen) {{
-                // Server history shrunk (restart with --clean) — resync
+                // Server history shrunk (restart with --clean), resync
                 location.reload();
                 return;
             }}
             if (d.history_len > knownHistoryLen) {{
                 if (d.history_len - knownHistoryLen > 1) {{
-                    // Missed entries — full reload to resync
+                    // Missed entries: full reload to resync
                     location.reload();
                     return;
                 }}
@@ -1903,7 +1903,7 @@
             // Theme
             applyTimeTheme();
 
-            // ETA — server computes; client just interpolates from local arrival time.
+            // ETA: server computes; client just interpolates from local arrival time.
             iterationStartEpoch = d.iteration_start;
             etaIterS = d.iter_eta_s;
             etaSessionS = d.session_eta_s;

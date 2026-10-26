@@ -22,7 +22,7 @@ wrapper) is convenient because it avoids a full packaged build, but `python.exe`
 has a limited default stack. At higher search depths this can cause stack
 overflows in the C extension. On Linux, thread stacks grow on demand so this
 is not an issue. If you see crashes on Windows, use a full build instead (see
-`tools/build.py`) — it configures a sufficiently large stack for the executable.
+`tools/build.py`); it configures a sufficiently large stack for the executable.
 
 ## Quick Start (single machine)
 
@@ -35,25 +35,25 @@ python tools/tuneup/spsa/genconfig.py my-test -D 8 -i 50 -g 100
 ```
 
 This creates `tuneup/my-test/` with:
-- `tuning.json` — session config (parameters, SPSA settings, search control)
-- `worker.json` — local worker config (engine path, book, concurrency)
-- `engine.bat` — engine wrapper (Windows only)
+- `tuning.json`: session config (parameters, SPSA settings, search control)
+- `worker.json`: local worker config (engine path, book, concurrency)
+- `engine.bat`: engine wrapper (Windows only)
 
 Options:
 - First argument is the project name
-- `all` (default) — tune all parameters, or list specific names
-- `-w` — generate worker.json only (no engine needed)
-- `-s` — generate tuning.json (coordinator) only, skip worker.json
-- `-e VERSION` — use a dist/ engine binary (e.g., `-e 2.5.1-pieces`)
-- `--ref VERSION` — reference engine from dist/ for reference mode (e.g., `--ref 2.5.0`)
-- `-D` — fixed search depth (mutually exclusive with `-t`)
-- `-t` — time control, e.g. `1+0.1` (default)
-- `-H` — hash table size in MB (default: 256)
-- `-T` — engine threads (default: 1)
-- `-i` — number of SPSA iterations (default: 10000)
-- `-g` — games per SPSA iteration (default: 100)
-- `-c` — SPSA perturbation as fraction of range (default: 0.05 = 5%)
-- `-a` — SPSA learning rate (default: 0.5)
+- `all` (default): tune all parameters, or list specific names
+- `-w`: generate worker.json only (no engine needed)
+- `-s`: generate tuning.json (coordinator) only, skip worker.json
+- `-e VERSION`: use a dist/ engine binary (e.g., `-e 2.5.1-pieces`)
+- `--ref VERSION`: reference engine from dist/ for reference mode (e.g., `--ref 2.5.0`)
+- `-D`: fixed search depth (mutually exclusive with `-t`)
+- `-t`: time control, e.g. `1+0.1` (default)
+- `-H`: hash table size in MB (default: 256)
+- `-T`: engine threads (default: 1)
+- `-i`: number of SPSA iterations (default: 10000)
+- `-g`: games per SPSA iteration (default: 100)
+- `-c`: SPSA perturbation as fraction of range (default: 0.05 = 5%)
+- `-a`: SPSA learning rate (default: 0.5)
 
 `genconfig` auto-detects fastchess or cutechess-cli: first checks PATH, then scans
 sibling directories of the project root for `*fastchess*`. Fastchess is preferred
@@ -127,7 +127,7 @@ python /path/to/tools/tuneup/spsa/worker.py -c worker.json
 ```
 
 Workers can come and go freely. The coordinator tracks each worker's throughput
-and adapts chunk sizes proportionally — faster machines get more work.
+and adapts chunk sizes proportionally, so faster machines get more work.
 
 ## Dashboard
 
@@ -169,7 +169,7 @@ interval set by `dashboard_refresh` in tuning.json.
 | `worker_idle_timeout` | Seconds before an idle worker (no chunks) is considered dead | `60.0` |
 | `chunk_timeout_factor` | Factor on expected duration for chunk timeout | `2.0` |
 | `min_chunk_timeout` | Minimum chunk timeout in seconds | `60.0` |
-| `min_chunk_expected_duration` | Floor for expected chunk duration; also used as the EWMA time-constant (tau) for worker-speed smoothing — long chunks weight more, short chunks less | `60.0` |
+| `min_chunk_expected_duration` | Floor for expected chunk duration; also used as the EWMA time-constant (tau) for worker-speed smoothing: long chunks weight more, short chunks less | `60.0` |
 | `overflow_factor` | Cap on total over-assignment past `games_per_iteration` when workers would otherwise go idle during the iteration tail. `1.0` disables overflow; `1.15` allows up to 15% extra games to be dispatched (bounds condemned work at iteration boundaries) | `1.15` |
 | `static_dir` | Directory for static assets (favicon, etc.); empty = disabled | `""` |
 | `validate_interval` | Seconds between chunk-validity checks (0 = disabled) | `5` |
@@ -261,7 +261,7 @@ fixed engine binary (can be a different engine or a pinned build of your own):
 }
 ```
 
-The reference engine receives no tunable parameters — only `fixed_options` from
+The reference engine receives no tunable parameters; only `fixed_options` from
 `tuning.json` (Hash, Threads, etc.) and any `parameter_overrides` from `worker.json`
 apply to it.
 
@@ -274,10 +274,10 @@ and derives the SPSA gradient from the difference.
 On multi-socket / multi-NUMA-node machines, a single worker's threads and allocations
 get scheduled across nodes by the kernel, causing cross-socket memory traffic and cache
 thrash. Running one worker per NUMA node pinned via `numactl` keeps each worker's memory
-local to its node — typically **5–15% throughput improvement** for chess engine workloads.
+local to its node, typically **5-15% throughput improvement** for chess engine workloads.
 
 **Requirements**: Linux, `libnuma.so.1`, and `numactl` in `PATH`. Windows and macOS are
-not supported at this time — the helpers detect this and no-op silently.
+not supported at this time; the helpers detect this and no-op silently.
 
 **Workflow**:
 

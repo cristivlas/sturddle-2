@@ -104,7 +104,7 @@ def main(args):
             print(f"warning: {len(both)} file(s) in both target and reference sets: {' '.join(both)}", file=sys.stderr)
         print(f"reference: {len(ref_files)} report file(s)", file=sys.stderr)
         ref_ratios, _, ref_overall, _ = aggregate(tables, ref_files, args.min_n, args.blend, "reference")
-        # a thin target bucket holds the target overall — divide by the reference overall, not a per-bucket ratio
+        # a thin target bucket holds the target overall -- divide by the reference overall, not a per-bucket ratio
         ratios = [overall / ref_overall if t else r / ref for r, ref, t in zip(ratios, ref_ratios, thin)]
 
     ratios = [round(r / args.amplify, 3) for r in ratios]

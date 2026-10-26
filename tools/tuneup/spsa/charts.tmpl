@@ -823,7 +823,7 @@
                 }}
                 // Window stats in engine-space (when range known) or normalized space.
                 // slope is in engine units per iteration (caller scales to per-1k).
-                // Cached by (name, fromIdx, toIdx) — zoom drag fires this on every
+                // Cached by (name, fromIdx, toIdx) -- zoom drag fires this on every
                 // pointermove, but identical integer indices map to identical stats.
                 var _wsCache = {{ k: null, v: null }};
                 function _windowStats(name, fromIdx, toIdx) {{
@@ -1017,7 +1017,7 @@
                 // σ as % of param range. _windowStats.sigma is in engine units when
                 // rangeKnown (divide by engine-space width), otherwise in normalized
                 // [-1,+1] space (divide by paramInternalRanges, which is the
-                // normalized width — always 2 for symmetric SPSA). Both branches
+                // normalized width, always 2 for symmetric SPSA). Both branches
                 // yield the same dimensionless percentage.
                 function _sigmaPct(name, st) {{
                     if (!st) return null;
@@ -1071,7 +1071,7 @@
                 }}
                 function _signed(v) {{ return (v >= 0 ? '+' : '') + _fmt(v); }}
                 // Read CSS var (e.g. '--surface', '--text') with fallback. Note:
-                // values are color hex strings, not rgba — combine with alpha at
+                // values are color hex strings, not rgba; combine with alpha at
                 // the call site by using a hex8 suffix (e.g. + 'd0' for ~82% alpha).
                 function _cssColor(varName, fallback) {{
                     var v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
@@ -1133,7 +1133,7 @@
                     // Line 4: Full-run convergence ratio = σ_detrended(last 25%)
                     // / σ_detrended(first 25%). Detrended so a still-drifting param
                     // doesn't appear "wider" just from the trend itself contributing
-                    // variance to the window. <0.7 tighter (good), 0.7–1.0 holding,
+                    // variance to the window. <0.7 tighter (good), 0.7-1.0 holding,
                     // ≥1.0 wider. Always uses the full run regardless of zoom.
                     var lastIdx = _labels.length - 1;
                     var qSpan = Math.floor(_labels.length / 4);

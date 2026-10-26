@@ -147,7 +147,7 @@ def analyze_chess_data(
             stm_total = count_white_to_move + count_black_to_move
             print(f"Total verified:          {stm_total:,}")
             if stm_total != total_count:
-                print(f"⚠️  WARNING: Side-to-move totals don't match! Missing: {total_count - stm_total:,}")
+                print(f"WARNING: Side-to-move totals don't match! Missing: {total_count - stm_total:,}")
 
             print("\n" + "="*64)
             print("EVALUATION SCORE ANALYSIS")
@@ -163,7 +163,7 @@ def analyze_chess_data(
             score_total = count_zero + count_positive + count_negative
             print(f"  Total verified:              {score_total:,}")
             if score_total != total_count:
-                print(f"  ⚠️  WARNING: Score totals don't match! Missing: {total_count - score_total:,}")
+                print(f"  WARNING: Score totals don't match! Missing: {total_count - score_total:,}")
 
             print("\n" + "="*64)
             print("GAME OUTCOME ANALYSIS")
@@ -177,7 +177,7 @@ def analyze_chess_data(
             outcome_total = count_wins + count_draws + count_losses
             print(f"  Total:  {outcome_total:,}")
             if outcome_total != total_count:
-                print(f"  ⚠️  WARNING: Outcome totals don't match! Missing: {total_count - outcome_total:,}")
+                print(f"  WARNING: Outcome totals don't match! Missing: {total_count - outcome_total:,}")
 
                 # Check for unexpected outcome values
                 print("\n  Checking for unexpected outcome values...")
@@ -207,7 +207,7 @@ def analyze_chess_data(
             white_outcome_total = count_white_wins + count_white_draws + count_white_losses
             print(f"  Total:  {white_outcome_total:,}")
             if white_outcome_total != count_white_to_move:
-                print(f"  ⚠️  WARNING: White outcome totals don't match!")
+                print(f"  WARNING: White outcome totals don't match!")
 
             print("\nBlack to Move")
             print(f"  Wins:   {count_black_wins:,} ({safe_percentage(count_black_wins, count_black_to_move):.2f}%)")
@@ -217,7 +217,7 @@ def analyze_chess_data(
             black_outcome_total = count_black_wins + count_black_draws + count_black_losses
             print(f"  Total:  {black_outcome_total:,}")
             if black_outcome_total != count_black_to_move:
-                print(f"  ⚠️  WARNING: Black outcome totals don't match!")
+                print(f"  WARNING: Black outcome totals don't match!")
 
             print("\n" + "="*64)
             print("SUMMARY")
@@ -350,7 +350,7 @@ def generate_eval_histogram(all_scores, bins, score_range, h5_file_path):
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close()
 
-    print(f"✓ Histogram saved successfully!")
+    print(f"Histogram saved.")
 
     # Also save histogram data as text file
     hist_data_file = f"{base_name}_eval_histogram.txt"
@@ -381,7 +381,7 @@ def generate_eval_histogram(all_scores, bins, score_range, h5_file_path):
             percentage = (count / len(scores)) * 100
             f.write(f"{bin_start:>15,.0f} {bin_end:>15,.0f} {count:>15,} {percentage:>11.2f}%\n")
 
-    print(f"✓ Histogram data saved successfully!")
+    print(f"Histogram data saved.")
 
 
 def main():

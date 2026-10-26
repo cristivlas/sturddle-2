@@ -90,7 +90,7 @@ def backup(args):
     tag = args.tag or next_tag(args.vds)
     dest = archive_name(args.vds, tag)
     if os.path.exists(dest):
-        print(f"{dest}: exists — pick another --tag")
+        print(f"{dest}: exists, pick another --tag")
         return
     write_archive(dest, snap)
     print(f"wrote {dest} ({len(snap)} profile(s))")
@@ -139,7 +139,7 @@ def restore(args):
 
 
 def clear(args):
-    """Backup current sidecars, then remove them — a clean slate (all-ones ratios,
+    """Backup current sidecars, then remove them for a clean slate (all-ones ratios,
     ready for a from-scratch outcome_scale.py --update-profile run)."""
     backup(argparse.Namespace(vds=args.vds, tag=None))
     removed = 0
