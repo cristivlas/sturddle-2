@@ -35,7 +35,9 @@
 #if _WIN32
   #include "winutil.h"
 #else
+  #include <cerrno>
   #include <unistd.h>
+  #include <sys/resource.h>
 #endif /* _WIN32 */
 #if !NATIVE_BUILD
   #include "Python.h"
@@ -357,6 +359,35 @@ namespace cpu
             /* best effort: the helper still searches, maybe on an E core */
         }
     #endif /* _WIN32 */
+    }
+
+#if !_WIN32
+    inline constexpr int high_priority_nice = -10;
+#endif /* !_WIN32 */
+
+    /* ask the OS, so we notice if someone else changed it */
+    inline bool is_high_priority()
+    {
+    #if _WIN32
+        const auto priority_class = GetPriorityClass(GetCurrentProcess());
+        return priority_class == HIGH_PRIORITY_CLASS || priority_class == REALTIME_PRIORITY_CLASS;
+    #else
+        errno = 0; /* getpriority can legitimately return -1 */
+        const int nice_value = getpriority(PRIO_PROCESS, 0);
+        return errno == 0 && nice_value <= high_priority_nice;
+    #endif /* !_WIN32 */
+    }
+
+    /** raise the process priority to high; throw std::runtime_error on failure */
+    inline void set_high_priority()
+    {
+    #if _WIN32
+        if (!SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS))
+            win::throw_last_error("SetPriorityClass");
+    #else /* requires "sudo setcap cap_sys_nice+ep <engine_name>" */
+        if (setpriority(PRIO_PROCESS, 0, high_priority_nice) != 0)
+            throw std::runtime_error("setpriority failed: " + std::to_string(errno));
+    #endif /* !_WIN32 */
     }
 } /* namespace cpu */
 

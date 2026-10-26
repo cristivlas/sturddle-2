@@ -26,7 +26,6 @@ using Params = std::unordered_map<std::string, std::string>;
   #include <io.h>
 #else
   #include <unistd.h>
-  #include <sys/resource.h>
 #endif /* !_WIN32 */
 
 #include "book.h"
@@ -172,7 +171,7 @@ namespace
     #else
         /*
          * On POSIX assume true, to avoid libcap dependency (or manually parsing /proc/self/status).
-         * If geteuid() != 0 and CAP_SYS_NICE not set, set_high_priority fails and resets _high_priority
+         * If geteuid() != 0 and CAP_SYS_NICE not set, update_priority fails and resets _high_priority
          */
         return true;
     #endif /* !_WIN32 */
@@ -467,6 +466,8 @@ public:
 
         if (cpu::is_hybrid())
             _options.emplace("allowecores", std::make_unique<OptionBool>("AllowECores", _allow_e_cores));
+
+        update_priority();
     }
 
     static bool output_expected() { return _output_expected.load(std::memory_order_relaxed); }
@@ -487,7 +488,7 @@ private:
     void uci();
     void newgame();
 
-    void set_high_priority(bool);
+    void update_priority();
     void update_cpu_binding();
     void disable_power_throttling();
     void show_settings();
@@ -673,7 +674,6 @@ private:
     bool _ponder = false;
     bool _use_opening_book = false;
     bool _best_book_move = true;
-    bool _current_priority = false; /* not high */
     bool _high_priority = DEFAULT_HIGH_PRIORITY;
     bool _allow_e_cores = false; /* true: do not bind search threads to P cores */
     bool _disable_throttling = true; /* cleared on failure, to prevent future calls */
@@ -1145,35 +1145,28 @@ void UCI::newgame()
 #endif
 }
 
-void UCI::set_high_priority(bool high_priority)
+/* stay high for the engine's lifetime; re-raise if someone lowered it (e.g. Task Manager) */
+void UCI::update_priority()
 {
-    if (_current_priority != high_priority)
+    if (!_high_priority || cpu::is_high_priority())
+        return;
+
+    std::string error; /* if any */
+    try
     {
-#if _WIN32
-        const DWORD priority_class = high_priority ? HIGH_PRIORITY_CLASS : NORMAL_PRIORITY_CLASS;
-        if (SetPriorityClass(GetCurrentProcess(), priority_class))
-        {
-            _current_priority = high_priority;
-        }
-        else
-        {
-            log_error(std::format("SetPriorityClass({}) failed: {}", priority_class, GetLastError()));
-            _current_priority = _high_priority = false; /* prevent future calls */
-        }
-#else /* POSIX -- requires "sudo setcap cap_sys_nice+ep <engine_name>" */
-        const int nice_value = high_priority ? -10 : 0;
-        if (setpriority(PRIO_PROCESS, 0, nice_value) == 0)
-        {
-            _current_priority = high_priority;
-        }
-        else
-        {
-            const auto msg = std::format("setpriority({}) failed: {}", nice_value, errno);
-            log_error(msg);
-            std::cout << "info string " << msg << std::endl;
-            _current_priority = _high_priority = false; /* prevent future calls */
-        }
-#endif /* !_WIN32 */
+        cpu::set_high_priority();
+    }
+    catch (const std::runtime_error& e)
+    {
+        _high_priority = false; /* prevent future calls */
+        error = e.what();
+    }
+
+    if (!error.empty())
+    {
+        const auto msg = "set high priority failed: " + error;
+        log_error(msg);
+        std::cout << "info string " << msg << std::endl;
     }
 }
 
@@ -1353,8 +1346,7 @@ INLINE score_t UCI::search(F set_time_limit)
     ctxt._max_depth = 1;
     ctxt._move = _last_move;
 
-    set_high_priority(_high_priority);
-    auto restore_priority = on_scope_exit([this] { set_high_priority(false); });
+    update_priority();
 
     disable_power_throttling();
 
