@@ -407,7 +407,7 @@ def test_epd_native_castling_combinations():
 
 
 def test_epd_native_en_passant_targets():
-    # all these have a capturing pawn available — ep square is pseudo-legal
+    # all these have a capturing pawn available -- ep square is pseudo-legal
     fens = [
         '4k3/8/8/8/3pP3/8/8/4K3 b - e3',
         '4k3/8/8/3pP3/8/8/8/4K3 w - d6',

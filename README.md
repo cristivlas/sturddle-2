@@ -18,8 +18,8 @@ virtual environment for building.
 
 <code>python3 tools\build.py</code> builds a native executable for the host OS.
 
-On x64_64, the executable bundles binary images that support AVX512, AVX2, AVX, VNNI, and generic SSE2.
-At runtime, a "bootstrap" python scripts selects the right engine module based on processor features.
+On x86_64, the executable bundles binary images that support AVX512, AVX2, AVX, VNNI, and generic SSE2.
+At runtime, a "bootstrap" python script selects the right engine module based on processor features.
 
 To build just a python module:
 <code>python3 setup.py build_ext --inplace</code>
@@ -30,7 +30,7 @@ or:
 
 Search and evaluation parameters are defined in `config.h` using tuning macros
 (`DECLARE_VALUE`, `DECLARE_PARAM`, etc.). Edit `config.h` to select which parameters
-to expose for tuning — see the comments in the file for the available macros and options.
+to expose for tuning; see the comments in the file for the available macros and options.
 
 Build the engine. On POSIX systems, building just the python module is sufficient and faster:
 <code>CC=clang++ CFLAGS=-march=native python3 setup.py build_ext --inplace</code>
@@ -49,7 +49,7 @@ Run `./main.py` and enter the `uci` command. Tunable parameters will be listed i
 2) Run `tuneup/gentune.py` to generate a JSON configuration file for chess-tuning-tools, or
 `tuneup/genlakas.py` to generate a wrapper script to invoke the Lakas optimizer.
 
-3) Run the optimizer. Once the optimizer converges, run `tools/tuneup/apply_lakas.py`
+3) Run the optimizer. Once the optimizer converges, run `tools/tuneup/apply-lakas.py`
 to apply the results to `config.h`, or edit it manually; change `DECLARE_PARAM` back
 to `DECLARE_VALUE`.
 

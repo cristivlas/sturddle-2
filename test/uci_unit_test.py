@@ -208,7 +208,7 @@ def test_searchmoves_terminators(test):
             f'{scenario}: expected one of {restricted}, got {move} (raw: {raw_go!r})'
         print(f'terminator {scenario:.<22s} bestmove {move} (ok)')
 
-    # 1) searchmoves last (no terminator) — runs to end of line.
+    # 1) searchmoves last (no terminator): runs to end of line.
     run_raw('end-of-line',
             f'go depth 8 searchmoves {" ".join(restricted)}')
 
@@ -217,7 +217,7 @@ def test_searchmoves_terminators(test):
             f'go searchmoves {" ".join(restricted)} depth 8')
 
     # 3) searchmoves followed by "wtime"/"btime". Include "depth" to cap the
-    #    search — wtime/btime alone would let it run to a depth that blows
+    #    search; wtime/btime alone would let it run to a depth that blows
     #    the Python build's main-thread stack.
     run_raw('wtime after',
             f'go searchmoves {" ".join(restricted)} wtime 60000 btime 60000 depth 8')
@@ -469,8 +469,7 @@ def test_halfmove_fen_overrides_leftover(test):
 
 
 '''
-Run the engine on the Kiwipete position — a tactically dense test board
-widely used in engine development. Verifies the engine completes a search
+Run the engine on the Kiwipete position. Verifies the engine completes a search
 without crashing and returns a legal move; exercises move ordering and
 the singular-extension path.
 '''

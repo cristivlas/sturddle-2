@@ -283,6 +283,8 @@ namespace search
         int _tid = 0;
         int16_t _iteration = 0;
         int16_t _eval_depth = 0;
+        int16_t _lmr_iteration = -1; /* root iteration that _lmr_scale was computed for */
+        float _lmr_scale = 0;        /* 1 / LMR divisor at _lmr_iteration */
         PlyHistory _ply_history;
 
         /* search window bounds */
