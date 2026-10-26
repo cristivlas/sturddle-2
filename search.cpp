@@ -98,6 +98,8 @@ TranspositionTable::TranspositionTable(const TranspositionTable& other)
     , _tid(other._tid)
     , _iteration(other._iteration)
     , _eval_depth(other._eval_depth)
+    , _lmr_iteration(other._lmr_iteration)
+    , _lmr_scale(other._lmr_scale)
     , _ply_history(other._ply_history)
     , _w_alpha(other._w_alpha)
     , _w_beta(other._w_beta)
@@ -126,6 +128,8 @@ void TranspositionTable::swap(TranspositionTable& other) noexcept
     swap(_tid, other._tid);
     swap(_iteration, other._iteration);
     swap(_eval_depth, other._eval_depth);
+    swap(_lmr_iteration, other._lmr_iteration);
+    swap(_lmr_scale, other._lmr_scale);
     swap(_ply_history, other._ply_history);
     swap(_w_alpha, other._w_alpha);
     swap(_w_beta, other._w_beta);
@@ -183,6 +187,7 @@ void TranspositionTable::clear()
 {
     _iteration = 0;
     _eval_depth = 0;
+    _lmr_iteration = -1;
 
     /* Clear aspiration window */
     _w_alpha = SCORE_MIN;
@@ -799,10 +804,9 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         int move_count = 0, futility = -1;
 
         score_t a = SCORE_MIN, b = SCORE_MAX, s = SCORE_MIN;
-        int64_t time_left = 0;
 
         /* iterate over moves */
-        while (auto next_ctxt = ctxt.next(null_move, futility, move_count, &time_left))
+        while (auto next_ctxt = ctxt.next(null_move, futility, move_count))
         {
             auto full_depth = next_ctxt->_max_depth; /* for retry; updated after extensions */
 
@@ -917,7 +921,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                 /* Late-move reduction and pruning */
                 full_depth = next_ctxt->_max_depth; /* save before LMR */
 
-                if (move_count && next_ctxt->late_move_reduce(move_count, time_left) == LMRAction::Prune)
+                if (move_count && next_ctxt->late_move_reduce(move_count) == LMRAction::Prune)
                 {
                     next_ctxt->_prune_reason = PruneReason::PRUNE_LMP;
                     update_pruned(ctxt, *next_ctxt, table._late_move_prune_count);

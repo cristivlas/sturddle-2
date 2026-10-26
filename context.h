@@ -381,7 +381,7 @@ namespace search
 
         bool        can_reduce() const;
 
-        int64_t     check_time_and_update_nps(int64_t* = nullptr); /* return elapsed milliseconds */
+        int64_t     check_time_and_update_nps(); /* return elapsed milliseconds */
 
         static void clear_caches_and_stacks();
 
@@ -454,7 +454,7 @@ namespace search
 
         INLINE int  iteration() const { ASSERT(_tt); return _tt->_iteration; }
 
-        LMRAction   late_move_reduce(int move_count, int64_t time_left);
+        LMRAction   late_move_reduce(int move_count);
         static void load_weights(const std::string& file_path);
 
         static void log_message(LogLevel, const std::string&, bool force = false);
@@ -462,13 +462,13 @@ namespace search
         int         move_count() const { return _move_maker.count(); }
         int64_t     nanosleep(int nanosec);
 
-        Context*    next(bool null_move, score_t, int& move_count, int64_t* time_left = nullptr);
+        Context*    next(bool null_move, score_t, int& move_count);
 
         template<bool Construct = false> Context* next_ply() const;
 
         INLINE int  next_move_index() { return _move_maker.current(*this); }
 
-        bool        on_next(int64_t*);
+        bool        on_next();
         INLINE int  piece_count() const { return state().piece_count(); }
 
         static void print_board(std::ostream&, const State&, bool unicode);
@@ -538,7 +538,7 @@ namespace search
 
         static HistoryPtr   _history;
 
-        /* "go searchmoves" filter — populated by the UCI front-end before each
+        /* "go searchmoves" filter, populated by the UCI front-end before each
          * search starts and read-only thereafter. Empty means no restriction.
          */
         static std::vector<chess::BaseMove> _root_filter;
@@ -1044,11 +1044,11 @@ namespace search
     /*
      * Get the next move and wrap it into a Context object.
      */
-    INLINE Context* Context::next(bool make_null_move, score_t futility, int& move_count, int64_t* time_left)
+    INLINE Context* Context::next(bool make_null_move, score_t futility, int& move_count)
     {
         ASSERT(_alpha < _beta);
 
-        if (!on_next(time_left))
+        if (!on_next())
             return nullptr;
 
         /* null move must be tried before actual moves */
@@ -1196,14 +1196,14 @@ namespace search
     /*
      * Check how much time is left, update NPS, call optional Python callback.
      */
-    INLINE bool Context::on_next(int64_t* time_left)
+    INLINE bool Context::on_next()
     {
         if (tid() == 0)
         {
             if (++_callback_count >= CALLBACK_PERIOD)
             {
                 _callback_count = 0; /* reset */
-                const auto millisec = check_time_and_update_nps(time_left);
+                const auto millisec = check_time_and_update_nps();
 
                 if (millisec < 0) /* time is up? */
                     return false;

@@ -165,7 +165,7 @@ namespace
  */
 static struct LMR
 {
-    int _table[PLY_MAX][64] = {};
+    float _table[PLY_MAX][64] = {}; /* log(depth) * log(moves), scaled by lmr_divisor() at lookup */
 
     LMR()
     {
@@ -173,7 +173,7 @@ static struct LMR
         {
             for (int moves = 1; moves < 64; ++moves)
             {
-                _table[depth][moves] = 0.5 + log(depth) * log(moves) / 4;
+                _table[depth][moves] = log(depth) * log(moves);
             }
         }
     }
@@ -1302,15 +1302,12 @@ namespace search
     }
 
 
-    static INLINE float fast_log2(float x)
+    /* Reduce more in early iterations, less as the search goes deeper. */
+    static INLINE float lmr_divisor(int iteration)
     {
-        union { float f; uint32_t i; } u = { x };
-        // Extract exponent directly from IEEE 754 representation
-        const int exp = ((u.i >> 23) & 0xFF) - 127;
-        u.i = (u.i & 0x007FFFFF) | 0x3F800000;
-        const float m = u.f;
-        const float t = m - 1.0f;
-        return exp + t * (1.424593877f + t * (-0.589206713f + t * 0.165383787f));
+        const auto span = std::max<int>(1, LMR_RAMP_LAST_ITERATION - LMR_RAMP_FIRST_ITERATION);
+        const auto t = std::clamp(float(iteration - LMR_RAMP_FIRST_ITERATION) / span, 0.0f, 1.0f);
+        return (LMR_DIVISOR_SHALLOW_PCT + t * (LMR_DIVISOR_DEEP_PCT - LMR_DIVISOR_SHALLOW_PCT)) / 100.0f;
     }
 
 
@@ -1318,7 +1315,7 @@ namespace search
      * Late move reduction and pruning.
      * https://www.chessprogramming.org/Late_Move_Reductions
      */
-    LMRAction Context::late_move_reduce(int count, int64_t time_left)
+    LMRAction Context::late_move_reduce(int count)
     {
         ASSERT(count > 0);
         ASSERT(!is_null_move());
@@ -1336,8 +1333,15 @@ namespace search
 
         count += _tt->_pass / 4;
 
+        /* LMR divisor changes once per root iteration */
+        if (_tt->_lmr_iteration != iteration())
+        {
+            _tt->_lmr_iteration = iteration();
+            _tt->_lmr_scale = 1.0f / lmr_divisor(iteration());
+        }
+
         /* Lookup reduction in the Late Move Reduction table. */
-        auto reduction = LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)];
+        int reduction = 0.5f + LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)] * _tt->_lmr_scale;
 
         if (_move._group != MoveOrder::TACTICAL_MOVES)
         {
@@ -1358,15 +1362,6 @@ namespace search
         const auto hist_score = _parent->history_score(_move);
         if (hist_score > 0 && hist_score < HISTORY_LOW)
             ++reduction;
-
-        /* Adjust for time -- main thread only */
-        if (time_left)
-        {
-            auto node_count = time_left * _tt->_nps * 0.001f;
-            auto recip_log_branch = std::min(16u, _tt->_pass) * 0.1 / 16 + 0.5 * piece_count() / 32;
-            auto affordable_depth = fast_log2(1 + node_count) * recip_log_branch;
-            reduction = std::max(reduction, std::max<int>(0, depth - affordable_depth));
-        }
 
         reduction = std::max(1, reduction);
         if (reduction > depth && can_prune())
@@ -1455,7 +1450,7 @@ namespace search
     }
 
 
-    int64_t Context::check_time_and_update_nps(int64_t* time_left)
+    int64_t Context::check_time_and_update_nps()
     {
         const auto millisec = elapsed_milliseconds();
 
@@ -1474,10 +1469,6 @@ namespace search
             return -1;
         }
 
-        if (time_left)
-        {
-            *time_left = std::max<int64_t>(0, t - millisec);
-        }
         return millisec;
     }
 

@@ -329,6 +329,11 @@ DECLARE_VALUE(  IMPROVEMENT_MARGIN,                  45,    0,     400)
 
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_THRESHOLD,        4,    0,      10)
 
+DECLARE_VALUE(  LMR_DIVISOR_SHALLOW_PCT,            200,  100,     800)
+DECLARE_VALUE(  LMR_DIVISOR_DEEP_PCT,               400,  100,     800)
+DECLARE_VALUE(  LMR_RAMP_FIRST_ITERATION,            18,    1,      60)
+DECLARE_VALUE(  LMR_RAMP_LAST_ITERATION,             26,    1,      60)
+
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
 
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                 25,    0,     100)
