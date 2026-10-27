@@ -1603,6 +1603,23 @@ namespace search
             return (_have_move = true);
         }
 
+        const bool test_legality = move._old_group == MoveOrder::UNDEFINED || move._old_group >= MoveOrder::UNORDERED_MOVES;
+
+        /* Reject illegal moves before making them, unless quiet grouping or futility pruning sees them first */
+        const bool test_early = test_legality && !_group_quiet_moves && futility <= 0;
+
+        if (test_early && !ctxt.state().is_legal(move, _checkers, _pinned))
+        {
+        #if DEBUG_INCREMENTAL
+            ctxt.state().clone_into(*move._state);
+            move._state->apply_move(move);
+            ASSERT_ALWAYS(move._state->checkers_mask(ctxt.turn()) != chess::BB_EMPTY);
+        #endif /* DEBUG_INCREMENTAL */
+
+            mark_as_illegal(move);
+            return false;
+        }
+
         ctxt.state().clone_into(*move._state);
         ASSERT(!move._state->is_capture());
 
@@ -1639,14 +1656,16 @@ namespace search
             }
         }
 
-        if (move._old_group == MoveOrder::UNDEFINED || move._old_group >= MoveOrder::UNORDERED_MOVES)
+        if (test_legality && !test_early && !is_legal(ctxt, move))
         {
-            if (!is_legal(ctxt, move))
-            {
-                mark_as_illegal(move); /* can't leave the king in check */
-                return false;
-            }
+            mark_as_illegal(move); /* can't leave the king in check */
+            return false;
         }
+
+    #if DEBUG_INCREMENTAL
+        if (test_early)
+            ASSERT_ALWAYS(move._state->checkers_mask(ctxt.turn()) == chess::BB_EMPTY);
+    #endif /* DEBUG_INCREMENTAL */
 
         /* consistency check */
         ASSERT((move._state->is_capture()) == ctxt.state().is_capture(move));
