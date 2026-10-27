@@ -559,8 +559,30 @@ private:
             if (!move)
                 if (auto first = ctxt.first_valid_move())
                     move = *first;
+            if (move)
+                move = ensure_legal(ctxt.state(), move, search::Context::_root_filter);
             output_best_move(move, request_ponder);
         }
+    }
+
+    /* Search moves can come out of hash-keyed caches: never send the GUI an illegal move. */
+    static chess::BaseMove ensure_legal(
+        const chess::State& state, const chess::BaseMove& move, const std::vector<chess::BaseMove>& searchmoves = {})
+    {
+        chess::MovesList moves;
+        state.generate_moves(moves);
+
+        for (const auto& legal : moves)
+            if (legal == move)
+                return move;
+
+        log_warning(std::format("illegal move {} in [{}]", move.uci(), search::Context::epd(state)));
+
+        for (const auto& legal : moves)
+            if (std::find(searchmoves.begin(), searchmoves.end(), legal) != searchmoves.end())
+                return legal;
+
+        return moves.empty() ? chess::BaseMove() : chess::BaseMove(moves[0]);
     }
 
     INLINE void output_best_move(const chess::BaseMove &move, bool request_ponder = false)
@@ -578,11 +600,18 @@ private:
             if (request_ponder && _ponder)
             {
                 const auto &pv = context().get_pv();
-                if (pv.size() > 2 && pv[1] == move)
+                if (pv.size() > 2 && pv[1] == move && pv[2])
                 {
-                    std::format_to(std::back_inserter(g_out), "bestmove {} ponder {}", move.uci(), pv[2].uci());
-                    output(g_out);
-                    return;
+                    chess::State next;
+                    context().state().clone_into(next);
+                    next.apply_move(move);
+
+                    if (ensure_legal(next, pv[2]) == pv[2])
+                    {
+                        std::format_to(std::back_inserter(g_out), "bestmove {} ponder {}", move.uci(), pv[2].uci());
+                        output(g_out);
+                        return;
+                    }
                 }
             }
             std::format_to(std::back_inserter(g_out), "bestmove {}", move.uci());

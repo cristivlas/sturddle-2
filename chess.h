@@ -884,7 +884,9 @@ namespace chess
             return colors[(mask & white) != 0];
         }
 
-        Bitboard pin_mask(Color, Square) const;
+        Bitboard pin_mask(Color color, Square square) const { return pin_mask(color, square, occupied()); }
+        Bitboard pin_mask(Color, Square, Bitboard occupied) const;
+        Bitboard pinned_pieces(Color) const;
     };
 
 
@@ -934,14 +936,13 @@ namespace chess
      * Otherwise return BB_ALL (so that the pinned piece's attacks can be restricted
      * to the direction of the pin).
      */
-    INLINE Bitboard Position::pin_mask(Color color, Square square) const
+    INLINE Bitboard Position::pin_mask(Color color, Square square, Bitboard occupied) const
     {
         const auto king_square = king(color);
         ASSERT(king_square >= 0);
 
         const auto square_mask = BB_SQUARES[square];
-        const auto occupied = this->occupied();
-        const auto theirs = this->occupied_co(!color);
+        const auto theirs = this->occupied_co(!color) & occupied;
 
         Bitboard result = BB_EMPTY;
 
@@ -969,6 +970,32 @@ namespace chess
         }
 
         return result ? result : BB_ALL;
+    }
+
+
+    /*
+     * Pieces of the given color pinned to their king.
+     * pin_mask (see above) tests one square and returns its pin line.
+     */
+    INLINE Bitboard Position::pinned_pieces(Color color) const
+    {
+        const auto king_square = king(color);
+        ASSERT(king_square >= 0);
+
+        const auto snipers = occupied_co(!color)
+            & ((diagonal_attacks(0, king_square) & (bishops | queens))
+             | (rank_and_file_attacks(0, king_square) & (rooks | queens)));
+
+        const auto occupied = this->occupied();
+        auto pinned = BB_EMPTY;
+
+        for_each_square(snipers, [&](Square sniper) {
+            const auto blockers = between(sniper, king_square) & occupied;
+            if (popcount(blockers) == 1)
+                pinned |= blockers;
+        });
+
+        return pinned & occupied_co(color);
     }
 
 
@@ -1124,8 +1151,8 @@ namespace chess
         void generate_moves(MovesList& moves) const;
 
         /* Check if a pseudo-legal move is legal (doesn't leave king in check) */
-        bool is_legal(const BaseMove& move) const { return is_legal(move, checkers_mask(turn)); }
-        bool is_legal(const BaseMove& move, Bitboard checkers) const;
+        bool is_legal(const BaseMove& move) const { return is_legal(move, checkers_mask(turn), pinned_pieces(turn)); }
+        bool is_legal(const BaseMove& move, Bitboard checkers, Bitboard pinned) const;
 
         void generate_castling_moves(MovesList& moves, Bitboard to_mask = BB_ALL) const;
 
@@ -1605,6 +1632,53 @@ namespace chess
     }
 
 
+    INLINE bool State::is_legal(const BaseMove& move, Bitboard checkers, Bitboard pinned) const
+    {
+        const auto from_sq = move.from_square();
+        const auto to_sq = move.to_square();
+        const auto from_mask = BB_SQUARES[from_sq];
+        const auto to_mask = BB_SQUARES[to_sq];
+        const auto our_color = turn;
+
+        /* King move: check if destination is attacked */
+        if (from_mask & kings)
+        {
+            /* Castling not allowed when in check; the generator checks the king's path */
+            if (is_castling(move))
+                return checkers == BB_EMPTY;
+
+            /* For king moves, compute attacks on destination with king removed */
+            const auto new_occupied = (occupied() & ~from_mask) | to_mask;
+            return attackers_mask(!our_color, to_sq, new_occupied) == BB_EMPTY;
+        }
+
+        const auto king_sq = king(our_color);
+
+        /* En passant removes two pawns from the board: test the resulting position */
+        if (to_sq == en_passant_square && (pawns & from_mask))
+        {
+            const auto captured_mask = BB_SQUARES[en_passant_square - 8 * SIGN[our_color]];
+            const auto new_occupied = (occupied() & ~from_mask & ~captured_mask) | to_mask;
+
+            return (attackers_mask(!our_color, king_sq, new_occupied) & ~captured_mask) == BB_EMPTY;
+        }
+
+        /* Pinned piece: can only move along the line through its king */
+        if ((pinned & from_mask) && (BB_RAYS[king_sq][from_sq] & to_mask) == BB_EMPTY)
+            return false;
+
+        if (checkers == BB_EMPTY)
+            return true;
+
+        /* Double check: only king can move */
+        if (popcount(checkers) > 1)
+            return false;
+
+        /* Single check: must capture checker or block */
+        return (to_mask & (checkers | between(Square(lsb(checkers)), king_sq))) != BB_EMPTY;
+    }
+
+
     INLINE bool State::is_capture(const BaseMove& move) const
     {
         ASSERT (move);
@@ -1763,7 +1837,7 @@ namespace chess
 
     INLINE Square get_least_valuable_attacker(const State& board, Color color, Square target_square, Bitboard occupied)
     {
-        Bitboard attackers = board.attackers_mask(color, target_square, occupied);
+        Bitboard attackers = board.attackers_mask(color, target_square, occupied) & occupied;
 
         if (attackers != BB_EMPTY)
         {
@@ -1771,9 +1845,9 @@ namespace chess
 
             for (PieceType piece_type : piece_order)
             {
-                Bitboard piece_attackers = attackers & board.pieces_mask(piece_type, color);
-
-                if (piece_attackers != BB_EMPTY)
+                for (auto piece_attackers = attackers & board.pieces_mask(piece_type, color);
+                     piece_attackers != BB_EMPTY;
+                     piece_attackers &= piece_attackers - 1)
                 {
                     Square candidate = Square(lsb(piece_attackers));
 
@@ -1783,17 +1857,17 @@ namespace chess
                         Bitboard temp_occupied = occupied & ~BB_SQUARES[candidate] & ~BB_SQUARES[target_square];
 
                         // Check if king would be in check on target square
-                        if (board.attackers_mask(!color, target_square, temp_occupied) != BB_EMPTY)
+                        if ((board.attackers_mask(!color, target_square, temp_occupied) & temp_occupied) != BB_EMPTY)
                         {
-                            break;
+                            return Square::UNDEFINED;
                         }
                     }
                     else
                     {
-                        Bitboard pin_mask = board.pin_mask(color, candidate);
+                        Bitboard pin_mask = board.pin_mask(color, candidate, occupied);
                         if (pin_mask != BB_ALL && !(pin_mask & BB_SQUARES[target_square]))
                         {
-                            continue; // Piece is pinned and target is not on the pin ray
+                            continue; // Piece is pinned and target is not on the pin ray: try the next one
                         }
                     }
 

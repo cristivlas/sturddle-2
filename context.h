@@ -173,6 +173,8 @@ namespace search
             std::swap(_current, other._current);
             std::swap(_reorder_depth, other._reorder_depth);
             std::swap(_state_index, other._state_index);
+            std::swap(_checkers, other._checkers);
+            std::swap(_pinned, other._pinned);
         }
 
     private:
@@ -181,6 +183,7 @@ namespace search
         void generate_unordered_moves(Context&, bool order_root_moves = false);
         const Move* get_move_at(Context& ctxt, int index, score_t futility = 0);
 
+        bool is_legal(const Context&, const Move&) const;
         void make_capture(Context&, Move&);
 
         template<bool LateMovePrune> bool make_move(Context&, Move&, score_t futility = 0);
@@ -216,6 +219,8 @@ namespace search
         int         _current = -1;
         int         _reorder_depth = 0; /* depth at which moves were ordered */
         size_t      _state_index = 0;
+        chess::Bitboard _checkers = chess::BB_EMPTY;
+        chess::Bitboard _pinned = chess::BB_EMPTY;
     };
 
 
@@ -1521,6 +1526,21 @@ namespace search
     }
 
 
+    INLINE bool MoveMaker::is_legal(const Context& ctxt, const Move& move) const
+    {
+        ASSERT(move._state);
+
+        const bool legal = ctxt.state().is_legal(move, _checkers, _pinned);
+
+    #if DEBUG_INCREMENTAL
+        ASSERT_ALWAYS(legal == (move._state->checkers_mask(ctxt.turn()) == chess::BB_EMPTY));
+    #endif /* DEBUG_INCREMENTAL */
+
+        move._state->_check[ctxt.turn()] = !legal;
+        return legal;
+    }
+
+
     /*
      * Return false if the move is not legal, or pruned.
      */
@@ -1570,7 +1590,7 @@ namespace search
         }
         /* Check legality in case this was a quiet, or previously pruned move */
         else if ((move._old_group == MoveOrder::UNDEFINED || move._old_group >= MoveOrder::UNORDERED_MOVES)
-            && move._state->is_check(!move._state->turn))
+            && !is_legal(ctxt, move))
         {
             mark_as_illegal(move);
             return false;
@@ -1621,7 +1641,7 @@ namespace search
 
         if (move._old_group == MoveOrder::UNDEFINED || move._old_group >= MoveOrder::UNORDERED_MOVES)
         {
-            if (move._state->is_check(ctxt.turn()))
+            if (!is_legal(ctxt, move))
             {
                 mark_as_illegal(move); /* can't leave the king in check */
                 return false;

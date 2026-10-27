@@ -1638,6 +1638,9 @@ namespace search
         _current = 0;
         _reorder_depth = ctxt._max_depth;
 
+        _checkers = ctxt.is_check() ? ctxt.state().checkers_mask(ctxt.turn()) : chess::BB_EMPTY;
+        _pinned = ctxt.state().pinned_pieces(ctxt.turn());
+
         auto& states_vec = Context::states(ctxt.tid(), ctxt._ply);
         if (states_vec.size() < size_t(_count))
         {
