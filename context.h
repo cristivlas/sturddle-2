@@ -1531,10 +1531,7 @@ namespace search
         ASSERT(move._state);
 
         const bool legal = ctxt.state().is_legal(move, _checkers, _pinned);
-
-    #if DEBUG_INCREMENTAL
-        ASSERT_ALWAYS(legal == (move._state->checkers_mask(ctxt.turn()) == chess::BB_EMPTY));
-    #endif /* DEBUG_INCREMENTAL */
+        ASSERT(legal == (move._state->checkers_mask(ctxt.turn()) == chess::BB_EMPTY));
 
         move._state->_check[ctxt.turn()] = !legal;
         return legal;
@@ -1610,11 +1607,11 @@ namespace search
 
         if (test_early && !ctxt.state().is_legal(move, _checkers, _pinned))
         {
-        #if DEBUG_INCREMENTAL
+        #if !defined(NO_ASSERT)
             ctxt.state().clone_into(*move._state);
             move._state->apply_move(move);
-            ASSERT_ALWAYS(move._state->checkers_mask(ctxt.turn()) != chess::BB_EMPTY);
-        #endif /* DEBUG_INCREMENTAL */
+            ASSERT(move._state->checkers_mask(ctxt.turn()) != chess::BB_EMPTY);
+        #endif /* !NO_ASSERT */
 
             mark_as_illegal(move);
             return false;
@@ -1662,10 +1659,7 @@ namespace search
             return false;
         }
 
-    #if DEBUG_INCREMENTAL
-        if (test_early)
-            ASSERT_ALWAYS(move._state->checkers_mask(ctxt.turn()) == chess::BB_EMPTY);
-    #endif /* DEBUG_INCREMENTAL */
+        ASSERT(!test_early || move._state->checkers_mask(ctxt.turn()) == chess::BB_EMPTY);
 
         /* consistency check */
         ASSERT((move._state->is_capture()) == ctxt.state().is_capture(move));
