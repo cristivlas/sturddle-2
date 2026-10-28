@@ -165,7 +165,7 @@ namespace
  */
 static struct LMR
 {
-    float _table[PLY_MAX][64] = {}; /* log(depth) * log(moves), scaled by lmr_divisor() at lookup */
+    float _table[PLY_MAX][64] = {}; /* scaled by lmr_divisor() at lookup */
 
     LMR()
     {
@@ -1302,7 +1302,6 @@ namespace search
     }
 
 
-    /* Calm while the next iteration is expected to fit in the time left, reduce more the less it fits. */
     static INLINE float lmr_divisor(TranspositionTable& tt)
     {
         const auto now = Context::elapsed_milliseconds();
