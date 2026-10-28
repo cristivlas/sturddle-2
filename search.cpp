@@ -100,6 +100,9 @@ TranspositionTable::TranspositionTable(const TranspositionTable& other)
     , _eval_depth(other._eval_depth)
     , _lmr_iteration(other._lmr_iteration)
     , _lmr_scale(other._lmr_scale)
+    , _lmr_start_ms(other._lmr_start_ms)
+    , _lmr_last_ms(other._lmr_last_ms)
+    , _lmr_limit(other._lmr_limit)
     , _ply_history(other._ply_history)
     , _w_alpha(other._w_alpha)
     , _w_beta(other._w_beta)
@@ -130,6 +133,9 @@ void TranspositionTable::swap(TranspositionTable& other) noexcept
     swap(_eval_depth, other._eval_depth);
     swap(_lmr_iteration, other._lmr_iteration);
     swap(_lmr_scale, other._lmr_scale);
+    swap(_lmr_start_ms, other._lmr_start_ms);
+    swap(_lmr_last_ms, other._lmr_last_ms);
+    swap(_lmr_limit, other._lmr_limit);
     swap(_ply_history, other._ply_history);
     swap(_w_alpha, other._w_alpha);
     swap(_w_beta, other._w_beta);
@@ -188,6 +194,9 @@ void TranspositionTable::clear()
     _iteration = 0;
     _eval_depth = 0;
     _lmr_iteration = -1;
+    _lmr_start_ms = 0;
+    _lmr_last_ms = 0;
+    _lmr_limit = 0;
 
     /* Clear aspiration window */
     _w_alpha = SCORE_MIN;

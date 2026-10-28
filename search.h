@@ -285,6 +285,9 @@ namespace search
         int16_t _eval_depth = 0;
         int16_t _lmr_iteration = -1; /* root iteration that _lmr_scale was computed for */
         float _lmr_scale = 0;        /* 1 / LMR divisor at _lmr_iteration */
+        int64_t _lmr_start_ms = 0;   /* elapsed time when _lmr_scale was set */
+        int64_t _lmr_last_ms = 0;    /* duration of the iteration before it */
+        int _lmr_limit = 0;          /* time limit when _lmr_scale was set */
         PlyHistory _ply_history;
 
         /* search window bounds */

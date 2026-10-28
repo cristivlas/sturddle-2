@@ -331,8 +331,7 @@ DECLARE_VALUE(  LATE_MOVE_REDUCTION_THRESHOLD,        4,    0,      10)
 
 DECLARE_VALUE(  LMR_DIVISOR_CALM_PCT,               400,  100,     800)
 DECLARE_VALUE(  LMR_DIVISOR_RUSHED_PCT,             200,  100,     800)
-DECLARE_VALUE(  LMR_RUSH_START_PCT,                  20,    0,     100)
-DECLARE_VALUE(  LMR_RUSH_FULL_PCT,                   50,    0,     100)
+DECLARE_VALUE(  LMR_GROWTH_MAX_PCT,                 400,  100,    1600)
 
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
 

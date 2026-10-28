@@ -1302,17 +1302,25 @@ namespace search
     }
 
 
-    /* Reduce more when an iteration starts late, or when there is no time limit. */
-    static INLINE float lmr_divisor()
+    /* Calm while the next iteration is expected to fit in the time left, reduce more the less it fits. */
+    static INLINE float lmr_divisor(TranspositionTable& tt)
     {
+        const auto now = Context::elapsed_milliseconds();
         const auto limit = Context::time_limit();
+
+        /* ponderhit sets a new limit and restarts the clock: keep the last known duration */
+        const auto last = limit != tt._lmr_limit ? tt._lmr_last_ms : now - tt._lmr_start_ms;
+        const auto ratio = tt._lmr_last_ms > 0 ? float(last) / tt._lmr_last_ms : 1.0f;
+        const auto growth = std::min(ratio, LMR_GROWTH_MAX_PCT / 100.0f);
+        tt._lmr_last_ms = last;
+        tt._lmr_start_ms = now;
+        tt._lmr_limit = limit;
+
         if (limit <= 0)
             return LMR_DIVISOR_RUSHED_PCT / 100.0f;
 
-        const auto elapsed_pct = 100.0f * Context::elapsed_milliseconds() / limit;
-        const auto span = std::max<int>(1, LMR_RUSH_FULL_PCT - LMR_RUSH_START_PCT);
-        const auto t = std::clamp((elapsed_pct - LMR_RUSH_START_PCT) / span, 0.0f, 1.0f);
-        return (LMR_DIVISOR_CALM_PCT + t * (LMR_DIVISOR_RUSHED_PCT - LMR_DIVISOR_CALM_PCT)) / 100.0f;
+        const auto need = last * growth / std::max<int64_t>(1, limit - now); /* > 1: next iteration won't fit */
+        return std::max<float>(LMR_DIVISOR_RUSHED_PCT, LMR_DIVISOR_CALM_PCT / std::max(need, 1.0f)) / 100.0f;
     }
 
 
@@ -1342,7 +1350,7 @@ namespace search
         if (_tt->_lmr_iteration != iteration())
         {
             _tt->_lmr_iteration = iteration();
-            _tt->_lmr_scale = 1.0f / lmr_divisor();
+            _tt->_lmr_scale = 1.0f / lmr_divisor(*_tt);
         }
 
         /* Lookup reduction in the Late Move Reduction table. */
