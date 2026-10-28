@@ -288,6 +288,7 @@ namespace search
         int64_t _lmr_start_ms = 0;   /* elapsed time when _lmr_scale was set */
         int64_t _lmr_last_ms = 0;    /* duration of the iteration before it */
         int _lmr_limit = 0;          /* time limit when _lmr_scale was set */
+        float _lmr_ratio = 0;        /* iteration time growth measured last time */
         PlyHistory _ply_history;
 
         /* search window bounds */

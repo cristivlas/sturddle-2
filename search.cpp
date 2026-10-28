@@ -103,6 +103,7 @@ TranspositionTable::TranspositionTable(const TranspositionTable& other)
     , _lmr_start_ms(other._lmr_start_ms)
     , _lmr_last_ms(other._lmr_last_ms)
     , _lmr_limit(other._lmr_limit)
+    , _lmr_ratio(other._lmr_ratio)
     , _ply_history(other._ply_history)
     , _w_alpha(other._w_alpha)
     , _w_beta(other._w_beta)
@@ -136,6 +137,7 @@ void TranspositionTable::swap(TranspositionTable& other) noexcept
     swap(_lmr_start_ms, other._lmr_start_ms);
     swap(_lmr_last_ms, other._lmr_last_ms);
     swap(_lmr_limit, other._lmr_limit);
+    swap(_lmr_ratio, other._lmr_ratio);
     swap(_ply_history, other._ply_history);
     swap(_w_alpha, other._w_alpha);
     swap(_w_beta, other._w_beta);
@@ -197,6 +199,7 @@ void TranspositionTable::clear()
     _lmr_start_ms = 0;
     _lmr_last_ms = 0;
     _lmr_limit = 0;
+    _lmr_ratio = 0;
 
     /* Clear aspiration window */
     _w_alpha = SCORE_MIN;

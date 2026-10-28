@@ -1308,10 +1308,13 @@ namespace search
         const auto now = Context::elapsed_milliseconds();
         const auto limit = Context::time_limit();
 
-        /* ponderhit sets a new limit and restarts the clock: keep the last known duration */
-        const auto last = limit != tt._lmr_limit ? tt._lmr_last_ms : now - tt._lmr_start_ms;
+        /* new search, or ponderhit (new limit, clock restarted): keep the last known duration */
+        const auto restarted = limit != tt._lmr_limit;
+        const auto last = restarted ? tt._lmr_last_ms : now - tt._lmr_start_ms;
         const auto ratio = tt._lmr_last_ms > 0 ? float(last) / tt._lmr_last_ms : 1.0f;
-        const auto growth = std::min(ratio, LMR_GROWTH_MAX_PCT / 100.0f);
+        const auto prev_ratio = tt._lmr_ratio > 0 ? tt._lmr_ratio : ratio;
+        const auto growth = std::min({ratio, prev_ratio, LMR_GROWTH_MAX_PCT / 100.0f});
+        tt._lmr_ratio = ratio;
         tt._lmr_last_ms = last;
         tt._lmr_start_ms = now;
         tt._lmr_limit = limit;
@@ -1320,7 +1323,8 @@ namespace search
             return LMR_DIVISOR_RUSHED_PCT / 100.0f;
 
         const auto need = last * growth / std::max<int64_t>(1, limit - now); /* > 1: next iteration won't fit */
-        return std::max<float>(LMR_DIVISOR_RUSHED_PCT, LMR_DIVISOR_CALM_PCT / std::max(need, 1.0f)) / 100.0f;
+        const auto divisor = std::max<float>(LMR_DIVISOR_RUSHED_PCT, LMR_DIVISOR_CALM_PCT / std::max(need, 1.0f)) / 100.0f;
+        return restarted ? divisor : std::min(divisor, 1.0f / tt._lmr_scale);
     }
 
 
