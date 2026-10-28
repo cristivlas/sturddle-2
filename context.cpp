@@ -900,8 +900,8 @@ namespace search
 
             if (ply + 1 >= PLY_MAX + EXCHANGES_MAX_DEPTH)
             {
-                const auto their_best =
-                    estimate_static_exchanges(next_state, next_state.turn, move.to_square(), PieceType::NONE, bucket);
+                const auto their_best = std::max<score_t>(0,
+                    estimate_static_exchanges(next_state, next_state.turn, move.to_square(), PieceType::NONE, bucket));
                 score = std::max(score, our_gain - their_best);
             }
             else

@@ -296,6 +296,32 @@ def test_static_exchanges_used_attackers():
     assert value < 0, ('see.06', value)
 
 
+def test_static_exchanges_promotion():
+    def board(fen):
+        b = chess.Board(fen=fen)
+        assert b.is_valid(), fen
+        return b
+
+    see = engine.eval_static_exchanges
+
+    # capturing onto the last rank promotes: gain the victim plus queen minus pawn
+    rook = see(board('r6k/8/8/8/8/8/8/R6K w - - 0 1'), chess.WHITE, chess.A8)
+    queen = see(board('3q3k/8/8/8/8/8/8/K2Q4 w - - 0 1'), chess.WHITE, chess.D8)
+    assert rook > 0 and queen > rook, ('promo.00', rook, queen)
+
+    # undefended: rook + queen - pawn
+    value = see(board('r6k/1P6/8/8/8/8/8/K7 w - - 0 1'), chess.WHITE, chess.A8)
+    assert value > queen, ('promo.01', value)
+
+    # defended by the queen: the new queen is lost, net rook - pawn
+    value = see(board('r2q3k/1P6/8/8/8/8/8/K7 w - - 0 1'), chess.WHITE, chess.A8)
+    assert 0 < value < rook, ('promo.02', value)
+
+    # same for black, capturing onto the first rank
+    value = see(board('k7/8/8/8/8/8/1p6/R2Q3K b - - 0 1'), chess.BLACK, chess.A1)
+    assert 0 < value < rook, ('promo.03', value)
+
+
 def test_zobrist():
     tests = [
         ('z.01', '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - -'),
@@ -399,6 +425,7 @@ test_pins()
 test_pin_mask()
 test_static_exchanges()
 test_static_exchanges_used_attackers()
+test_static_exchanges_promotion()
 test_zobrist()
 test_forks()
 

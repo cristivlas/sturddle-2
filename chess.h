@@ -1906,33 +1906,40 @@ namespace chess
             return 0;
 
         score_t gain[MAX_DEPTH];
-        gain[0] = board.piece_value_at(square, !side, target, bucket);
+        score_t victim = board.piece_value_at(square, !side, target, bucket);
+        const int target_rank = square_rank(square);
         int d = 0;
 
-        while (from != Square::UNDEFINED && d < MAX_DEPTH - 1)
+        while (true)
         {
-            ++d;
-
             score_t attacker_value = board.piece_value_at(from, side, NONE, bucket);
+            score_t promotion = 0;
 
             /* Check for promotion */
             if (board.piece_type_at(from) == PAWN)
             {
-                int target_rank = square_rank(square);
-
                 if ((side == WHITE && target_rank == 7) || (side == BLACK && target_rank == 0))
                 {
-                    /* Assume promotion to queen (most common case). Subtract pawn value, add queen value */
-                    attacker_value = board.piece_value_at(from, side, QUEEN, bucket)
-                                   - board.piece_value_at(from, side, PAWN, bucket);
+                    /* Assume promotion to queen (most common case): gain the difference, expose the queen */
+                    const auto queen_value = board.piece_value_at(from, side, QUEEN, bucket);
+                    promotion = queen_value - attacker_value;
+                    attacker_value = queen_value;
                 }
             }
 
-            gain[d] = attacker_value - gain[d - 1];
+            /* net gain of the side making capture d, if the exchange stops there */
+            gain[d] = victim + promotion - (d ? gain[d - 1] : 0);
+            victim = attacker_value;
+
+            if (++d == MAX_DEPTH)
+                break;
 
             occupied &= ~BB_SQUARES[from];
             flip(side);
             from = get_least_valuable_attacker(board, side, square, occupied);
+
+            if (from == Square::UNDEFINED)
+                break;
         }
 
         while (--d)

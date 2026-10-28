@@ -168,6 +168,7 @@ else:
 
 platform = sysconfig.get_platform()
 
+# NATIVE_UCI=0 builds the deprecated uci.pyx (kept for history/docs only): invalid, do not use
 NATIVE_UCI = environ.get('NATIVE_UCI', '1').lower() in ['1', 'true', 'yes']
 
 # Debug build
