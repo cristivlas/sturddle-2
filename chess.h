@@ -884,7 +884,8 @@ namespace chess
             return colors[(mask & white) != 0];
         }
 
-        Bitboard pin_mask(Color, Square) const;
+        Bitboard pin_mask(Color color, Square square) const { return pin_mask(color, square, occupied()); }
+        Bitboard pin_mask(Color, Square, Bitboard occupied) const;
     };
 
 
@@ -934,14 +935,13 @@ namespace chess
      * Otherwise return BB_ALL (so that the pinned piece's attacks can be restricted
      * to the direction of the pin).
      */
-    INLINE Bitboard Position::pin_mask(Color color, Square square) const
+    INLINE Bitboard Position::pin_mask(Color color, Square square, Bitboard occupied) const
     {
         const auto king_square = king(color);
         ASSERT(king_square >= 0);
 
         const auto square_mask = BB_SQUARES[square];
-        const auto occupied = this->occupied();
-        const auto theirs = this->occupied_co(!color);
+        const auto theirs = this->occupied_co(!color) & occupied;
 
         Bitboard result = BB_EMPTY;
 
@@ -1763,7 +1763,7 @@ namespace chess
 
     INLINE Square get_least_valuable_attacker(const State& board, Color color, Square target_square, Bitboard occupied)
     {
-        Bitboard attackers = board.attackers_mask(color, target_square, occupied);
+        Bitboard attackers = board.attackers_mask(color, target_square, occupied) & occupied;
 
         if (attackers != BB_EMPTY)
         {
@@ -1771,9 +1771,9 @@ namespace chess
 
             for (PieceType piece_type : piece_order)
             {
-                Bitboard piece_attackers = attackers & board.pieces_mask(piece_type, color);
-
-                if (piece_attackers != BB_EMPTY)
+                for (auto piece_attackers = attackers & board.pieces_mask(piece_type, color);
+                     piece_attackers != BB_EMPTY;
+                     piece_attackers &= piece_attackers - 1)
                 {
                     Square candidate = Square(lsb(piece_attackers));
 
@@ -1783,14 +1783,14 @@ namespace chess
                         Bitboard temp_occupied = occupied & ~BB_SQUARES[candidate] & ~BB_SQUARES[target_square];
 
                         // Check if king would be in check on target square
-                        if (board.attackers_mask(!color, target_square, temp_occupied) != BB_EMPTY)
+                        if ((board.attackers_mask(!color, target_square, temp_occupied) & temp_occupied) != BB_EMPTY)
                         {
-                            break;
+                            return Square::UNDEFINED;
                         }
                     }
                     else
                     {
-                        Bitboard pin_mask = board.pin_mask(color, candidate);
+                        Bitboard pin_mask = board.pin_mask(color, candidate, occupied);
                         if (pin_mask != BB_ALL && !(pin_mask & BB_SQUARES[target_square]))
                         {
                             continue; // Piece is pinned and target is not on the pin ray
@@ -1848,9 +1848,10 @@ namespace chess
 
                 if ((side == WHITE && target_rank == 7) || (side == BLACK && target_rank == 0))
                 {
-                    /* Assume promotion to queen (most common case). Subtract pawn value, add queen value */
-                    attacker_value = board.piece_value_at(from, side, QUEEN, bucket)
-                                   - board.piece_value_at(from, side, PAWN, bucket);
+                    /* Assume promotion to queen (most common case): gain the difference, expose the queen */
+                    const auto queen_value = board.piece_value_at(from, side, QUEEN, bucket);
+                    gain[d - 1] += queen_value - attacker_value;
+                    attacker_value = queen_value;
                 }
             }
 

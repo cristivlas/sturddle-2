@@ -635,9 +635,9 @@ namespace search
 
             if constexpr(StaticExchangeEvaluation)
             {
-                /* Approximate without playing the moves. */
-                val = estimate_static_exchanges(
-                    *move._state, move._state->turn, move.to_square(), chess::PieceType::NONE, bucket);
+                /* Approximate without playing the moves; the opponent may decline a losing recapture. */
+                val = std::max<score_t>(0, estimate_static_exchanges(
+                    *move._state, move._state->turn, move.to_square(), chess::PieceType::NONE, bucket));
             }
             else
             {
