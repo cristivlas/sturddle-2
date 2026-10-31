@@ -328,6 +328,15 @@ namespace chess
             return attackers_mask(!our_color, to_sq, new_occupied) == BB_EMPTY;
         }
 
+        /* En passant clears two squares and fills a third: test the resulting position */
+        if (to_sq == en_passant_square && (pawns & from_mask))
+        {
+            const auto captured_mask = BB_SQUARES[en_passant_square - 8 * SIGN[our_color]];
+            const auto new_occupied = (occupied() & ~from_mask & ~captured_mask) | to_mask;
+
+            return (attackers_mask(!our_color, king_sq, new_occupied) & ~captured_mask) == BB_EMPTY;
+        }
+
         /* If in check, non-king moves must block or capture the checker */
         if (checkers != BB_EMPTY)
         {
@@ -354,27 +363,6 @@ namespace chess
             /* Verify pin constraint for blocking move */
             const auto pin = pin_mask(our_color, from_sq);
             return pin == BB_ALL || (pin & to_mask);
-        }
-
-        /* En passant: special case - can expose king to horizontal attack */
-        if (to_sq == en_passant_square && (pawns & from_mask))
-        {
-            const auto captured_sq = Square(en_passant_square - 8 * SIGN[our_color]);
-            const auto captured_mask = BB_SQUARES[captured_sq];
-
-            /* Compute new occupancy after en passant */
-            const auto new_occupied = (occupied() & ~from_mask & ~captured_mask) | to_mask;
-
-            /* Check for sliding attacks on king through the cleared squares */
-            const auto their_rooks_queens = (rooks | queens) & occupied_co(!our_color);
-            if (their_rooks_queens & rank_and_file_attacks(new_occupied, king_sq))
-                return false;
-
-            const auto their_bishops_queens = (bishops | queens) & occupied_co(!our_color);
-            if (their_bishops_queens & diagonal_attacks(new_occupied, king_sq))
-                return false;
-
-            return true;
         }
 
         /* Regular move: check pin constraint */

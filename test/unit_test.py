@@ -132,6 +132,23 @@ def test_en_passant():
         #assert state.capture_value() == value, (name, value, state.capture_value())
 
 
+def test_en_passant_legality():
+    tests = [
+        ('ep.01', '8/8/8/4k3/3Pp3/8/8/4K3 b - d3 0 1', True),  # captures the checking pawn
+        ('ep.02', '8/8/8/4k3/3Pp3/8/8/4R1K1 b - d3 0 1', False),  # e4 pawn pinned on the file
+        ('ep.03', '8/8/8/8/k2Pp2Q/8/8/3K4 b - d3 0 1', False),  # removing both pawns exposes the king
+    ]
+
+    for name, fen, ep_legal in tests:
+        board = chess.Board(fen=fen)
+        assert board.is_valid(), name
+        assert board.is_legal(chess.Move.from_uci('e4d3')) == ep_legal, name
+
+        expected = board.legal_moves.count()
+        count = engine.perft2(fen)[0]
+        assert count == expected, (name, f'expected={expected} got={count}')
+
+
 def test_is_checkmate():
     tests = [
         ('Mate in 1', '6k1/1b2K1P1/7R/8/3B4/8/8/8 w - -'),
@@ -362,6 +379,7 @@ def test_parse_fen():
 test_castling()
 test_castling_moves_generation()
 test_en_passant()
+test_en_passant_legality()
 
 test_is_checkmate()
 test_pins()
