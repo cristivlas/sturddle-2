@@ -127,7 +127,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define SMP                                 true
 
 #if !defined(USE_PIECE_SQUARE_TABLES)
-  #define USE_PIECE_SQUARE_TABLES           true
+  #define USE_PIECE_SQUARE_TABLES           false
 #endif
 
 /* Experimental */
