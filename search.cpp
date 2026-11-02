@@ -287,7 +287,7 @@ void TranspositionTable::update_entry(Context& ctxt, TT_Entry& entry, TT_Type ty
     ASSERT(ctxt._score > SCORE_MIN);
     ASSERT(ctxt._score < SCORE_MAX);
 
-    if (type == TT_Type::LOWER || (type == TT_Type::EXACT && !entry._best_move))
+    if (type == TT_Type::LOWER || type == TT_Type::EXACT)
     {
         entry._best_move = ctxt._best_move;
     }
@@ -334,51 +334,35 @@ void TranspositionTable::store_killer_move(const Context& ctxt)
 /*
  * https://www.stmintz.com/ccc/index.php?id=76542
  */
-bool verify_null_move(Context& ctxt, Context& null_move_ctxt)
+NOINLINE bool verify_null_move(Context& ctxt, Context& null_move_ctxt)
 {
     /* consistency checks */
     ASSERT(null_move_ctxt.is_null_move());
     ASSERT(ctxt.next_move_index() == 0);
     ASSERT(!ctxt._best_move);
-    ASSERT(ctxt.turn() != null_move_ctxt.turn());
     ASSERT(&ctxt == null_move_ctxt._parent);
 
-    null_move_ctxt.rewind();
+    /* ply + 2: see singular extension */
+    ContextBuffer buf;
+    auto verify_ctxt = ctxt.clone(buf, ctxt._ply + 2);
 
-    null_move_ctxt._null_move_allowed[null_move_ctxt.turn()] = false;
-    null_move_ctxt._score = SCORE_MIN;
-    null_move_ctxt._alpha = ctxt._beta - 1;
-    null_move_ctxt._beta  = ctxt._beta;
+    ASSERT(verify_ctxt->turn() == ctxt.turn());
+    ASSERT(!verify_ctxt->is_null_move());
 
-    /* Ensure minimum verification depth */
-    null_move_ctxt._max_depth =
-       std::max<int>(null_move_ctxt._ply + NULL_MOVE_MIN_DRAUGHT, null_move_ctxt._max_depth);
-    ASSERT(null_move_ctxt.depth() >= NULL_MOVE_MIN_DRAUGHT);
+    verify_ctxt->set_tt(ctxt.get_tt());
+    verify_ctxt->tt_result()._replacement_slot = -1; /* do not overwrite ctxt's slot */
+    verify_ctxt->_max_depth = verify_ctxt->_ply + std::max<int>(NULL_MOVE_MIN_DRAUGHT, null_move_ctxt.depth());
+    verify_ctxt->_alpha = ctxt._beta - 1;
+    verify_ctxt->_beta = ctxt._beta;
+    verify_ctxt->_score = SCORE_MIN;
+    verify_ctxt->_multicut_allowed = ctxt._multicut_allowed;
+    verify_ctxt->_null_move_allowed[0] = ctxt._null_move_allowed[0];
+    verify_ctxt->_null_move_allowed[1] = ctxt._null_move_allowed[1];
+    verify_ctxt->_null_move_allowed[ctxt.turn()] = false;
+    verify_ctxt->_nnue_prev_offs = 3; /* skip 2 plies */
 
-    const auto score = negamax(null_move_ctxt, *null_move_ctxt.get_tt());
-
-    if (score >= ctxt._beta)
+    if (negamax(*verify_ctxt, *ctxt.get_tt()) >= ctxt._beta)
         return true; /* verification successful */
-
-    if (ctxt.is_cancelled())
-        return false;
-
-    /*
-     * null move refuted? update capture_square and mate_detected
-     */
-    if (const auto& counter_move = null_move_ctxt._best_move)
-    {
-        ASSERT(score > SCORE_MIN);
-
-        if (null_move_ctxt.state().is_capture(counter_move))
-            ctxt._capture_square = counter_move.to_square();
-
-        if (-score > MATE_HIGH)
-        {
-            ctxt._mate_detected = CHECKMATE + score + 1;
-            ASSERT(ctxt._mate_detected > 0);
-        }
-    }
 
     if constexpr(EXTRA_STATS)
         ++ctxt.get_tt()->_null_move_failed;
@@ -689,8 +673,10 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
     if (ctxt._alpha + 1 < ctxt._beta)
     {
-        ASSERT(ctxt._algorithm != NEGASCOUT || ctxt.is_leftmost() || ctxt.is_retry());
+        ASSERT(ctxt._algorithm != NEGASCOUT || ctxt.is_leftmost() || ctxt.is_retry() || ctxt.is_first_pv_move());
     }
+
+    ASSERT(!ctxt.is_retry() || ctxt._can_forward_prune == -1);
 
     if constexpr(!COUNT_VALID_MOVES_AS_NODES)
         ++table._nodes;
@@ -704,6 +690,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         ctxt._prune_reason = PruneReason::PRUNE_TT;
         return *p;
     }
+
+    const score_t entry_alpha = ctxt._alpha;
 
     if (ctxt.is_leaf())
     {
@@ -779,7 +767,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             if (ctxt.is_pv_node()
                 && ctxt.depth() >= 6
                 && !ctxt.tt_entry().is_valid()
-                && ctxt.can_reduce()
+                && ctxt.is_tactically_quiet()
+                && !ctxt.is_retry()
                )
             {
                 ctxt._max_depth -= 2;
@@ -958,16 +947,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     break;
 
                 /* Retry: reset next_ctxt for full-depth/full-window search */
-                next_ctxt->_max_depth = full_depth;
-                next_ctxt->_alpha = -ctxt._beta;
-                next_ctxt->_beta = (ctxt._retry_beta < ctxt._beta) ? ctxt._retry_beta : -ctxt._alpha;
-                ctxt._retry_beta = SCORE_MAX;
-                next_ctxt->_score = SCORE_MIN;
-                next_ctxt->_is_retry = true;
-                next_ctxt->_retry_above_alpha = RETRY::None;
-
-                if (next_ctxt->move_count() >= 0)
-                    next_ctxt->rewind(true);
+                next_ctxt->prepare_retry(full_depth);
             }
 
             if (fail_high == FailHigh::Cutoff)
@@ -1077,7 +1057,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
      */
     if (ctxt._score && !ctxt.is_root() && ctxt.depth() > 0 && !ctxt._excluded && !ctxt.is_cancelled())
     {
-        table.store(ctxt, ctxt.depth());
+        table.store(ctxt, ctxt.depth(), entry_alpha);
     }
 
     if constexpr(EXTRA_STATS)
@@ -1415,6 +1395,7 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
         ASSERT(ctxt.iteration() == i);
 
         Context::clear_root_exclusions();
+        ctxt._has_singleton = false;
 
         bool cancelled = false;
         bool singleton = false;

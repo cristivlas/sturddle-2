@@ -331,7 +331,7 @@ namespace search
         template<typename C> const int16_t* lookup(C& ctxt);
 
         template<TT_Type=TT_Type::NONE, typename C=struct Context>
-        void store(C& ctxt, int depth);
+        void store(C& ctxt, int depth, score_t alpha);
 
         void update_entry(Context&, TT_Entry&, TT_Type, int depth);
         bool update_and_store(Context&, TT_Type);
@@ -496,7 +496,7 @@ namespace search
 
 
     template<TT_Type T, typename C>
-    INLINE void TranspositionTable::store(C& ctxt, int depth)
+    INLINE void TranspositionTable::store(C& ctxt, int depth, score_t alpha)
     {
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
@@ -513,7 +513,7 @@ namespace search
                 {
                     type = TT_Type::LOWER;
                 }
-                else if (ctxt._score <= ctxt._alpha)
+                else if (ctxt._score <= alpha)
                 {
                     type = TT_Type::UPPER;
                 }

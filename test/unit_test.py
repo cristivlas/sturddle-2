@@ -338,6 +338,14 @@ def test_repetition():
     assert node.is_repeated()
 
 
+def test_single_legal_move():
+    board = chess.Board('k3N3/8/1K6/P7/8/8/8/8 b - - 0 1')
+    for algorithm in (engine.MTDf_i, engine.Negascout_i):
+        search = algorithm(board, depth=12)
+        search.search()
+        assert search.current_depth == 1, algorithm
+
+
 def test_nnue_eval():
     sys.path.append(os.path.join(root_path(), 'tools', 'nnue'))
     import golds as nnue_golds
@@ -389,6 +397,7 @@ test_zobrist()
 test_forks()
 
 test_repetition()
+test_single_legal_move()
 
 test_nnue_eval()
 

@@ -42,6 +42,14 @@
   #define INLINE inline
 #endif /* _DEBUG */
 
+#if _MSC_VER
+  #define NOINLINE __declspec(noinline)
+#elif __GNUC__
+  #define NOINLINE __attribute__((noinline))
+#else
+  #define NOINLINE
+#endif /* _MSC_VER */
+
 #ifdef _MSC_VER
   #include <xmmintrin.h>
   #define PREFETCH(addr) _mm_prefetch((char*)(addr), _MM_HINT_T0)

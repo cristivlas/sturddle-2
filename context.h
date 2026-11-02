@@ -222,12 +222,14 @@ namespace search
     enum class LMRAction : int { None = 0, Ok, Prune };
 
     /* Reason for retrying */
-    enum class RETRY : uint8_t { None = 0, Reduced, PVS };
+    enum class RETRY : uint8_t { None = 0, Reduced = 1, PVS = 2 };
 
     /* Result of is_beta_cutoff */
     enum class FailHigh : int { None = 0, Cutoff, Retry };
 
-    INLINE constexpr bool operator!(RETRY retry) { return retry == RETRY::None; }
+    INLINE constexpr RETRY operator|(RETRY a, RETRY b) { return RETRY(to_underlying(a) | to_underlying(b)); }
+    INLINE constexpr RETRY& operator|=(RETRY& a, RETRY b) { return a = a | b; }
+    INLINE constexpr bool operator&(RETRY a, RETRY b) { return to_underlying(a) & to_underlying(b); }
 
     struct IterationInfo
     {
@@ -301,7 +303,6 @@ namespace search
         int16_t     _alpha = SCORE_MIN;
         int16_t     _beta = SCORE_MAX;
         int16_t     _score = SCORE_MIN; /* dynamic eval score */
-        int16_t     _retry_beta = SCORE_MAX; /* NEGASCOUT only */
 
         Algorithm   _algorithm = Algorithm::MTDF;
 
@@ -314,11 +315,20 @@ namespace search
         bool        _is_null_move = false; /* for null-move pruning */
         bool        _is_pv = false;
         bool        _is_retry = false;
+        /*
+         * Set when a retry restores a reduced depth (LMR): search on, even at a leaf.
+         * A window-only (PVS) retry re-evaluates a leaf instead; expanding it would
+         * let its scout children retry and expand without a depth limit.
+         */
+        bool        _retry_at_depth = false;
         bool        _is_singleton = false;
         bool        _leftmost = false;
         bool        _multicut_allowed = MULTICUT;
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
+    #if !defined(NO_ASSERT)
+        bool        _lmr_reduced = false;
+    #endif /* !(NO_ASSERT) */
         int8_t      _nnue_prev_offs = 1; /* NNUE */
 
         uint8_t     _double_ext = 0;
@@ -437,6 +447,7 @@ namespace search
         bool        is_extended() const;
         bool        is_fifty_move_rule_draw() const { return _fifty >= 100; }
         bool        is_last_move();
+        INLINE bool is_first_pv_move() const { return _parent->is_pv_node() && _parent->next_move_index() == 1; }
         INLINE bool is_leftmost() const { return is_root() || _leftmost; }
         bool        is_leaf(); /* treat as terminal node ? */
         bool        is_mate_bound() const;
@@ -450,6 +461,7 @@ namespace search
         bool        is_reduced() const;
         bool        is_repeated() const;
         INLINE bool is_retry() const { return _is_retry; }
+        bool        is_tactically_quiet() const;
         INLINE bool is_root() const { return _ply == 0; }
 
         INLINE int  iteration() const { ASSERT(_tt); return _tt->_iteration; }
@@ -471,12 +483,21 @@ namespace search
         bool        on_next();
         INLINE int  piece_count() const { return state().piece_count(); }
 
+        void        prepare_retry(int max_depth);
         static void print_board(std::ostream&, const State&, bool unicode);
 
         void        reset(bool force_reorder_moves = true, bool clear_best_move = true);
         int         rewind(bool reorder = false);
 
         INLINE void set_counter_move(const BaseMove& move) { _counter_move = move; }
+
+        INLINE void set_lmr_reduced(bool reduced)
+        {
+        #if !defined(NO_ASSERT)
+            _lmr_reduced = reduced;
+        #endif /* !(NO_ASSERT) */
+        }
+
         void        set_search_window(score_t score, score_t& prev_score);
         static void set_start_time();
         static void set_time_limit_ms(int milliseconds);
@@ -750,17 +771,21 @@ namespace search
     }
 
 
-    INLINE bool Context::can_reduce() const
+    INLINE bool Context::is_tactically_quiet() const
     {
-        ASSERT(!is_null_move());
-
-        return !is_leftmost()
-            && !is_retry()
-            && (state().pushed_pawns_score == 0)
+        return (state().pushed_pawns_score == 0)
             && !is_extended()
             && (_move.from_square() != _parent->_capture_square)
             && !is_recapture()
             && !is_check();
+    }
+
+
+    INLINE bool Context::can_reduce() const
+    {
+        ASSERT(!is_null_move());
+
+        return !is_leftmost() && !is_retry() && is_tactically_quiet();
     }
 
 
@@ -908,7 +933,7 @@ namespace search
     template<POV pov>
     INLINE score_t Context::improvement() const
     {
-        if (_ply < 2 || _excluded)
+        if (_excluded || !_parent || !_parent->_parent)
             return 0;
 
         const auto prev = _parent->_parent; /* 2 plies ago */
@@ -1026,7 +1051,7 @@ namespace search
 
     INLINE bool Context::is_pvs_ok() const
     {
-        return (_algorithm == NEGASCOUT) && !is_retry() && !is_leftmost();
+        return (_algorithm == NEGASCOUT) && !is_first_pv_move();
     }
 
 
@@ -1220,6 +1245,30 @@ namespace search
     INLINE int Context::rewind(bool reorder)
     {
         return _move_maker.rewind(*this, reorder);
+    }
+
+
+    INLINE void Context::prepare_retry(int max_depth)
+    {
+        /* reduced scout: restore depth first, widen the window on the next retry */
+        const bool reduced_scout = _retry_above_alpha == (RETRY::Reduced | RETRY::PVS);
+        _retry_at_depth |= _retry_above_alpha & RETRY::Reduced;
+
+        _max_depth = max_depth;
+        _alpha = reduced_scout ? -_parent->_alpha - 1 : -_parent->_beta;
+        _beta = -_parent->_alpha;
+        _score = SCORE_MIN;
+        _is_retry = true;
+        _retry_above_alpha = reduced_scout ? RETRY::PVS : RETRY::None;
+        _can_forward_prune = -1;
+        _pruned_count = 0;
+        _prune_reason = PruneReason::PRUNE_NONE;
+        _best_move = BaseMove();
+        _cutoff_move = BaseMove();
+        set_lmr_reduced(false);
+
+        if (move_count() >= 0)
+            rewind(true);
     }
 
 

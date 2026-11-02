@@ -763,23 +763,25 @@ namespace search
                 if (!next_ctxt->is_null_move())
                 {
                     if (next_ctxt->_prune_reason == PruneReason::PRUNE_TT
-                        && next_ctxt->tt_entry()._depth >= depth() - 1)
+                        && next_ctxt->tt_entry()._depth >= depth() - 1
+                        && (next_ctxt->tt_entry().is_exact() || score >= _beta))
                     {
                         /* Do not retry */
                         ASSERT(next_ctxt->tt_entry().is_valid());
                     }
-                    else if (next_ctxt->_retry_above_alpha == RETRY::Reduced)
+                    else if (next_ctxt->_retry_above_alpha & RETRY::Reduced)
                     {
                         if constexpr(EXTRA_STATS)
                             ++_tt->_retry_reductions;
 
                         return FailHigh::Retry;
                     }
-                    else if (next_ctxt->_retry_above_alpha == RETRY::PVS && score < _beta)
+                    else if ((next_ctxt->_retry_above_alpha & RETRY::PVS) && score < _beta)
                     {
-                        _retry_beta = -score;
                         return FailHigh::Retry;
                     }
+
+                    ASSERT(next_ctxt->_prune_reason == PruneReason::PRUNE_TT || !next_ctxt->_lmr_reduced);
 
                     if (score >= _beta)
                     {
@@ -1211,6 +1213,7 @@ namespace search
         ASSERT(is_root());
         ASSERT(!_is_null_move);
         ASSERT(!_is_retry);
+        ASSERT(!_retry_at_depth);
         ASSERT(!_is_singleton);
         ASSERT(_tt->_w_alpha <= _alpha);
         ASSERT(_retry_above_alpha == RETRY::None);
@@ -1236,15 +1239,12 @@ namespace search
 
         _counter_move = Move();
         _cutoff_move = Move();
-        _has_singleton = false;
 
         _max_depth = iteration();
 
         _mate_detected = 0;
 
         _repeated = -1;
-
-        _retry_beta = SCORE_MAX;
 
         rewind(force_reorder_moves);
     }
@@ -1380,8 +1380,8 @@ namespace search
          * "Classical implementation assumes a re-search at full depth
          * if the reduced depth search returns a score above alpha."
          */
-        if (!_retry_above_alpha)
-            _retry_above_alpha = RETRY::Reduced;
+        set_lmr_reduced(true);
+        _retry_above_alpha |= RETRY::Reduced;
 
         if constexpr(EXTRA_STATS)
             ++_tt->_reductions;
@@ -1423,7 +1423,7 @@ namespace search
 
         if (depth() > 0
             || is_null_move()
-            || is_retry()
+            || _retry_at_depth
             || is_promotion()
             || is_check()
             /*
@@ -1435,8 +1435,11 @@ namespace search
             return false;
 
         /* treat it as leaf for now but retry and extend if it beats alpha */
-        if (is_reduced() && !_retry_above_alpha)
-            _retry_above_alpha = RETRY::Reduced;
+        if (is_reduced())
+        {
+            set_lmr_reduced(true);
+            _retry_above_alpha |= RETRY::Reduced;
+        }
 
         return true;
     }
@@ -1585,7 +1588,11 @@ namespace search
                 {
                     ASSERT(move._group >= MoveOrder::UNORDERED_MOVES);
                     ASSERT(move._score == 0);
-                    break;
+
+                    if (move._group == MoveOrder::PRUNED_MOVES)
+                        move._group = MoveOrder::UNORDERED_MOVES;
+
+                    continue;
                 }
 
                 if (move._group == MoveOrder::ILLEGAL_MOVES)
@@ -1600,6 +1607,12 @@ namespace search
                 move._score = 0;
                 move._group = MoveOrder::UNORDERED_MOVES;
             }
+
+            _have_pruned_moves = false;
+
+            ASSERT(std::none_of(moves_list.begin(), moves_list.begin() + _count,
+                [](const Move& move) { return move._group == MoveOrder::PRUNED_MOVES; })
+            );
         }
 
         _current = 0;
