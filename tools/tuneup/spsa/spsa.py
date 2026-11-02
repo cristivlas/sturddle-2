@@ -1,8 +1,6 @@
 """
 SPSA (Simultaneous Perturbation Stochastic Approximation) optimizer.
 
-Pure math module -- no I/O, no network, no dependencies beyond stdlib.
-
 Algorithm (range-scaled):
   r_i = upper_i - lower_i  (parameter range)
   delta_k ~ Bernoulli(+1, -1) per parameter
@@ -17,8 +15,7 @@ Algorithm (range-scaled):
   a_k = a / (A + k + 1)^alpha
   c_k = c / (k + 1)^gamma
 
-  c is a fraction of parameter range (e.g., 0.05 = 5%).
-  a controls learning rate; the step is a_k * gradient * range.
+  c is a fraction of the parameter range; the step is a_k * gradient * range.
 """
 
 import random
@@ -30,7 +27,6 @@ from config import Parameter, SPSAConfig
 
 @dataclass
 class SPSAState:
-    """Serializable SPSA state for checkpointing."""
     iteration: int = 0
     theta: Dict[str, float] = field(default_factory=dict)
     history: List[dict] = field(default_factory=list)
@@ -39,8 +35,8 @@ class SPSAState:
     total_wins: int = 0       # games won by theta_plus
     total_draws: int = 0      # drawn games
     total_losses: int = 0     # games lost by theta_plus (= won by theta_minus)
-    created_at: float = 0.0   # session start timestamp (epoch)
-    # Reference mode accumulators (theta+ vs ref, theta- vs ref separately)
+    created_at: float = 0.0   # session start, epoch
+    # reference mode
     total_plus_wins: int = 0
     total_plus_draws: int = 0
     total_plus_losses: int = 0
@@ -60,7 +56,6 @@ class SPSAState:
             "total_losses": self.total_losses,
             "created_at": self.created_at,
         }
-        # Only persist reference accumulators when non-zero
         for key in ("total_plus_wins", "total_plus_draws", "total_plus_losses",
                      "total_minus_wins", "total_minus_draws", "total_minus_losses"):
             val = getattr(self, key)
@@ -90,18 +85,13 @@ class SPSAState:
 
 
 class SPSAOptimizer:
-    """SPSA optimizer for chess engine parameter tuning."""
-
     def __init__(self, params: Dict[str, Parameter], spsa_config: SPSAConfig, max_iterations: int, state: SPSAState = None):
         self.params = params
         self.config = spsa_config
         self.max_iterations = max_iterations
 
-        # A = fraction of total iterations for initial stabilization
         self.A = spsa_config.A_ratio * max_iterations
-
-        # Effective perturbation per param (set by compute_candidates, used by update).
-        self._effective_perts = {}
+        self._effective_perts = {}  # set by compute_candidates, used by update
 
         if state is not None:
             self.state = state
@@ -132,21 +122,10 @@ class SPSAOptimizer:
         return self.config.c / (k + 1) ** self.config.gamma
 
     def generate_perturbation(self) -> Dict[str, int]:
-        """Generate Bernoulli +/-1 perturbation vector."""
         return {name: random.choice([-1, 1]) for name in self.params}
 
     def compute_candidates(self, delta: Dict[str, int]) -> Tuple[Dict[str, float], Dict[str, float]]:
-        """
-        Compute perturbed parameter vectors.
-
-        Enforces a minimum perturbation of +/-1 in engine space so the engine
-        always sees distinct values (avoids pure-noise gradient estimates).
-        The actual perturbation per parameter is stored in _effective_perts
-        for use by update().
-
-        Returns:
-            (theta_plus, theta_minus) as dicts of param_name -> engine value.
-        """
+        """(theta_plus, theta_minus) as engine values, at least 1 engine unit apart."""
         ck = self.c_k()
         theta_plus = {}
         theta_minus = {}
@@ -157,7 +136,6 @@ class SPSAOptimizer:
             r = param.upper - param.lower
             pert = ck * d * r
 
-            # Minimum +/-1 engine-space step.
             if param.is_normalized:
                 orig_range = param.original_upper - param.original_lower
                 min_pert = 2.0 / orig_range
@@ -169,7 +147,7 @@ class SPSAOptimizer:
             tp = param.clamp(t + pert)
             tm = param.clamp(t - pert)
 
-            # Verify engine values actually differ; bump if rounding collapsed them.
+            # rounding can still make them equal
             if param.denormalize(tp) == param.denormalize(tm):
                 pert = d * min_pert * 2
                 tp = param.clamp(t + pert)
@@ -182,19 +160,7 @@ class SPSAOptimizer:
         return theta_plus, theta_minus
 
     def update(self, delta: Dict[str, int], score_plus: float, score_minus: float, games: int) -> Dict[str, float]:
-        """
-        Compute gradient estimate and update theta.
-
-        Args:
-            delta: perturbation vector from generate_perturbation()
-            score_plus: aggregated win rate for theta_plus
-            score_minus: aggregated win rate for theta_minus
-            games: number of games played this iteration (for accurate totals
-                when games_per_iteration changes mid-session)
-
-        Returns:
-            Updated theta dict.
-        """
+        """Gradient step; games is recorded so totals stay right if games_per_iteration changes."""
         ak = self.a_k()
         ck = self.c_k()
         k = self.state.iteration
@@ -203,14 +169,12 @@ class SPSAOptimizer:
         for name, param in self.params.items():
             d = delta[name]
             r = param.upper - param.lower
-            # Use actual perturbation (accounts for minimum step on int params).
             eff = self._effective_perts.get(name, ck * d)
             g_hat = (score_plus - score_minus) / (2.0 * eff)
             t = self.state.theta[name] + ak * g_hat * r
             t = param.clamp(t)
             new_theta[name] = t
 
-        # Record history
         score_diff = score_plus - score_minus
         self.state.history.append({
             "iteration": k,
@@ -230,7 +194,7 @@ class SPSAOptimizer:
         return new_theta
 
     def advance(self, score_plus: float, score_minus: float, games: int):
-        """Advance iteration counter without updating theta (skipped update)."""
+        """Record the iteration without updating theta."""
         k = self.state.iteration
         self.state.history.append({
             "iteration": k,
@@ -250,14 +214,12 @@ class SPSAOptimizer:
         return self.state.iteration >= self.max_iterations
 
     def get_engine_values(self) -> Dict[str, any]:
-        """Current theta as engine-facing values (rounded ints, etc.)."""
         return {
             name: self.params[name].to_engine_value(val)
             for name, val in self.state.theta.items()
         }
 
     def elo_estimate(self, score: float) -> float:
-        """Convert win rate to approximate ELO difference."""
         if score <= 0.0 or score >= 1.0:
             return float("inf") if score >= 1.0 else float("-inf")
         from math import log10

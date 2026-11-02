@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate SPSA tuning project from engine parameters.
-
-Uses get_param_info() from chess_engine (same pattern as genlakas.py/gentune.py)
-to create a project directory with tuning.json and worker.json, ready for hand-editing.
+Generate an SPSA tuning project (tuning.json + worker.json) from get_param_info().
 
 Usage:
     python genconfig.py <project_name> [-D 8] [-H 256] [-T 1]
@@ -35,15 +32,12 @@ from config import (
 from recommend import ParamSpec, recommend, format_recommendation, constrain_for, compute_c_a
 
 
-# Knob choices for --check-ranges. The shared recommend module no longer
-# carries defaults; each caller picks its own (see feedback memory).
 CHECK_OUTLIER_RATIO = 5.0
 CHECK_MIN_PERT_PCT = 5.0
 CHECK_SAFETY_PAD = 1.2
 
 
 def physical_cpu_count():
-    """Return the number of physical CPU cores (not logical/hyperthreaded)."""
     try:
         if sys.platform == 'win32':
             out = subprocess.check_output(['wmic', 'cpu', 'get', 'NumberOfCores', '/value'], text=True)
@@ -69,30 +63,23 @@ def tuneup_path():
 
 
 def to_forward_slash(path):
-    """Convert path to use forward slashes (cross-platform consistency)."""
     normalized = os.path.normpath(path).replace('\\', '/')
-    # On Unix/Linux, ensure absolute paths start with /
-    # On Windows, drive letter paths like C:/path are already correct
     if os.path.isabs(path) and not normalized.startswith('/') and ':' not in normalized[:2]:
         normalized = '/' + normalized
     return normalized
 
 
 def abspath(path):
-    """Absolute path with forward slashes."""
     return to_forward_slash(os.path.abspath(path))
 
 
 def find_game_runner():
-    """Auto-detect fastchess or cutechess-cli. Fastchess preferred over cutechess-cli."""
     windows = sysconfig.get_platform().startswith('win')
     binary = 'fastchess.exe' if windows else 'fastchess'
-    # 1) fastchess in PATH
     path = shutil.which('fastchess')
     if path:
         print(f'  Found fastchess in PATH: {path}')
         return abspath(path)
-    # 2) fastchess in sibling directories of root project
     parent = os.path.dirname(root_path())
     pattern = os.path.join(parent, '*fastchess*')
     print(f'  Scanning siblings: {pattern}')
@@ -101,7 +88,6 @@ def find_game_runner():
         print(f'  Checking: {candidate} (exists={os.path.isfile(candidate)})')
         if os.path.isfile(candidate):
             return abspath(candidate)
-    # 3) cutechess-cli in PATH as fallback
     path = shutil.which('cutechess-cli')
     if path:
         print(f'  Found cutechess-cli in PATH: {path}')
@@ -133,7 +119,7 @@ def resolve_native_engine():
 
 
 def resolve_engine(value):
-    """Resolve engine: if value is a path, canonicalize it; otherwise look up version in dist/. Exits on failure."""
+    """Path to an engine binary, or a version looked up in dist/."""
     if os.path.exists(value):
         path = os.path.realpath(value)
         if not os.path.isfile(path):
@@ -157,7 +143,7 @@ _PYI_MAGIC = b'MEI\x0c\x0b\x0a\x0b\x0e'
 
 
 def is_pyinstaller_onefile(path: str) -> bool:
-    """Detect PyInstaller --onefile binaries by scanning the tail for the CArchive cookie magic."""
+    """Scan the tail of the binary for the PyInstaller CArchive cookie."""
     if not path or not os.path.isfile(path):
         return False
     if path.lower().endswith(('.py', '.bat', '.cmd', '.sh')):
@@ -173,7 +159,6 @@ def is_pyinstaller_onefile(path: str) -> bool:
 
 
 def _build_tune_params(tune_arg):
-    """Load chess_engine and build tune_params from get_param_info(). Exits on unknown name."""
     sys.path.append(root_path())
     from chess_engine import get_param_info
 
@@ -223,7 +208,6 @@ def _build_tune_params(tune_arg):
 
 
 def _print_recommendations(tune_params, iterations, gamma, a_to_c_ratio, target_r=None, target_c=None):
-    """Dry-run: build ParamSpec list from tune_params and delegate to recommend module."""
     if not tune_params:
         print('No tunable parameters to analyze.')
         return
@@ -241,7 +225,6 @@ def _print_recommendations(tune_params, iterations, gamma, a_to_c_ratio, target_
             center = p['init']
         is_int = is_int_like(lo) and is_int_like(hi)
         fixed_lo, fixed_hi, floor = constrain_for(lo, hi)
-        # Genconfig: current bounds == engine cap (fresh from get_param_info), so pass as both.
         specs.append(ParamSpec(name=name, center=center, current_lo=lo, current_hi=hi,
                                is_int=is_int, cap_lo=lo, cap_hi=hi,
                                fixed_lo=fixed_lo, fixed_hi=fixed_hi, floor=floor))
@@ -256,7 +239,7 @@ def _print_recommendations(tune_params, iterations, gamma, a_to_c_ratio, target_
 
 def main():
     parser = argparse.ArgumentParser(description='Generate SPSA tuning project from engine parameters.')
-    parser.add_argument('project', nargs='?', default=None, help='Project name (creates tuneup/<project>/) -- omit with --dry-run')
+    parser.add_argument('project', nargs='?', default=None, help='Project name (creates tuneup/<project>/); omit with --dry-run')
     parser.add_argument('tune', nargs='*', default='all', help='Parameter names to tune (or "all")')
     parser.add_argument('-w', '--worker-only', action='store_true', help='Generate worker.json only (no engine needed)')
     parser.add_argument('-s', '--server-only', action='store_true', help='Generate tuning.json (coordinator) only, skip worker.json')
@@ -281,7 +264,6 @@ def main():
     if args.dry_run:
         if args.worker_only:
             parser.error('--dry-run is incompatible with --worker-only (no params to analyze)')
-        # In dry-run there is no project; the first positional is also a tune name.
         if args.project is None:
             tune_arg = args.tune
         else:
@@ -294,7 +276,6 @@ def main():
     if not args.project:
         parser.error('project name required (or pass --dry-run)')
 
-    # Create project directory
     if os.path.isabs(args.project):
         project_dir = args.project
     else:
@@ -306,22 +287,16 @@ def main():
     os.makedirs(os.path.join(project_dir, 'logs'), exist_ok=True)
     project_dir_abs = abspath(project_dir)
 
-    # Engine command: explicit path/version via -e, otherwise the native build from dist/native/.
     if not args.server_only:
         engine_cmd = resolve_engine(args.engine) if args.engine else resolve_native_engine()
 
-    # Default book path (absolute, forward slashes)
     default_book = abspath(os.path.join(tuneup_path(), 'books', 'UHO_2024_6mvs_+085_+094.pgn'))
 
-    # --- tuning.json (session-level, shared) ---
     tune_params = {}
 
     if not args.worker_only:
         tune_params = _build_tune_params(args.tune)
 
-        # c/a via the same compute_c_a() that recommend.py uses on its post-action
-        # specs. After apply.py rebalances bounds + rebuild, the engine-reported
-        # widths == recommend's new widths, so c here matches the run-2.json c.
         if args.spsa_c is not None:
             spsa_c = args.spsa_c
             spsa_a = args.spsa_a if args.spsa_a is not None else round(spsa_c * (_spsa.a / _spsa.c), 4)
@@ -341,9 +316,6 @@ def main():
             if args.spsa_a is not None:
                 spsa_a = args.spsa_a
 
-        # SSE heartbeat interval (real updates push immediately)
-        dashboard_refresh = 60
-
         parameters = {
             name: Parameter(name=name, **p) for name, p in tune_params.items()
         }
@@ -362,7 +334,7 @@ def main():
             games_per_iteration=args.games_per_iteration,
             output_dir=project_dir_abs,
             static_dir=abspath(root_path()),
-            dashboard_refresh=dashboard_refresh,
+            dashboard_refresh=60,
             spsa=SPSAConfig(
                 budget=args.iterations * args.games_per_iteration,
                 a=spsa_a,
@@ -376,12 +348,11 @@ def main():
             f.write(tuning_config.to_json())
             f.write('\n')
 
-    # --- worker.json (per-machine, local) ---
     if not args.server_only:
         games_dir = abspath(os.path.join(project_dir, 'games'))
         log_file = abspath(os.path.join(project_dir, 'logs', 'worker.log'))
 
-        _wd = WorkerConfig  # shorthand for accessing dataclass defaults
+        _wd = WorkerConfig
         worker_config = {
             'name': platform.node(),
             'coordinator': _wd.coordinator,
@@ -401,7 +372,6 @@ def main():
         if args.ref:
             worker_config['reference_engine'] = resolve_engine(args.ref)
 
-        # Enable ramdisk only if an engine is a PyInstaller --onefile binary.
         if is_pyinstaller_onefile(engine_cmd) or is_pyinstaller_onefile(worker_config.get('reference_engine', '')):
             worker_config['ramdisk'] = True
 
@@ -410,7 +380,6 @@ def main():
             json.dump(worker_config, f, indent=2)
             f.write('\n')
 
-    # Summary
     indent = 2 * ' '
     print(f'Project created: {project_dir_abs}/')
     if not args.worker_only:
@@ -447,8 +416,6 @@ def main():
 
 
 def _print_numa_hint(concurrency: int, indent: str):
-    """If this machine is NUMA with 2+ CPU-bearing nodes, print a hint
-    pointing the user at the split/launch helpers. No-op otherwise."""
     try:
         from split_numa_config import numa_available, cpu_bearing_nodes
     except ImportError:
@@ -471,7 +438,7 @@ def _print_numa_hint(concurrency: int, indent: str):
         lower = (concurrency // n) * n
         upper = lower + n
         suggestions = ' or '.join(str(v) for v in (lower, upper) if v > 0)
-        print(f'{indent}  (adjust concurrency to {suggestions} first -- must divide {n} evenly)')
+        print(f'{indent}  (adjust concurrency to {suggestions} first, must be a multiple of {n})')
 
 
 if __name__ == '__main__':

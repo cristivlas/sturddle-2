@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-SPSA Tuning Worker.
-
-Polls the coordinator for work, runs cutechess-cli games, reports results.
-Zero external dependencies -- uses only Python stdlib.
+SPSA tuning worker: gets games from the coordinator, plays them with cutechess-cli or fastchess.
 
 Usage:
     python worker.py -c worker.json
@@ -37,11 +34,11 @@ from ramdisk import (
 
 logger = logging.getLogger("worker")
 
-class RetryableError(Exception):
-    """Recoverable error during a single chunk -- worker retries."""
-    pass
 
-# Subprocess timeouts and poll cadence
+class RetryableError(Exception):
+    """Chunk failed; ask for new work."""
+
+
 GAME_TIMEOUT = 3600        # max seconds for a cutechess-cli run
 PIPE_DRAIN_TIMEOUT = 30    # seconds to wait for pipe readers after exit
 POLL_INTERVAL = 0.5        # seconds between process-alive checks
@@ -49,16 +46,14 @@ HTTP_TIMEOUT = 30          # seconds for general HTTP requests
 VALIDATE_TIMEOUT = 3       # seconds for chunk-validity HTTP checks
 SHUTDOWN_NOTIFY_TIMEOUT = 5  # seconds for the best-effort shutdown notify
 
-# Graceful-shutdown state
-_current_process = None       # cutechess-cli Popen while games run
-_shutdown_requested = False   # set True after operator chooses "wait"
-_cutechess_debug = False      # set True via --cutechess-debug flag
-_managed_mode = False         # set True by --managed; launcher owns the prompt
-_tool_label = "cutechess-cli"  # display name; updated to "fastchess" at startup
+_current_process = None
+_shutdown_requested = False   # operator chose "wait", or SIGTERM
+_cutechess_debug = False
+_managed_mode = False         # launcher owns the Ctrl+C prompt
+_tool_label = "cutechess-cli"
 
-
-_ramdisk_mount = ""  # resolved mount point for the active RAM disk
-_ramdisk_owned = False  # True only if we created the drive this session
+_ramdisk_mount = ""
+_ramdisk_owned = False  # created by this worker
 
 
 def _get_numa_node() -> int:
@@ -67,23 +62,18 @@ def _get_numa_node() -> int:
         libnuma = ctypes.CDLL("libnuma.so.1")
         if libnuma.numa_available() < 0:
             return -1
-        cpu = os.sched_getaffinity(0)  # set of CPUs we're allowed to run on
-        # Take the first CPU and ask which node it belongs to
+        cpu = os.sched_getaffinity(0)
         first_cpu = min(cpu)
         return libnuma.numa_node_of_cpu(first_cpu)
     except (OSError, AttributeError):
         return -1
 
 
-_numactl_prefix = None  # cached ["numactl", ...] or [] -- see _wrap_numactl
+_numactl_prefix = None
 
 
 def _wrap_numactl(cmd: list) -> list:
-    """Prepend numactl pinning to cmd, caching the prefix on first call.
-
-    Returns cmd unchanged on Windows, non-NUMA machines, or if numactl
-    is not installed -- making this a safe no-op in all those cases.
-    """
+    """Pin cmd to this worker's NUMA node; no-op without NUMA or numactl."""
     global _numactl_prefix
     if _numactl_prefix is None:
         node = _get_numa_node()
@@ -95,7 +85,6 @@ def _wrap_numactl(cmd: list) -> list:
 
 
 def _needs_ramdisk(worker_config):
-    """Check if any engine is a non-script binary that benefits from a RAM disk."""
     if not worker_config.ramdisk:
         return False
     engines = [worker_config.engine]
@@ -105,12 +94,7 @@ def _needs_ramdisk(worker_config):
 
 
 def setup_ramdisk(worker_config) -> str:
-    """Set up a RAM disk for engine temp files. Returns the mount path, or empty string.
-
-    On Windows the mount path is 'X:\\' (drive root); on Linux it's a /dev/shm subdirectory.
-    Raises RuntimeError on failure (ramdisk=true means the user wants it).
-    Returns empty string only when ramdisk is disabled or not needed.
-    """
+    """RAM disk for engine temp files: drive root on Windows, /dev/shm dir on Linux, "" if not needed."""
     global _ramdisk_mount, _ramdisk_owned
     if not _needs_ramdisk(worker_config):
         return ""
@@ -120,14 +104,13 @@ def setup_ramdisk(worker_config) -> str:
         if size_mb <= 0:
             engine2 = worker_config.reference_engine or worker_config.engine
             size_mb = estimate_ramdisk_mb(worker_config.engine, engine2, worker_config.concurrency, worker_config.ramdisk_decompression)
-        # Check for leftover from a previous crash
+        # left over from a crash
         drive = find_existing_ramdisk()
         if drive:
             drive_root = drive + os.sep
             _ramdisk_mount = drive_root
             write_marker(drive_root)
             return drive_root
-        # Use configured drive letter or auto-find one
         if worker_config.ramdisk_drive:
             drive = normalize_drive(worker_config.ramdisk_drive)
             drive_root = drive + os.sep
@@ -144,11 +127,9 @@ def setup_ramdisk(worker_config) -> str:
         _ramdisk_owned = True
         return drive_root
     else:
-        # Linux/macOS: use /dev/shm (already tmpfs, no root needed).
-        # Suffix the mount with the worker name so co-located workers
-        # (e.g. one per NUMA node) don't share or race on teardown.
+        # per-worker dir so co-located workers don't race on teardown
         if not os.path.isdir("/dev/shm"):
-            raise RuntimeError("/dev/shm not available -- cannot create RAM-backed temp")
+            raise RuntimeError("/dev/shm not available")
         suffix = worker_config.name or platform.node()
         mount = f"/dev/shm/spsa_temp_{suffix}"
         os.makedirs(mount, exist_ok=True)
@@ -158,7 +139,6 @@ def setup_ramdisk(worker_config) -> str:
 
 
 def teardown_ramdisk(worker_config):
-    """Remove the RAM disk created by setup_ramdisk."""
     global _ramdisk_mount, _ramdisk_owned
     if not _ramdisk_mount:
         return
@@ -175,7 +155,6 @@ def teardown_ramdisk(worker_config):
 
 
 def _make_temp_env(worker_config) -> dict:
-    """Build an env dict with temp dir overridden for subprocess, or None if no override."""
     if not _ramdisk_mount:
         return None
     env = os.environ.copy()
@@ -188,18 +167,13 @@ def _make_temp_env(worker_config) -> dict:
 
 
 def http_get(url: str, timeout: int) -> dict:
-    """GET request, return parsed JSON."""
     req = urllib.request.Request(url)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
 
 
 def http_post(url: str, data: dict, retry_timeout: int = 0, timeout: int = HTTP_TIMEOUT) -> dict:
-    """POST JSON, return parsed JSON response.
-
-    On connection errors, retries with exponential backoff for up to
-    retry_timeout seconds (0 = no retry). timeout is the per-request limit.
-    """
+    """On connection errors, retry with backoff for up to retry_timeout seconds."""
     body = json.dumps(data).encode()
     deadline = time.monotonic() + retry_timeout
     delay = 1
@@ -220,18 +194,7 @@ def http_post(url: str, data: dict, retry_timeout: int = 0, timeout: int = HTTP_
 
 
 def parse_cutechess_output(output: str) -> tuple:
-    """
-    Parse cutechess-cli output for game results.
-
-    cutechess-cli prints a running score after each game:
-        Score of engine1 vs engine2: W - L - D  [pct]  N
-
-    We need the LAST occurrence (final tally after all games).
-
-    Returns:
-        (wins, losses, draws) from engine1's perspective.
-        engine1 = theta_plus, engine2 = theta_minus.
-    """
+    """(wins, losses, draws) for engine1 from the last "Score of" line."""
     pattern = r"Score of .+ vs .+: (\d+) - (\d+) - (\d+)"
     matches = re.findall(pattern, output)
     if not matches:
@@ -243,15 +206,7 @@ def parse_cutechess_output(output: str) -> tuple:
 
 
 def parse_gauntlet_output(output: str, seed_name: str) -> dict:
-    """Parse cutechess-cli gauntlet output from per-game result lines.
-
-    Tournament mode prints "Finished game N (A vs B): result" per game
-    (no cumulative "Score of" lines).  Tally results per opponent from
-    the seed engine's perspective.
-
-    Returns:
-        {opponent_name: (seed_wins, seed_losses, draws)}
-    """
+    """{opponent: (seed_wins, seed_losses, draws)} from "Finished game" lines; gauntlets print no "Score of"."""
     pattern = r"Finished game \d+ \((.+?) vs (.+?)\): (1-0|0-1|1/2-1/2)"
     games = re.findall(pattern, output)
     if not games:
@@ -294,19 +249,7 @@ def build_cutechess_command(worker_config: WorkerConfig,
                             engine3_params: dict = None,
                             engine3_name: str = "",
                             engine3_cmd: str = "") -> list:
-    """Build the command line for cutechess-cli or fastchess.
-
-    Detects which tool is configured via worker_config.cutechess_cli and
-    adjusts syntax accordingly.  fastchess requires `-output format=cutechess`
-    so that our existing output parsers work unchanged.
-
-    Args:
-        engine1_cmd: override engine binary for engine1.
-        engine2_cmd: override engine binary for engine2.
-        engine3_params: if not None, adds a 3rd engine and uses gauntlet mode.
-        engine3_cmd: override engine binary for engine3.
-        All cmd overrides default to worker_config.engine when empty.
-    """
+    """cutechess-cli or fastchess command; engine3_params adds a third engine in gauntlet mode."""
     engine_cmd = worker_config.engine
     protocol = tuning_config["engine"].get("protocol", "uci")
     fixed_options = tuning_config["engine"].get("fixed_options", {})
@@ -318,7 +261,6 @@ def build_cutechess_command(worker_config: WorkerConfig,
     depth = tuning_config.get("depth")
     tc = tuning_config.get("time_control", "1+0.1")
 
-    # Apply worker-local overrides
     cc_overrides = worker_config.cutechess_overrides
     if "depth" in cc_overrides:
         depth = cc_overrides["depth"]
@@ -327,25 +269,20 @@ def build_cutechess_command(worker_config: WorkerConfig,
         tc = cc_overrides["tc"]
         logger.info("Worker override: tc=%s", tc)
 
-    # Detect fast-chess vs cutechess-cli from the binary name
     tool_name = Path(worker_config.cutechess_cli).stem.lower()
     is_fastchess = "fastchess" in tool_name
 
-    # Get parameter overrides from worker config (exclude _comment)
     param_overrides = {k: v for k, v in worker_config.parameter_overrides.items() if not k.startswith('_')}
 
-    # Build engine option strings
     def option_args(params: dict) -> list:
         args = []
-        # Fixed options first
         for name, val in fixed_options.items():
             if isinstance(val, bool):
                 val = "true" if val else "false"
             args.append(f"option.{name}={val}")
-        # Tunable params
         for name, val in params.items():
             args.append(f"option.{name}={val}")
-        # Parameter overrides (applied last, highest priority)
+        # last, so they win
         for name, val in param_overrides.items():
             if isinstance(val, bool):
                 val = "true" if val else "false"
@@ -354,24 +291,21 @@ def build_cutechess_command(worker_config: WorkerConfig,
 
     cmd = [worker_config.cutechess_cli]
 
-    # Engine 1
     e1_cmd = engine1_cmd or engine_cmd
     cmd += ["-engine", f"cmd={e1_cmd}", f"name={engine1_name}"]
     cmd += option_args(engine1_params)
 
-    # Engine 2
     e2_cmd = engine2_cmd or engine_cmd
     cmd += ["-engine", f"cmd={e2_cmd}", f"name={engine2_name}"]
     cmd += option_args(engine2_params)
 
-    # Engine 3 (gauntlet mode: engine1 is the seed, plays engines 2 and 3)
+    # gauntlet: engine1 plays both
     if engine3_params is not None:
         e3_cmd = engine3_cmd or engine_cmd
         cmd += ["-engine", f"cmd={e3_cmd}", f"name={engine3_name}"]
         cmd += option_args(engine3_params)
         cmd += ["-tournament", "gauntlet"]
 
-    # Common settings
     cmd += ["-each", f"proto={protocol}"]
 
     if depth is not None:
@@ -380,7 +314,6 @@ def build_cutechess_command(worker_config: WorkerConfig,
     else:
         cmd += [f"tc={tc}"]
 
-    # Opening book
     if book_file:
         if not book_format:
             ext = Path(book_file).suffix.lower().lstrip(".")
@@ -392,24 +325,21 @@ def build_cutechess_command(worker_config: WorkerConfig,
         if not is_fastchess:
             cmd += ["policy=round"]
 
-    # Number of games: each round plays 2 games (color swap) per pairing.
-    # 2-engine: rounds = games/2.  Gauntlet (2 pairings): rounds = games/4.
+    # 2 games (color swap) per pairing per round
     games_per_round = 4 if engine3_params is not None else 2
     num_rounds = max(1, num_games // games_per_round)
     assert(num_games)
     assert(num_rounds)
 
     cmd += ["-rounds", str(num_rounds)]
-    cmd += ["-games", "2"]  # 2 games per round (color swap)
+    cmd += ["-games", "2"]
     cmd += ["-repeat"]
 
-    # Concurrency
     if worker_config.concurrency > 1:
         cmd += ["-concurrency", str(worker_config.concurrency)]
         if is_fastchess:
             cmd += ["-force-concurrency"]
 
-    # PGN output
     if is_fastchess:
         cmd += ["-pgnout", f"file={pgn_file}"]
         cmd += ["-output", "format=cutechess"]
@@ -418,18 +348,15 @@ def build_cutechess_command(worker_config: WorkerConfig,
     else:
         cmd += ["-pgnout", pgn_file]
 
-    # Adjudication: shorten decided games to reduce time forfeits
     if tuning_config.get("auto_resign", True):
         cmd += ["-resign", f"movecount={tuning_config.get('resign_movecount', 3)}", f"score={tuning_config.get('resign_score', 700)}"]
         cmd += ["-draw", f"movenumber={tuning_config.get('draw_movenumber', 40)}", f"movecount={tuning_config.get('draw_movecount', 8)}", f"score={tuning_config.get('draw_score', 10)}"]
 
-    # Tablebase adjudication: reuse the engines' SyzygyPath override.
-    # fastchess only -- cutechess-cli's TB options are not cmdline-compatible.
+    # TB adjudication; cutechess-cli's TB options differ
     syzygy_path = param_overrides.get("SyzygyPath")
     if is_fastchess and syzygy_path:
         cmd += ["-tb", str(syzygy_path)]
 
-    # Debug: log all engine I/O
     if _cutechess_debug:
         if is_fastchess:
             cmd += ["-log", "engine=true"]
@@ -440,17 +367,7 @@ def build_cutechess_command(worker_config: WorkerConfig,
 
 
 def _handle_game_interrupt(proc):
-    """Handle Ctrl+C while cutechess-cli games are running.
-
-    Prompts the operator (whether or not the child is still alive):
-        [w]ait -- let games finish, report results, then stop
-        [s]top -- kill immediately
-        Enter  -- dismiss, keep working (default)
-    A second Ctrl+C during the wait force-kills the child.
-
-    In --managed mode the launcher owns the prompt; SIGINT always
-    means "stop now" -- kill cutechess and propagate to exit the loop.
-    """
+    """Ctrl+C during games: wait, stop or dismiss; a second Ctrl+C while waiting kills. --managed always kills."""
     global _shutdown_requested
 
     if _managed_mode:
@@ -482,12 +399,7 @@ def _handle_game_interrupt(proc):
 
 
 def _run_cutechess(cmd, work, worker_config, tuning_config):
-    """Run a cutechess-cli process and return its stdout, or None if cancelled.
-
-    Handles process lifecycle: logging, pipe draining, polling with
-    timeout/validate/interrupt, return-code checks, error-line scanning.
-    """
-    # Summarize command for console when many tunable params make it noisy
+    """Run the match and return stdout, or None if the coordinator cancelled the chunk."""
     opt_count = sum(1 for a in cmd if a.startswith("option."))
     if opt_count > 10:
         brief = [a for a in cmd if not a.startswith("option.")]
@@ -495,13 +407,9 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
     else:
         logger.info("Running: %s", " ".join(cmd))
 
-    # Pin cutechess subprocess to same NUMA node as this worker process.
-    # No-op on Windows, non-NUMA machines, or if numactl is not installed.
     cmd = _wrap_numactl(cmd)
 
-    # Isolate child process from Ctrl+C so we can offer a graceful stop.
-    # Windows: CREATE_NEW_PROCESS_GROUP prevents CTRL_C_EVENT propagation.
-    # Unix: start_new_session puts the child in its own session.
+    # keep Ctrl+C away from the child so we can offer a graceful stop
     global _current_process
     popen_kwargs = {}
     if sys.platform == "win32":
@@ -515,9 +423,7 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **popen_kwargs)
     _current_process = proc
 
-    # Drain pipes in background threads to prevent deadlock while the
-    # main thread polls proc.poll() (which directly sets returncode).
-    # Output is streamed to <tool>.log for post-mortem inspection.
+    # drain pipes in threads so the child never blocks; also tee to a log
     stdout_buf = []
     stderr_buf = []
     log_path = Path(worker_config.log_file)
@@ -541,8 +447,7 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
     out_t.start()
     err_t.start()
 
-    # Poll for exit -- main thread stays responsive to Ctrl+C.
-    # The inner try re-enters after "ignore" so the worker keeps going.
+    # poll so the main thread stays responsive to Ctrl+C
     validate_interval = tuning_config.get("validate_interval", 0)
     base_url = worker_config.coordinator.rstrip("/")
     worker_name = worker_config.name or platform.node()
@@ -555,7 +460,6 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
                 proc.kill()
                 proc.wait()
                 raise subprocess.TimeoutExpired(cmd[0], GAME_TIMEOUT)
-            # Periodic chunk-validity check
             if validate_interval and now - last_validate >= validate_interval:
                 last_validate = now
                 try:
@@ -575,7 +479,6 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
     finally:
         _current_process = None
 
-    # Collect pipe output (process is dead; readers will see EOF shortly)
     out_t.join(timeout=PIPE_DRAIN_TIMEOUT)
     err_t.join(timeout=PIPE_DRAIN_TIMEOUT)
     if _cc_log:
@@ -589,7 +492,7 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
         logger.error("%s failed (rc=%s)", _tool_label, hex(rc))
         logger.error("stdout (last 1000 chars): %s", (stdout_buf[0][-1000:] if stdout_buf else "") or "(empty)")
         logger.error("stderr (last 1000 chars): %s", (stderr_buf[0][-1000:] if stderr_buf else "") or "(empty)")
-        # Windows STATUS_ACCESS_VIOLATION (subprocess returns signed or unsigned)
+        # STATUS_ACCESS_VIOLATION, signed or unsigned
         if rc & 0xFFFFFFFF == 0xc0000005:
             raise RetryableError(f"{_tool_label} access violation ({hex(rc)})")
         raise RetryableError(f"{_tool_label} exited with code {hex(rc)}")
@@ -598,11 +501,10 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
     stderr_output = stderr_buf[0] if stderr_buf else ""
     if stderr_output:
         logger.warning("%s stderr: %s", _tool_label, stderr_output.strip()[-1000:])
-        # "Cannot start engine" / "Cannot execute command" = config error, not transient
+        # config error, not transient
         if "cannot start engine" in stderr_output.lower() or "cannot execute command" in stderr_output.lower():
             raise RuntimeError("Engine failed to start (check paths/permissions):\n" + stderr_output.strip()[-500:])
 
-    # Log all output lines that mention errors or crashes
     for line in output.splitlines():
         if any(kw in line.lower() for kw in ("abandoned", "error", "crash", "disconnect", "timeout", "illegal", "terminated", "forfeit", "loses on time")):
             logger.warning("%s: %s", _tool_label, line.strip())
@@ -611,11 +513,7 @@ def _run_cutechess(cmd, work, worker_config, tuning_config):
 
 
 def _check_forfeits(output, expected_games, max_forfeit_pct):
-    """Raise RetryableError if too many games ended by time forfeit.
-
-    cutechess-cli uses "loses on time" for decisive forfeits and
-    "Draw by timeout" when both engines flag.
-    """
+    """Raise RetryableError on too many time forfeits ("loses on time" or "Draw by timeout")."""
     if not max_forfeit_pct or max_forfeit_pct <= 0:
         return
     forfeit_count = sum(1 for line in output.splitlines() if "loses on time" in line.lower() or "draw by timeout" in line.lower())
@@ -624,23 +522,16 @@ def _check_forfeits(output, expected_games, max_forfeit_pct):
     threshold = math.ceil(expected_games * max_forfeit_pct)
     logger.warning("Forfeits: %d/%d (threshold %d at %.0f%%)", forfeit_count, expected_games, threshold, max_forfeit_pct * 100)
     if forfeit_count >= threshold:
-        # TODO: RetryableError causes the coordinator to treat the next /work
-        # request as a crash-reconnect, resetting the worker's speed EWMA.
-        # Consider reporting a "discard" result instead to preserve the EWMA.
+        # TODO: the coordinator treats the next /work as a crash-reconnect and resets the speed EWMA
         raise RetryableError(f"{forfeit_count}/{expected_games} games forfeited ({forfeit_count/expected_games:.0%}), max is {max_forfeit_pct:.0%}")
 
 
 def _execute_match(cmd, expected_games, work, worker_config, tuning_config):
-    """
-    Run a single cutechess-cli match and return (wins, draws, losses) or None.
-
-    This is the standard-mode wrapper around _run_cutechess().
-    """
+    """Standard mode: (wins, draws, losses) for theta_plus, or None if cancelled."""
     output = _run_cutechess(cmd, work, worker_config, tuning_config)
     if output is None:
         return None
 
-    # Log score lines for diagnostics
     score_lines = re.findall(r"Score of .+", output)
     logger.info("%s reported %d score line(s)", _tool_label, len(score_lines))
     for line in score_lines[:-1]:
@@ -654,14 +545,13 @@ def _execute_match(cmd, expected_games, work, worker_config, tuning_config):
     if total == 0:
         started = any("started game" in line.lower() for line in output.splitlines())
         if not started:
-            raise RuntimeError(f"{_tool_label} started no games -- check engine configuration\n" + (output[-500:] or "(no output)"))
+            raise RuntimeError(f"{_tool_label} started no games, check engine configuration\n" + (output[-500:] or "(no output)"))
         raise RetryableError("No games were played")
 
-    # Abort if too many games failed -- results would be noise
     min_completion = 1 - worker_config.max_forfeit_pct
     if total < expected_games * min_completion:
         logger.error(
-            "Only %d/%d games completed (W=%d L=%d D=%d) -- aborting chunk",
+            "Only %d/%d games completed (W=%d L=%d D=%d), aborting chunk",
             total, expected_games, wins, losses, draws,
         )
         raise RetryableError(f"Only {total}/{expected_games} games completed ({total/expected_games:.0%}), minimum is {min_completion:.0%}")
@@ -680,19 +570,13 @@ def _execute_match(cmd, expected_games, work, worker_config, tuning_config):
 
 
 def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) -> tuple:
-    """Run cutechess-cli match(es) and return results.
-
-    Standard mode: returns (wins, draws, losses) for theta_plus vs theta_minus.
-    Reference mode: returns (plus_W/D/L, minus_W/D/L) for theta+/- vs reference.
-    Returns None if cancelled.
-    """
+    """(W, D, L) in standard mode, (plus W, D, L, minus W, D, L) in reference mode, None if cancelled."""
     games_dir = Path(worker_config.games_dir)
     games_dir.mkdir(parents=True, exist_ok=True)
     pgn_file = str(games_dir / f"games-{work.iteration}.pgn").replace("\\", "/")
 
-    # KLUDGE: clean up orphaned PyInstaller _MEI* dirs on the RAM disk.
-    # Crashed/timed-out engines leave extracted dirs behind, filling the disk.
-    # Windows only: file locks protect dirs still in use by colocated workers.
+    # KLUDGE: crashed engines leave PyInstaller _MEI* dirs behind and fill the RAM disk.
+    # Windows only, where file locks protect the dirs of co-located workers.
     if _ramdisk_mount and sys.platform == "win32":
         for entry in os.scandir(_ramdisk_mount):
             if entry.is_dir() and entry.name.startswith("_MEI"):
@@ -701,7 +585,7 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
     ref_engine = worker_config.reference_engine
 
     if ref_engine:
-        # Reference mode: gauntlet with reference as seed vs theta+, theta-
+        # reference engine is the gauntlet seed
         half = work.num_games // 2
         cmd = build_cutechess_command(
             worker_config, tuning_config,
@@ -718,7 +602,6 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
 
         _check_forfeits(output, work.num_games, worker_config.max_forfeit_pct)
 
-        # Log ranking table from gauntlet output
         in_rank = False
         for line in output.splitlines():
             if line.startswith("Rank "):
@@ -728,7 +611,6 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
                     break
                 logger.info("  %s", line.rstrip())
 
-        # Parse per-pairing results (from reference's perspective)
         try:
             pairing_results = parse_gauntlet_output(output, "reference")
         except ValueError:
@@ -737,13 +619,12 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
             if name not in pairing_results:
                 raise RetryableError(f"Missing gauntlet pairing for {name} in output:\n{output[-500:]}")
 
-        # Swap perspective: reference W/L -> theta W/L
+        # flip from the reference's point of view
         ref_pw, ref_pl, ref_pd = pairing_results["theta_plus"]
         ref_mw, ref_ml, ref_md = pairing_results["theta_minus"]
         plus_wins, plus_draws, plus_losses = ref_pl, ref_pd, ref_pw
         minus_wins, minus_draws, minus_losses = ref_ml, ref_md, ref_mw
 
-        # Validate game counts per side
         min_completion = 1 - worker_config.max_forfeit_pct
         for side, w, d, l in [("theta+", plus_wins, plus_draws, plus_losses), ("theta-", minus_wins, minus_draws, minus_losses)]:
             total = w + d + l
@@ -758,7 +639,6 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
         return plus_wins, plus_draws, plus_losses, minus_wins, minus_draws, minus_losses
 
     else:
-        # Standard mode: theta_plus vs theta_minus
         cmd = build_cutechess_command(
             worker_config, tuning_config,
             engine1_params=work.theta_plus, engine1_name="theta_plus",
@@ -769,10 +649,8 @@ def run_games(worker_config: WorkerConfig, tuning_config: dict, work: WorkItem) 
 
 
 def worker_loop(worker_config: WorkerConfig):
-    """Main worker loop: poll for work, run games, report results."""
     base_url = worker_config.coordinator.rstrip("/")
 
-    # Fetch tuning config from coordinator
     def fetch_config():
         nonlocal tuning_config, server_start, default_retry
         tuning_config = http_get(f"{base_url}/config", HTTP_TIMEOUT)
@@ -789,12 +667,11 @@ def worker_loop(worker_config: WorkerConfig):
 
     worker_name = worker_config.name or platform.node()
 
-    # Collect cutechess overrides to send to coordinator (for timeout estimation)
+    # sent so the coordinator can estimate timeouts
     cc_overrides = {k: v for k, v in worker_config.cutechess_overrides.items()
                     if not k.startswith('_')}
 
-    # Compute effective chunk size cap from max_rounds_per_chunk and concurrency
-    chunk_size_cap = worker_config.max_chunk_size  # hard cap (0 = unlimited)
+    chunk_size_cap = worker_config.max_chunk_size
     if worker_config.max_rounds_per_chunk > 0:
         rounds_cap = worker_config.max_rounds_per_chunk * worker_config.concurrency * 2
         chunk_size_cap = min(chunk_size_cap, rounds_cap) if chunk_size_cap > 0 else rounds_cap
@@ -805,7 +682,6 @@ def worker_loop(worker_config: WorkerConfig):
 
     while True:
         try:
-            # Request work
             work_request = {
                 "chunk_size": chunk_size_cap,
                 "worker": worker_name,
@@ -816,7 +692,6 @@ def worker_loop(worker_config: WorkerConfig):
                 work_request["cutechess_overrides"] = cc_overrides
             response = http_post(f"{base_url}/work", work_request, retry_timeout)
 
-            # Detect coordinator restart and re-fetch config
             if response.get("status") == "config_changed":
                 logger.warning("Coordinator restarted, re-fetching config")
                 fetch_config()
@@ -832,16 +707,13 @@ def worker_loop(worker_config: WorkerConfig):
                 time.sleep(delay)
                 continue
 
-            # We got a work assignment
             work = WorkItem.from_dict(response)
             logger.info("Got work: iteration %d, %d games", work.iteration, work.num_games)
 
-            # Run the games
             game_result = run_games(worker_config, tuning_config, work)
             if game_result is None:
                 if _shutdown_requested:
-                    # Notify the coordinator so it deregisters us instead of
-                    # waiting for the idle timeout to reap us as crashed.
+                    # deregister now rather than time out as crashed
                     try:
                         http_post(f"{base_url}/result", {
                             "iteration": work.iteration,
@@ -854,9 +726,8 @@ def worker_loop(worker_config: WorkerConfig):
                     except Exception as e:
                         logger.debug("Shutdown notify failed: %s", e)
                     break
-                continue  # chunk cancelled, request new work
+                continue  # chunk cancelled
 
-            # Report results (PGNs saved locally by cutechess-cli)
             result = {
                 "iteration": work.iteration,
                 "chunk_id": work.chunk_id,
@@ -864,7 +735,6 @@ def worker_loop(worker_config: WorkerConfig):
                 "shutting_down": _shutdown_requested,
             }
             if len(game_result) == 6:
-                # Reference mode: per-side scores, coordinator derives aggregates
                 pw, pd, pl, mw, md, ml = game_result
                 result["num_games"] = pw + pd + pl + mw + md + ml
                 result["reference_mode"] = True
@@ -875,7 +745,6 @@ def worker_loop(worker_config: WorkerConfig):
                 result["minus_draws"] = md
                 result["minus_losses"] = ml
             else:
-                # Standard mode
                 wins, draws, losses = game_result
                 result["wins"] = wins
                 result["draws"] = draws
@@ -893,9 +762,7 @@ def worker_loop(worker_config: WorkerConfig):
             logger.info("Interrupted, shutting down.")
             break
         except urllib.error.URLError as e:
-            # http_post already retried internally for http_retry_timeout seconds
-            # with exponential backoff; reaching here means the coordinator has
-            # been unreachable for that long. Exit rather than loop forever.
+            # http_post already retried for http_retry_timeout seconds
             logger.error("Coordinator unreachable after %ds: %s. Exiting.", retry_timeout, e)
             break
         except (subprocess.TimeoutExpired, RetryableError) as e:
@@ -909,15 +776,9 @@ def worker_loop(worker_config: WorkerConfig):
             logger.exception("Terminating.")
             break
 
-def _install_managed_signals():
-    """Wire signal handlers for --managed mode.
 
-    SIGTERM: graceful -- set _shutdown_requested so the worker finishes
-             the current cutechess run, reports results, and exits.
-    SIGINT:  hard stop -- default handler raises KeyboardInterrupt,
-             which _handle_game_interrupt converts into an immediate
-             cutechess kill + loop break (see --managed branch there).
-    """
+def _install_managed_signals():
+    """SIGTERM finishes the current games, reports, and exits; SIGINT kills cutechess right away."""
     global _managed_mode
     _managed_mode = True
 
@@ -930,7 +791,6 @@ def _install_managed_signals():
 
 
 def setup_logging(log_file: str, debug: bool, rotate: bool):
-    """Configure logging to file and stdout."""
     formatter = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -967,7 +827,6 @@ def main():
 
     config = WorkerConfig.from_json(args.config)
 
-    # --clean: remove log file and rotated copies (keep games)
     if args.clean:
         log_path = Path(config.log_file)
         for f in log_path.parent.glob(log_path.name + "*"):

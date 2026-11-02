@@ -1,13 +1,8 @@
-"""SPSA range recommendation: shared by genconfig and apply.
+"""SPSA range recommendation shared by genconfig and apply.
 
-Picks an engine-space target range R, derives c/a, and produces per-param
-suggested bounds. Two contexts:
-
-  - genconfig --check-ranges: center=init from get_param_info(); cap=engine
-    declared bounds; classifies as keep/narrow/REBUILD.
-  - apply.py --rebalance:     center=post-tuning theta; cap is None (apply.py
-    edits C++ source directly, so REBUILD is moot); classifies as
-    keep/narrow/widen/shift.
+Picks an engine-space target range R, derives c/a, and suggests per-param bounds.
+genconfig passes the engine's declared bounds as cap (enables REBUILD); apply.py
+passes no cap since it edits the C++ source directly.
 """
 
 import math
@@ -18,15 +13,15 @@ from typing import List, Optional, Set
 @dataclass
 class ParamSpec:
     name: str
-    center: float                       # init (genconfig) or post-tuned theta (apply), engine space
-    current_lo: float                   # current bounds (engine space) -- used for change labeling
+    center: float                       # engine space
+    current_lo: float
     current_hi: float
     is_int: bool
-    cap_lo: Optional[float] = None      # engine source cap; set => REBUILD detection enabled
+    cap_lo: Optional[float] = None      # engine source bounds; set => REBUILD detection
     cap_hi: Optional[float] = None
-    fixed_lo: Optional[float] = None    # pin new lower to this value (e.g., 1 for divisor bookend)
-    fixed_hi: Optional[float] = None    # pin new upper to this value (e.g., 1 for probability ceiling)
-    floor: Optional[float] = None       # never let new lower go below (e.g., 0 for non-negative)
+    fixed_lo: Optional[float] = None    # pin new lower (e.g. 1 for a divisor)
+    fixed_hi: Optional[float] = None    # pin new upper (e.g. 1 for a probability)
+    floor: Optional[float] = None       # new lower never goes below this
 
 
 @dataclass
@@ -54,16 +49,7 @@ class Recommendation:
 
 
 def constrain_for(current_lo, current_hi):
-    """Derive bound constraints from a param's current bounds:
-
-      - lower == 1 or upper == 1 marks a hard semantic bookend (divisor floor /
-        probability ceiling); the algorithm pins it.
-      - lower >= 0 marks a non-negative-only range; the new lower never goes
-        below 0.
-
-    Returns (fixed_lo, fixed_hi, floor); each is None when the rule does
-    not apply.
-    """
+    """(fixed_lo, fixed_hi, floor): a bound of 1 is pinned, lower >= 0 keeps the range non-negative."""
     return (
         1 if current_lo == 1 else None,
         1 if current_hi == 1 else None,
@@ -72,7 +58,7 @@ def constrain_for(current_lo, current_hi):
 
 
 def _detect_outliers(specs: List[ParamSpec], outlier_ratio: Optional[float]):
-    """Return (outlier_names, median_inlier_w). Needs >=3 specs to be robust."""
+    """Return (outlier_names, median_inlier_w)."""
     if not outlier_ratio or len(specs) < 3:
         return set(), None
     all_widths = sorted([s.current_hi - s.current_lo for s in specs if s.current_hi > s.current_lo])
@@ -91,17 +77,7 @@ def _detect_outliers(specs: List[ParamSpec], outlier_ratio: Optional[float]):
 def compute_c_a(specs: List[ParamSpec], iterations: int, gamma: float,
                 a_to_c_ratio: float, target_c: Optional[float],
                 min_pert_pct: float, outlier_ratio: Optional[float]):
-    """Spall convention: c = initial perturbation as a fraction of each param's
-    range (typical 0.05 = 5%). At iter k pert_engine = c_k * R = (c/(k+1)^gamma) * R.
-
-    Bumped above min_pert_pct/100 only if the narrowest param's range is small
-    enough that end-of-run pert would drop below 1 engine unit (R_min < N^gamma/c).
-    Otherwise stays at the textbook Spall floor.
-
-    Bound-invariant + idempotent across rebalances. Used both by recommend()
-    (post-action specs) and by genconfig (engine-reported post-apply specs);
-    same input -> same c.
-    """
+    """c = min_pert_pct/100, raised only if the narrowest range would make the end-of-run pert < 1 engine unit."""
     if target_c is not None:
         return round(target_c, 4), round(target_c * a_to_c_ratio, 4)
     outlier_names, _ = _detect_outliers(specs, outlier_ratio)
@@ -111,7 +87,6 @@ def compute_c_a(specs: List[ParamSpec], iterations: int, gamma: float,
         raise ValueError('all params have zero/negative width; cannot derive c')
     R_min = min(widths)
     pct_floor = (min_pert_pct / 100.0) if min_pert_pct else 0.0
-    # Min c needed so end-of-run pert = c/N^gamma * R_min >= 1 engine unit.
     unit_pert_floor = (iterations ** gamma) / R_min
     c = round(max(pct_floor, unit_pert_floor), 4)
     a = round(c * a_to_c_ratio, 4)
@@ -124,34 +99,11 @@ def recommend(specs: List[ParamSpec], iterations: int, gamma: float,
               outlier_ratio: Optional[float],
               min_pert_pct: float,
               safety_pad: float) -> Recommendation:
-    """Compute SPSA schedule recommendation.
+    """Size R_target (floor N^gamma/c so the end-of-run pert stays >= 1 engine unit), then c/a from the new widths.
 
-    Two-stage, coupled:
-      (A) size R_target + per-param new bounds, with a floor R_target >= N^gamma/c
-          so end-of-run pert stays >= 1 engine unit;
-      (B) size c via compute_c_a (Spall convention: c = min_pert_pct/100, bumped
-          up only if R_min is so small that end-pert would drop sub-unit).
-    Stage B is what genconfig calls directly on engine-reported post-apply specs
-    -- same formula on same input -> same c.
-
-    Order (A vs B first) flips with target type: --target-c => B fixed, A sized
-    to support; --target-r => A fixed, B derived; neither => B defaults to Spall
-    0.05, A sized accordingly.
-
-    outlier_ratio: params whose current width exceeds outlier_ratio * median
-    width are detected as scale outliers. Their R is rescaled on a log axis
-    so a wide outlier stays slightly wider than inliers without dwarfing them.
-    Outliers are excluded from R_target geomean and from R_min in compute_c_a.
-    Typical: 5.0.
-
-    min_pert_pct: Spall pert fraction (initial pert = pct% of each param's
-    range, decaying as 1/k^gamma). Default c floor in compute_c_a, and the
-    target-c assumed when sizing R_target if no target is given. Typical: 5.0.
-
-    safety_pad: multiplier on the geomean for R_target (bound sizing). Premature
-    narrow ranges are catastrophic (saturation -> mid-run rebuild); premature
-    wide ranges are merely slow. Bias above 1.0 to lean away from the cliff.
-    Ignored when target_r or target_c is given. Typical: 1.2.
+    outlier_ratio: widths above outlier_ratio * median are rescaled on a log axis and
+    excluded from the geomean and from R_min.
+    safety_pad: multiplier on the geomean; ignored when target_r or target_c is given.
     """
     if not specs:
         raise ValueError('no params')
@@ -160,13 +112,10 @@ def recommend(specs: List[ParamSpec], iterations: int, gamma: float,
 
     outlier_names, median_inlier_w = _detect_outliers(specs, outlier_ratio)
 
-    # Floor for R_target so end-of-run pert >= 1 engine unit at the c we'll
-    # ultimately pick. Coupling A->B: bound sizing must support the perturbation
-    # schedule. target_r path skips the floor (user-specified R wins).
     if target_c is not None:
         c_for_floor = target_c
     elif min_pert_pct:
-        c_for_floor = min_pert_pct / 100.0  # Spall default we'll land on in compute_c_a
+        c_for_floor = min_pert_pct / 100.0
     else:
         c_for_floor = None
     R_unit_floor = max(1, math.ceil((iterations ** gamma) / c_for_floor)) if c_for_floor else 1
@@ -197,18 +146,13 @@ def recommend(specs: List[ParamSpec], iterations: int, gamma: float,
     actions = []
     for s in specs:
         if s.name in outlier_names and median_inlier_w and median_inlier_w > 1:
-            # Log-scale rescale: outlier_R = R_target * log(cur_w)/log(median_inlier_w).
-            # Keeps outliers slightly larger than inliers (ratio = log of the
-            # current-width ratio) without preserving their full magnitude.
             cur_w = s.current_hi - s.current_lo
             R_outlier = max(1, round(R_target * math.log(cur_w) / math.log(median_inlier_w)))
             actions.append(_recommend_one(s, R_outlier))
         else:
             actions.append(_recommend_one(s, R_target))
 
-    # c/a sized from post-action widths so the schedule matches what'll
-    # actually run after apply.py rewrites bounds. Re-running compute_c_a on
-    # the engine-reported (post-apply) specs from genconfig yields the same c.
+    # c/a from post-action widths, so genconfig's compute_c_a on the applied bounds gives the same c.
     post_specs = [
         ParamSpec(name=act.name, center=act.center,
                   current_lo=act.new_lo, current_hi=act.new_hi,
@@ -222,13 +166,7 @@ def recommend(specs: List[ParamSpec], iterations: int, gamma: float,
 
 
 def _apply_bookend_constraints(spec, new_lo, new_hi):
-    """Apply fixed_lo / fixed_hi / floor; preserve width when possible.
-
-    Order: fixed bookends first (semantic invariants), floor last (fallback
-    for non-negative ranges). When constraints conflict (fixed_lo + fixed_hi
-    + R_target > current_w, or floor + fixed_hi pinch), prefer bookend pins
-    over width preservation -- the resulting range may be narrower than R.
-    """
+    """Apply fixed_lo / fixed_hi / floor, shifting to preserve width; pins win over width when they conflict."""
     if spec.fixed_lo is not None and new_lo != spec.fixed_lo:
         new_hi += spec.fixed_lo - new_lo
         new_lo = spec.fixed_lo
@@ -253,8 +191,7 @@ def _recommend_one(spec: ParamSpec, R_target: int) -> ParamAction:
     cap_w = cap_hi - cap_lo
 
     if has_cap and R_target > cap_w:
-        # One-sided extension: anchor at the side init is farther from.
-        # Minimizes engine source diff (one bound changes) while keeping center inside.
+        # Extend one side only, the one the center is farther from.
         deficit = R_target - cap_w
         if (cap_hi - spec.center) <= (spec.center - cap_lo):
             new_lo, new_hi = cap_lo, cap_hi + deficit
@@ -277,9 +214,7 @@ def _recommend_one(spec: ParamSpec, R_target: int) -> ParamAction:
         new_hi = cap_hi
         new_lo = max(new_lo, cap_lo)
     new_lo, new_hi = _apply_bookend_constraints(spec, new_lo, new_hi)
-    # Bookend shift can push new_hi past cap_hi when the lower side is pinned.
-    # Re-clamp upper without shifting the lower (which is now at floor or fixed).
-    if new_hi > cap_hi:
+    if new_hi > cap_hi:  # a pinned lower side can push the upper past the cap
         new_hi = cap_hi
 
     if spec.is_int:
@@ -300,12 +235,6 @@ def _recommend_one(spec: ParamSpec, R_target: int) -> ParamAction:
 
 
 def format_recommendation(rec: Recommendation, printer=print, center_label: str = 'init') -> None:
-    """Emit the recommendation. `printer` is any callable taking a single string.
-
-    Default is `print` (stdout). Pass `logging.info` (or a lambda wrapping it)
-    to interleave correctly with logger output -- otherwise stdout buffering can
-    reorder against unbuffered stderr-bound logs.
-    """
     def fmt(x):
         if isinstance(x, float) and abs(x - round(x)) < 1e-9:
             return str(int(round(x)))

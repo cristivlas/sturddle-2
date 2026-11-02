@@ -306,7 +306,7 @@
             .theme-toggle > span[data-mode="dark"]::before {{ content: '\263E'; }}
         }}
     </style>
-    <!-- Pre-render collapsed state from localStorage to prevent flicker -->
+    <!-- apply the saved collapsed state before first paint -->
     <script>
         (function() {{
             try {{
@@ -329,7 +329,7 @@
             }} catch(e) {{}}
         }})();
     </script>
-    <!-- Time-of-day theme (keep in sync across dashboard/charts/logs templates) -->
+    <!-- time-of-day theme, same in all three templates -->
     <script>
         var forceHour = null;
         function applyTimeTheme() {{
@@ -344,7 +344,7 @@
         }}
         applyTimeTheme();
         setInterval(applyTimeTheme, 3600000);
-        // Debug: Shift+T cycles forced time-of-day theme (auto/morning/afternoon/evening/night)
+        // Shift+T cycles the time-of-day theme (debug)
         document.addEventListener('keydown', function(ev) {{
             if (ev.key !== 'T' || ev.ctrlKey || ev.altKey || ev.metaKey) return;
             var t = ev.target;
@@ -357,7 +357,7 @@
             ev.preventDefault();
         }});
 
-        // Dark mode (tri-state: auto/light/dark; user override persisted in localStorage)
+        // dark mode: auto, light or dark
         function currentThemeMode() {{ return localStorage.getItem('themeMode') || 'auto'; }}
         function resolvedTheme() {{
             var m = currentThemeMode();
@@ -456,12 +456,11 @@
             }}
         }} catch(e) {{}}
 
-        // Dual-slider zoom: control x-axis window across all charts
+        // x-axis zoom for all charts
         var _labels = [];
         function onZoom(src) {{
             var f = document.getElementById('zoomFrom');
             var t = document.getElementById('zoomTo');
-            // Prevent thumbs from crossing
             if (src === 'from' && +f.value > +t.value) f.value = t.value;
             if (src === 'to'   && +t.value < +f.value) t.value = f.value;
             applyZoomRange(+f.value, +t.value);
@@ -470,7 +469,6 @@
             var last = _labels.length - 1;
             var minVal = from > 0    ? _labels[from] : undefined;
             var maxVal = to   < last ? _labels[to]   : undefined;
-            // Active charts
             document.querySelectorAll('canvas').forEach(function(c) {{
                 var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(c);
                 if (!ch) return;
@@ -483,7 +481,6 @@
                 else delete opts.scales.x.max;
                 ch.update('none');
             }});
-            // Pending chart configs
             for (var id in _pending) {{
                 var o = _pending[id].options;
                 if (!o.scales) o.scales = {{}};
@@ -493,24 +490,21 @@
                 if (maxVal !== undefined) o.scales.x.max = maxVal;
                 else delete o.scales.x.max;
             }}
-            // Fill bar
             var span = last || 1;
             var fill = document.getElementById('zoomFill');
             if (fill) {{
                 fill.style.left  = (from / span * 100) + '%';
                 fill.style.right = ((1 - to / span) * 100) + '%';
             }}
-            // Label
             var lbl = document.getElementById('zoomLabel');
             if (lbl) lbl.textContent = (minVal !== undefined || maxVal !== undefined)
                 ? (_labels[from] || _labels[0]) + ' \u2013 ' + (_labels[to] || _labels[last])
                 : 'All';
-            // Persist (clear when full range so new data doesn't get clipped)
+            // full range is not saved, so new data isn't clipped
             try {{ if (from <= 0 && to >= last) localStorage.removeItem('chartZoom'); else localStorage.setItem('chartZoom', JSON.stringify({{f:from, t:to}})); }} catch(e) {{}}
             if (window.updateThetaSubtitle) window.updateThetaSubtitle();
         }}
 
-        // Chart theme: update axis/grid colors on all registered charts
         function applyChartTheme() {{
             if (typeof Chart === 'undefined') return;
             var dark = document.documentElement.getAttribute('data-theme') === 'dark';
@@ -523,7 +517,7 @@
             }});
         }}
 
-        // Deferred chart creation for canvases hidden at init time
+        // charts on hidden canvases are created when shown
         var _pending = {{}};
         var _canvasCard = {{ thetaChart:'params', eloChart:'elo', akChart:'rates', ckChart:'rates' }};
         function createPending() {{
@@ -547,9 +541,7 @@
             var pre = document.getElementById('pre-collapse');
             if (pre) pre.remove();
             localStorage.setItem('chartVis', JSON.stringify(chartVis));
-            // Params resize handle: only visible when params is expanded AND
-            // at least one card below is expanded (otherwise there is nothing
-            // to resize against, and params should fill all available space).
+            // the handle needs params expanded and something open below it
             var anyBelowOpen = chartVis.elo || chartVis.rates;
             var rh = document.getElementById('paramsResize');
             if (rh) rh.style.display = (chartVis.params && anyBelowOpen) ? '' : 'none';
@@ -558,8 +550,7 @@
                 if (chartVis.params && anyBelowOpen) {{
                     var savedH = parseInt(localStorage.getItem('chartParamsH'), 10);
                     if (savedH > 0) {{
-                        // Clamp against available content space so the fixed
-                        // height doesn't push siblings out of the viewport.
+                        // keep siblings inside the viewport
                         var content = pc.closest('.content');
                         var avail = content ? content.clientHeight : 0;
                         var maxH = avail > 0 ? avail - 150 : savedH;
@@ -574,13 +565,11 @@
             }}
             requestAnimationFrame(function() {{
                 createPending();
-                // Resize existing charts after layout reflow
                 document.querySelectorAll('[data-chart]:not(.collapsed) canvas').forEach(function(c) {{
                     var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(c);
                     if (ch) ch.resize();
                 }});
-                // Re-apply zoom after createPending/resize so that newly created or
-                // resized charts always reflect the current slider range.
+                // re-apply zoom to new or resized charts
                 if (_labels.length) {{
                     var _sf = document.getElementById('zoomFrom'), _st = document.getElementById('zoomTo');
                     if (_sf && _st) applyZoomRange(+_sf.value, +_st.value);
@@ -590,7 +579,7 @@
 
         function toggleChart(key) {{
             chartVis[key] = !chartVis[key];
-            // If all off, cycle to the next chart
+            // all off: show the next chart
             if (!Object.values(chartVis).some(Boolean)) {{
                 var next = chartKeys[(chartKeys.indexOf(key) + 1) % chartKeys.length];
                 chartVis[next] = true;
@@ -600,7 +589,7 @@
 
         document.addEventListener('DOMContentLoaded', applyVis);
 
-        // Drag-resize for the "Parameter Values" card height.
+        // drag-resize the Parameter Values card
         (function() {{
             function resizeAllCharts() {{
                 document.querySelectorAll('[data-chart]:not(.collapsed) canvas').forEach(function(c) {{
@@ -620,15 +609,13 @@
                     var startY = eDown.clientY;
                     var startH = card.getBoundingClientRect().height;
                     var content = card.closest('.content');
-                    // Min height = natural collapsed size. Measured by briefly
-                    // toggling .collapsed (synchronous reads, no paint flash).
+                    // measure the collapsed height by toggling .collapsed
                     var prevFlex = card.style.flex, prevH = card.style.height;
                     card.style.flex = ''; card.style.height = '';
                     card.classList.add('collapsed');
                     var collapsedH = card.offsetHeight;
                     card.classList.remove('collapsed');
                     card.style.flex = prevFlex; card.style.height = prevH;
-                    // Constants for max computation
                     var MIN_EXPANDED = 160;     // min useful height of an expanded below-card
                     var RESERVED = 10 + 24;     // handle + two 12px gaps
                     function dynMax() {{
@@ -639,10 +626,7 @@
                     }}
                     function onMove(e) {{
                         var target = startH + e.clientY - startY;
-                        // Shrink below natural min -> auto-collapse params (mirror of
-                        // the drag-down branch below). Without this the card body
-                        // keeps rendering past its clamped height and overlaps the
-                        // charts beneath.
+                        // below the collapsed height, collapse params, or the body overlaps the charts
                         if (target < collapsedH && chartVis.params) {{
                             chartVis.params = false;
                             card.classList.add('collapsed');
@@ -652,7 +636,7 @@
                             onUp();  // end drag; handle hides via applyVis()
                             return;
                         }}
-                        // Grow past current max -> auto-collapse bottommost expanded below-card.
+                        // past the max, collapse the lowest open card
                         while (target > dynMax() && (chartVis.elo || chartVis.rates)) {{
                             var key = chartVis.rates ? 'rates' : 'elo';
                             chartVis[key] = false;
@@ -660,7 +644,7 @@
                             if (bc) bc.classList.add('collapsed');
                         }}
                         if (!chartVis.elo && !chartVis.rates) {{
-                            // Both collapsed: let params fill via flex:1
+                            // both collapsed: params fills
                             card.style.flex = '';
                             card.style.height = '';
                         }} else {{
@@ -690,7 +674,7 @@
     <script>{chart_js}</script>
     <script id="history-data" type="application/json">{history_json}</script>
     <script>
-        // Param ranges fetched from /config for engine-space solo mode + convergence
+        // engine-space ranges from /config, for solo mode and convergence
         var paramRanges = {{}};
         var paramInternalRanges = {{}};
         var _spsaC = null, _spsaGamma = null;
@@ -706,11 +690,9 @@
             _spsaC = sp.c != null ? sp.c : null;
             _spsaGamma = sp.gamma != null ? sp.gamma : null;
             if (window.updateThetaSubtitle) window.updateThetaSubtitle();
-            // Re-apply engine-space range now that paramRanges is populated
             if (window._reapplySoloRange) window._reapplySoloRange();
         }}).catch(function() {{
-            // If /config never arrives, undo the solo-restore hide so the user
-            // sees normalized data rather than a blank panel.
+            // no /config: show normalized data rather than a blank panel
             var c = document.getElementById('thetaChart');
             if (c) c.style.visibility = '';
         }});
@@ -761,7 +743,6 @@
                     scales: {{ x: {{ type: 'linear' }} }}
                 }};
 
-                // Create chart now if visible, otherwise stash for deferred creation
                 function initChart(canvasId, config) {{
                     var cardKey = _canvasCard[canvasId];
                     if (cardKey && !chartVis[cardKey]) {{
@@ -790,11 +771,9 @@
                     }});
                 }}
 
-                // Parameter values (multi-series) with solo mode
                 const thetaKeys = [...new Set(
                     history.flatMap(h => Object.keys(h.theta || {{}}))
                 )];
-                // Store original normalized data for each param
                 var _origData = {{}};
                 const thetaDatasets = thetaKeys.map((k, i) => {{
                     var d = history.map(h => ({{x: h.iteration, y: (h.theta && k in h.theta) ? h.theta[k] : null}}));
@@ -813,18 +792,14 @@
                 var _pertView = 'value';
                 try {{ var _sv = JSON.parse(localStorage.getItem('chartSolo')); if (_sv && _sv.p && _origData[_sv.p]) {{ _soloParam = _sv.p; _pertView = (_sv.m === 'pert' || _sv.m === 'conv') ? _sv.m : 'value'; }} }} catch(e) {{}}
                 function denorm(v, lo, hi) {{ return (v + 1) * (hi - lo) / 2 + lo; }}
-                // History can escape the param range after a warm-resume renormalization;
-                // widen the solo y-axis so that data stays visible. Reads _origData
-                // (always theta space) and denormalizes itself -- unit-proof.
+                // history can leave the range after a warm-resume renormalization, widen the solo y-axis
                 function _soloYBounds(name, range) {{
                     var lo = range[0], hi = range[1];
                     (_origData[name] || []).forEach(function(pt) {{ if (pt.y != null) {{ var v = denorm(pt.y, range[0], range[1]); if (v < lo) lo = v; if (v > hi) hi = v; }} }});
                     return [lo, hi];
                 }}
-                // Window stats in engine-space (when range known) or normalized space.
-                // slope is in engine units per iteration (caller scales to per-1k).
-                // Cached by (name, fromIdx, toIdx) -- zoom drag fires this on every
-                // pointermove, but identical integer indices map to identical stats.
+                // Stats over the zoom window, in engine units when the range is known.
+                // Cached since zoom dragging calls this on every pointermove.
                 var _wsCache = {{ k: null, v: null }};
                 function _windowStats(name, fromIdx, toIdx) {{
                     var key = name + '|' + fromIdx + '|' + toIdx;
@@ -850,8 +825,7 @@
                             sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
                         }}
                         var slope = sxx > 0 ? sxy / sxx : null;
-                        // sse = sum of squared residuals around the trend; falls
-                        // back to syy (no-trend total SS) when slope can't be fit.
+                        // residual SS around the trend, total SS without a slope
                         var sse = syy;
                         if (slope != null) {{
                             sse = 0;
@@ -883,10 +857,8 @@
                     var scale = range ? (range[1] - range[0]) : ir;
                     return labels.map(function(k) {{ return {{x: k, y: Math.max(_spsaC / Math.pow(k + 1, _spsaGamma) * scale, 1.0)}}; }});
                 }}
-                // Conv ratio at iter k: σ_detrended(last 25% of [0..k]) / σ_detrended(first 25% of [0..k]),
-                // plus a secondary "diff" series = (σ_raw ratio) / (σ_detrended ratio) that
-                // visualizes how much drift is inflating σ across the windows.
-                // Cached per param -- history is immutable, so each series is computed once per page load.
+                // Conv ratio at k: σ_detrended(last 25% of [0..k]) / σ_detrended(first 25%), plus a
+                // raw/detrended "diff" series showing how much drift inflates σ. Computed once per param.
                 var _convCache = {{}};
                 function _convDataForParam(name) {{
                     if (_convCache[name] !== undefined) return _convCache[name];
@@ -902,9 +874,7 @@
                         var detRatio = (early.sigmaDetrended > 0) ? late.sigmaDetrended / early.sigmaDetrended : null;
                         var rawRatio = (early.sigma > 0) ? late.sigma / early.sigma : null;
                         if (detRatio != null) detrended.push({{x: d[k].x, y: detRatio}});
-                        // diff = raw / detrended; values >1 mean drift contributes
-                        // more in the late window than the early window. <1 means
-                        // drift was relatively bigger early.
+                        // > 1: drift weighs more in the late window
                         if (detRatio != null && rawRatio != null && detRatio > 0) {{
                             diff.push({{x: d[k].x, y: rawRatio / detRatio}});
                         }}
@@ -934,8 +904,7 @@
                     ch.data.datasets = ch.data.datasets.filter(function(d) {{ return !d._isThreshold; }});
                     var soloDs = ch.data.datasets.find(function(d) {{ return d.label === _soloParam; }});
                     if (!soloDs) return;
-                    // Conv mode flips y-axis to logarithmic; reset on every toggle
-                    // so other modes always start from linear.
+                    // back to linear; only Conv mode uses a log axis
                     ch.options.scales.y.type = 'linear';
                     ch._convLegend = null;
                     if (mode === 'pert') {{
@@ -943,8 +912,7 @@
                         if (!data) return;
                         soloDs.data = data;
                         ch.data.datasets.push({{ label: 'min pert', data: labels.map(function(k) {{ return {{x: k, y: 1.0}}; }}), borderColor: '#e53935', borderDash: [5,3], borderWidth: 1.5, pointRadius: 0, fill: false, _isThreshold: true }});
-                        // Recent-slice σ in engine units (or normalized if range
-                        // unknown -- skip in that case since |Pert| is engine-space).
+                        // |Pert| is in engine units, skip when the range is unknown
                         var lastIdx2 = labels.length - 1;
                         var qSpan2 = Math.floor(labels.length / 4);
                         if (qSpan2 >= CONV_MIN) {{
@@ -970,30 +938,24 @@
                     }} else if (mode === 'conv') {{
                         var convData = _convDataForParam(_soloParam);
                         if (!convData || !convData.detrended.length) {{
-                            // Not enough history for any Conv point; fall back silently to Value.
+                            // not enough history for Conv
                             _pertView = 'value';
                             _updatePertToggle();
                             try {{ localStorage.setItem('chartSolo', JSON.stringify({{p:_soloParam, m:'value'}})); }} catch(e) {{}}
                             mode = 'value';
                         }} else {{
                             soloDs.data = convData.detrended;
-                            // Drift-contribution overlay: ratio raw/detrended on the
-                            // same log axis. =1 means no drift contribution to σ.
-                            // <1 means early window had relatively more drift; >1
-                            // means late window has more drift (param re-destabilizing).
                             var convDiffColor = '#a256d8';
                             ch.data.datasets.push({{ label: 'diff', data: convData.diff, borderColor: convDiffColor, borderWidth: 2, borderDash: [10, 5], pointRadius: 0, fill: false, _isThreshold: true }});
-                            // Threshold lines at 0.7 (tighter boundary) and 1.0 (wider boundary)
+                            // thresholds: 0.7 tighter, 1.0 wider
                             ch.data.datasets.push({{ label: 'tighter', data: labels.map(function(k) {{ return {{x: k, y: 0.7}}; }}), borderColor: '#1B8A2A', borderDash: [3, 3], borderWidth: 1.5, pointRadius: 0, fill: false, _isThreshold: true }});
                             ch.data.datasets.push({{ label: 'wider',   data: labels.map(function(k) {{ return {{x: k, y: 1.0}}; }}), borderColor: '#C62828', borderDash: [5, 3], borderWidth: 1.5, pointRadius: 0, fill: false, _isThreshold: true }});
-                            // Stash colors on chart for the inline legend plugin.
+                            // for the inline legend plugin
                             ch._convLegend = [
                                 {{ color: soloDs.borderColor, label: 'detrended Conv', dash: null }},
                                 {{ color: convDiffColor,      label: 'raw / detrended', dash: [6, 3] }}
                             ];
-                            // Log scale: Conv is multiplicative (a ratio), so 0.5
-                            // and 2.0 are symmetric around 1.0. Log scale also tames
-                            // the early-iter spikes naturally instead of clipping.
+                            // log axis: 0.5 and 2.0 are symmetric around 1, and early spikes stay on scale
                             ch.options.scales.y.type = 'logarithmic';
                             ch.options.scales.y.min = 0.1;
                             ch.options.scales.y.max = 10.0;
@@ -1014,11 +976,7 @@
                     ch.update();
                 }}
                 var CONV_MIN = 20;
-                // σ as % of param range. _windowStats.sigma is in engine units when
-                // rangeKnown (divide by engine-space width), otherwise in normalized
-                // [-1,+1] space (divide by paramInternalRanges, which is the
-                // normalized width, always 2 for symmetric SPSA). Both branches
-                // yield the same dimensionless percentage.
+                // engine σ over engine width, or normalized σ over normalized width
                 function _sigmaPct(name, st) {{
                     if (!st) return null;
                     if (st.rangeKnown) {{
@@ -1033,20 +991,13 @@
                     var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
                     if (!ch) return;
                     if (_pertView === 'pert') {{
-                        // The initial restore tried to enter pert mode before the
-                        // /config fetch had populated _spsaC/_spsaGamma, so the
-                        // swap silently bailed out and left the chart in a hybrid
-                        // value/pert state. Retry now that those are ready, then
-                        // unhide (the restore block hid the canvas to avoid the
-                        // value->pert flash in between).
+                        // the restore couldn't enter pert mode before /config arrived; retry, then unhide
                         setPertView('pert');
                         document.getElementById('thetaChart').style.visibility = '';
                         return;
                     }}
                     if (_pertView === 'conv') {{
-                        // Conv ratio is dimensionless; data doesn't depend on
-                        // /config. Restore block already set it up correctly,
-                        // just unhide.
+                        // Conv doesn't need /config
                         document.getElementById('thetaChart').style.visibility = '';
                         return;
                     }}
@@ -1070,14 +1021,12 @@
                     return v.toFixed(2);
                 }}
                 function _signed(v) {{ return (v >= 0 ? '+' : '') + _fmt(v); }}
-                // Read CSS var (e.g. '--surface', '--text') with fallback. Note:
-                // values are color hex strings, not rgba; combine with alpha at
-                // the call site by using a hex8 suffix (e.g. + 'd0' for ~82% alpha).
+                // hex colors; add alpha with a hex8 suffix
                 function _cssColor(varName, fallback) {{
                     var v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
                     return v || fallback;
                 }}
-                // Expose globally so applyZoomRange can call it
+                // called by applyZoomRange
                 window.updateThetaSubtitle = function() {{
                     var ch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
                     if (!ch) return;
@@ -1096,28 +1045,23 @@
                         ch.update('none');
                         return;
                     }}
-                    // Line 1: Delta over window (engine units + % of range)
+                    // line 1: delta over the window
                     var delta = st.yEnd - st.yStart;
                     var deltaTxt = '\u0394: ' + _signed(delta);
                     if (st.rangeKnown) {{
                         var rspan = st.range[1] - st.range[0];
                         if (rspan > 0) deltaTxt += '  (' + _signed(delta / rspan * 100) + '% of range)';
                     }}
-                    // Color sentinel resolved at draw time so theme changes apply
-                    // without needing to rerun this function.
+                    // resolved at draw time so theme changes apply
                     ch._sub1 = {{ text: deltaTxt, color: 'theme:text' }};
-                    // Line 2: StdDev/Range %, with engine-unit \u00b11\u03c3 if known
+                    // line 2: σ as % of range
                     var pct = _sigmaPct(_soloParam, st);
                     if (pct != null) {{
                         var sigTxt = '\u03c3/Range: ' + pct.toFixed(1) + '%';
                         if (st.rangeKnown) sigTxt += '  (\u00b1' + _fmt(st.sigma) + ')';
                         ch._sub2 = {{ text: sigTxt, color: pct < 2 ? '#1B8A2A' : pct < 5 ? '#B86800' : '#C62828' }};
                     }} else {{ ch._sub2 = null; }}
-                    // Line 3: Slope per 1k iter + significance qualifier.
-                    // Qualifier uses |t| thresholds (not exact p-values) -- |t|>=2
-                    // ~ p<.05 only at large n (df->infty crit ~1.96); CONV_MIN=20
-                    // keeps that approximation honest. Suppress the directional
-                    // arrow when |t|<1 since the sign isn't trustworthy.
+                    // line 3: slope per 1k iterations; |t| >= 2 is roughly p < .05, no arrow when |t| < 1
                     if (st.slope != null) {{
                         var per1k = st.slope * 1000;
                         var at = st.tstat != null ? Math.abs(st.tstat) : 0;
@@ -1130,11 +1074,7 @@
                         else                    {{ qual = '  (noise)';   color = '#999';    }}
                         ch._sub3 = {{ text: 'Slope: ' + _signed(per1k) + '/1k iter ' + arrow + qual, color: color }};
                     }} else {{ ch._sub3 = null; }}
-                    // Line 4: Full-run convergence ratio = σ_detrended(last 25%)
-                    // / σ_detrended(first 25%). Detrended so a still-drifting param
-                    // doesn't appear "wider" just from the trend itself contributing
-                    // variance to the window. <0.7 tighter (good), 0.7-1.0 holding,
-                    // ≥1.0 wider. Always uses the full run regardless of zoom.
+                    // line 4: full-run Conv ratio, ignores zoom; < 0.7 tighter, 0.7-1.0 holding, >= 1.0 wider
                     var lastIdx = _labels.length - 1;
                     var qSpan = Math.floor(_labels.length / 4);
                     var late = null;
@@ -1167,7 +1107,7 @@
                                 var name = item.text;
                                 var ds = ch.data.datasets;
                                 if (_soloParam === name) {{
-                                    // Unsolo: restore all
+                                    // unsolo
                                     _soloParam = null;
                                     _pertView = 'value';
                                     try {{ localStorage.removeItem('chartSolo'); }} catch(e) {{}}
@@ -1177,14 +1117,13 @@
                                         d.hidden = false;
                                         d.data = _origData[d.label].slice();
                                     }});
-                                    // Conv mode flipped y-axis to log; reset.
                                     ch.options.scales.y.type = 'linear';
                                     delete ch.options.scales.y.min;
                                     delete ch.options.scales.y.max;
                                     ch.options.plugins.title.display = false;
                                     _updatePertToggle();
                                 }} else {{
-                                    // Solo this param (preserve current view mode)
+                                    // solo, keeping the view mode
                                     var keepMode = (_soloParam && (_pertView === 'pert' || _pertView === 'conv')) ? _pertView : 'value';
                                     ch.data.datasets = ch.data.datasets.filter(function(d) {{ return !d._isThreshold; }});
                                     _soloParam = name;
@@ -1228,7 +1167,6 @@
                     }},
                     scales: {{ x: {{ type: 'linear' }}, y: {{}} }}
                 }};
-                // Initial value (iter 0, engine units if known) per param
                 function _initialValueEng(name) {{
                     var d = _origData[name];
                     if (!d || !d.length || d[0].y == null) return null;
@@ -1247,9 +1185,7 @@
                             var ys = chart.scales.y, xs = chart.scales.x;
                             if (!ys || !xs) return;
                             var ctx = chart.ctx;
-                            // Conv mode: draw vertical dashed lines at the boundaries
-                            // of the early/late slices used by the rightmost Conv point.
-                            // Helps users see *which* iter ranges the latest reading compares.
+                            // Conv mode: mark the early/late slices behind the latest point
                             if (_pertView === 'conv') {{
                                 var d = _origData[_soloParam];
                                 if (!d || d.length === 0) return;
@@ -1281,15 +1217,13 @@
                             ctx.beginPath();
                             ctx.rect(ca.left, ca.top, ca.right - ca.left, ca.bottom - ca.top);
                             ctx.clip();
-                            // ±1σ band around mean (sigma is from sqrt(sum of
-                            // squares / n), so always finite & non-negative)
+                            // ±1σ band
                             if (st && st.sigma > 0) {{
                                 var yLo = ys.getPixelForValue(st.mean - st.sigma);
                                 var yHi = ys.getPixelForValue(st.mean + st.sigma);
                                 var top = Math.min(yLo, yHi), bot = Math.max(yLo, yHi);
                                 ctx.fillStyle = 'rgba(102,126,234,0.10)';
                                 ctx.fillRect(ca.left, top, ca.right - ca.left, bot - top);
-                                // Mean line
                                 var ym = ys.getPixelForValue(st.mean);
                                 ctx.strokeStyle = 'rgba(102,126,234,0.55)';
                                 ctx.lineWidth = 1;
@@ -1298,7 +1232,7 @@
                                 ctx.moveTo(ca.left, ym); ctx.lineTo(ca.right, ym);
                                 ctx.stroke();
                             }}
-                            // Current cₖ half-band bracket at right edge of visible window
+                            // current ±cₖ bracket at the right edge
                             if (_spsaC != null && _spsaGamma != null && st) {{
                                 var ir = paramInternalRanges[_soloParam];
                                 if (ir) {{
@@ -1306,7 +1240,6 @@
                                     var ck = _spsaC / Math.pow(st.iterTo + 1, _spsaGamma) * scale;
                                     if (isFinite(ck) && ck > 0) {{
                                         var px = xs.getPixelForValue(st.iterTo);
-                                        // Clamp to chart area
                                         px = Math.max(ca.left + 1, Math.min(ca.right - 1, px));
                                         var pyTop = ys.getPixelForValue(st.yEnd + ck);
                                         var pyBot = ys.getPixelForValue(st.yEnd - ck);
@@ -1333,7 +1266,7 @@
                             }} else {{
                                 chart._ckLabelPos = null;
                             }}
-                            // Initial value (θ₀) dashed line
+                            // θ₀ line
                             var y0 = _initialValueEng(_soloParam);
                             if (y0 != null && isFinite(y0)) {{
                                 var py0 = ys.getPixelForValue(y0);
@@ -1354,8 +1287,7 @@
                             if (!_soloParam) return;
                             var ca = chart.chartArea;
                             var ctx = chart.ctx;
-                            // Conv mode: inline mini-legend (chart.js's built-in legend
-                            // would conflict with the click-to-unsolo handler).
+                            // inline legend, the built-in one would fight click-to-unsolo
                             if (_pertView === 'conv' && chart._convLegend) {{
                                 var entries = chart._convLegend;
                                 var darkLeg = document.documentElement.getAttribute('data-theme') === 'dark';
@@ -1376,8 +1308,7 @@
                                 ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
                                 entries.forEach(function(e, i) {{
                                     var rowY = ly + pad + i * lh + 6;
-                                    // Stroke a short line so the swatch matches the
-                                    // dataset's actual style (solid vs dashed).
+                                    // swatch drawn as a line so dashes show
                                     ctx.strokeStyle = e.color;
                                     ctx.lineWidth = 2;
                                     ctx.setLineDash(e.dash || []);
@@ -1398,13 +1329,12 @@
                             ctx.rect(ca.left, ca.top, ca.right - ca.left, ca.bottom - ca.top);
                             ctx.clip();
                             ctx.font = 'bold 20px ' + (Chart.defaults.font.family || 'sans-serif');
-                            // Halo for legibility against the data line (theme-aware)
+                            // halo against the data line
                             var darkHalo = document.documentElement.getAttribute('data-theme') === 'dark';
                             ctx.lineWidth = 4;
                             // 'd9' ~ 85% alpha
                             ctx.strokeStyle = darkHalo ? (_cssColor('--surface', '#1e1f26') + 'd9') : '#ffffffd9';
                             ctx.lineJoin = 'round';
-                            // ±cₖ label on top of line
                             var clp = chart._ckLabelPos;
                             if (clp) {{
                                 ctx.fillStyle = darkHalo ? 'rgba(200,200,205,1.0)' : 'rgba(80,80,80,1.0)';
@@ -1418,7 +1348,6 @@
                                 ctx.strokeText(lbl, lx2, clp.py);
                                 ctx.fillText(lbl, lx2, clp.py);
                             }}
-                            // θ₀ label on top of line
                             if (chart._theta0LabelY != null) {{
                                 ctx.fillStyle = darkHalo ? 'rgba(200,200,205,1.0)' : 'rgba(80,80,80,1.0)';
                                 ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
@@ -1526,16 +1455,10 @@
                 makeChart('ckChart', history.map(h => ({{x: h.iteration, y: h.c_k}})), 'c_k', '#FF9800');
                 applyChartTheme();
 
-                // Restore solo param + view mode
                 if (_soloParam) {{
                     var _rch = typeof Chart !== 'undefined' && Chart.getChart && Chart.getChart(document.getElementById('thetaChart'));
                     if (_rch) {{
-                        // Hide canvas through the restore: in pert mode we wait
-                        // for _spsaC/_spsaGamma (so _reapplySoloRange can swap to
-                        // pert data), in value mode we wait for paramRanges (so
-                        // engine-space y-axis denormalization can happen). Both
-                        // come from /config; if it's still in flight we'd otherwise
-                        // flash the multi-line normalized view first.
+                        // hidden until /config arrives, so the normalized multi-line view never flashes
                         var _haveCfg = (_spsaC != null && _spsaGamma != null);
                         if (!_haveCfg) {{
                             document.getElementById('thetaChart').style.visibility = 'hidden';
@@ -1558,16 +1481,13 @@
                         else _rch.update();
                     }}
                 }}
-                // Apply saved zoom now that charts and _pending are populated
                 if (_restoredZoom) applyZoomRange(_restoredZoom[0], _restoredZoom[1]);
                 window.updateThetaSubtitle();
             }} catch (e) {{
                 console.error('Failed to render charts', e);
             }}
         }})();
-    // Update chart legend visibility on resize. Only the main theta chart
-    // has a conditional legend; other charts (ELO, a_k, c_k) keep legend
-    // permanently hidden per their own options, so don't touch them.
+    // only the theta chart toggles its legend
     var _resizeTimer;
     window.addEventListener('resize', function() {{
         clearTimeout(_resizeTimer);

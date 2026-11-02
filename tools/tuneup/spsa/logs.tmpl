@@ -59,8 +59,7 @@
             min-height: 100vh;
             padding: 12px;
             transition: background 1s ease;
-            /* App feel: page chrome is not selectable, so Ctrl+A never drags in
-               the header/toolbar. .log-line-content opts back in. */
+            /* page chrome is not selectable; .log-line-content opts back in */
             -webkit-user-select: none;
             user-select: none;
         }}
@@ -327,7 +326,7 @@
             .theme-toggle > span[data-mode="dark"]::before {{ content: '\263E'; }}
         }}
     </style>
-    <!-- Time-of-day theme (keep in sync across dashboard/charts/logs templates) -->
+    <!-- time-of-day theme, same in all three templates -->
     <script>
         var forceHour = null;
         function applyTimeTheme() {{
@@ -342,7 +341,7 @@
         }}
         applyTimeTheme();
         setInterval(applyTimeTheme, 3600000);
-        // Debug: Shift+T cycles forced time-of-day theme (auto/morning/afternoon/evening/night)
+        // Shift+T cycles the time-of-day theme (debug)
         document.addEventListener('keydown', function(ev) {{
             if (ev.key !== 'T' || ev.ctrlKey || ev.altKey || ev.metaKey) return;
             var t = ev.target;
@@ -355,7 +354,7 @@
             ev.preventDefault();
         }});
 
-        // Dark mode (tri-state: auto/light/dark; user override persisted in localStorage)
+        // dark mode: auto, light or dark
         function currentThemeMode() {{ return localStorage.getItem('themeMode') || 'auto'; }}
         function resolvedTheme() {{
             var m = currentThemeMode();
@@ -502,9 +501,7 @@
             parts.push('<div style="height:' + padBottom + 'px"></div>');
             container.innerHTML = parts.join('');
             container.scrollLeft = scrollLeft;
-            // innerHTML dropped the nodes any select-all range was anchored to;
-            // repaint it over the newly rendered slice so scrolling during a
-            // select-all keeps showing the highlight.
+            // innerHTML dropped the select-all range, repaint it
             if (typeof repaintSelectAll === 'function') repaintSelectAll();
         }}
 
@@ -517,7 +514,6 @@
             }});
         }});
 
-        /* --- Search --- */
 
         function performSearch() {{
             var query = searchInput.value;
@@ -565,7 +561,6 @@
             renderLines(true);
         }}
 
-        // Return true if the currently-highlighted match is within the viewport.
         function currentMatchInView() {{
             var cur = matches[currentMatchIndex];
             if (!cur) return false;
@@ -579,7 +574,7 @@
             if (currentMatchInView()) {{
                 currentMatchIndex = (currentMatchIndex + 1) % matches.length;
             }} else {{
-                // User scrolled away -- jump to first match at or below the viewport top.
+                // scrolled away: first match below the viewport top
                 var firstLine = Math.floor(container.scrollTop / LINE_HEIGHT);
                 var found = -1;
                 for (var i = 0; i < matches.length; i++) {{
@@ -595,7 +590,7 @@
             if (currentMatchInView()) {{
                 currentMatchIndex = (currentMatchIndex - 1 + matches.length) % matches.length;
             }} else {{
-                // User scrolled away -- jump to last match at or above the viewport bottom.
+                // scrolled away: last match above the viewport bottom
                 var lastLine = Math.ceil((container.scrollTop + container.clientHeight) / LINE_HEIGHT);
                 var found = -1;
                 for (var i = matches.length - 1; i >= 0; i--) {{
@@ -642,16 +637,8 @@
             }}
         }});
 
-        /* --- Ctrl/Cmd+A selects the log text, not the whole page ------------
-           Desktop only: on a touch/coarse-pointer device there is no Ctrl+A,
-           and the native long-press selection UI is left alone.
-
-           The container is virtually scrolled -- only the visible slice of
-           lines exists in the DOM, wrapped in spacer divs -- so selecting its
-           contents would silently yield a fraction of the log (plus blank
-           spacer lines). Instead: paint a selection over the rendered lines so
-           there is visible feedback, mark the selection as "all lines", and
-           serve the full text from LOG_DATA on copy. */
+        // Desktop Ctrl+A: only the visible lines exist in the DOM, so paint a selection
+        // over them and copy the full text from LOG_DATA.
         var isDesktop = !window.matchMedia || window.matchMedia('(hover: hover) and (pointer: fine)').matches;
         var selectedAll = false;
 
@@ -659,7 +646,6 @@
             return !!el && (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
         }}
 
-        // Paint a selection across every currently rendered log line.
         function repaintSelectAll() {{
             if (!selectedAll) return;
             var lines = container.querySelectorAll('.log-line-content');
@@ -675,22 +661,19 @@
         if (isDesktop) {{
             document.addEventListener('keydown', function(e) {{
                 if (!((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A'))) return;
-                // Leave the search field's own select-all alone.
                 if (isEditableTarget(document.activeElement)) return;
                 e.preventDefault();
                 selectedAll = true;
                 repaintSelectAll();
             }});
 
-            // Escape drops the select-all highlight (it also clears search).
             document.addEventListener('keydown', function(e) {{
                 if (e.key !== 'Escape' || !selectedAll) return;
                 selectedAll = false;
                 window.getSelection().removeAllRanges();
             }});
 
-            // Any fresh selection gesture invalidates the select-all state, so a
-            // later copy serializes what the user actually dragged over.
+            // a new drag replaces the select-all
             container.addEventListener('mousedown', function() {{ selectedAll = false; }});
 
             document.addEventListener('copy', function(e) {{
@@ -703,7 +686,6 @@
             }});
         }}
 
-        /* --- Initial render, scrolled to bottom --- */
         container.innerHTML = '<div style="height:' + (LOG_DATA.length * LINE_HEIGHT) + 'px"></div>';
         container.scrollTop = container.scrollHeight;
         renderLines(true);

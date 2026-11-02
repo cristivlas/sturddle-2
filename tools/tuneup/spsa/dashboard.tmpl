@@ -389,8 +389,7 @@
         th.th-sortable {{
             cursor: pointer;
         }}
-        /* Reserve the arrow's width on every sortable th so the indicator
-           appearing/disappearing never reflows the header text. */
+        /* reserve the arrow's width so the header never reflows */
         th.th-sortable::after {{
             content: '\2195';
             font-size: 9px;
@@ -515,7 +514,6 @@
             min-height: 0;
             max-height: none !important;
         }}
-        /* Thin scrollbars for all scrollable areas */
         .content, .content div {{
             scrollbar-width: thin;
             scrollbar-color: var(--scrollbar) transparent;
@@ -652,7 +650,7 @@
             z-index: 5;
         }}
     </style>
-    <!-- Time-of-day theme (keep in sync across dashboard/charts/logs templates) -->
+    <!-- time-of-day theme, same in all three templates -->
     <script>
         var forceHour = null;
         function applyTimeTheme() {{
@@ -669,7 +667,7 @@
         }}
         applyTimeTheme();
         setInterval(applyTimeTheme, 3600000);
-        // Debug: Shift+T cycles forced time-of-day theme (auto/morning/afternoon/evening/night)
+        // Shift+T cycles the time-of-day theme (debug)
         document.addEventListener('keydown', function(ev) {{
             if (ev.key !== 'T' || ev.ctrlKey || ev.altKey || ev.metaKey) return;
             var t = ev.target;
@@ -682,7 +680,7 @@
             ev.preventDefault();
         }});
 
-        // Dark mode (tri-state: auto/light/dark; user override persisted in localStorage)
+        // dark mode: auto, light or dark
         function currentThemeMode() {{ return localStorage.getItem('themeMode') || 'auto'; }}
         function resolvedTheme() {{
             var m = currentThemeMode();
@@ -882,7 +880,6 @@
     <script id="theta-internal-data" type="application/json">{theta_internal_json}</script>
     <script id="workers-data" type="application/json">{workers_json}</script>
     <script>
-        // --- Normalized/internal toggle ---
         var hasNormalized = {has_normalized};
         var thetaViewMode = localStorage.getItem('thetaView') || 'engine';
         if (!hasNormalized && thetaViewMode === 'internal') thetaViewMode = 'engine';
@@ -895,15 +892,7 @@
         var paramTints = {{}};
         var hiddenParams = new Set();
 
-        // --- Legend filter persistence ---------------------------------------
-        // Legend clicks hide/show chart series (and, via hiddenParams, the rows
-        // in the params table). Persist that selection so a reload keeps it.
-        //
-        // Keyed by dataset _groupKey (stable id) rather than label: in grouped
-        // mode the label is a display string ('PS_1 (Pawn)') that GROUP_LABELS
-        // can rename, which would orphan saved state. Grouped and ungrouped
-        // modes have different identities for the same chart, so they get
-        // separate keys and never leak into each other.
+        // Persist the legend filter, keyed by _groupKey since grouped-mode labels can be renamed.
         function hiddenStoreKey() {{
             return groupedMode ? 'dashHiddenGroups' : 'dashHiddenParams';
         }}
@@ -922,10 +911,9 @@
             }} catch (e) {{}}
         }}
         var paramRanges = {{}};
-        var paramConfig = {{}};  // name -> param record from /config (has original_lower/upper, type, init, etc.)
+        var paramConfig = {{}};  // from /config
 
-        // Shared engine-space denormalizer. Mirrors Python ParamSpec.denormalize().
-        // Returns val unchanged if param record not yet loaded.
+        // Parameter.denormalize() in config.py; val is returned as is until /config arrives.
         function denormalizeToEngine(name, val) {{
             if (typeof val !== 'number') return val;
             var p = paramConfig[name];
@@ -954,7 +942,7 @@
         }};
 
         function paramPrefix(name) {{
-            // Group by first two underscore-separated segments: PS_1_xx -> PS_1, PS_KEG_xx -> PS_KEG
+            // PS_1_xx -> PS_1, PS_KEG_xx -> PS_KEG
             var parts = name.split('_');
             if (parts.length >= 3) return parts[0] + '_' + parts[1];
             return name;
@@ -965,7 +953,6 @@
         }}
 
         function buildGroups(keys) {{
-            // Build groupMap and return sorted unique group keys
             groupMap = {{}};
             var groups = {{}};
             keys.forEach(function(k) {{
@@ -977,7 +964,6 @@
         }}
 
         function groupMean(theta, groupKey) {{
-            // Average of all params in this group present in theta
             var sum = 0, count = 0;
             for (var name in theta) {{
                 if (groupMap[name] === groupKey) {{
@@ -992,9 +978,8 @@
         function convColor(pct) {{
             return pct < CONV_THRESHOLDS[0] ? CONV_COLORS[0] : pct < CONV_THRESHOLDS[1] ? CONV_COLORS[1] : CONV_COLORS[2];
         }}
-        // Theta trajectories are strongly autocorrelated, which inflates the
-        // slope t-stat; use it only as a significance gate and grade the drift
-        // by magnitude (same %-of-range thresholds as the StdDev column).
+        // Theta is strongly autocorrelated, which inflates t: use it only as a gate
+        // and grade the drift by magnitude, like the StdDev column.
         function trendColor(trendPct, t) {{
             if (Math.abs(t) < 2) return CONV_COLORS[0];
             return convColor(Math.abs(trendPct));
@@ -1008,10 +993,7 @@
             var mean = vals.reduce(function(a, b) {{ return a + b; }}, 0) / n;
             var variance = vals.reduce(function(a, v) {{ return a + (v - mean) * (v - mean); }}, 0) / n;
             var stddev = Math.sqrt(variance);
-            // Least-squares slope of theta vs. iteration index over the window:
-            // stddev alone can't tell jitter from a slow one-directional drift
-            // (annealed gains keep it small either way), so report the trend and
-            // its t-statistic against the detrended residuals separately.
+            // slope over the window, since stddev alone can't tell jitter from slow drift
             var xm = (n - 1) / 2;
             var sxx = 0, sxy = 0;
             for (var i = 0; i < n; i++) {{
@@ -1027,20 +1009,14 @@
             var se = (n > 2 && sxx > 0) ? Math.sqrt(ssRes / (n - 2) / sxx) : 0;
             var tstat = se > 0 ? slope / se : 0;
             var trendPct = range > 0 ? slope * n / range * 100 : 0;  // % of range per window
-            // StdDev/% Range report the detrended residual σ so they measure
-            // jitter only (roughly window-size invariant); the drift component
-            // lives in the Trend column. Raw σ kept for the tooltip.
+            // detrended σ is jitter only, drift goes in the Trend column
             var residSd = Math.sqrt(ssRes / n);
             return {{ stddev: residSd, range: range, pct: range > 0 ? (residSd / range * 100) : 0,
                      window: n, trend: trendPct, trendAbs: Math.abs(trendPct), tstat: tstat,
                      rawSd: stddev }};
         }}
 
-        // --- Convergence-tab column sort -------------------------------------
-        // Click cycle per column: none -> first -> other -> none, one active
-        // column at a time. Only the Conv view sorts; the Internal/Engine views
-        // keep theta's natural (config) order, so the state is parked whenever
-        // the view isn't 'convergence'.
+        // Conv view column sort: none -> first -> other -> none, one column at a time
         var CONV_SORT_COLS = [
             {{ key: 'name',     firstDir: 'asc' }},
             {{ key: 'stddev',   firstDir: 'desc' }},
@@ -1063,8 +1039,7 @@
             return firstDir;
         }}
 
-        // Params below CONVERGENCE_MIN samples have no stddev/pct ('--'); keep
-        // them pinned last in both directions rather than letting them sort as 0.
+        // params without enough samples stay last both ways
         function sortConvNames(names) {{
             if (!convSort) return names;
             var sign = convSort.dir === 'asc' ? 1 : -1;
@@ -1101,7 +1076,7 @@
                 var col = CONV_SORT_COLS[i];
                 if (!col) return;
                 th.addEventListener('click', function(ev) {{
-                    // Ignore clicks on the resize grip so a drag never sorts.
+                    // a drag on the grip must not sort
                     if (ev.target.closest('.th-grip')) return;
                     var current = convSort && convSort.key === col.key ? convSort.dir : null;
                     var dir = nextSortDir(current, col.firstDir);
@@ -1116,7 +1091,6 @@
 
         function renderTheta(theta, initial) {{
             var isConv = thetaViewMode === 'convergence';
-            // Update headers
             var hr = document.getElementById('thetaHeadRow');
             if (isConv) {{
                 hr.innerHTML = '<th>Parameter</th><th>StdDev</th><th>% Range</th><th>Trend</th>';
@@ -1124,7 +1098,7 @@
                 hr.innerHTML = '<th>Parameter</th><th>Initial</th><th>Current</th>';
             }}
             if (thetaColResizer) thetaColResizer.reattach();
-            // innerHTML above replaced the th nodes, so re-wire click handlers.
+            // innerHTML replaced the th nodes
             if (isConv) wireConvSort();
             const tbody = document.getElementById('thetaBody');
             tbody.innerHTML = '';
@@ -1156,8 +1130,7 @@
                                  + '<td style="font-family:monospace;overflow:hidden;text-overflow:ellipsis;' + trendStyle + '" title="' + trendTip + '">' + trendTxt + '</td>';
                 }} else {{
                     var initVal = initial && initial[name] !== undefined ? fmtVal(initial[name], dec) : '';
-                    // Compact mirror of the Conv tab: jitter dot left of the
-                    // name, trend arrow right of the value.
+                    // jitter dot before the name, trend arrow after the value, as in the Conv tab
                     var conv = paramConvergence(name);
                     var dot = '';
                     if (conv) {{
@@ -1262,7 +1235,7 @@
             }}
         }}
 
-        // Tick last-seen counters client-side between SSE pushes
+        // tick last-seen counters between SSE pushes
         setInterval(function() {{
             var elapsed = Math.round((Date.now() - lastWorkerUpdate) / 1000);
             var cells = document.querySelectorAll('.worker-seen');
@@ -1296,12 +1269,10 @@
             if (el) el.textContent = 'History (' + shown + ' of ' + total + ' iterations)';
         }}
 
-        // --- Initial render from baked-in data ---
         const sessionStart = '{session_start}';
         var totalGamesAtStart = {total_games_at_start};
         var iterationStartEpoch = {iteration_start};
-        // ETAs computed server-side; client tracks local arrival time so the
-        // displayed countdown is independent of client/server clock skew.
+        // count down from local arrival time, so clock skew does not matter
         var etaIterS = {iter_eta_s};
         var etaSessionS = {session_eta_s};
         var avgIterSec = {avg_iter_sec};
@@ -1325,13 +1296,11 @@
         updateSinceRestart({total_games});
         updateETA({games_done}, {games_total}, {iteration}, {max_iters});
         setInterval(function() {{
-            // Elapsed clock always ticks
             var e = (Date.now() - iterationStartEpoch * 1000) / 1000;
             document.getElementById('elapsedIter').textContent = '(' + formatDuration(e * 1000) + ')';
             updateETA.apply(null, lastETA);
         }}, 1000);
 
-        // --- Fetch initial parameter values from config ---
         fetch('/config').then(function(r) {{ return r.json(); }}).then(function(cfg) {{
             var params = cfg.parameters || {{}};
             for (var name in params) {{
@@ -1341,8 +1310,7 @@
                 initialThetaInternal[name] = p.init;
                 initialTheta[name] = denormalizeToEngine(name, p.init);
             }}
-            // Heatmap may have rendered before /config arrived; refresh it now
-            // so PST cells use denormalized engine values.
+            // the heatmap may have rendered before /config arrived
             if (typeof renderPstHeatmaps === 'function') renderPstHeatmaps();
             renderTheta(
                 showInternal ? currentThetaInternal : currentTheta,
@@ -1350,7 +1318,6 @@
             );
         }});
 
-        // --- Chart theme: keep axis/grid colors readable across light/dark ---
         function applyChartTheme() {{
             if (typeof Chart === 'undefined') return;
             var dark = document.documentElement.getAttribute('data-theme') === 'dark';
@@ -1359,7 +1326,6 @@
             if (typeof thetaChart !== 'undefined' && thetaChart) thetaChart.update('none');
         }}
 
-        // --- Chart ---
         function toRgbTint(cssColor, alpha) {{
             var tmp = document.createElement('div');
             tmp.style.color = cssColor;
@@ -1411,11 +1377,7 @@
             updateLegend();
         }}
 
-        // Dots read fine up to ~DOT_LIMIT points; beyond that they merge
-        // into fat ropes, so draw plain thinner lines. Applied as plain
-        // dataset values (cheap, matches charts.tmpl's _pr approach) and
-        // rechecked whenever the data length changes. Length only grows --
-        // the maxHist shift keeps it constant -- so this flips at most once.
+        // past DOT_LIMIT points the dots merge into ropes, so draw plain thin lines
         var DOT_LIMIT = 150;
         function applyChartDensity(chart) {{
             var dense = chart.data.labels.length > DOT_LIMIT;
@@ -1425,19 +1387,15 @@
                 ds.pointRadius = dense ? 0 : 2;
                 ds.borderWidth = dense ? 1.5 : 2;
             }});
-            // Self-contained: don't rely on callers updating soon after.
-            // Only runs on an actual flip, so the extra render is rare.
             chart.update('none');
         }}
 
         function createThetaChart(keys, labels, dataFn, labelFn) {{
             var ctx = document.getElementById('thetaChart').getContext('2d');
-            // Restore the persisted legend filter. Every chart-creation path
-            // funnels through here, so this covers first load and rebuilds.
+            // restore the saved legend filter
             var savedHidden = loadHiddenFilter();
             var hiddenSet = savedHidden ? new Set(savedHidden) : null;
-            // Never restore a state that hides every series (a blank chart with
-            // no obvious way back); treat it as "show all".
+            // never restore a filter that hides everything
             if (hiddenSet && keys.every(function(k) {{ return hiddenSet.has(k); }})) hiddenSet = null;
             hiddenParams.clear();
             var chart = new Chart(ctx, {{
@@ -1476,9 +1434,7 @@
         }}
 
         function legendClick(e, item, legend) {{
-            // Default Chart.js toggle
             Chart.defaults.plugins.legend.onClick.call(this, e, item, legend);
-            // Sync hidden set from chart dataset visibility
             hiddenParams.clear();
             var hiddenKeys = [];
             legend.chart.data.datasets.forEach(function(ds, i) {{
@@ -1493,9 +1449,9 @@
             );
         }}
 
-        // --- PST heatmaps (8x8 per piece, auto-detected from PS_<n>_<sq> names) ---
+        // PST heatmaps, from PS_<piece>_<square> params
         function detectPstPieces(theta) {{
-            // Returns map: pieceKey -> (sq -> paramName)
+            // pieceKey -> (sq -> paramName)
             var re = /^PS_(\d+|KEG)_(\d+)$/;
             var pieces = {{}};
             Object.keys(theta || {{}}).forEach(function(name) {{
@@ -1511,8 +1467,7 @@
             '4': 'Rook', '5': 'Queen', '6': 'King', 'KEG': 'King EG'
         }};
         function pstCellColor(v, maxAbs) {{
-            // Tableau 10 categorical: orange (#f28e2c) for positive, blue (#4e79a7) for negative.
-            // Alpha encodes |v|/maxAbs. Deeper alt (Orange-Blue Diverging): 200,82,0 / 17,112,170.
+            // orange positive, blue negative, alpha by |v| / maxAbs
             if (maxAbs <= 0 || v === 0) return '';
             var t = Math.min(1, Math.abs(v) / maxAbs);
             var alpha = (0.15 + 0.65 * t).toFixed(3);
@@ -1520,13 +1475,10 @@
                 ? 'background: rgba(242, 142, 44, ' + alpha + ');'
                 : 'background: rgba(78, 121, 167, ' + alpha + ');';
         }}
-        // Slider state: pinned-iteration number (null = follow latest-recorded).
-        // Tracking the iteration (not array index) keeps the pin stable when
-        // historyWindow shifts old entries out. Note: we always render from
-        // historyWindow[].theta (the snapshot at that recorded iter), never from
-        // currentTheta which is the live in-progress state and can differ.
+        // Pinned iteration, null = latest recorded. Always rendered from historyWindow,
+        // never from the live currentTheta.
         var pstPinnedIter = null;
-        var pstSkeletonKey = '';  // detects when DOM skeleton needs rebuild
+        var pstSkeletonKey = '';
 
         function pstHistoryEntries() {{
             return (typeof historyWindow !== 'undefined' && historyWindow) ? historyWindow : [];
@@ -1535,9 +1487,7 @@
             var hw = pstHistoryEntries();
             if (!hw.length) return null;
             if (pstPinnedIter == null) {{
-                // Default: show the latest *recorded* snapshot (not live currentTheta).
-                // This keeps the heatmap consistent with the slider position and
-                // avoids a discontinuity when scrubbing between last and previous.
+                // latest recorded snapshot, so the slider and heatmap agree
                 var last = hw[hw.length - 1];
                 return (last && last.theta) ? last.theta : null;
             }}
@@ -1570,9 +1520,7 @@
             var wrap = document.getElementById('pstHeatmapsWrap');
             var root = document.getElementById('pstHeatmapsInline');
             if (!root || !wrap) return;
-            // Show the recorded snapshot at the pinned iter (or the latest recorded
-            // iter when unpinned). Falls back to live normalized theta when history
-            // is empty. Both paths must feed denormalizeToEngine normalized values.
+            // pinned or latest snapshot, live theta without history; both normalized
             var pinnedTheta = pstGetPinnedTheta();
             var theta = pinnedTheta || currentThetaInternal;
             var pieces = detectPstPieces(theta);
@@ -1594,8 +1542,7 @@
             if (legendBtn) legendBtn.style.display = 'none';
             updatePstSliderUI();
 
-            // Rebuild skeleton only when piece set changes; on later ticks just
-            // patch cell text + style. Avoids regenerating 400+ DOM nodes per tick.
+            // rebuild only when the piece set changes, otherwise patch the cells
             var skeletonKey = pieceKeys.map(function(p) {{
                 return p + ':' + Object.keys(pieces[p]).sort().join(',');
             }}).join('|');
@@ -1616,7 +1563,7 @@
                     + '<h4><span>' + label + '</span>'
                     + '<span class="pst-range" data-range="' + p + '">±0</span></h4>'
                     + '<div class="pst-grid">';
-                // Rank 8 (top) -> rank 1 (bottom); square index = rank*8 + file, A1=0, H8=63
+                // rank 8 on top; A1 = 0, H8 = 63
                 for (var r = 7; r >= 0; --r) {{
                     for (var f = 0; f < 8; ++f) {{
                         var sq = r * 8 + f;
@@ -1631,7 +1578,7 @@
                 html += '</div></div>';
             }});
             root.innerHTML = html;
-            // Wire click -> charts page solo, same as the params table rows.
+            // click solos the param on the charts page
             root.querySelectorAll('.pst-cell-clickable').forEach(function(cell) {{
                 cell.addEventListener('click', function() {{
                     var pname = cell.getAttribute('data-pname');
@@ -1650,7 +1597,6 @@
         function updatePstCells(pieceKeys, pieces, theta) {{
             pieceKeys.forEach(function(p) {{
                 var squares = pieces[p];
-                // Denormalize to engine cp before computing range and rendering.
                 var engineVals = {{}};
                 Object.keys(squares).forEach(function(sq) {{
                     var name = squares[sq];
@@ -1678,7 +1624,6 @@
             }});
         }}
 
-        // Wire slider controls once.
         (function setupPstSlider() {{
             var slider = document.getElementById('pstSlider');
             if (!slider) return;
@@ -1720,7 +1665,6 @@
                 )];
 
                 if (thetaKeys.length > GROUP_THRESHOLD) {{
-                    // Grouped mode: aggregate by prefix
                     groupedMode = true;
                     var groupKeys = buildGroups(thetaKeys);
                     thetaChart = createThetaChart(groupKeys, labels, function(g) {{
@@ -1742,7 +1686,6 @@
             }}
         }})();
 
-        // --- ETA estimation ---
         function formatDuration(ms) {{
             if (ms == null || !isFinite(ms) || ms < 0) return '--';
             var sec = Math.round(ms / 1000);
@@ -1765,11 +1708,7 @@
             var rawPct = remaining > 0 ? pending / remaining * 100 : (pending > 0 ? Infinity : 0);
             fill.style.width = Math.min(100, rawPct) + '%';
             fill.textContent = rawPct > 0 ? (isFinite(rawPct) ? Math.round(rawPct) + '%' : '∞') : '';
-            // In overschedule mode, drift the gradient's end color toward a
-            // forest green proportional to excess. Excess reaches 1 at 150%
-            // scheduled (rather than 200%) so the shift is more aggressive,
-            // and the green mix peaks at 80%. Target hex is hardcoded -- the
-            // mint --conv-good token is the wrong hue for "deep forest".
+            // past 100% of schedule, mix forest green into the gradient end, up to 80% at 150%
             if (rawPct >= 100) {{
                 var greenPct = (Math.min(1, (rawPct / 100 - 1) * 2) * 80).toFixed(0);
                 fill.style.background = 'linear-gradient(90deg, var(--accent-start) 0%, color-mix(in srgb, var(--accent-end), #1F5C2A ' + greenPct + '%) 100%)';
@@ -1778,9 +1717,6 @@
             }}
         }}
         function updateETA(gamesDone, gamesTotal, iteration, maxIters) {{
-            // Interpolate the server's ETAs forward to "now" using the local
-            // arrival time, so the countdown ticks smoothly between SSE events
-            // without depending on server-vs-client clock alignment.
             var sinceRx = (Date.now() - etaReceivedAt) / 1000;
             function fmt(s) {{ var f = formatDuration(s * 1000); return f === '--' ? '' : f; }}
             var etaIter = etaIterS > 0 ? fmt(Math.max(0, etaIterS - sinceRx)) : '';
@@ -1796,7 +1732,6 @@
                 : '--';
         }}
 
-        // --- SSE live updates ---
         let knownHistoryLen = {history_total};
         const maxHist = parseInt('{dashboard_history}', 10) || 0;  // 0 = unlimited
         const serverStart = '{server_start}';
@@ -1805,7 +1740,6 @@
         sse.onmessage = function(event) {{
             const d = JSON.parse(event.data);
 
-            // Cards
             document.getElementById('iterFill').style.width = d.progress + '%';
             document.getElementById('iterFill').textContent = Math.round(d.progress) + '%';
             document.getElementById('gamesFill').style.width = d.iter_progress + '%';
@@ -1814,46 +1748,39 @@
             document.getElementById('remainingValue').textContent = d.games_total - d.games_done;
             updateSchedFill(d.games_pending, d.games_total - d.games_done);
 
-            // Stats
             document.getElementById('akValue').textContent = d.a_k.toFixed(6);
             document.getElementById('ckValue').textContent = d.c_k.toFixed(6);
             document.getElementById('totalGamesValue').textContent = d.total_games;
             if (typeof d.total_games_at_start === 'number') totalGamesAtStart = d.total_games_at_start;
             updateSinceRestart(d.total_games);
 
-            // Status badge
             const badge = document.getElementById('statusBadge');
             badge.textContent = d.status_text;
             badge.style.background = d.status_color;
 
-            // Tables
             currentTheta = d.theta;
             if (d.theta_internal) currentThetaInternal = d.theta_internal;
             renderTheta(showInternal ? currentThetaInternal : currentTheta, showInternal ? initialThetaInternal : initialTheta);
             renderPstHeatmaps();
             renderWorkers(d.workers);
 
-            // History: detect reset (--clean) or missed entries, append new
             if (d.history_len < knownHistoryLen) {{
-                // Server history shrunk (restart with --clean), resync
+                // restarted with --clean
                 location.reload();
                 return;
             }}
             if (d.history_len > knownHistoryLen) {{
                 if (d.history_len - knownHistoryLen > 1) {{
-                    // Missed entries: full reload to resync
+                    // missed entries
                     location.reload();
                     return;
                 }}
                 if (d.last_history) {{
-                    // Prepend to table (newest first)
                     const tbody = document.getElementById('historyBody');
                     tbody.insertBefore(historyRow(d.last_history), tbody.firstChild);
-                    // Trim oldest row if over limit
                     if (maxHist > 0 && tbody.children.length > maxHist)
                         tbody.removeChild(tbody.lastChild);
 
-                    // Update chart
                     if (d.last_history.theta) {{
                         if (!thetaChart) {{
                             var keys = Object.keys(d.last_history.theta);
@@ -1880,7 +1807,6 @@
                             }}
                             ds.data.push(val);
                         }});
-                        // Trim oldest chart point if over limit
                         if (maxHist > 0 && thetaChart.data.labels.length > maxHist) {{
                             thetaChart.data.labels.shift();
                             thetaChart.data.datasets.forEach(ds => ds.data.shift());
@@ -1889,7 +1815,6 @@
                         thetaChart.update();
                         syncParamColors();
                     }}
-                    // Grow the client-side window backing the convergence metrics
                     if (d.last_history.theta) {{
                         historyWindow.push(d.last_history);
                         if (maxHist > 0 && historyWindow.length > maxHist) historyWindow.shift();
@@ -1900,10 +1825,8 @@
 
             updateHistoryTitle(d.history_len);
 
-            // Theme
             applyTimeTheme();
 
-            // ETA: server computes; client just interpolates from local arrival time.
             iterationStartEpoch = d.iteration_start;
             etaIterS = d.iter_eta_s;
             etaSessionS = d.session_eta_s;
@@ -1912,22 +1835,19 @@
             lastETA = [d.games_done, d.games_total, d.iteration, d.max_iters];
             updateETA.apply(null, lastETA);
 
-            // Footer
             document.getElementById('footerInfo').innerHTML =
                 'Session created ' + sessionStart + ' &middot; Last started ' + d.server_start
                 + ' &middot; Updated ' + d.timestamp;
         }};
-    // Update chart legend visibility on resize
     var _resizeTimer;
     window.addEventListener('resize', function() {{
         clearTimeout(_resizeTimer);
         _resizeTimer = setTimeout(updateLegend, 200);
     }});
 
-    // --- Resize handles (horizontal row split + vertical column splitters) ---
+    // resize handles
     (function() {{
-        // Shared drag boilerplate: mobile guard, dragging class, move/up listeners, chart resize.
-        // onStart(e) is called on pointerdown and must return {{ move(e), save() }}.
+        // onStart(e) runs on pointerdown and returns {{ move(e), save() }}
         function makeDragResize(handle, onStart) {{
             handle.addEventListener('pointerdown', function(eDown) {{
                 if (eDown.button !== undefined && eDown.button !== 0) return;
@@ -1980,8 +1900,7 @@
             function clampRatio(r) {{
                 var w = handle.parentElement.getBoundingClientRect().width || 1000;
                 r = Math.max(minLeft / w, Math.min((w - minRight) / w, r));
-                // Snap to exact edges when near them, so the user can fully
-                // collapse without needing pixel-perfect cursor placement.
+                // snap to the edges so a panel can fully collapse
                 if (r < 0.02) r = 0;
                 else if (r > 0.98) r = 1;
                 return r;
@@ -1997,7 +1916,6 @@
             }});
         }}
 
-        // Horizontal split: chart section height
         var cs = document.getElementById('chartSection');
         var rh = document.getElementById('resizeHandle');
         var savedH = localStorage.getItem('dashSplitH');
@@ -2012,22 +1930,17 @@
             }};
         }});
 
-        // Vertical column splits
         makeColResizable(document.getElementById('chartParamsHandle'), cs.querySelector('.card'), cs.querySelector('.section'), 'dashChartParamsRatio', 0.6, 0, 0);
         var bp = document.querySelector('.bottom-panel');
         var bpSections = bp.querySelectorAll('.section');
         makeColResizable(document.getElementById('workersHistHandle'), bpSections[0], bpSections[1], 'dashWorkersHistRatio', 0.5, 0, 0);
 
-        // Per-column resize: drag a grip on the right edge of any <th> to widen
-        // its column at the expense of the next; paired head/body colgroups stay
-        // in sync, widths persist in localStorage.
+        // drag a th grip to widen its column at the expense of the next
         function makeTableColumnsResizable(headCg, bodyCg, headRow, storageKey) {{
             var headCols = headCg.querySelectorAll('col');
             var bodyCols = bodyCg.querySelectorAll('col');
             var nCols = headCols.length;
-            // Views may render a different number of columns (e.g. the Conv
-            // view adds a Trend column); remember the markup's defaults so the
-            // colgroups can be rebuilt to match, with widths saved per count.
+            // views differ in column count, so widths are saved per count
             var baseCols = nCols;
             var baseWidths = [];
             headCols.forEach(function(c) {{ baseWidths.push(c.style.width); }});
@@ -2054,12 +1967,9 @@
             var bodyTbl = bodyCg.parentElement;
             var bodyWrapper = bodyTbl.parentElement;
             var section = headTbl.closest('.section') || headTbl.parentElement;
-            // Anchor for the full-column drag-indicator overlay
             var sStyle = getComputedStyle(section);
             if (sStyle.position === 'static') section.style.position = 'relative';
-            // `left`/`top` for absolute children are measured from the padding-box,
-            // but getBoundingClientRect() returns the border-box; subtract the
-            // section's border to keep the indicator pixel-aligned to the column.
+            // absolute offsets are from the padding box, rects from the border box
             var sBorderLeft = parseFloat(sStyle.borderLeftWidth) || 0;
             var sBorderTop = parseFloat(sStyle.borderTopWidth) || 0;
             function applyWidths(pcts) {{
@@ -2104,20 +2014,12 @@
                                 var sRect = section.getBoundingClientRect();
                                 var thRect = headRow.querySelectorAll('th')[idx].getBoundingClientRect();
                                 var headRect = headTbl.getBoundingClientRect();
-                                // End the line at the visible content edge, not the
-                                // section bottom: with flex:1 wrappers the section can
-                                // extend past the last row, otherwise the line draws
-                                // ghost rows below the data.
+                                // stop at the last row, the section can extend past it
                                 var bottomY = Math.min(bodyTbl.getBoundingClientRect().bottom,
                                                        bodyWrapper.getBoundingClientRect().bottom);
                                 var topPx = (headRect.top - sRect.top - sBorderTop) + 'px';
                                 var heightPx = (bottomY - headRect.top) + 'px';
-                                // The -3 px fudge nudges the indicator under the col-resize
-                                // cursor's *visual* center: on the OS theme this was tuned
-                                // against, the cursor's hotspot sits ~3 px right of the
-                                // double-arrow's visual midpoint, so the line at the true
-                                // boundary looked offset. Cosmetic only; safe to drop or
-                                // retune for a different cursor theme.
+                                // -3px centers the line under the col-resize cursor
                                 overlay.style.left = (thRect.right - sRect.left - sBorderLeft - 3) + 'px';
                                 overlay.style.top = topPx;
                                 overlay.style.height = heightPx;

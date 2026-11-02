@@ -1,18 +1,8 @@
 #!/usr/bin/env python3
 """
-Split a worker JSON config into per-NUMA-node copies.
-
-Given a worker config, creates <config>-0.json .. <config>-(N-1).json
-next to it, where N is the number of CPU-bearing NUMA nodes on this
-machine. Each copy has:
-  - name suffixed with the NUMA node id (defaults to hostname if unset)
-  - concurrency divided evenly across nodes
-
-Prints a message and exits without writing anything if:
-  - the machine is not NUMA (libnuma unavailable or numa_available < 0)
-  - fewer than 2 CPU-bearing NUMA nodes exist
-  - concurrency does not divide evenly across the detected nodes
-  - any target output file already exists
+Split a worker config into <config>-0.json .. <config>-(N-1).json, one per CPU-bearing
+NUMA node, with name/log_file/games_dir suffixed and concurrency divided evenly.
+Writes nothing if concurrency doesn't divide or a target file exists.
 
 Usage:
     python split_numa_config.py <worker.json>
@@ -27,7 +17,6 @@ from pathlib import Path
 
 
 def numa_available() -> bool:
-    """Return True iff libnuma reports a working NUMA system."""
     try:
         libnuma = ctypes.CDLL("libnuma.so.1")
         return libnuma.numa_available() >= 0
@@ -36,11 +25,7 @@ def numa_available() -> bool:
 
 
 def cpu_bearing_nodes() -> list:
-    """Return sorted list of NUMA node ids that have at least one CPU.
-
-    Reads /sys/devices/system/node -- skips memory-only nodes whose
-    cpulist is empty.
-    """
+    """Sorted NUMA node ids, memory-only nodes skipped."""
     node_root = Path("/sys/devices/system/node")
     if not node_root.is_dir():
         return []
@@ -75,12 +60,12 @@ def main() -> int:
         return 1
 
     if not numa_available():
-        print("No NUMA architecture detected -- nothing to do.")
+        print("No NUMA architecture detected, nothing to do.")
         return 0
 
     nodes = cpu_bearing_nodes()
     if len(nodes) < 2:
-        print(f"Only {len(nodes)} CPU-bearing NUMA node(s) detected -- nothing to split.")
+        print(f"Only {len(nodes)} CPU-bearing NUMA node(s) detected, nothing to split.")
         return 0
 
     n = len(nodes)

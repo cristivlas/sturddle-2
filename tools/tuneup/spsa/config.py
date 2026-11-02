@@ -1,10 +1,4 @@
-"""
-Configuration dataclasses for the distributed SPSA tuner.
-
-Two config files:
-- Tuning config (tuning.json): shared session config
-- Worker config (worker.json): per-machine settings
-"""
+"""Config dataclasses: tuning.json (shared session) and worker.json (per machine)."""
 
 import json
 from dataclasses import dataclass, field, asdict, MISSING
@@ -13,13 +7,13 @@ from typing import Any, Dict, Optional
 
 @dataclass
 class Parameter:
-    """A single tunable engine parameter (Lakas-compatible format)."""
+    """Lakas-compatible tunable parameter."""
     name: str
     init: float
     lower: float
     upper: float
     type: str = "int"  # "int" or "float"
-    # Original range for normalized parameters (where lower/upper are [-1, 1])
+    # engine range when lower/upper are normalized to [-1, 1]
     original_lower: Optional[float] = None
     original_upper: Optional[float] = None
 
@@ -31,24 +25,17 @@ class Parameter:
         return max(self.lower, min(self.upper, value))
 
     def discretize(self, value: float) -> float:
-        """Round to int if this is an integer parameter."""
         if self.type == "int":
             return round(value)
         return value
 
     def to_engine_value(self, value: float):
-        """Convert internal float to engine-facing value."""
         v = self.clamp(value)
         if self.type == "int":
             return int(round(v))
         return v
 
     def denormalize(self, theta_val: float) -> int:
-        """Convert theta value to engine-space integer.
-
-        For normalized parameters, maps from [-1,1] to [original_lower, original_upper].
-        For non-normalized parameters, rounds to int.
-        """
         if self.is_normalized:
             lo, hi = self.original_lower, self.original_upper
             return int(round((theta_val + 1) * (hi - lo) / 2 + lo))
@@ -57,12 +44,7 @@ class Parameter:
 
 @dataclass
 class SPSAConfig:
-    """
-    SPSA hyperparameters.
-
-    c is a fraction of each parameter's range (0.05 = perturb by 5% of range).
-    a controls learning rate; effective step = a_k * gradient * range.
-    """
+    """c is a fraction of each parameter's range; the step is a_k * gradient * range."""
     budget: int = 10000
     a: float = 0.5
     c: float = 0.05
@@ -93,58 +75,32 @@ class SPSAConfig:
 
 @dataclass
 class EngineConfig:
-    """Engine settings (protocol and fixed UCI options)."""
     protocol: str = "uci"
     fixed_options: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class TuningConfig:
-    """
-    Main tuning session configuration (tuning.json).
-
-    Contains only session-level settings shared across all workers:
-    SPSA hyperparameters, parameter definitions, search control.
-
-    Per-worker settings (engine path, opening book, games dir, logging)
-    live in each worker's own worker.json.
-
-    Search control: if `depth` is set, games use fixed depth search
-    (cutechess-cli -each depth=N). Otherwise `time_control` is used
-    (cutechess-cli -each tc=...).
-    """
+    """Session config shared by all workers. depth, if set, overrides time_control."""
     engine: EngineConfig = field(default_factory=EngineConfig)
     time_control: str = "1+0.1"
     depth: Optional[int] = None
     games_per_iteration: int = 200
     output_dir: str = "./spsa_output"
-    # Seconds for workers to wait before retrying when no work available
-    retry_after: int = 5
-    # Dashboard auto-refresh interval in seconds
-    dashboard_refresh: int = 60
-    # Max history entries sent to the dashboard (0 = unlimited)
-    dashboard_history: int = 100
+    retry_after: int = 5            # seconds
+    dashboard_refresh: int = 60     # SSE heartbeat, seconds
+    dashboard_history: int = 100    # 0 = unlimited
     overdue_factor: float = 1.35
     worker_idle_timeout: float = 60.0
     chunk_timeout_factor: float = 2.0
     min_chunk_timeout: float = 60.0
     min_chunk_expected_duration: float = 60.0
-    # Cap on total over-assignment past games_per_iteration.  Bounds the maximum
-    # condemned in-flight work at iteration boundary (late results are discarded
-    # as stale). 1.0 = no overflow, 1.15 = up to 15% extra games may be dispatched.
-    overflow_factor: float = 1.15
-    # Number of completed chunks before a worker is trusted with full speed-proportional work.
-    # Until then the bootstrap cap applies to prevent a cold worker from grabbing too much work.
-    ewma_warmup_chunks: int = 3
-    # Directory for static assets (favicon, etc.); empty = disabled
-    static_dir: str = ""
-    # Daily log rotation (keeps rotated files with date suffix)
+    overflow_factor: float = 1.15   # max games dispatched per iteration / games_per_iteration
+    ewma_warmup_chunks: int = 3     # chunks before a worker gets speed-proportional work
+    static_dir: str = ""            # favicon etc., empty = disabled
     log_rotation: bool = True
-    # Seconds between chunk-validity checks (0 = disabled)
-    validate_interval: int = 5
-    # Max worker reconnects within max_retries * retry_after seconds (0 = unlimited)
-    max_retries: int = 3
-    # Adjudication: auto-resign and draw detection to shorten decided games.
+    validate_interval: int = 5      # seconds, 0 = disabled
+    max_retries: int = 3            # reconnects within max_retries * retry_after seconds, 0 = unlimited
     auto_resign: bool = True
     resign_movecount: int = 3
     resign_score: int = 700
@@ -221,7 +177,6 @@ class TuningConfig:
             "spsa": asdict(self.spsa),
             "parameters": { name: _param_dict(p) for name, p in self.parameters.items() },
         }
-        # Omit None values for cleaner output
         d = {k: v for k, v in d.items() if v is not None}
         return json.dumps(d, indent=2)
 
@@ -237,7 +192,6 @@ class TuningConfig:
         for name, pdict in d.get("parameters", {}).items():
             parameters[name] = Parameter(name=name, **pdict)
 
-        # Pull scalar fields from JSON, falling back to dataclass defaults
         fields = cls.__dataclass_fields__
         skip = {"engine", "spsa", "parameters"}
         kwargs = {}
@@ -254,15 +208,8 @@ class TuningConfig:
 
 @dataclass
 class WorkerConfig:
-    """
-    Per-machine worker configuration (worker.json).
-
-    All paths are local to the worker machine:
-    engine binary, opening book, games output, log file.
-    parameter_overrides allows overriding specific engine options per machine
-    (e.g., SyzygyPath for different tablebase locations).
-    """
-    name: str = ""  # worker identity; defaults to hostname if empty
+    """Per-machine worker config; all paths are local."""
+    name: str = ""  # defaults to hostname
     coordinator: str = "http://localhost:8080"
     engine: str = "./sturddle"
     cutechess_cli: str = "cutechess-cli"
@@ -272,30 +219,20 @@ class WorkerConfig:
     book_depth: int = 8
     games_dir: str = "./games"
     log_file: str = "worker.log"
-    max_chunk_size: int = 0  # hard cap on games per chunk (0 = unlimited)
-    max_rounds_per_chunk: int = 10  # cap = concurrency * this * 2 (0 = unlimited)
-    http_retry_timeout: int = 300  # seconds to retry on connection errors
+    max_chunk_size: int = 0  # 0 = unlimited
+    max_rounds_per_chunk: int = 10  # cap = concurrency * this * 2, 0 = unlimited
+    http_retry_timeout: int = 300  # seconds
     parameter_overrides: dict = field(default_factory=dict)
-    # cutechess-cli overrides: tc, depth, etc. (not UCI options)
-    cutechess_overrides: dict = field(default_factory=dict)
-    # Daily log rotation (keeps rotated files with date suffix)
+    cutechess_overrides: dict = field(default_factory=dict)  # tc, depth
     log_rotation: bool = True
-    # Reference engine for 3-way SPSA (theta+/- vs reference instead of vs each other)
-    reference_engine: str = ""
-    # Auto-create RAM disk for PyInstaller extraction at high concurrency.
-    # Finds an unused drive letter (Windows) or tmpfs mount (Linux).
-    # Only needed for PyInstaller --onefile engines; genconfig enables it automatically when detected.
-    ramdisk: bool = False
-    # Override drive letter / mount point for RAM disk (e.g. "R:"). Empty = auto-select.
-    ramdisk_drive: str = ""
-    # Auto-download and install ImDisk on Windows if not found. Set false to manage ImDisk manually.
+    reference_engine: str = ""  # theta+/- play this instead of each other
+    ramdisk: bool = False  # for PyInstaller --onefile engines
+    ramdisk_drive: str = ""  # empty = auto-select
     auto_install_imdisk: bool = True
-    ramdisk_size: int = 0
+    ramdisk_size: int = 0  # MB, 0 = estimate
     ramdisk_decompression: float = 2.6
-    # Max fraction of games that can be forfeits before discarding the chunk (0 = disabled).
-    max_forfeit_pct: float = 0.05
-    # Max consecutive retryable errors before the worker gives up (0 = unlimited).
-    max_retries: int = 3
+    max_forfeit_pct: float = 0.05  # 0 = disabled
+    max_retries: int = 3  # consecutive errors, 0 = unlimited
 
     @classmethod
     def from_json(cls, path: str) -> "WorkerConfig":
@@ -308,10 +245,10 @@ class WorkerConfig:
 class WorkItem:
     """A batch of games assigned to a worker."""
     iteration: int
-    theta_plus: Dict[str, Any]   # param_name -> engine value
-    theta_minus: Dict[str, Any]  # param_name -> engine value
+    theta_plus: Dict[str, Any]   # engine values
+    theta_minus: Dict[str, Any]
     num_games: int
-    chunk_id: str = ""           # unique chunk identifier
+    chunk_id: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -323,16 +260,16 @@ class WorkItem:
 
 @dataclass
 class WorkResult:
-    """Results reported by a worker for a batch (game counts, PGNs saved locally)."""
+    """Game counts for a batch; PGNs stay on the worker."""
     iteration: int
-    num_games: int      # actual games completed
-    wins: int = 0       # games won by theta_plus side (standard mode)
-    draws: int = 0      # drawn games (standard mode)
-    losses: int = 0     # games lost by theta_plus side (standard mode)
-    chunk_id: str = ""  # echoed from WorkItem
-    worker: str = ""    # worker name
+    num_games: int
+    wins: int = 0       # theta_plus, standard mode
+    draws: int = 0
+    losses: int = 0
+    chunk_id: str = ""
+    worker: str = ""
     shutting_down: bool = False
-    # Reference mode: separate scores for theta+ and theta- vs reference engine
+    # reference mode
     reference_mode: bool = False
     plus_wins: int = 0
     plus_draws: int = 0

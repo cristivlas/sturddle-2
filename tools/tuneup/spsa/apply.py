@@ -12,8 +12,6 @@ from config import TuningConfig
 from recommend import ParamSpec, recommend, format_recommendation, constrain_for
 
 
-# Knob choices for --rebalance. The shared recommend module no longer
-# carries defaults; each caller picks its own (see feedback memory).
 REBALANCE_OUTLIER_RATIO = 5.0
 REBALANCE_MIN_PERT_PCT = 5.0
 REBALANCE_SAFETY_PAD = 1.2
@@ -30,12 +28,6 @@ GRADING_ADJUST_RE = re.compile(r'ADJUST_(\d+)_(PAWN|KNIGHT|BISHOP|ROOK|QUEEN)$')
 
 
 def denormalize(param, theta_val):
-    """Convert a theta value to engine-space integer.
-
-    For normalized parameters (with original_lower/original_upper), maps
-    from [-1,1] to the original range.  For non-normalized parameters,
-    rounds to int.
-    """
     if param.is_normalized:
         lo, hi = param.original_lower, param.original_upper
         engine_val = int(round((theta_val + 1) * (hi - lo) / 2 + lo))
@@ -48,13 +40,7 @@ def denormalize(param, theta_val):
 
 
 def average_theta(state, window):
-    """Mean theta over the last `window` iterates (history + current theta).
-
-    Skipped iterations are excluded -- they re-record an unchanged theta and
-    would double-weight stalled values. Averages per-param over entries where
-    the param is present; falls back to the current value for params with no
-    history occurrences.
-    """
+    """Mean theta over the last `window` iterates, current theta included; skipped ones would double-count."""
     series = [h.get('theta', {}) for h in state.get('history', []) if not h.get('skipped')]
     current = state.get('theta', {})
     series.append(current)
@@ -67,18 +53,12 @@ def average_theta(state, window):
 
 
 def compute_range(value, range_pct):
-    """Compute bounds as value +/- range_pct% of value."""
     half = value * range_pct / 100.0
     return round(value - half), round(value + half)
 
 
 def _realign(new, old, prev):
-    """Preserve column alignment when a numeric token changes width.
-
-    If new is narrower than old, left-pad new with spaces.
-    If new is wider, eat the extra characters from prev (the separator/whitespace
-    preceding new). Returns (new, prev).
-    """
+    """Keep column alignment when a numeric token changes width: pad new, or eat from the preceding separator."""
     diff = len(new) - len(old)
     if diff < 0:
         return ' ' * -diff + new, prev
@@ -87,12 +67,11 @@ def _realign(new, old, prev):
     return new, prev
 
 
-# Global toggle. Set by main() from --dry-run; each file-writing site checks it.
 DRY_RUN = False
 
 
 def _to_engine(param, theta_val):
-    """Silent version of denormalize for bulk computations (no per-call logging)."""
+    """denormalize() without logging."""
     if param is not None and getattr(param, 'is_normalized', False):
         lo, hi = param.original_lower, param.original_upper
         return int(round((theta_val + 1) * (hi - lo) / 2 + lo))
@@ -100,11 +79,7 @@ def _to_engine(param, theta_val):
 
 
 def compute_param_drifts(state, tuning):
-    """Per-param drift info from full exploration history (engine space).
-
-    Returns list of dicts {name, current, lo, hi, drift_pct} sorted by
-    drift_pct descending. Empty list if no history.
-    """
+    """Per-param {name, current, lo, hi, drift_pct} over the full history, sorted by drift_pct descending."""
     history = state.get('history', [])
     current_theta = state.get('theta', {})
     if not history or not current_theta:
@@ -135,10 +110,7 @@ def compute_param_drifts(state, tuning):
 
 
 def compute_min_safe_range(state, tuning):
-    """Smallest --range %% that covers every explored value of every param.
-
-    Returns (pct, driving_param) or (None, None) if no history.
-    """
+    """Smallest --range % covering every explored value; returns (pct, driving_param)."""
     drifts = compute_param_drifts(state, tuning)
     if not drifts:
         return None, None
@@ -149,15 +121,9 @@ def compute_min_safe_range(state, tuning):
 def update_config(config_file, engine_values, finalize=False, range_pct=None, bounds_map=None):
     """Patch DECLARE_PARAM/DECLARE_VALUE/DECLARE_NORMAL lines in config.h.
 
-    If finalize is True, also converts DECLARE_PARAM/DECLARE_NORMAL back to
-    DECLARE_VALUE for the tuned parameters.
-
-    Bounds adjustment precedence: bounds_map[name] (per-param explicit) >
-    range_pct (uniform percentage) > leave unchanged.
-
-    Returns (updated, found) where:
-        updated: set of parameter names that were changed
-        found: set of parameter names that were found in config.h
+    finalize converts DECLARE_PARAM/DECLARE_NORMAL to DECLARE_VALUE.
+    Bounds precedence: bounds_map[name] > range_pct > unchanged.
+    Returns (updated, found) name sets.
     """
     with open(config_file, 'r') as f:
         lines = f.readlines()
@@ -179,8 +145,7 @@ def update_config(config_file, engine_values, finalize=False, range_pct=None, bo
                     found.add(name)
                     before, old_val, sep1, old_lo, sep2, old_hi, close = match.groups()
 
-                    # Finalize: rename the macro without padding compensation,
-                    # so the line looks the same as any pre-existing DECLARE_VALUE.
+                    # No padding compensation, so the line matches pre-existing DECLARE_VALUEs.
                     if finalize and macro != 'DECLARE_VALUE':
                         before = before.replace(macro + '(', 'DECLARE_VALUE(', 1)
                         finalized.add(name)
@@ -188,7 +153,6 @@ def update_config(config_file, engine_values, finalize=False, range_pct=None, bo
                     new_val = str(value)
                     new_val, before = _realign(new_val, old_val, before)
 
-                    # Adjust bounds: per-param map takes precedence over uniform pct
                     new_lo, new_hi = old_lo, old_hi
                     if bounds_map and name in bounds_map:
                         lo, hi = bounds_map[name]
@@ -221,10 +185,7 @@ def update_config(config_file, engine_values, finalize=False, range_pct=None, bo
 
 
 def _read_eval_piece_grading(header_dir):
-    """Read the EVAL_PIECE_GRADING setting from common.h.
-
-    Returns True/False if found, None if the file or define is missing.
-    """
+    """EVAL_PIECE_GRADING from common.h, or None if missing."""
     common_h = os.path.join(header_dir, 'common.h')
     if not os.path.exists(common_h):
         return None
@@ -237,19 +198,10 @@ def _read_eval_piece_grading(header_dir):
 
 
 def update_piece_values(header_file, engine_values):
-    """Patch PIECE_VALUES and GRADING_ADJUST array macros in chess.h.
+    """Patch PIECE_VALUES and GRADING_ADJUST macros in chess.h.
 
-    Recognises piece weight names (PAWN, KNIGHT, ...) and grading adjustment
-    names (ADJUST_<bucket>_<piece>) and updates the corresponding element of
-    the ``#define PIECE_VALUES { ... }`` line or the ``#define GRADING_ADJUST``
-    multi-line macro (one pawn-bucket row per line) matching the active build
-    configuration.
-
-    When PIECE_VALUES has conditional definitions guarded by
-    ``#if EVAL_PIECE_GRADING``, only the branch matching the current
-    setting in common.h is patched.
-
-    Returns (updated, found) sets of parameter names.
+    Only the PIECE_VALUES branch matching EVAL_PIECE_GRADING in common.h is patched.
+    Returns (updated, found) name sets.
     """
     piece_updates = {}   # array index -> (name, value)
     adjust_updates = {}  # (bucket, column) -> (name, value)
@@ -268,7 +220,6 @@ def update_piece_values(header_file, engine_values):
     with open(header_file, 'r', encoding='utf-8', newline='') as f:
         lines = f.readlines()
 
-    # Determine which PIECE_VALUES branch to patch
     grading = _read_eval_piece_grading(os.path.dirname(header_file) or '.')
     if grading is not None:
         logging.info(f"EVAL_PIECE_GRADING = {grading}")
@@ -287,16 +238,14 @@ def update_piece_values(header_file, engine_values):
         r'([^}]+)'
         r'(\s*\})'
     )
-    # Track preprocessor context to identify which branch we're in
-    in_grading_if = False   # inside #if EVAL_PIECE_GRADING block
-    in_else = False         # inside the #else branch
-    adjust_row = -1         # current GRADING_ADJUST row, -1 when outside the macro
+    in_grading_if = False
+    in_else = False
+    adjust_row = -1  # -1 when outside the GRADING_ADJUST macro
 
     result_lines = []
     for line in lines:
         stripped_line = line.lstrip()
 
-        # Track #if EVAL_PIECE_GRADING / #else / #endif
         if re.match(r'#if\s+EVAL_PIECE_GRADING\b', stripped_line):
             in_grading_if = True
             in_else = False
@@ -306,21 +255,15 @@ def update_piece_values(header_file, engine_values):
             in_grading_if = False
             in_else = False
 
-        # Patch PIECE_VALUES -- skip the wrong branch when we know which is active
         if piece_updates and define_re.search(line):
             skip = False
             if grading is not None and in_grading_if:
-                # In the #if block: patch only if grading matches
-                if in_else:
-                    skip = grading        # skip #else branch when grading is true
-                else:
-                    skip = not grading    # skip #if branch when grading is false
+                skip = grading if in_else else not grading
 
             if not skip:
                 line = _patch_array_line(define_re, line, 'PIECE_VALUES',
                                          piece_updates, found, updated)
 
-        # Patch GRADING_ADJUST (multi-line macro, one pawn-bucket row per line)
         if adjust_updates:
             if re.match(r'#define\s+GRADING_ADJUST\b', stripped_line):
                 adjust_row = 0
@@ -330,7 +273,7 @@ def update_piece_values(header_file, engine_values):
                     line = _patch_adjust_row(line, m, adjust_row, adjust_updates, found, updated, adjust_weights)
                     adjust_row += 1
                 else:
-                    adjust_row = -1  # closing brace or unexpected line ends the macro
+                    adjust_row = -1
 
         result_lines.append(line)
 
@@ -345,7 +288,7 @@ def update_piece_values(header_file, engine_values):
 
 
 def _parse_piece_values(lines, grading):
-    """Graded-branch PIECE_VALUES as a list of 7 ints (for the effective-value comments)."""
+    """PIECE_VALUES of the active branch as a list of ints."""
     in_if = in_else = False
     fallback = None
     for line in lines:
@@ -367,8 +310,7 @@ def _parse_piece_values(lines, grading):
 
 
 def _patch_adjust_row(line, m, row, updates, found, updated, weights):
-    """Regenerate one ``{ ... }`` row of GRADING_ADJUST: patch updated elements,
-    normalize column widths, refresh the effective-piece-value comment (WEIGHT + adjust)."""
+    """Regenerate one GRADING_ADJUST row: patch values, realign columns, refresh the effective-value comment."""
     values = [int(tok) for tok in m.group(1).split(',')]
     for (bucket, col), (name, val) in updates.items():
         if bucket != row:
@@ -406,11 +348,7 @@ def _patch_array_line(pattern, line, macro_name, updates, found, updated):
 
 
 def _patch_table_row(line, base_square, updates, found, updated):
-    """Patch individual values in a comma-separated row of a PST array.
-
-    base_square: the square index of the first value on this line
-    updates: {square: (name, value)}
-    """
+    """Patch values in one PST row; base_square is the index of its first value."""
     parts = line.split(',')
     modified = False
     for i, part in enumerate(parts):
@@ -426,7 +364,6 @@ def _patch_table_row(line, base_square, updates, found, updated):
         new_str = str(new_val)
         if old_str == new_str:
             continue
-        # Adjust leading whitespace to preserve column width
         prefix = part[:m.start(1)]
         suffix = part[m.end(1):]
         diff = len(new_str) - len(old_str)
@@ -442,20 +379,17 @@ def _patch_table_row(line, base_square, updates, found, updated):
 
 
 _PST_NUM_RE = re.compile(r'-?\d+')
-# A "PST row" line: indent, comma-separated ints, optional trailing comma, EOL.
 _PST_ROW_RE = re.compile(r'^(\s*)(-?\d+(?:\s*,\s*-?\d+)*)(,?)\s*$')
 
 
 def update_tables(tables_file, pst_values):
-    """Patch SQUARE_TABLE and ENDGAME_KING_SQUARE_TABLE arrays in tables.h.
+    """Patch SQUARE_TABLE and ENDGAME_KING_SQUARE_TABLE in tables.h.
 
-    pst_values: dict of name -> (piece_key, square, value)
-        piece_key: '1'-'6' for SQUARE_TABLE, 'KEG' for ENDGAME_KING_SQUARE_TABLE
-    Returns (updated, found) sets of parameter names.
+    pst_values: name -> (piece_key, square, value); piece_key '1'-'6' or 'KEG'.
+    Returns (updated, found) name sets.
     """
-    # Group updates by table
-    sq_updates = {}   # piece_type_int -> {square: (name, value)}
-    keg_updates = {}  # {square: (name, value)}
+    sq_updates = {}
+    keg_updates = {}
     for name, (piece_key, square, value) in pst_values.items():
         if piece_key == 'KEG':
             keg_updates[square] = (name, value)
@@ -467,16 +401,15 @@ def update_tables(tables_file, pst_values):
 
     found = set()
     updated = set()
-    section = None     # 'sq' or 'keg'
-    piece_idx = -1     # current sub-array index in SQUARE_TABLE
-    square_idx = 0     # current square within piece/table
-    in_piece = False   # inside a piece sub-array
+    section = None  # 'sq' or 'keg'
+    piece_idx = -1
+    square_idx = 0
+    in_piece = False
 
     result = []
     for line in lines:
         s = line.strip()
 
-        # Detect section starts
         if section is None:
             if 'SQUARE_TABLE' in line and '[]' in line and '{' in s:
                 section = 'sq'
@@ -494,8 +427,7 @@ def update_tables(tables_file, pst_values):
                     piece_idx += 1
                     square_idx = 0
                     in_piece = True
-                    # Self-closing sub-array like {}/* NONE */
-                    if '}' in s:
+                    if '}' in s:  # {}/* NONE */
                         in_piece = False
                 elif s.startswith('};'):
                     section = None
@@ -503,7 +435,6 @@ def update_tables(tables_file, pst_values):
                 if s.startswith('}'):
                     in_piece = False
                 elif re.search(r'-?\d', s):
-                    # Data row -- patch if we have updates for this piece
                     piece_updates = sq_updates.get(piece_idx, {})
                     if piece_updates:
                         line = _patch_table_row(line, square_idx, piece_updates, found, updated)
@@ -533,7 +464,7 @@ def update_tables(tables_file, pst_values):
 
 
 def _reformat_pst_tables(lines):
-    """Right-align values in each maximal run of numeric-only rows."""
+    """Right-align values in each run of numeric-only rows."""
     from itertools import groupby
     out = []
     for is_row, grp in groupby(lines, key=lambda l: bool(_PST_ROW_RE.match(l))):
@@ -548,10 +479,7 @@ def _reformat_pst_tables(lines):
 
 
 def adjust_piece_param_bounds(config_file, engine_values, range_pct=None, bounds_map=None):
-    """Adjust Config::Param bounds for piece value parameters in config.h.
-
-    Bounds source precedence: bounds_map[name] > range_pct > skip param.
-    """
+    """Adjust Config::Param bounds for piece values in config.h; bounds_map[name] > range_pct > skip."""
     piece_names = [n for n in engine_values if n in PIECE_INDEX]
     if not piece_names:
         return set()
@@ -597,11 +525,7 @@ _PST_RE = re.compile(r'PS_(\d+|KEG)_(\d+)$')
 
 
 def _build_rebalance_specs(theta, tuning):
-    """Build ParamSpec list from spsa_state theta + tuning.json metadata.
-
-    Returns (specs, skipped_pst). PST params are skipped because their bounds
-    live in a single shared PST_RANGE macro (config.h), not per-param.
-    """
+    """ParamSpecs from theta + tuning.json; PST params skipped (shared PST_RANGE macro, no per-param bounds)."""
     specs = []
     skipped_pst = []
     for name, t_val in theta.items():
@@ -671,7 +595,6 @@ def main():
     global DRY_RUN
     DRY_RUN = args.dry_run
 
-    # Accept either a project directory or a tuning.json file directly
     if os.path.isfile(args.project) and args.project.endswith('.json'):
         tuning_path = args.project
         project_dir = os.path.dirname(tuning_path) or '.'
@@ -682,7 +605,6 @@ def main():
         logging.error(f"Not a valid project directory or tuning.json: {args.project}")
         sys.exit(1)
 
-    # Load tuning config for parameter metadata
     if not os.path.exists(tuning_path):
         logging.error(f"Tuning config not found: {tuning_path}")
         sys.exit(1)
@@ -690,7 +612,6 @@ def main():
     tuning = TuningConfig.from_json(tuning_path)
     logging.info(f"Loaded tuning config: {len(tuning.parameters)} parameter(s)")
 
-    # Load SPSA state
     state_path = args.state or os.path.join(project_dir, 'spsa_state.json')
     if not os.path.exists(state_path):
         logging.error(f"State file not found: {state_path}")
@@ -713,13 +634,9 @@ def main():
         if args.window > n_avail:
             logging.warning(f"--window {args.window} exceeds {n_avail} available iterate(s); using all")
         theta = average_theta(state, args.window)
-        # Recenter state's theta so drift / --auto-range computations are
-        # consistent with the averaged values applied below.
-        state['theta'] = theta
+        state['theta'] = theta  # keep drift / --auto-range consistent with the averaged values
         logging.info(f"Averaged theta over last {min(args.window, n_avail)} non-skipped iterate(s)")
 
-    # Report the minimum safe --range based on full exploration history,
-    # along with per-param drift sorted by swing percentage.
     drifts = compute_param_drifts(state, tuning)
     if drifts:
         logging.info("Per-param drift (sorted by swing %%):")
@@ -733,13 +650,12 @@ def main():
         args.range_pct = drifts[0]['drift_pct']
         logging.info(f"Using --auto-range = {args.range_pct:.1f}%")
 
-    # Compute --rebalance recommendations (per-param bounds)
     bounds_map = None
     if args.rebalance:
         specs, skipped_pst = _build_rebalance_specs(theta, tuning)
         if skipped_pst:
             logging.warning(f"--rebalance skipped {len(skipped_pst)} PST param(s); "
-                            f"PST bounds use shared PST_RANGE macro -- adjust manually in config.h")
+                            f"PST bounds use shared PST_RANGE macro; adjust manually in config.h")
         if not specs:
             logging.error("No params eligible for --rebalance")
             sys.exit(1)
@@ -751,11 +667,9 @@ def main():
                         min_pert_pct=REBALANCE_MIN_PERT_PCT,
                         safety_pad=REBALANCE_SAFETY_PAD)
         format_recommendation(rec, center_label='value')
-        sys.stdout.flush()  # ensure stdout table lands before subsequent stderr-bound logs
-        # 'keep' actions don't enter the bounds_map -- current bounds are already correct.
+        sys.stdout.flush()
         bounds_map = {a.name: (a.new_lo, a.new_hi) for a in rec.actions if a.action != 'keep'}
 
-    # Convert all theta values to engine-space integers
     logging.info(f"Denormalizing {len(theta)} parameter(s):")
     engine_values = {}
     for name, val in theta.items():
@@ -767,8 +681,7 @@ def main():
             logging.info(f"  {name}: theta={val} -> engine={engine_val} (not in tuning config)")
             engine_values[name] = engine_val
 
-    # Separate PST params (PS_<piece>_<square>, PS_KEG_<square>) from config.h params
-    pst_values = {}   # name -> (piece_key, square, value)
+    pst_values = {}
     config_values = {}
     for name, val in engine_values.items():
         m = _PST_RE.match(name)
@@ -780,11 +693,9 @@ def main():
     if pst_values:
         logging.info(f"{len(pst_values)} PST parameter(s), {len(config_values)} config parameter(s)")
 
-    # Patch config.h (DECLARE_PARAM / DECLARE_VALUE / DECLARE_NORMAL)
     updated, found = update_config(args.config, config_values, finalize=args.finalize,
                                     range_pct=args.range_pct, bounds_map=bounds_map)
 
-    # Patch piece values in chess.h (PIECE_VALUES / ENDGAME_ADJUST macros)
     not_in_config = {n: v for n, v in engine_values.items() if n not in found}
     piece_candidates = {n: v for n, v in not_in_config.items() if n in PIECE_INDEX or GRADING_ADJUST_RE.match(n)}
 
@@ -797,12 +708,10 @@ def main():
         else:
             logging.warning(f"Header file not found for piece values: {header_path}")
 
-    # Adjust Config::Param bounds for piece values in config.h
     if (args.range_pct is not None or bounds_map) and piece_candidates:
         adjust_piece_param_bounds(args.config, piece_candidates,
                                    range_pct=args.range_pct, bounds_map=bounds_map)
 
-    # Patch piece-square tables in tables.h
     if pst_values:
         tables_path = args.tables or os.path.join(os.path.dirname(args.config) or '.', 'tables.h')
         if os.path.exists(tables_path):
@@ -812,14 +721,12 @@ def main():
         else:
             logging.warning(f"Tables file not found for PST values: {tables_path}")
 
-    # Report params that match current values (no change needed)
     unchanged = {name: engine_values[name] for name in found if name not in updated}
     if unchanged:
         logging.info(f"{len(unchanged)} parameter(s) already at target value:")
         for name, val in sorted(unchanged.items()):
             print(f"  {name} = {val}")
 
-    # Report params not found in any file
     not_found = {name: engine_values[name] for name in engine_values if name not in found}
     if not_found:
         logging.info(f"{len(not_found)} parameter(s) not found:")

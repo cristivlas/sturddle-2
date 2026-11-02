@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-RAM disk management for SPSA tuning workers.
-
-Shared helpers for creating/removing ImDisk RAM disks on Windows and /dev/shm
-on Linux. Used by worker.py and as a standalone CLI tool.
+RAM disks for worker temp files: ImDisk on Windows, /dev/shm on Linux.
 
 Usage:
     python ramdisk.py create --engine PATH [--ref PATH] [--concurrency N] [--drive X:] [--size MB] [--factor F]
@@ -26,13 +23,10 @@ import zipfile
 logger = logging.getLogger("ramdisk")
 
 IMDISK_URL = "https://sourceforge.net/projects/imdisk-toolkit/files/20250206/ImDiskTk-x64.zip/download"
-RAMDISK_MARKER = "spsa_ramdisk"  # marker file to identify our RAM disks
+RAMDISK_MARKER = "spsa_ramdisk"  # marker file on our disks
 
-
-# --- ImDisk helpers ---
 
 def has_imdisk() -> bool:
-    """Check if imdisk is available on the system."""
     return shutil.which("imdisk") is not None
 
 
@@ -83,7 +77,7 @@ def install_imdisk() -> bool:
         if result.returncode != 0:
             logger.error("ImDisk install failed (rc=%d): %s", result.returncode, result.stderr.strip())
             return False
-        # install.bat may copy files without registering the driver service; fix up if needed
+        # install.bat may not register the driver service
         sc_query = subprocess.run(["sc", "query", "ImDisk"], capture_output=True, text=True, timeout=10)
         if sc_query.returncode != 0:
             logger.info("Registering ImDisk driver service")
@@ -101,10 +95,8 @@ def install_imdisk() -> bool:
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-# --- Drive letter helpers ---
-
 def normalize_drive(mount_point: str) -> str:
-    """Normalize a Windows drive letter to 'X:' form (no trailing separator)."""
+    """'x:\\' -> 'X:'"""
     drive = mount_point.rstrip("\\/")
     if not drive.endswith(":"):
         drive += ":"
@@ -112,18 +104,16 @@ def normalize_drive(mount_point: str) -> str:
 
 
 def drive_letters():
-    """Yield drive letters Z: down to D: as 'X:' strings."""
     for letter in "ZYXWVUTSRQPONMLKJIHGFED":
         yield letter + ":"
 
 
 def is_our_ramdisk(drive_root: str) -> bool:
-    """Check if a drive root has our marker file (from a previous run or crash)."""
     return os.path.exists(os.path.join(drive_root, RAMDISK_MARKER))
 
 
 def find_existing_ramdisk() -> str:
-    """Scan drive letters for an existing SPSA RAM disk. Returns 'X:' or empty."""
+    """Our RAM disk as 'X:', or ""."""
     for drive in drive_letters():
         drive_root = drive + os.sep
         if os.path.exists(drive_root) and is_our_ramdisk(drive_root):
@@ -133,7 +123,7 @@ def find_existing_ramdisk() -> str:
 
 
 def find_free_drive() -> str:
-    """Find an unused drive letter, searching from Z: down. Returns 'X:' or empty."""
+    """Unused drive letter as 'X:', searching down from Z:, or ""."""
     for drive in drive_letters():
         if not os.path.exists(drive + os.sep):
             return drive
@@ -141,14 +131,12 @@ def find_free_drive() -> str:
 
 
 def write_marker(mount: str):
-    """Write a marker file to identify our RAM disk after a crash. Raises on failure."""
     marker = os.path.join(mount, RAMDISK_MARKER)
     with open(marker, "w") as f:
         f.write("pid=%d\n" % os.getpid())
 
 
 def _resolve_mei_path(path):
-    """Resolve the _MEI parent path for clean/status. Returns path or None."""
     if sys.platform != "win32":
         return path or "/dev/shm/spsa_temp"
     if path:
@@ -157,8 +145,6 @@ def _resolve_mei_path(path):
         drive = find_existing_ramdisk()
     return (drive + os.sep) if drive else None
 
-
-# --- Size estimation ---
 
 def is_script(path):
     return path.endswith(".py")
@@ -184,24 +170,16 @@ def estimate_ramdisk_mb(engine1, engine2, concurrency, decompression):
     return mb
 
 
-# --- Create / remove ---
-
 def create_ramdisk(size_mb: int, drive: str = "", auto_install: bool = True) -> str:
-    """Create and format an ImDisk RAM disk on Windows. Returns drive root path.
-
-    If drive is empty, auto-selects an unused drive letter.
-    Raises RuntimeError on failure.
-    """
+    """Create and format an ImDisk RAM disk, or reuse ours; returns the drive root."""
     if sys.platform != "win32":
         raise RuntimeError("ImDisk RAM disks are Windows-only; use /dev/shm on Linux")
-    # Reuse existing ramdisk if found
     existing = find_existing_ramdisk()
     if existing:
         drive_root = existing + os.sep
         write_marker(drive_root)
         logger.info("Reusing existing RAM disk: %s", existing)
         return drive_root
-    # Resolve drive letter
     if drive:
         drive = normalize_drive(drive)
         drive_root = drive + os.sep
@@ -215,7 +193,6 @@ def create_ramdisk(size_mb: int, drive: str = "", auto_install: bool = True) -> 
         drive = find_free_drive()
         if not drive:
             raise RuntimeError("No free drive letters available for RAM disk")
-    # Ensure imdisk is available
     if not has_imdisk():
         if not auto_install:
             raise RuntimeError("ImDisk not found and auto-install is disabled")
@@ -297,7 +274,6 @@ def clean_ramdisk(path: str = "") -> int:
 
 
 def _disk_usage_str(path):
-    """Format free/total disk usage, or empty string on failure."""
     try:
         u = shutil.disk_usage(path)
         pct = 100.0 * u.free / u.total if u.total else 0
@@ -307,7 +283,6 @@ def _disk_usage_str(path):
 
 
 def _running_pids():
-    """Return set of all running process IDs."""
     pids = set()
     try:
         if sys.platform == "win32":
@@ -328,12 +303,7 @@ def _running_pids():
 
 
 def _mei_is_active_win32(digits, pids):
-    """Check if a _MEI dir's digit suffix matches a running PID (Windows).
-
-    PyInstaller on Windows names temp dirs _MEI<pid><suffix> where <pid>
-    comes from _getpid() and <suffix> is appended by _wtempnam(). We find
-    the PID by longest-prefix match against the running PID set.
-    """
+    """PyInstaller names Windows temp dirs _MEI<pid><suffix>; match the longest digit prefix to a running PID."""
     for length in range(len(digits), 0, -1):
         try:
             candidate = int(digits[:length])
@@ -345,7 +315,7 @@ def _mei_is_active_win32(digits, pids):
 
 
 def _active_mei_paths_posix():
-    """Scan /proc/*/maps for memory-mapped files inside _MEI dirs. Returns set of active _MEI dir paths."""
+    """_MEI dirs with files mapped by a running process."""
     import re
     active = set()
     mei_re = re.compile(r'(/\S*/_MEI\w+)/')
@@ -358,14 +328,13 @@ def _active_mei_paths_posix():
                     m = mei_re.search(line)
                     if m:
                         active.add(m.group(1))
-                        break  # one match per process is enough
+                        break
         except OSError:
             pass
     return active
 
 
 class _MeiChecker:
-    """Checks whether _MEI dirs are active. Platform-aware, caches state."""
     def __init__(self):
         if sys.platform == "win32":
             self._pids = _running_pids()
@@ -381,7 +350,7 @@ class _MeiChecker:
 
 
 def _mei_summary(path):
-    """Count _MEI dirs and detect orphans. Returns (total, orphaned)."""
+    """(total, orphaned) _MEI dir counts."""
     checker = _MeiChecker()
     total = orphaned = 0
     for e in os.scandir(path):
@@ -393,7 +362,6 @@ def _mei_summary(path):
 
 
 def _mei_status_str(path):
-    """Format _MEI dir summary string, or empty if none."""
     total, orphaned = _mei_summary(path)
     if not total:
         return ""
@@ -404,7 +372,7 @@ def _mei_status_str(path):
 
 
 def ramdisk_status() -> list:
-    """Scan for SPSA RAM disks. Returns list of (drive, info_string) tuples."""
+    """[(drive, info)] for our RAM disks."""
     if sys.platform != "win32":
         shm = "/dev/shm/spsa_temp"
         if os.path.isdir(shm):
@@ -437,13 +405,10 @@ def ramdisk_status() -> list:
     return found
 
 
-# --- CLI ---
-
 def main():
     parser = argparse.ArgumentParser(description="SPSA RAM disk management tool")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # create
     p_create = sub.add_parser("create", help="Create a RAM disk for engine temp files")
     p_create.add_argument("--engine", required=True, help="Path to engine binary")
     p_create.add_argument("--ref", default="", help="Path to reference engine binary")
@@ -454,20 +419,16 @@ def main():
     p_create.add_argument("--factor", type=float, default=2.6, help="Decompression multiplier (default: 2.6)")
     p_create.add_argument("--no-install", action="store_true", help="Don't auto-install ImDisk if missing")
 
-    # remove
     p_remove = sub.add_parser("remove", help="Remove an SPSA RAM disk")
     p_remove.add_argument("--drive", default="", help="Drive letter to remove; auto-detect if omitted")
 
-    # clean
     p_clean = sub.add_parser("clean", help="Remove orphaned _MEI* dirs from RAM disk")
     p_clean.add_argument("--drive", default="", help="Drive letter to clean; auto-detect if omitted")
 
-    # status
     sub.add_parser("status", help="Show active SPSA RAM disks")
 
     args = parser.parse_args()
 
-    # Setup logging to console
     logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s",
                         datefmt="%Y-%m-%d %H:%M:%S", level=logging.INFO)
 
