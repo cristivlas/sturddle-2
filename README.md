@@ -59,6 +59,7 @@ Starting with version 2.6.0, a distributed SPSA tuner is included in the project
 It uses a coordinator/worker architecture designed for small heterogeneous LANs and provides
 a live web dashboard for monitoring progress.
 
-See [tools/tuneup/spsa/README.md](tools/tuneup/spsa/README.md) for setup and usage.
+The tuner now lives in its own repo, [sturddle-spsa](https://github.com/cristivlas/sturddle-spsa),
+checked out as a submodule under `tools/tuneup/spsa`. See its README for setup and usage.
 Use `tools/tuneup/spsa/apply.py` to apply tuning results from `spsa_state.json` to `config.h`.
 

@@ -13,3 +13,6 @@
 [submodule "Fathom"]
 	path = Fathom
 	url = https://github.com/cristivlas/Fathom.git
+[submodule "tools/tuneup/spsa"]
+	path = tools/tuneup/spsa
+	url = https://github.com/cristivlas/sturddle-spsa.git
