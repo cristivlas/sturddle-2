@@ -1,67 +1,45 @@
 #!/usr/bin/env python3
-
 import math
 import sys
-from scipy.stats import norm
 
 
-def calculate_elo_rating(wins, losses, draws):
-    """
-    Calculate ELO rating and confidence margin from game results.
+def elo(score):
+    if score <= 0:
+        return -math.inf
+    if score >= 1:
+        return math.inf
+    return -400.0 * math.log10(1.0 / score - 1.0)
 
-    Args:
-    losses (int): Number of losses
-    wins (int): Number of wins
-    draws (int): Number of draws
-
-    Returns:
-    dict: A dictionary containing ELO rating calculations
-    """
-    # Calculate total games and performance ratio
-    total_games = losses + wins + draws
-    performance_ratio = (wins + 0.5 * draws) / total_games
-    elo_rating = 400 * math.log10(performance_ratio / (1 - performance_ratio))
-    standard_error = math.sqrt((performance_ratio * (1 - performance_ratio)) / total_games)
-    confidence_interval = 1.96 * standard_error * 400
-
-    # LOS calculation using cumulative normal distribution
-    los = norm.cdf(elo_rating / (standard_error * 400)) * 100  # LOS as percentage
-
-    return {
-        'total_games': total_games,
-        'performance_ratio': performance_ratio * 100,
-        'elo_rating': round(elo_rating, 2),
-        'confidence_interval': round(confidence_interval, 2),
-        'elo_range_low': round(elo_rating - confidence_interval, 2),
-        'elo_range_high': round(elo_rating + confidence_interval, 2),
-        'los': round(los, 2)
-    }
 
 def main():
-    # Check if correct number of arguments is provided
     if len(sys.argv) != 4:
-        print("Usage: python elo_calculator.py <wins> <losses> <draws>")
-        sys.exit(1)
-
+        sys.exit(f"usage: {sys.argv[0]} <wins> <losses> <draws>")
     try:
-        # Convert command-line arguments to integers
-        wins = int(sys.argv[1])
-        losses = int(sys.argv[2])
-        draws = int(sys.argv[3])
+        wins, losses, draws = map(int, sys.argv[1:])
     except ValueError:
-        print("Error: Arguments must be integers")
-        sys.exit(1)
+        sys.exit("wins, losses and draws must be integers")
+    if min(wins, losses, draws) < 0:
+        sys.exit("wins, losses and draws must be >= 0")
+    games = wins + losses + draws
+    if games <= 0:
+        sys.exit("no games")
 
-    result = calculate_elo_rating(wins, losses, draws)
+    score = (wins + 0.5 * draws) / games
+    variance = (wins * (1 - score) ** 2 + losses * score**2 + draws * (0.5 - score) ** 2) / games
+    margin = 1.96 * math.sqrt(variance / games)
+    low, high = elo(score - margin), elo(score + margin)
+    half = math.inf if math.isinf(low) and low == high else (high - low) / 2
+    decisive = wins + losses
+    los = 0.5 * (1 + math.erf((wins - losses) / math.sqrt(2 * decisive))) if decisive else 0.5
 
     print(f"\nGame Results: {wins} wins, {losses} losses, {draws} draws")
-    print(f"Total Games: {result['total_games']}")
-    print(f"Performance Ratio: {result['performance_ratio']:.2f}%")
-    print(f"ELO Rating: {result['elo_rating']}")
-    print(f"95% Confidence Interval: ±{result['confidence_interval']}")
-    print(f"ELO Rating Range: [{result['elo_range_low']}, {result['elo_range_high']}]")
-    print(f"LOS: {result['los']}%")
+    print(f"Total Games: {games}")
+    print(f"Performance Ratio: {100 * score:.2f}%")
+    print(f"ELO Rating: {elo(score):.2f}")
+    print(f"95% Confidence Interval: ±{half:.2f}")
+    print(f"ELO Rating Range: [{low:.2f}, {high:.2f}]")
+    print(f"LOS: {100 * los:.2f}%")
+
 
 if __name__ == "__main__":
     main()
-
