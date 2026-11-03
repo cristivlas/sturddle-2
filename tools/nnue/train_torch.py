@@ -2,19 +2,10 @@
 """
 PyTorch trainer for the Sturddle Chess engine's NNUE.
 Copyright (c) 2023 - 2026 Cristian Vlasceanu.
-
-Port of train.py (TF) to PyTorch. Primary optimizer is SGD+momentum.
-Loads / exports the same flat float32 weights.bin layout as the TF trainer so a
-TF-trained net can be continued here and the result consumed by the C++ engine.
-
-Layer export order (must match C++ context.cpp load order):
-    hidden_1a, hidden_1b, pool, hidden_2, hidden_3, out
-Each layer: kernel (in, out) float32 row-major, then bias (out,) float32.
-pool is kernel-only (no bias): 2 x ACCUMULATOR_SIZE floats, side-to-move
-major (black-to-move block first), init 1/POOL_SIZE == average pooling.
 """
 
 import argparse
+import contextlib
 import json
 import logging
 import math
@@ -28,128 +19,227 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# ---- architecture constants (keep in sync with nnue.h / context.cpp) ----
-ACTIVE_INPUTS = 769
-ACCUMULATOR_SIZE = 2048
-POOL_SIZE = 8
-POOLED = ACCUMULATOR_SIZE // POOL_SIZE  # 256
-MAIN_BUCKETS = 16  # 4 pawn x 4 king-file
-INPUTS_B = 256  # kings + pawns
-HIDDEN_2 = 16
-HIDDEN_3 = 16
+# Architecture constants (keep in sync with nnue.h / model.h)
+ACTIVE_INPUTS = 768
+MAX_PIECES = 32
+ACCUMULATOR_SIZE = 1024  # per perspective
+L1_INPUTS = ACCUMULATOR_SIZE  # 2 views x half the accumulator
+KING_BLOCKS = 32  # king bucket x opponent queen
+PROFILE_BUCKETS = 16  # pawn count x king side
+OUTCOME_SIDE_KEYS = ("outcome_scale_wtm", "outcome_scale_btm")  # per-side profile keys, white to move first
+STACKS = 32  # piece count x queens (mover, other)
+HIDDEN_2 = 32
+HIDDEN_3 = 32
+
+# black-view feature index: color swap (64) + rank flip (56)
+PERSPECTIVE_XOR = 120
 
 Q_SCALE = 1024
-# 32 pieces + side-to-move + bias == 34
-Q_MAX_A = 32767 / Q_SCALE / 34
-# (8 pawns + 1 king) x 2 + bias == 19
-Q_MAX_B = 32767 / Q_SCALE / 19
+# 32 pieces + bias == 33 terms; floor(32767 / 33) LSB so the bound is exact
+Q_MAX_A = 992 / Q_SCALE
+
+# activation: bytes 0..127 at scale 128
+ACT_CLAMP = 1023 / Q_SCALE
+Q_ACT = 128
+ACT_MAX = 127 / Q_ACT
+
+# hidden_2: s8 weights at scale 128, int32 bias at the product scale
+# |w| <= 64: two 4-byte blocks summed in int16 cannot saturate (AVX2 without VNNI)
+Q_W2 = 128
+Q_MAX_W2 = 64 / Q_W2
+Q_B2 = Q_ACT * Q_W2
 
 SCALE = 100.0
 
+OUTCOME_SCALE_CI = 0.02  # fitted outcome scale: 95% CI as a fraction of S
+OUTCOME_SCALE_START = 400.0  # Newton start, cp
+FIT_READ_SLICES = 256  # slices per read while fitting
+
 
 # ---------------------------------------------------------------------------
-# Feature unpacking and bucketing (mirror tools/nnue/train.py exactly)
+# Feature unpacking and bucketing
 # ---------------------------------------------------------------------------
 def unpack_bits(packed):
-    """packed: (B, 13) uint64 [12 bitboards + turn] -> (B, 769) float32 features.
+    """packed: (B, 13) int64 [12 bitboards + turn] -> (B, 768) float32 white-view features.
 
     Feature index idx within a 64-block holds bitboard bit (63 - idx)."""
     bitboards = packed[:, :12]  # (B, 12) int64
-    turn = packed[:, 12:13]  # (B, 1)
     shifts = torch.arange(63, -1, -1, device=packed.device, dtype=torch.int64)
     bits = (bitboards.unsqueeze(-1) >> shifts) & 1  # (B, 12, 64)
-    feats = bits.reshape(bits.shape[0], 12 * 64)  # (B, 768)
-    return torch.cat([feats, turn], dim=1).float()  # (B, 769)
+    return bits.reshape(bits.shape[0], 12 * 64).float()  # (B, 768)
 
 
-# right half = files e-h: feature idx where (63 - idx) % 8 >= 4
-_RIGHT_MASK = torch.tensor([1.0 if ((63 - idx) % 8) >= 4 else 0.0 for idx in range(64)], dtype=torch.float32)
+_PERSPECTIVE_PERM = torch.arange(ACTIVE_INPUTS) ^ PERSPECTIVE_XOR
 
 
-def compute_bucket_id(features):
-    """features: (B, 769) -> (B,) bucket id = pawn_id * 4 + king_id."""
-    right_mask = _RIGHT_MASK.to(features.device)
-    # black king [0:64], white king [64:128], black pawns [128:192], white pawns [192:256]
-    pawn_count = features[:, 128:256].sum(dim=1)
-    pawn_id = torch.where(
-        pawn_count <= 4.0,
-        torch.zeros_like(pawn_count),
-        torch.clamp(torch.floor((pawn_count - 1.0) / 4.0), max=3.0),
-    )
-    pawn_id = pawn_id.long()
+def black_view(features):
+    """White-view features -> black-view features (colors swapped, ranks flipped)."""
+    return features[:, _PERSPECTIVE_PERM.to(features.device)]
 
-    wk_right = (features[:, 64:128] * right_mask).sum(dim=1).long()
-    bk_right = (features[:, 0:64] * right_mask).sum(dim=1).long()
-    king_id = wk_right * 2 + bk_right
-    return pawn_id * 4 + king_id
+
+# own king square, a1 = 0 -> king bucket
+# fmt: off
+KING_BUCKETS = [
+     0,  1,  2,  3,  3,  2,  1,  0,
+     4,  5,  6,  7,  7,  6,  5,  4,
+     8,  9, 10, 11, 11, 10,  9,  8,
+     8,  9, 10, 11, 11, 10,  9,  8,
+    12, 12, 13, 13, 13, 13, 12, 12,
+    12, 12, 13, 13, 13, 13, 12, 12,
+    14, 14, 15, 15, 15, 15, 14, 14,
+    14, 14, 15, 15, 15, 15, 14, 14,
+]
+# fmt: on
+
+_KING_BUCKETS = torch.tensor(KING_BUCKETS)
+_MIRROR_PERM = torch.arange(ACTIVE_INPUTS) ^ 7
+
+
+def king_block(features):
+    """(B, 768) view -> (hidden_1a block, mirrored) per row, from own king [64:128] and opponent queens [640:704]."""
+    sq = 63 - features[:, 64:128].argmax(dim=1)
+    mirrored = sq % 8 >= 4
+    queen = features[:, 640:704].any(dim=1).long()
+    return _KING_BUCKETS.to(features.device)[torch.where(mirrored, sq ^ 7, sq)] * 2 + queen, mirrored
+
+
+def mirror_files(features, mirrored):
+    features[mirrored] = features[mirrored][:, _MIRROR_PERM.to(features.device)]
+    return features
+
+
+def stack_index(packed):
+    pieces = unpack_bits(packed).sum(dim=1).long()
+    wtm = packed[:, 12] == 1
+    black_q, white_q = packed[:, 10] != 0, packed[:, 11] != 0
+    mover_q = torch.where(wtm, white_q, black_q).long()
+    other_q = torch.where(wtm, black_q, white_q).long()
+    return (pieces - 1) // 4 * 4 + mover_q * 2 + other_q
+
+
+def king_blocks(packed):
+    white = unpack_bits(packed)
+    return king_block(torch.cat([white, black_view(white)], dim=0))[0]
+
+
+# bucket kinds the engine counts (NNUE_COUNTS): name -> (packed -> ids, count); ids: all rows' first view, then the next
+PARTITIONS = {"stack": (stack_index, STACKS), "block": (king_blocks, KING_BLOCKS)}
+
+
+def pairwise(acc):
+    lo, hi = torch.clamp(acc, 0.0, ACT_CLAMP).chunk(2, dim=1)
+    return lo * hi
+
+
+def round_half_away(x):
+    """Round ties away from zero, like the engine loader's std::round."""
+    return torch.sign(x) * torch.floor(torch.abs(x) + 0.5)
+
+
+def fake_quant(x, scale):
+    """Round to 1/scale in the forward pass; straight-through gradient."""
+    return x + (round_half_away(x * scale) / scale - x).detach()
+
+
+def fake_floor(x, scale):
+    """Floor to 1/scale in the forward pass (the engine's >> 3); straight-through gradient."""
+    return x + (torch.floor(x * scale) / scale - x).detach()
+
+
+def exact_fp32(device, quant):
+    """Integer-grid arithmetic must not be downcast under autocast; float runs keep mixed precision."""
+    return torch.autocast(device_type=device.type, enabled=False) if quant else contextlib.nullcontext()
 
 
 class BucketedDense(nn.Module):
-    """hidden_1a: per-row bucket selects a (ACTIVE_INPUTS, units) weight block.
+    """hidden_1a: per-row block selects a (ACTIVE_INPUTS, units) weight block.
 
-    Kernel stored as one (num_buckets * ACTIVE_INPUTS, units) tensor, bucket-major,
-    matching the C++ inference convention base = bucket * ACTIVE_INPUTS and the flat
-    weights.bin layout."""
+    Kernel stored as one (num_blocks * ACTIVE_INPUTS, units) tensor, block-major,
+    matching the C++ inference convention base = block * ACTIVE_INPUTS and the flat
+    weights.bin layout. Returns the linear accumulator (no activation)."""
 
-    def __init__(self, num_buckets, in_features, units):
+    def __init__(self, num_blocks, in_features, units):
         super().__init__()
-        self.num_buckets = num_buckets
         self.in_features = in_features
-        self.units = units
-        # weight laid out (num_buckets * in_features, units) to match .bin (in, out)
-        self.weight = nn.Parameter(torch.empty(num_buckets * in_features, units))
+        # weight laid out (num_blocks * in_features, units) to match .bin (in, out)
+        self.weight = nn.Parameter(torch.empty(num_blocks * in_features, units))
         self.bias = nn.Parameter(torch.zeros(units))
         nn.init.kaiming_normal_(self.weight, nonlinearity="relu")
 
-    def forward(self, features):
-        bucket_id = compute_bucket_id(features)  # (B,)
-        blocks = self.weight.view(self.num_buckets, self.in_features, self.units)
-        out = None
-        for b in range(self.num_buckets):
-            rows = (bucket_id == b).nonzero(as_tuple=True)[0]
-            if rows.numel():
-                r = features[rows] @ blocks[b]
-                if out is None:  # match matmul dtype (AMP -> Half)
-                    out = features.new_empty(features.shape[0], self.units, dtype=r.dtype)
-                out[rows] = r
-        if out is None:
-            out = features.new_zeros(features.shape[0], self.units)
-        out = out + self.bias
-        return F.relu(out)
+    def forward(self, features, block, quant):
+        w, b = self.weight, self.bias
+        if quant:
+            w, b = fake_quant(w, Q_SCALE), fake_quant(b, Q_SCALE)
+        present, inputs = features.topk(MAX_PIECES, dim=1)
+        rows = block.unsqueeze(1) * self.in_features + inputs
+        return F.embedding_bag(rows, w, mode="sum", per_sample_weights=present) + b
+
+
+class Stacked(nn.Module):
+    """STACKS independent dense layers; each row uses the one its stack index selects.
+
+    Weight (STACKS, in, out) matches the .bin (in, out) layout per stack. All stacks
+    run as one matmul (no per-sample weight gather), then rows are selected."""
+
+    def __init__(self, in_features, units, init_std=None):
+        super().__init__()
+        self.units = units
+        bound = 1.0 / math.sqrt(in_features)
+        self.weight = nn.Parameter(torch.empty(STACKS, in_features, units))
+        self.bias = nn.Parameter(torch.empty(STACKS, units).uniform_(-bound, bound))
+        if init_std is None:
+            nn.init.uniform_(self.weight, -bound, bound)
+        else:
+            nn.init.normal_(self.weight, std=init_std)
+
+    def forward(self, x, stack, w=None, b=None):
+        w = self.weight if w is None else w
+        b = self.bias if b is None else b
+        w_cat = w.permute(1, 0, 2).reshape(w.shape[1], STACKS * self.units)  # (in, STACKS * out)
+        y = (x @ w_cat).view(-1, STACKS, self.units) + b
+        return y[torch.arange(y.shape[0], device=y.device), stack]
 
 
 class NNUE(nn.Module):
-    def __init__(self):
+    def __init__(self, qat=False):
         super().__init__()
-        self.hidden_1a = BucketedDense(MAIN_BUCKETS, ACTIVE_INPUTS, ACCUMULATOR_SIZE)
-        self.hidden_1b = nn.Linear(INPUTS_B, POOLED)  # linear (no activation)
-        # learned pooling, one weight set per side to move; init == average pooling
-        self.pool = nn.Parameter(torch.full((2, POOLED, POOL_SIZE), 1.0 / POOL_SIZE))
-        self.hidden_2 = nn.Linear(POOLED, HIDDEN_2)
-        self.hidden_3 = nn.Linear(HIDDEN_2, HIDDEN_3)
-        self.out = nn.Linear(HIDDEN_3, 1)
-        for m in (self.hidden_1b, self.hidden_2, self.hidden_3):
-            nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
+        self.qat = qat  # fake-quant in training; always on in eval()
+        self.hidden_1a = BucketedDense(KING_BLOCKS, ACTIVE_INPUTS, ACCUMULATOR_SIZE)
+        self.hidden_2 = Stacked(L1_INPUTS, HIDDEN_2, init_std=math.sqrt(2.0 / L1_INPUTS))
+        self.hidden_3 = Stacked(HIDDEN_2, HIDDEN_3, init_std=math.sqrt(2.0 / HIDDEN_2))
+        self.out = Stacked(HIDDEN_3, 1)
+
+    def accumulator(self, packed, quant):
+        """Linear accumulator halves (white view, black view), each (B, ACCUMULATOR_SIZE)."""
+        white = unpack_bits(packed)
+        views = torch.cat([white, black_view(white)], dim=0)
+        block, mirrored = king_block(views)
+        with exact_fp32(packed.device, quant):
+            both = self.hidden_1a(mirror_files(views, mirrored), block, quant)
+        n = packed.shape[0]
+        return both[:n], both[n:]
 
     def forward(self, packed):
-        feats = unpack_bits(packed)  # (B, 769)
-        acc = self.hidden_1a(feats)  # (B, 2048) relu'd
-        kp = feats[:, :INPUTS_B]
-        mod = self.hidden_1b(kp)  # (B, 256) linear
+        quant = self.qat or not self.training
+        stack = stack_index(packed)
 
-        stm = packed[:, 12].long()  # 0 = black to move, 1 = white
-        w = self.pool[stm]  # (B, 256, 8)
-        pooled = (acc.view(acc.shape[0], POOLED, POOL_SIZE) * w).sum(dim=-1)  # (B, 256)
-        residual = pooled + pooled * mod  # pooled * (1 + mod)
+        with exact_fp32(packed.device, quant):
+            acc_w, acc_b = self.accumulator(packed, quant)
+            pw_w, pw_b = pairwise(acc_w), pairwise(acc_b)
+            wtm = packed[:, 12:13] == 1
+            a = torch.cat([torch.where(wtm, pw_w, pw_b), torch.where(wtm, pw_b, pw_w)], dim=1)
+            w2, b2 = self.hidden_2.weight, self.hidden_2.bias
+            if quant:
+                a = fake_floor(a, Q_ACT)
+                w2, b2 = fake_quant(w2, Q_W2), fake_quant(b2, Q_B2)
+            x = F.relu(self.hidden_2(a, stack, w2, b2))
 
-        x = F.relu(self.hidden_2(residual))
-        x = F.relu(self.hidden_3(x))
-        return self.out(x)  # (B, 1)
+        x = F.relu(self.hidden_3(x, stack))
+        return self.out(x, stack)  # (B, 1)
 
 
 # ---------------------------------------------------------------------------
-# Quantization constraint: round to 1/Q_SCALE and clamp. Applied in-place after
-# each optimizer step (PyTorch has no kernel/bias constraint hook).
+# Clamp latent weights in place after each optimizer step
 # ---------------------------------------------------------------------------
 def _core(model):
     """Unwrap nn.DataParallel to reach the real NNUE layers."""
@@ -157,68 +247,55 @@ def _core(model):
 
 
 @torch.no_grad()
-def apply_constraints(model, quantize_round):
+def apply_constraints(model):
     model = _core(model)
-
-    def clamp(p, qmax):
-        if quantize_round:
-            p.copy_(torch.round(p * Q_SCALE) / Q_SCALE)
-        p.clamp_(-qmax, qmax)
-
-    clamp(model.hidden_1a.weight, Q_MAX_A)
-    clamp(model.hidden_1a.bias, Q_MAX_A)
-    clamp(model.hidden_1b.weight, Q_MAX_B)
-    clamp(model.hidden_1b.bias, Q_MAX_B)
-    # hidden_2 / hidden_3 / out are unconstrained (hidden_2 is int16 at 4096 in C++ under NNUE_L2_INT16, see tools/nnue/l2_int16_check.py)
+    model.hidden_1a.weight.clamp_(-Q_MAX_A, Q_MAX_A)
+    model.hidden_1a.bias.clamp_(-Q_MAX_A, Q_MAX_A)
+    model.hidden_2.weight.clamp_(-Q_MAX_W2, Q_MAX_W2)
 
 
 # ---------------------------------------------------------------------------
 # Flat weights.bin load / save (C++-compatible: kernel (in, out) then bias)
 # ---------------------------------------------------------------------------
-# (name, in, out, bias count); BucketedDense uses num_buckets*in as the stored row count.
-# pool is kernel-only: (2 * ACCUMULATOR_SIZE, 1), stm-major, no bias.
-_EXPORT = [
-    ("hidden_1a", MAIN_BUCKETS * ACTIVE_INPUTS, ACCUMULATOR_SIZE, ACCUMULATOR_SIZE),
-    ("hidden_1b", INPUTS_B, POOLED, POOLED),
-    ("pool", 2 * ACCUMULATOR_SIZE, 1, 0),
-    ("hidden_2", POOLED, HIDDEN_2, HIDDEN_2),
-    ("hidden_3", HIDDEN_2, HIDDEN_3, HIDDEN_3),
-    ("out", HIDDEN_3, 1, 1),
+# (name, in, out, bias count); BucketedDense uses num_blocks*in as the stored row count.
+# Stacked layers are named "<layer>.<stack>".
+_EXPORT = [("hidden_1a", KING_BLOCKS * ACTIVE_INPUTS, ACCUMULATOR_SIZE, ACCUMULATOR_SIZE)] + [
+    (f"{name}.{s}", i, o, o)
+    for s in range(STACKS)
+    for name, i, o in (("hidden_2", L1_INPUTS, HIDDEN_2), ("hidden_3", HIDDEN_2, HIDDEN_3), ("out", HIDDEN_3, 1))
 ]
 
+# on-grid export: (kernel scale, bias scale, kernel clamp, bias clamp)
+_QUANT = {
+    "hidden_1a": (Q_SCALE, Q_SCALE, Q_MAX_A, Q_MAX_A),
+    "hidden_2": (Q_W2, Q_B2, Q_MAX_W2, None),
+}
 
-def _layer_kernel_bias(model, name):
-    """Return (kernel (in,out) np.float32, bias (out,) np.float32) for export."""
+
+def _layer_params(model, name):
+    """(kernel (in, out), bias (out,)) parameter views for an _EXPORT entry."""
     model = _core(model)
-    if name == "pool":
-        k = model.pool.detach().cpu().numpy().reshape(-1, 1)  # (2*2048, 1), stm-major
-        b = np.zeros(0, dtype=np.float32)
-    elif name == "hidden_1a":
-        k = model.hidden_1a.weight.detach().cpu().numpy()  # already (in, out)
-        b = model.hidden_1a.bias.detach().cpu().numpy()
-    else:
-        m = getattr(model, name)
-        k = m.weight.detach().cpu().numpy().T  # (out,in) -> (in,out)
-        b = m.bias.detach().cpu().numpy()
-    return k.astype(np.float32), b.astype(np.float32)
+    if name == "hidden_1a":
+        return model.hidden_1a.weight, model.hidden_1a.bias
+    layer, s = name.split(".")
+    m = getattr(model, layer)
+    return m.weight[int(s)], m.bias[int(s)]
+
+
+def _on_grid(a, scale, qmax):
+    a = np.sign(a) * np.floor(np.abs(a * scale) + 0.5) / scale + 0.0  # + 0.0: no -0.0, so re-export is byte-identical
+    return a if qmax is None else np.clip(a, -qmax, qmax)
 
 
 @torch.no_grad()
 def save_bin(model, path, quantize_round=False):
-    def q(a, qmax):
-        if quantize_round:
-            a = np.round(a * Q_SCALE) / Q_SCALE
-            a = np.clip(a, -qmax, qmax)
-        return a.astype(np.float32)
-
-    qmax = {"hidden_1a": Q_MAX_A, "hidden_1b": Q_MAX_B}
     tmp = path + ".tmp"
     with open(tmp, "wb") as f:
         for name, _, _, _ in _EXPORT:
-            k, b = _layer_kernel_bias(model, name)
-            m = qmax.get(name)
-            if m is not None:
-                k, b = q(k, m), q(b, m)
+            k, b = (p.detach().cpu().numpy().astype(np.float32) for p in _layer_params(model, name))
+            q = _QUANT.get(name.split(".")[0])
+            if quantize_round and q:
+                k, b = _on_grid(k, q[0], q[2]), _on_grid(b, q[1], q[3])
             k.tofile(f)
             b.tofile(f)
         f.flush()
@@ -229,26 +306,17 @@ def save_bin(model, path, quantize_round=False):
 
 @torch.no_grad()
 def load_bin(model, path, count=-1):
-    model = _core(model)
     data = np.fromfile(path, dtype=np.float32, count=count)
     expected = sum(i * o + bn for _, i, o, bn in _EXPORT)
     if data.size != expected:
         raise ValueError(f"{path}: expected {expected} floats, got {data.size}")
     off = 0
     for name, i, o, bn in _EXPORT:
-        k = data[off : off + i * o].reshape(i, o)
+        k, b = _layer_params(model, name)
+        k.copy_(torch.from_numpy(data[off : off + i * o].reshape(i, o).copy()))
         off += i * o
-        b = data[off : off + bn]
+        b.copy_(torch.from_numpy(data[off : off + bn].copy()))
         off += bn
-        if name == "pool":
-            model.pool.copy_(torch.from_numpy(k.reshape(2, POOLED, POOL_SIZE).copy()))
-        elif name == "hidden_1a":
-            model.hidden_1a.weight.copy_(torch.from_numpy(k.copy()))
-            model.hidden_1a.bias.copy_(torch.from_numpy(b.copy()))
-        else:
-            m = getattr(model, name)
-            m.weight.copy_(torch.from_numpy(k.T.copy()))  # (in,out)->(out,in)
-            m.bias.copy_(torch.from_numpy(b.copy()))
     print(f"Loaded weights from {path}")
 
 
@@ -302,77 +370,97 @@ def combined_loss(y_pred, y_true, args):
 
 
 # ---------------------------------------------------------------------------
-# H5 dataset: yields whole batches (contiguous slices), shuffled / sampled.
+# H5 dataset: yields batches of random slices, shuffled / sampled.
 # ---------------------------------------------------------------------------
 class H5Batches(torch.utils.data.Dataset):
     def __init__(
         self,
         path,
         batch_size,
+        slice_rows,
+        alt_profile_dir,
         sample=None,
         smoothing=0.025,
         filter=None,
         no_capture=False,
-        balance=False,
         profile_ratios=None,
         outcome_scale=400.0,
     ):
         self.path = path
-        self.batch_size = batch_size
         self.sample = sample
         self.smoothing = smoothing
         self.filter = filter
         self.no_capture = no_capture
-        self.balance = balance
         print(f"Loading dataset {path}")
         with h5py.File(path, "r") as hf:
             n = hf["data"].shape[0]
             self.cols = hf["data"].shape[1]
             self.member_starts, self.member_profiles, self.member_oscales = member_profile_table(
-                hf["data"], path, profile_ratios, outcome_scale
+                hf["data"], path, profile_ratios, outcome_scale, alt_profile_dir
             )
-        self.trivial_profiles = bool(np.all(self.member_profiles == 1.0)) and bool(
-            np.all(self.member_oscales == self.member_oscales.flat[0])
-        )
+        self.set_default_outcome_scale(outcome_scale)
         print(f"{n:,} rows.")
         logging.info("dataset %s: %s rows", path, f"{n:,}")
         self.feature_count = 13
-        self.num_batches = n // batch_size
+        self.slice_rows = slice_rows
+        self.slices_per_batch = batch_size // slice_rows
+        self.num_offsets = slice_rows if slice_rows < batch_size else 1  # contiguous: aligned, as before
+        self.num_slices = (n - self.num_offsets + 1) // slice_rows
+        self.num_batches = self.num_slices // self.slices_per_batch
+        if self.num_batches < 1:
+            raise ValueError(f"{path}: {n:,} rows, less than one batch")
+        print(f"{self.slices_per_batch} slice(s) of {slice_rows} rows per batch")
+        self.indices = np.empty((0, self.slices_per_batch), dtype=np.int64)  # until reshuffle()
+        self.offset = 0
+        self.invalid = 0  # rows read without one king per side, per process
         self.hf = None  # lazy per-worker
-        self.reshuffle()
 
-    def reshuffle(self):
-        if self.sample:
-            k = max(1, int(self.num_batches * self.sample))
-            self.indices = np.random.choice(self.num_batches, k, replace=False)
-        else:
-            self.indices = np.random.permutation(self.num_batches)
+    def set_default_outcome_scale(self, s):
+        """Outcome scale for members without one in their profile (NaN until known)."""
+        self.member_oscales[np.isnan(self.member_oscales)] = s
+        self.trivial_profiles = bool(np.all(self.member_profiles == 1.0)) and bool(
+            np.all(self.member_oscales == self.member_oscales.flat[0])
+        )
+
+    def reshuffle(self, device):
+        k = max(1, int(self.num_batches * self.sample)) if self.sample else self.num_batches
+        dtype = torch.int32 if self.num_slices <= torch.iinfo(torch.int32).max else torch.int64
+        slices = torch.randperm(self.num_slices, device=device, dtype=dtype)[: k * self.slices_per_batch]
+        self.indices = slices.cpu().numpy().reshape(k, self.slices_per_batch)
+        self.offset = np.random.randint(self.num_offsets)
 
     def __len__(self):
         return len(self.indices)
 
     def __getitem__(self, idx):
+        starts = np.sort(self.indices[idx]).astype(np.int64) * self.slice_rows + self.offset
+        x, y, _ = self.read_slices(starts)
+        return torch.from_numpy(x), torch.from_numpy(y)
+
+    def read_slices(self, starts):
+        """(x, y, keep) for slices at sorted row offsets starts; keep: filters and valid positions, all rows read."""
+        assert np.all(np.diff(starts) >= self.slice_rows), "starts must be sorted and disjoint"
         if self.hf is None:  # open inside worker
             self.hf = h5py.File(self.path, "r")
         data = self.hf["data"]
-        i = self.indices[idx]
-        s, e = i * self.batch_size, (i + 1) * self.batch_size
-        rows = data[s:e]  # (B, cols) uint64
+        # one read for all slices: a VDS walks every mapping per read call
+        space = data.id.get_space()
+        space.select_none()
+        for s in starts:
+            space.select_hyperslab((int(s), 0), (self.slice_rows, self.cols), op=h5py.h5s.SELECT_OR)
+        rows = np.empty((len(starts) * self.slice_rows, self.cols), dtype=data.dtype)  # (B, cols) uint64
+        data.id.read(h5py.h5s.create_simple(rows.shape), space, rows)
 
         x = rows[:, : self.feature_count].astype(np.int64)
-        wtm = x[:, 12] == 1
 
         # Member (source file) of each row, for per-member label-scale profiles
         member_ids = None
         if not self.trivial_profiles:
-            member_ids = np.searchsorted(self.member_starts, np.arange(s, e), side="right") - 1
+            positions = (starts[:, np.newaxis] + np.arange(self.slice_rows)).ravel()
+            member_ids = np.searchsorted(self.member_starts, positions, side="right") - 1
 
         y_eval = rows[:, self.feature_count].astype(np.int64).astype(np.float32) / SCALE
-        y_eval = np.where(wtm, y_eval, -y_eval)
-
-        y_out = rows[:, self.feature_count + 1].astype(np.float32) - 1.0  # 0,1,2 -> -1,0,1
-        y_out = np.where(wtm, y_out, -y_out)
-        y_out = (y_out + 1.0) / 2.0  # -> 0,0.5,1
+        y_out = rows[:, self.feature_count + 1].astype(np.float32) / 2.0  # loss, draw, win
         s_ = self.smoothing
         y_out = y_out * (1 - s_) + 0.5 * s_
 
@@ -388,31 +476,65 @@ class H5Batches(torch.utils.data.Dataset):
             is_capture = (opp_occ & np.left_shift(np.uint64(1), to_square)) != 0
             keep = ~is_capture if keep is None else (keep & ~is_capture)
 
-        if keep is not None:
-            x, y_eval, y_out = x[keep], y_eval[keep], y_out[keep]
-            if member_ids is not None:
-                member_ids = member_ids[keep]
+        valid = (popcount(rows[:, 0]) == 1) & (popcount(rows[:, 1]) == 1)  # one king per side
+        if not valid.all():
+            if not self.invalid:
+                logging.warning("%s: dropping rows without one king per side", self.path)
+            self.invalid += int((~valid).sum())
+        keep = valid if keep is None else (keep & valid)
 
-        # Label/outcome scales reflect how the source labeled the original position,
-        # so compute before balance mirroring (which QK<->KQ swaps the bucket)
+        x, y_eval, y_out = x[keep], y_eval[keep], y_out[keep]
+        if member_ids is not None:
+            member_ids = member_ids[keep]
+
         if self.trivial_profiles:
             label_scale = np.ones(x.shape[0], dtype=np.float32)
             outcome_scale = np.full(x.shape[0], self.member_oscales.flat[0], dtype=np.float32)
         else:
-            b = scale_buckets(x)
+            b = profile_buckets(x)
             label_scale = self.member_profiles[member_ids, b]
-            outcome_scale = self.member_oscales[member_ids, b]
-
-        if self.balance:
-            # Synthesize color-mirrored positions: swap colors + vertical mirror + flip STM.
-            x = np.concatenate([x, flip_position(x)], axis=0)
-            y_eval = np.concatenate([y_eval, -y_eval], axis=0)  # negate eval
-            y_out = np.concatenate([y_out, 1.0 - y_out], axis=0)  # swap win/loss, keep draws
-            label_scale = np.concatenate([label_scale, label_scale])
-            outcome_scale = np.concatenate([outcome_scale, outcome_scale])
+            side = np.where(x[:, 12] == 1, 0, 1)  # 0: white to move, 1: black
+            outcome_scale = self.member_oscales[member_ids, side, b]
 
         y = np.stack([y_eval, y_out, label_scale, outcome_scale], axis=1).astype(np.float32)
-        return torch.from_numpy(x), torch.from_numpy(y)
+        return x, y, keep
+
+
+def fit_outcome_scale(ds):
+    """(S, 95% CI half-width): outcome ~ sigmoid(calibrated cp / S) on the trainer's view of ds, logistic in 1/S;
+    random slices in doubling rounds until the slice-clustered CI is within OUTCOME_SCALE_CI of S."""
+    rng = np.random.default_rng()
+    cp, out, cluster = [], [], []
+    num, s, ci = FIT_READ_SLICES, math.nan, math.inf
+    while math.isnan(s) or ci > OUTCOME_SCALE_CI * s:
+        slices = np.sort(rng.choice(ds.num_slices, min(num, ds.num_slices), replace=False)).astype(np.int64)
+        for group in np.array_split(slices, -(-len(slices) // FIT_READ_SLICES)):
+            _, y, keep = ds.read_slices(group * ds.slice_rows)
+            cp.append(y[:, 0] / y[:, 2] * SCALE)
+            out.append((y[:, 1] - 0.5 * ds.smoothing) / (1.0 - ds.smoothing))  # unsmoothed
+            cluster.append(np.repeat(group, ds.slice_rows)[keep])
+        c, o, k = np.concatenate(cp), np.concatenate(out), np.concatenate(cluster)
+        beta = 1.0 / OUTCOME_SCALE_START
+        for _ in range(100):  # Newton; the 1-D logistic loss is convex in beta
+            p = 1.0 / (1.0 + np.exp(-np.clip(beta * c, -30.0, 30.0)))
+            hess = np.dot(p * (1.0 - p), c * c)
+            if not hess > 0:
+                raise ValueError(f"{ds.path}: outcome scale fit: no eval signal")
+            step = np.dot(p - o, c) / hess
+            beta -= step
+            if abs(step) < 1e-12 * abs(beta):
+                break
+        if not beta > 0:
+            raise ValueError(f"{ds.path}: outcome scale fit failed (beta {beta})")
+        g = np.bincount(np.unique(k, return_inverse=True)[1], weights=(p - o) * c)  # per-slice scores
+        s, ci = 1.0 / beta, 1.96 * math.sqrt(np.sum(g * g)) / hess / beta**2  # sandwich SE, delta method
+        if num >= ds.num_slices:
+            break
+        num *= 2
+    if ds.hf is not None:  # no open h5 handle across a fork
+        ds.hf.close()
+        ds.hf = None
+    return s, ci
 
 
 def vertical_mirror(bb):
@@ -455,12 +577,12 @@ else:
         return ((bb * np.uint64(0x0101010101010101)) >> np.uint64(56)).astype(np.float32)
 
 
-# Squares on files e-h, for king-file bucketing
+# Squares on files e-h, for king-side profile buckets
 FILES_EFGH = np.uint64(0xF0F0F0F0F0F0F0F0)
 
 
-def scale_buckets(x):
-    """Per-sample pawn x king-file bucket ids from raw bitboards, same scheme as compute_bucket_id."""
+def profile_buckets(x):
+    """Per-sample pawn x king-side profile bucket ids from raw bitboards."""
     xu = x.astype(np.uint64)
     pawns = popcount(xu[:, 2]) + popcount(xu[:, 3])
     pawn_id = np.where(pawns <= 4, 0, np.minimum((pawns - 1) // 4, 3))
@@ -474,8 +596,8 @@ def load_profile(path):
     with open(path) as f:
         profile = json.load(f)
     ratios = profile["ratios"] if isinstance(profile, dict) else profile
-    if not isinstance(ratios, list) or len(ratios) != MAIN_BUCKETS:
-        raise ValueError(f"{path}: expected a list of {MAIN_BUCKETS} bucket ratios")
+    if not isinstance(ratios, list) or len(ratios) != PROFILE_BUCKETS:
+        raise ValueError(f"{path}: expected a list of {PROFILE_BUCKETS} bucket ratios")
     ratios = np.array(ratios, dtype=np.float32)
     if not np.all(np.isfinite(ratios)) or np.any(ratios <= 0):
         raise ValueError(f"{path}: ratios must be positive and finite")
@@ -484,28 +606,52 @@ def load_profile(path):
 
 
 def load_outcome_scale(path, default):
-    """Per-bucket outcome_scale from a profile sidecar; missing key (legacy profile) -> default."""
+    """Outcome scales from a profile sidecar, shape (sides, buckets), white to move first.
+    Without per-side keys both sides use the pooled outcome_scale; legacy profiles without either get default."""
     with open(path) as f:
         profile = json.load(f)
-    scales = profile.get("outcome_scale") if isinstance(profile, dict) else None
-    if scales is None:
-        return np.full(MAIN_BUCKETS, default, dtype=np.float32)
-    scales = np.array(scales, dtype=np.float32)
-    if scales.shape != (MAIN_BUCKETS,) or not np.all(np.isfinite(scales)) or np.any(scales <= 0):
-        raise ValueError(f"{path}: outcome_scale must be {MAIN_BUCKETS} positive values")
-    logging.info("outcome_scale %s: %s", path, " ".join(f"{s:.0f}" for s in scales))
+    if not isinstance(profile, dict):
+        profile = {}
+    pooled = profile.get("outcome_scale")
+    sides = [profile.get(k, pooled) for k in OUTCOME_SIDE_KEYS]
+    if all(s is None for s in sides):
+        return np.full((len(OUTCOME_SIDE_KEYS), PROFILE_BUCKETS), default, dtype=np.float32)
+    if any(s is None for s in sides):
+        raise ValueError(f"{path}: needs both {' and '.join(OUTCOME_SIDE_KEYS)}, or outcome_scale")
+    scales = np.array(sides, dtype=np.float32)
+    shape = (len(OUTCOME_SIDE_KEYS), PROFILE_BUCKETS)
+    if scales.shape != shape or not np.all(np.isfinite(scales)) or np.any(scales <= 0):
+        raise ValueError(f"{path}: outcome scales must be {PROFILE_BUCKETS} positive values per side")
+    for k, s in zip(OUTCOME_SIDE_KEYS, scales):
+        logging.info("%s %s: %s", k, path, " ".join(f"{v:.0f}" for v in s))
     return scales
 
 
-def member_profile_table(data, filepath, profile_ratios, outcome_scale):
-    """Per-member profiles: (member start rows, ratio matrix, outcome-scale matrix), both (members x buckets).
+def load_engine(path):
+    """Engine a profile sidecar was calibrated with; None for legacy (untagged) profiles."""
+    with open(path) as f:
+        profile = json.load(f)
+    return profile.get("engine") if isinstance(profile, dict) else None
+
+
+def find_sidecar(path, alt_dir):
+    if alt_dir:
+        alt = os.path.join(alt_dir, os.path.basename(path) + ".profile.json")
+        if os.path.exists(alt):
+            return alt
+    return path + ".profile.json"
+
+
+def member_profile_table(data, filepath, profile_ratios, outcome_scale, alt_dir):
+    """Per-member profiles: start rows, ratios (members x buckets), outcome scales (members x sides x buckets).
 
     An explicit profile overrides everything (and keeps --outcome-scale). Otherwise
     each member of a virtual dataset (or the file itself if not virtual) uses the
-    <member>.profile.json sidecar when present, falling back to the container's
-    sidecar, then to all-ones ratios / --outcome-scale. One level, not recursive.
+    <member>.profile.json sidecar when present (alt_dir first, then side-by-side),
+    falling back to the container's sidecar, then to all-ones ratios / --outcome-scale.
+    One level, not recursive. The sidecars in use must share one engine, or all be legacy (untagged).
     """
-    default_os = np.full(MAIN_BUCKETS, outcome_scale, dtype=np.float32)
+    default_os = np.full((len(OUTCOME_SIDE_KEYS), PROFILE_BUCKETS), outcome_scale, dtype=np.float32)
     if profile_ratios is not None:
         return np.zeros(1, dtype=np.int64), profile_ratios[np.newaxis, :], default_os[np.newaxis, :]
 
@@ -521,49 +667,68 @@ def member_profile_table(data, filepath, profile_ratios, outcome_scale):
         members = [(0, filepath)]
     assert members[0][0] == 0, "first member must start at row 0"
 
-    default = np.ones(MAIN_BUCKETS, dtype=np.float32)
-    own_sidecar = filepath + ".profile.json"
+    default = np.ones(PROFILE_BUCKETS, dtype=np.float32)
+    own_sidecar = find_sidecar(filepath, alt_dir)
     if os.path.exists(own_sidecar):
         default = load_profile(own_sidecar)
         default_os = load_outcome_scale(own_sidecar, outcome_scale)
+        default_engine = load_engine(own_sidecar)
         print(f"{filepath}: default profile {own_sidecar}")
 
     cache = {}
+    owners = {own_sidecar: filepath}
+    engines = {}  # engines in use (None for legacy), each with one sidecar for the error message
     matched = 0
     profiles, oscales = [], []
     for start, path in members:
-        sidecar = path + ".profile.json"
+        sidecar = find_sidecar(path, alt_dir)
+        if owners.setdefault(sidecar, path) != path:
+            raise ValueError(f"{sidecar}: ambiguous, matches {owners[sidecar]} and {path}")
         if sidecar not in cache:
             if path != filepath and os.path.exists(sidecar):
-                cache[sidecar] = (load_profile(sidecar), load_outcome_scale(sidecar, outcome_scale))
+                cache[sidecar] = (load_profile(sidecar), load_outcome_scale(sidecar, outcome_scale), True)
+                engines.setdefault(load_engine(sidecar), sidecar)
                 print(f"{path}: using profile {sidecar}")
-                matched += 1
             else:
-                cache[sidecar] = (default, default_os)
-        r, o = cache[sidecar]
+                cache[sidecar] = (default, default_os, False)
+                if os.path.exists(own_sidecar):
+                    engines.setdefault(default_engine, own_sidecar)
+        r, o, own = cache[sidecar]
+        matched += own
         profiles.append(r)
         oscales.append(o)
 
-    print(f"{len(members)} member(s), {matched} with own profile")
+    if len(engines) > 1:
+        raise ValueError(
+            f"{filepath}: profiles from different engines: "
+            + ", ".join(f"{e or 'legacy (untagged)'} ({s})" for e, s in engines.items())
+        )
+    engine = f", engine {next(iter(engines)) or 'legacy (untagged)'}" if engines else ""
+    print(f"{len(members)} member(s) from {len(cache)} file(s), {matched} with own profile{engine}")
     return np.array([m[0] for m in members], dtype=np.int64), np.stack(profiles), np.stack(oscales)
 
 
-def summary(model):
-    print(f'{"layer":<12}{"shape (in, out)":<22}{"params":>12}')
-    print("-" * 46)
+def summary(model, layers):
+    if layers:
+        print(f'{"layer":<12}{"shape (in, out)":<22}{"params":>12}')
+        print("-" * 46)
     total = 0
     for name, _, _, _ in _EXPORT:
-        k, b = _layer_kernel_bias(model, name)
-        n = k.size + b.size
+        k, b = _layer_params(model, name)
+        n = k.numel() + b.numel()
         total += n
-        print(f"{name:<12}{str(k.shape):<22}{n:>12,}")
-    print("-" * 46)
-    print(f'{"total":<34}{total:>12,}')
+        if layers:
+            print(f"{name:<12}{str(tuple(k.shape)):<22}{n:>12,}")
+    if layers:
+        print("-" * 46)
+        print(f'{"total":<34}{total:>12,}')
+    else:
+        print(f"total params: {total:,}")
 
 
 @torch.no_grad()
 def metrics(pred, y, outcome_scale):
-    """Match TF: accuracy = 1 - MAE(sigmoid(cp/scale), outcome); mae = MAE(eval) * SCALE/100."""
+    """accuracy = 1 - MAE(sigmoid(cp/scale), outcome); mae = MAE(eval) * SCALE/100."""
     eval_t, out_t = y[:, 0:1] / y[:, 2:3], y[:, 1:2]
     probs = torch.sigmoid(pred * SCALE / outcome_scale)
     acc = 1.0 - (probs - out_t).abs().mean().item()
@@ -585,7 +750,7 @@ def main(args):
             total = torch.cuda.get_device_properties(i).total_memory
             torch.cuda.set_per_process_memory_fraction(min(1.0, args.mem_limit * 1024 * 1024 / total), device=i)
 
-    model = NNUE().to(device)
+    model = NNUE(qat=args.quant_round).to(device)
     src = args.import_file or (args.model if args.model and os.path.exists(args.model) else None)
     if src:
         load_bin(model, src)
@@ -594,7 +759,9 @@ def main(args):
         save_bin(model, args.export, quantize_round=args.quant_round)
         return
 
-    # Multi-GPU: split each global batch across all visible GPUs (like TF MirroredStrategy).
+    print(f"QAT {'on' if args.quant_round else 'off (float run)'}")
+
+    # Multi-GPU: split each global batch across all visible GPUs
     if use_dp:
         model = nn.DataParallel(model)
         print(f"DataParallel over {torch.cuda.device_count()} GPUs")
@@ -647,18 +814,27 @@ def main(args):
     ds = H5Batches(
         args.input,
         args.batch_size,
+        args.slice_rows,
+        alt_profile_dir=args.alt_profile_dir,
         sample=args.sample,
         smoothing=args.outcome_smoothing,
         filter=args.filter,
         no_capture=args.no_capture,
-        balance=args.balance,
         profile_ratios=profile_ratios,
-        outcome_scale=args.outcome_scale,
+        outcome_scale=math.nan if args.outcome_scale is None else args.outcome_scale,
     )
+    if args.outcome_scale is None:
+        args.outcome_scale, ci = fit_outcome_scale(ds)
+        ds.set_default_outcome_scale(args.outcome_scale)
+        print(f"outcome scale {args.outcome_scale:.1f} ±{ci:.1f} (fitted)")
+        logging.info("outcome scale %.1f +-%.1f (fitted)", args.outcome_scale, ci)
     pin = device.type == "cuda"
-    loader = torch.utils.data.DataLoader(ds, batch_size=None, num_workers=args.workers, shuffle=False, pin_memory=pin)
+    # non-persistent workers: re-forked each epoch, so they see reshuffle()
+    loader = torch.utils.data.DataLoader(
+        ds, batch_size=None, num_workers=args.workers, shuffle=False, pin_memory=pin, persistent_workers=False
+    )
 
-    summary(model)
+    summary(model, args.show_layers)
 
     try:
         from tqdm import tqdm
@@ -677,7 +853,8 @@ def main(args):
             model.train()
             total, count = 0.0, 0
             acc_sum, mae_sum = 0.0, 0.0
-            ds.reshuffle()
+            ema_loss, ema_acc, ema_mae = 0.0, 0.0, 0.0  # display: EMA with --ema batch horizon
+            ds.reshuffle(device)
             bar = (
                 tqdm(
                     loader,
@@ -701,14 +878,19 @@ def main(args):
                     nn.utils.clip_grad_norm_(model.parameters(), args.clip_norm)
                 scaler.step(opt)
                 scaler.update()
-                apply_constraints(model, args.quant_round)
-                total += loss.item()
+                apply_constraints(model)
+                step_loss = loss.item()
+                total += step_loss
                 count += 1
                 acc, mae = metrics(pred, y, args.outcome_scale)
                 acc_sum += acc
                 mae_sum += mae
+                alpha = max(1.0 / count, 1.0 / (args.ema or count))  # running mean for the first --ema batches, then EMA
+                ema_loss += alpha * (step_loss - ema_loss)
+                ema_acc += alpha * (acc - ema_acc)
+                ema_mae += alpha * (mae - ema_mae)
                 if tqdm:
-                    post = dict(loss=f"{total/count:.4f}", acc=f"{acc_sum/count:.4f}", mae=f"{mae_sum/count:.4f}")
+                    post = dict(loss=f"{ema_loss:.4f}", acc=f"{ema_acc:.4f}", mae=f"{ema_mae:.4f}")
                     if use_amp and args.show_scale:
                         post["scale"] = f"{scaler.get_scale():.0f}"
                     bar.set_postfix(**post)
@@ -717,7 +899,7 @@ def main(args):
                     rate = count / max(t_last - t0, 1e-9)
                     print(
                         f"epoch {epoch+1}/{args.epochs} step {i+1}/{len(ds)} "
-                        f"loss {total/count:.4f} acc {acc_sum/count:.4f} mae {mae_sum/count:.4f} {rate:.2f} it/s"
+                        f"loss {ema_loss:.4f} acc {ema_acc:.4f} mae {ema_mae:.4f} {rate:.2f} it/s"
                     )
             avg = total / max(count, 1)
             avg_acc = acc_sum / max(count, 1)
@@ -730,6 +912,7 @@ def main(args):
             hyperparam = {
                 "learn rate": f"{lr:.2e}",
                 "batch size": args.batch_size,
+                "slice rows": args.slice_rows,
                 "profile": args.profile,
                 "sampling ratio": args.sample,
             }
@@ -738,7 +921,7 @@ def main(args):
             logging.info(f"epoch={epoch} mae={avg_mae:.6f}")
             if args.model and (args.sample or avg < best):  # sampling: loss not comparable across epochs
                 best = avg
-                save_bin(model, args.model)
+                save_bin(model, args.model)  # latents, so a resume keeps sub-LSB progress
     except KeyboardInterrupt:
         if tqdm and bar is not None:
             bar.close()
@@ -750,18 +933,14 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("input", nargs="?", help="h5 dataset path")
     p.add_argument("-b", "--batch-size", type=int, default=16384)
+    p.add_argument("--slice-rows", type=int, default=64, help="rows per random batch slice")
     p.add_argument("-e", "--epochs", type=int, default=100)
     p.add_argument("-m", "--model", help="output weights.bin checkpoint path (best loss)")
     # Defaults below are tuned for SGD (--optimizer sgd). For adam/amsgrad use a
     # much smaller --learn-rate (e.g. 1e-4) and lower --momentum (~0.5).
     p.add_argument("-r", "--learn-rate", type=float, default=1e-2)
     p.add_argument("-o", "--export", help="export weights.bin and exit")
-    p.add_argument(
-        "-q",
-        "--quant-round",
-        action="store_true",
-        help="round weights to 1/Q_SCALE (training constraint and on export)",
-    )
+    p.add_argument("-q", "--quant-round", action="store_true", help="QAT, on-grid export")
     p.add_argument("-s", "--outcome-smoothing", type=float, default=0.025)
     p.add_argument("-d", "--decay", type=float)
     p.add_argument("-L", "--logfile", default="train_torch.log")
@@ -772,46 +951,44 @@ if __name__ == "__main__":
     p.add_argument("--clip-norm", type=float, default=1.0)
     p.add_argument("--clip-eval", type=int)
     p.add_argument("--outcome-weight", type=float, default=0.1)
-    p.add_argument(
-        "--outcome-scale",
-        type=float,
-        default=120.0,
-        help="pred-side sigmoid scale (the net's cp units); per-row sidecar S calibrates targets",
-    )
+    p.add_argument("--outcome-scale", type=float, help="pred-side sigmoid scale (default: fitted), targets use sidecar S")
     p.add_argument("--loss-mae", action="store_true")
     p.add_argument("--loss-bce", action="store_true")
     p.add_argument("--loss-blend", action="store_true")
     p.add_argument("--huber-delta", type=float, default=1.5)
     p.add_argument("--focal-gamma", type=float, default=0.0, help="focal modulation of the outcome loss term (0 = off)")
     p.add_argument("--profile", help="JSON dataset profile with per-bucket label scale ratios")
+    p.add_argument("--alt-profile-dir", help="read <file>.profile.json here first, else next to data")
     p.add_argument("--sample", type=float)
     p.add_argument("-F", "--filter", type=int, help="drop positions with |eval| >= this (centipawns)")
-    p.add_argument("--balance", action="store_true", help="augment each batch with color-mirrored positions")
     p.add_argument("--no-capture", action="store_true", help="exclude positions whose move is a capture")
     p.add_argument("--mem-limit", type=int, default=0, help="GPU memory limit in MB (0 = unlimited)")
     p.add_argument("--schedule", action="store_true")
     p.add_argument("--patience", type=int, default=3)
-    p.add_argument(
-        "--sched-threshold",
-        type=float,
-        default=1e-4,
-        help="--schedule: min relative loss improvement that counts as progress (raise when --sample adds noise)",
-    )
-    p.add_argument("--workers", type=int, default=0)
+    p.add_argument("--sched-threshold", type=float, default=1e-4, help="--schedule: min relative improvement")
+    p.add_argument("--workers", type=int, default=8)
     p.add_argument("--ncols", type=int, default=120, help="progress bar width (0 = auto/full terminal)")
     p.add_argument("--log-every", type=float, default=30, help="seconds between status lines when tqdm is missing")
+    p.add_argument("--ema", type=int, default=0, help="progress display EMA horizon, in batches (0 = epoch average)")
     p.add_argument("--gpu", dest="gpu", action="store_true", default=True)
     p.add_argument("--no-gpu", dest="gpu", action="store_false")
     p.add_argument("--no-data-parallel", action="store_true", help="use a single GPU even if several are visible")
     p.add_argument("--mixed-precision", dest="mixed_precision", action="store_true", default=True)
     p.add_argument("--no-mixed-precision", dest="mixed_precision", action="store_false")
     p.add_argument("--show-scale", action="store_true", help="show AMP GradScaler scale in progress bar")
+    p.add_argument("--show-layers", action="store_true", help="print per-layer shapes and parameter counts")
     args = p.parse_args()
 
     if not args.input and not args.export:
         p.error("input dataset required (or use --export)")
     if args.focal_gamma < 0:
         p.error("--focal-gamma must be >= 0")
+    if not 0 < args.slice_rows <= args.batch_size or args.batch_size % args.slice_rows:
+        p.error("--slice-rows must divide --batch-size")
+    if args.ema < 0:
+        p.error("--ema must be >= 0")
     if sum((args.loss_mae, args.loss_bce, args.loss_blend)) > 1:
         p.error("--loss-mae, --loss-bce and --loss-blend are mutually exclusive")
+    if args.alt_profile_dir and not os.path.isdir(args.alt_profile_dir):
+        p.error(f"--alt-profile-dir: {args.alt_profile_dir} not found")
     main(args)

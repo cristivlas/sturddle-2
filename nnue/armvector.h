@@ -143,6 +143,13 @@ INLINE float horizontal_add(Vec8f x)
 #endif
 }
 
+INLINE Vec8f horizontal_add(const Vec8f (&v)[8])
+{
+    return Vec8f(
+        horizontal_add(v[0]), horizontal_add(v[1]), horizontal_add(v[2]), horizontal_add(v[3]),
+        horizontal_add(v[4]), horizontal_add(v[5]), horizontal_add(v[6]), horizontal_add(v[7]));
+}
+
 INLINE Vec8f operator + (Vec8f a, Vec8f b)
 {
     return vaddq_f16(a, b);
@@ -302,6 +309,179 @@ INLINE Vec16s max(Vec16s a, Vec16s b)
     result.val[0] = vmaxq_s16(a.get_low(), b.get_low());
     result.val[1] = vmaxq_s16(a.get_high(),b.get_high());
     return result;
+}
+
+
+INLINE Vec8s min(Vec8s a, Vec8s b)
+{
+    return _mm_min_epi16(a, b);
+}
+
+INLINE Vec8s operator >> (Vec8s a, int b)
+{
+    return _mm_srai_epi16(a, b);
+}
+
+INLINE Vec8s operator << (Vec8s a, int b)
+{
+    return _mm_slli_epi16(a, b);
+}
+
+/** High 16 bits of the signed 16 x 16 products; not vqdmulh, which doubles them */
+INLINE Vec8s mul_hi(Vec8s a, Vec8s b)
+{
+    const int16x8_t x = vreinterpretq_s16_s64(a), y = vreinterpretq_s16_s64(b);
+    const int16x4_t lo = vshrn_n_s32(vmull_s16(vget_low_s16(x), vget_low_s16(y)), 16);
+    const int16x4_t hi = vshrn_n_s32(vmull_s16(vget_high_s16(x), vget_high_s16(y)), 16);
+    return __m128i(vreinterpretq_s64_s16(vcombine_s16(lo, hi)));
+}
+
+
+class Vec16c
+{
+    int8x16_t v;
+
+public:
+    static constexpr size_t size() { return 16; }
+
+    Vec16c() = default;
+
+    Vec16c(int8x16_t x) : v(x) {}
+
+    INLINE operator int8x16_t() const { return v; }
+
+    INLINE Vec16c & load_a(void const * p)
+    {
+        v = vld1q_s8((const int8_t*)p);
+        return *this;
+    }
+};
+
+class Vec16uc
+{
+    uint8x16_t v;
+
+public:
+    static constexpr size_t size() { return 16; }
+
+    Vec16uc() = default;
+
+    Vec16uc(uint8x16_t x) : v(x) {}
+
+    Vec16uc(Vec16c x) : v(vreinterpretq_u8_s8(x)) {}
+
+    Vec16uc(int32x4_t x) : v(vreinterpretq_u8_s32(x)) {}
+
+    INLINE operator uint8x16_t() const { return v; }
+
+    INLINE Vec16uc & load_a(void const * p)
+    {
+        v = vld1q_u8((const uint8_t*)p);
+        return *this;
+    }
+
+    INLINE void store_a(void * p) const { vst1q_u8((uint8_t*)p, v); }
+};
+
+class Vec4i
+{
+    int32x4_t v;
+
+public:
+    static constexpr size_t size() { return 4; }
+
+    Vec4i() = default;
+
+    Vec4i(int32x4_t x) : v(x) {}
+
+    Vec4i(int i) : v(vdupq_n_s32(i)) {}
+
+    Vec4i(Vec16uc x) : v(vreinterpretq_s32_u8(x)) {}
+
+    INLINE operator int32x4_t() const { return v; }
+
+    INLINE Vec4i & load_a(void const * p)
+    {
+        v = vld1q_s32((const int32_t*)p);
+        return *this;
+    }
+
+    INLINE void store_a(void * p) const { vst1q_s32((int32_t*)p, v); }
+};
+
+INLINE Vec4i operator + (Vec4i a, Vec4i b)
+{
+    return vaddq_s32(a, b);
+}
+
+using block_t = int32_t;
+
+/* Append base + k for each non-zero lane k of v at out[count]; count <= base keeps writes in bounds */
+template <size_t N> INLINE int append_nonzero_lanes(block_t (&out)[N], int count, int base, Vec4i v)
+{
+    alignas(16) int32_t lane[4];
+    v.store_a(lane);
+    for (int k = 0; k != 4; ++k)
+    {
+        out[count] = base + k;
+        count += (lane[k] != 0);
+    }
+    return count;
+}
+
+INLINE int32_t horizontal_add(Vec4i a)
+{
+#if (__arm64__) || (__aarch64__)
+    return vaddvq_s32(a);
+#else
+    const int32x2_t s = vadd_s32(vget_low_s32(a), vget_high_s32(a));
+    return vget_lane_s32(vpadd_s32(s, s), 0);
+#endif /* __aarch64__ */
+}
+
+#if 0 /* unused since the sparse int8 dot */
+/** Sum up each of the 8 vectors */
+INLINE void horizontal_add(const Vec4i (&v)[8], int32_t (&out)[8])
+{
+#if (__arm64__) || (__aarch64__)
+    vst1q_s32(out, vpaddq_s32(vpaddq_s32(v[0], v[1]), vpaddq_s32(v[2], v[3])));
+    vst1q_s32(&out[4], vpaddq_s32(vpaddq_s32(v[4], v[5]), vpaddq_s32(v[6], v[7])));
+#else
+    for (int k = 0; k != 8; ++k)
+        out[k] = horizontal_add(v[k]);
+#endif /* __aarch64__ */
+}
+#endif /* unused */
+
+/* Signed saturation to int8 */
+INLINE Vec16c compress_saturated(Vec8s low, Vec8s high)
+{
+    /* on NEON, simde's __m128i is int64x2_t */
+    return vcombine_s8(vqmovn_s16(vreinterpretq_s16_s64(low)), vqmovn_s16(vreinterpretq_s16_s64(high)));
+}
+
+/* Saturate signed 16-bit to unsigned 8-bit: negatives become 0 */
+INLINE Vec16uc compress_saturated_s2u(Vec8s low, Vec8s high)
+{
+    return vcombine_u8(vqmovun_s16(vreinterpretq_s16_s64(low)), vqmovun_s16(vreinterpretq_s16_s64(high)));
+}
+
+/** Multiply bytes (u8 x s8), adding each group of 4 products into an int32 lane of acc; a <= 127 */
+INLINE Vec4i dot_add(Vec4i acc, Vec16uc a, Vec16c b)
+{
+    const int8x16_t sa = vreinterpretq_s8_u8(a);
+#if __ARM_FEATURE_DOTPROD
+    return vdotq_s32(acc, sa, b);
+#else
+    /* pairs of adjacent products, then pairs of pairs: 4 adjacent bytes per lane, like vdotq */
+    const int32x4_t lo = vpaddlq_s16(vmull_s8(vget_low_s8(sa), vget_low_s8(b)));
+    const int32x4_t hi = vpaddlq_s16(vmull_s8(vget_high_s8(sa), vget_high_s8(b)));
+  #if (__arm64__) || (__aarch64__)
+    return vaddq_s32(acc, vpaddq_s32(lo, hi));
+  #else
+    return vaddq_s32(acc, vcombine_s32(vpadd_s32(vget_low_s32(lo), vget_high_s32(lo)), vpadd_s32(vget_low_s32(hi), vget_high_s32(hi))));
+  #endif /* __aarch64__ */
+#endif /* __ARM_FEATURE_DOTPROD */
 }
 
 

@@ -3,9 +3,7 @@
 #include <filesystem>
 #include <unordered_map>
 #include "context.h"
-#if WITH_NNUE
-    #include "nnue.h"
-#endif
+#include "nnue/nnue.h"
 
 namespace fs = std::filesystem;
 using Params = std::unordered_map<std::string, std::string>;
@@ -26,10 +24,8 @@ using Params = std::unordered_map<std::string, std::string>;
 #include <vector>
 #if _WIN32
   #include <io.h>
-  #include <tlhelp32.h>
 #else
   #include <unistd.h>
-  #include <sys/resource.h>
 #endif /* !_WIN32 */
 
 #include "book.h"
@@ -175,7 +171,7 @@ namespace
     #else
         /*
          * On POSIX assume true, to avoid libcap dependency (or manually parsing /proc/self/status).
-         * If geteuid() != 0 and CAP_SYS_NICE not set, set_high_priority fails and resets _high_priority
+         * If geteuid() != 0 and CAP_SYS_NICE not set, update_priority fails and resets _high_priority
          */
         return true;
     #endif /* !_WIN32 */
@@ -397,125 +393,21 @@ namespace
 } /* namespace */
 
 
+/* return true if a console was allocated; no action needed on POSIX (TODO: Test on Mac) */
+static bool manage_console()
+{
 #if _WIN32
-/*
- * Helpers for manage_console (see below).
- */
-static DWORD get_parent_pid(DWORD processId)
-{
-    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (hSnapshot == INVALID_HANDLE_VALUE)
-        return 0;
-
-    auto cleanup = on_scope_exit([hSnapshot]() {
-        CloseHandle(hSnapshot);
-    });
-
-    PROCESSENTRY32 pe32 = {};
-    pe32.dwSize = sizeof(PROCESSENTRY32);
-
-    if (!Process32First(hSnapshot, &pe32))
-        return 0;
-
-    do {
-        if (pe32.th32ProcessID == processId)
-        {
-            std::string name(pe32.szExeFile);
-
-            // Running as a python script? bail
-            if (lowercase(name).starts_with("python"))
-                return 0;
-
-            return pe32.th32ParentProcessID;
-        }
-    } while (Process32Next(hSnapshot, &pe32));
-
-    return 0;
-}
-
-static bool ensure_console()
-{
-    if (!GetConsoleWindow())
+    try
     {
-        if (!AllocConsole())
-        {
-            log_error(std::format("Could not allocate console, error: {}", GetLastError()));
-        }
-        else
-        {
-            // Rebind standard handles
-            FILE* fp = nullptr;
-            freopen_s(&fp, "CONIN$",  "r", stdin);
-            freopen_s(&fp, "CONOUT$", "w", stdout);
-            freopen_s(&fp, "CONOUT$", "w", stderr);
-
-            return true;
-        }
+        return win::manage_console();
     }
-    return false;
-}
-
-
-/*
- * An improved solution for: https://github.com/cristivlas/sturddle-2/issues/11
- *
- * Currently the engine runs from under the PyInstaller bootloader, and, under some
- * GUIs such as Shredder, an extra console pops up. The solution for recent Windows 11
- * builds is to use the "detached" setting in a manifest file at build time
- * (https://learn.microsoft.com/en-us/windows/console/console-allocation-policy).
- *
- * On older Windows versions: call FreeConsole if console detected in chess GUI mode.
- *
- * Return true if a console was allocated.
- */
-static bool manage_console()
-{
-    /* Use STDIN handle to detect how the engine is being run. */
-    const HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
-
-    DWORD mode = 0;
-
-    if (GetConsoleMode(h, &mode))
+    catch (const std::exception& e)
     {
-        if (auto wnd = GetConsoleWindow())
-        {
-            DWORD consolePID = 0;
-            GetWindowThreadProcessId(wnd, &consolePID);
-
-            const auto ourPID = GetProcessId(GetCurrentProcess());
-            return (ourPID == consolePID) || get_parent_pid(ourPID) == consolePID;
-        }
+        log_error(std::format("Could not allocate console: {}", e.what()));
     }
-    else if (GetFileType(h) == FILE_TYPE_PIPE)
-    {
-        /* STDIN is attached to a pipe, assume it is running under a chess GUI. */
-        /* GUIs connect pipes to the engine's standard input and output to send */
-        /* UCI command and to read back responses. */
-
-        /* Do away with console window if detected. */
-        if (GetConsoleWindow())
-        {
-            FreeConsole();
-        }
-    }
-    else
-    {
-        /* The engine was likely started by the user double clicking in explorer.exe */
-        /* or in some other file manager. The user likely wants to test the engine by */
-        /* entering UCI commands manually, so make sure that there is a console. */
-        return ensure_console();
-    }
-    return false;
-}
-
-#else
-
-/* No action needed on POSIX. TODO: Test on Mac */
-static bool manage_console()
-{
-    return false;
-}
 #endif /* _WIN32 */
+    return false;
+}
 
 
 class UCI
@@ -574,6 +466,8 @@ public:
 
         if (cpu::is_hybrid())
             _options.emplace("allowecores", std::make_unique<OptionBool>("AllowECores", _allow_e_cores));
+
+        update_priority();
     }
 
     static bool output_expected() { return _output_expected.load(std::memory_order_relaxed); }
@@ -594,8 +488,9 @@ private:
     void uci();
     void newgame();
 
-    void set_high_priority(bool);
+    void update_priority();
     void update_cpu_binding();
+    void disable_power_throttling();
     void show_settings();
 
     /** Context callbacks */
@@ -779,9 +674,10 @@ private:
     bool _ponder = false;
     bool _use_opening_book = false;
     bool _best_book_move = true;
-    bool _current_priority = false; /* not high */
     bool _high_priority = DEFAULT_HIGH_PRIORITY;
     bool _allow_e_cores = false; /* true: do not bind search threads to P cores */
+    bool _disable_throttling = true; /* cleared on failure, to prevent future calls */
+
     chess::BaseMove _last_move;
 #if NATIVE_BOOK
     PolyglotBook _opening_book = {};
@@ -812,10 +708,12 @@ struct Info : public search::IterationInfo
         : IterationInfo(info)
         , eval_depth(ctxt.get_tt()->_eval_depth)
         , hashfull(search::TranspositionTable::usage() * 10)
-        , iteration(ctxt.iteration())
+        , iteration(info.depth)
         , brief(milliseconds < TIME_LOW || !ctxt._best_move)
         , pv(brief ? &no_pv : &ctxt.get_pv())
-    {}
+    {
+        ASSERT(MULTIPV > 1 || iteration == ctxt.iteration());
+    }
 };
 
 search::PV Info::no_pv;
@@ -825,7 +723,7 @@ static void INLINE format_info(const Info& info)
     g_out.clear();
     if (info.brief)
     {
-        std::format_to(std::back_inserter(g_out), "info score cp {} depth {}", info.score, info.iteration);
+        std::format_to(std::back_inserter(g_out), "info multipv {} score cp {} depth {}", info.multipv, info.score, info.iteration);
     }
     else
     {
@@ -841,10 +739,11 @@ static void INLINE format_info(const Info& info)
         std::format_to(
             std::back_inserter(g_out),
         #if USE_ENDTABLES
-            "info score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} tbhits {} pv"
+            "info multipv {} score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} tbhits {} pv"
         #else
-            "info score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} pv"
+            "info multipv {} score {} {} depth {} seldepth {} time {} nodes {} nps {} hashfull {} pv"
         #endif
+            , info.multipv
             , score_unit
             , score
             , info.iteration
@@ -941,6 +840,9 @@ void UCI::run()
         }
         dispatch(cmd, args);
     }
+#if NNUE_COUNTS
+    nnue::write_counts(); /* quit or EOF */
+#endif
 }
 
 INLINE void UCI::dispatch(std::string &cmd, const Arguments &args)
@@ -1158,6 +1060,8 @@ void UCI::go(const Arguments &args)
     {
         _extended_time = std::max(1, movetime);
         ctxt->set_time_limit_ms(INFINITE);
+
+        ensure_background_thread();
         _compute_pool->push_task([this]{ ponder(); });
     }
     else if (do_analysis && !explicit_movetime)
@@ -1226,6 +1130,9 @@ INLINE void UCI::isready()
 void UCI::newgame()
 {
     stop();
+#if NNUE_COUNTS
+    nnue::write_counts();
+#endif
 
     _tt.init(/* new_game = */ true);
 
@@ -1238,35 +1145,49 @@ void UCI::newgame()
 #endif
 }
 
-void UCI::set_high_priority(bool high_priority)
+/* stay high for the engine's lifetime; re-raise if someone lowered it (e.g. Task Manager) */
+void UCI::update_priority()
 {
-    if (_current_priority != high_priority)
+    if (!_high_priority || cpu::is_high_priority())
+        return;
+
+    std::string error; /* if any */
+    try
     {
-#if _WIN32
-        const DWORD priority_class = high_priority ? HIGH_PRIORITY_CLASS : NORMAL_PRIORITY_CLASS;
-        if (SetPriorityClass(GetCurrentProcess(), priority_class))
+        cpu::set_high_priority();
+    }
+    catch (const std::runtime_error& e)
+    {
+        _high_priority = false; /* prevent future calls */
+        error = e.what();
+    }
+
+    if (!error.empty())
+    {
+        const auto msg = "set high priority failed: " + error;
+        log_error(msg);
+        std::cout << "info string " << msg << std::endl;
+    }
+}
+
+void UCI::disable_power_throttling()
+{
+    if (_disable_throttling)
+    {
+        try
         {
-            _current_priority = high_priority;
+        #if _WIN32
+            /* keep Windows from slowing the engine down when it looks like a background process */
+            win::disable_power_throttling();
+        #else
+            /* TODO */
+        #endif /* _WIN32 */
         }
-        else
+        catch (const std::exception& e)
         {
-            log_error(std::format("SetPriorityClass({}) failed: {}", priority_class, GetLastError()));
-            _current_priority = _high_priority = false; /* prevent future calls */
+            _disable_throttling = false; /* prevent future calls */
+            log_error(std::format("Could not disable power throttling: {}", e.what()));
         }
-#else /* POSIX -- requires "sudo setcap cap_sys_nice+ep <engine_name>" */
-        const int nice_value = high_priority ? -10 : 0;
-        if (setpriority(PRIO_PROCESS, 0, nice_value) == 0)
-        {
-            _current_priority = high_priority;
-        }
-        else
-        {
-            const auto msg = std::format("setpriority({}) failed: {}", nice_value, errno);
-            log_error(msg);
-            std::cout << "info string " << msg << std::endl;
-            _current_priority = _high_priority = false; /* prevent future calls */
-        }
-#endif /* !_WIN32 */
     }
 }
 
@@ -1277,17 +1198,20 @@ void UCI::update_cpu_binding()
         return;
 
     const bool bind = !_allow_e_cores;
-    std::string err;
-    if (cpu::bind_to_performance_cores(bind, err))
-        return;
-
-    const auto msg = std::format("{} performance cores failed: {}", bind ? "bind to" : "unbind from", err);
-    log_error(msg);
-    std::cout << "info string " << msg << std::endl;
-#if !NATIVE_BUILD
-    std::fprintf(stderr, "%s\n", msg.c_str()); /* Python logging may not flush before _Exit */
-#endif
-    std::_Exit(EXIT_FAILURE);
+    try
+    {
+        cpu::bind_to_performance_cores(bind);
+    }
+    catch (const std::runtime_error& e)
+    {
+        const auto msg = std::format("{} performance cores failed: {}", bind ? "bind to" : "unbind from", e.what());
+        log_error(msg);
+        std::cout << "info string " << msg << std::endl;
+    #if !NATIVE_BUILD
+        std::fprintf(stderr, "%s\n", msg.c_str()); /* Python logging may not flush before _Exit */
+    #endif /* !NATIVE_BUILD */
+        std::_Exit(EXIT_FAILURE);
+    }
 }
 
 void UCI::show_settings()
@@ -1422,8 +1346,9 @@ INLINE score_t UCI::search(F set_time_limit)
     ctxt._max_depth = 1;
     ctxt._move = _last_move;
 
-    set_high_priority(_high_priority);
-    auto restore_priority = on_scope_exit([this] { set_high_priority(false); });
+    update_priority();
+
+    disable_power_throttling();
 
     update_cpu_binding();
 
@@ -1469,13 +1394,8 @@ void UCI::setoption(const Arguments &args)
 
 void UCI::stop()
 {
-#if 0
-    search::Context::set_time_limit_ms(0);
-    _compute_pool->wait_for_tasks([] { search::Context::cancel(); });
-#else
-    search::Context::cancel();
+    search::Context::stop();
     _compute_pool->wait_for_tasks();
-#endif
     output_best_move();
 }
 
@@ -1573,11 +1493,7 @@ void uci_loop(Params params)
     const auto version = params["version"];
     const auto debug = params["debug"];
 
-#if WITH_NNUE
     output<false>(std::format("{} {} {}", name, version, nnue::instrset));
-#else
-    output<false>(std::format("{} {}", name, version));
-#endif /* WITH_NNUE */
 
     _debug = (debug == "true");
     sync_native_log_level();

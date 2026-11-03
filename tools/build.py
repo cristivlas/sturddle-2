@@ -181,7 +181,7 @@ if __name__ == '__main__':
         elif arch == 'AVX512':
             arch_flags = '-march=skylake-avx512 -mtune=skylake-avx512'
         elif arch == 'ARMv8_2':
-            arch_flags = '-DUSE_MAGIC_BITS -march=armv8.2-a+fp16'
+            arch_flags = '-DUSE_MAGIC_BITS -march=armv8.2-a+fp16+dotprod'
 
         os.environ['CXXFLAGS'] = f'{arch_flags} -DSHARED_WEIGHTS'
 

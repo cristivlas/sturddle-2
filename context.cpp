@@ -36,22 +36,13 @@
   #include "context.h"
 #undef CONFIG_IMPL
 
-#if !defined(WITH_NNUE)
-  #define WITH_NNUE true
-#endif
-
-#if WITH_NNUE
-  #include "nnue.h"
-  #if !SHARED_WEIGHTS && defined(USE_WEIGHTS_H)
-    #include "weights.h"
-  #endif
-#endif
-
 #include "eval.h"
+#include "nnue/model.h"
 
 #if USE_ENDTABLES
   #include "tbprobe.h"
 #endif
+
 
 using namespace chess;
 using search::TranspositionTable;
@@ -172,9 +163,9 @@ namespace
 /*
  * Late-move reduction tables (adapted from berserk)
  */
-struct LMR
+static struct LMR
 {
-    int _table[PLY_MAX][64] = {};
+    float _table[PLY_MAX][64] = {}; /* log(depth) * log(moves), scaled by lmr_divisor() at lookup */
 
     LMR()
     {
@@ -182,7 +173,7 @@ struct LMR
         {
             for (int moves = 1; moves < 64; ++moves)
             {
-                _table[depth][moves] = 0.5 + log(depth) * log(moves) / 4;
+                _table[depth][moves] = log(depth) * log(moves);
             }
         }
     }
@@ -289,46 +280,10 @@ std::map<std::string, int> _get_params()
 /*****************************************************************************
  *  NNUE
  *****************************************************************************/
+static nnue::Model model;
 
-#if WITH_NNUE
-/* Define the network architecture */
-constexpr int INPUTS_A = nnue::ACTIVE_INPUTS * nnue::NUM_BUCKETS;
-constexpr int INPUTS_B = 256;
-constexpr int HIDDEN_1A = 2048;
-constexpr int HIDDEN_1A_POOLED = HIDDEN_1A / nnue::POOL_STRIDE;
-constexpr int HIDDEN_1B = HIDDEN_1A_POOLED; /* 1b modulates pooled 1:1 */
-constexpr int HIDDEN_2 = 16;
-constexpr int HIDDEN_3 = 16;
-
-using L1AType = nnue::Layer<INPUTS_A, HIDDEN_1A, int16_t, nnue::QSCALE, true /* incremental */>;
-using L1BType = nnue::Layer<INPUTS_B, HIDDEN_1B, int16_t, nnue::QSCALE, true /* incremental */>;
-using PoolType = nnue::PoolLayer<HIDDEN_1A>;
-#if NNUE_L2_INT16
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, int16_t, nnue::WQSCALE>;
-#elif USE_BF16
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, __bf16>;
-#else
-  using L2Type = nnue::Layer<HIDDEN_1A_POOLED, HIDDEN_2, float>;
-#endif
-using L3Type = nnue::Layer<HIDDEN_2, HIDDEN_3>;
-using EVALType = nnue::Layer<HIDDEN_3, 1>;
-
-/*
- * The accumulator takes the inputs and processes them into two outputs,
- * using layers L1A and L1B. L1B processes the 1st 256 inputs, which
- * correspond to kings and pawns. The (linear) output of L1B modulates the
- * pooled output of L1A 1:1.
- */
-using Accumulator = nnue::Accumulator<INPUTS_A, HIDDEN_1A, HIDDEN_1B>;
+using Accumulator = nnue::Model::Accumulator;
 using AccumulatorStack = std::array<Accumulator, PLY_MAX>;
-
-/* Move-prediction head (experimental): own 256-wide sub-accumulator off raw inputs
- * (decoupled from eval), then a bilinear map to the 4096 (from,to) logits scored
- * per-move by column. Full recompute per node -- only used at early iterations.
- */
-constexpr int MOVE_ACC = 256;
-using LMOVEAccType = nnue::Layer<INPUTS_A / nnue::NUM_BUCKETS, MOVE_ACC, int16_t, nnue::QSCALE>;
-using LMOVEType = nnue::Layer<MOVE_ACC, 4096, int16_t, nnue::QSCALE>;
 
 /* Each thread uses its own stack */
 static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
@@ -336,172 +291,67 @@ static std::vector<AccumulatorStack> NNUE_data(SMP_CORES);
 /* Per-thread bucket-refresh caches */
 static std::vector<Accumulator::RefreshTable> NNUE_refresh(SMP_CORES);
 
-static struct Model
+#if NNUE_COUNTS
+/* Per-thread histograms of evaluated positions: stack, and L1A block of both views */
+struct ALIGN NNUECounts
 {
-    void init();
+    uint64_t stack[nnue::STACKS] = {};
+    uint64_t block[nnue::NUM_BLOCKS] = {};
+};
 
-    void validate_weights_file(const std::filesystem::path& weights_path)
-    {
-        constexpr auto param_count =
-            L1AType::param_count()
-            + L1BType::param_count()
-            + PoolType::param_count()
-            + L2Type::param_count()
-            + L3Type::param_count()
-            + EVALType::param_count()
-        #if USE_MOVE_PREDICTION
-            + LMOVEAccType::param_count()
-            + LMOVEType::param_count()
-        #endif
-            ;
-        constexpr auto expected_size = param_count * sizeof(float);
-        const auto file_size = std::filesystem::file_size(weights_path);
-        if (file_size != expected_size)
-            throw std::runtime_error(weights_path.string() + ": expected " + std::to_string(expected_size) + " bytes, got " + std::to_string(file_size));
-    }
+static std::vector<NNUECounts> NNUE_counts(SMP_CORES);
 
-    void load_weights(const std::filesystem::path& weights_path)
-    {
-        validate_weights_file(weights_path);
-
-        std::ifstream file(weights_path, std::ios::binary);
-        if (!file)
-            throw std::runtime_error("Could not open weights file: " + weights_path.string());
-
-        file.exceptions(std::ios::failbit | std::ios::badbit);
-
-        try
-        {
-            /* Load layers in the same order that the trainer exports them. */
-            L1A.load_weights(file);
-            L1B.load_weights(file);
-            POOL.load_weights(file);
-            L2.load_weights(file);
-            L3.load_weights(file);
-            EVAL.load_weights(file);
-
-        #if USE_MOVE_PREDICTION
-            LMOVE_ACC.load_weights(file);
-            LMOVES.load_weights(file);
-        #endif
-        }
-        catch (const std::exception&)
-        {
-            throw std::runtime_error("Error reading weights from: " + weights_path.string());
-        }
-        Context::log_message(LogLevel::DEBUG, "Loaded " + weights_path.string());
-    }
-
-    std::string default_weights_path;
-
-    L1AType L1A;
-    L1BType L1B;
-    PoolType POOL;
-    L2Type L2;
-    L3Type L3;
-    EVALType EVAL;
-
-#if USE_MOVE_PREDICTION
-    LMOVEAccType LMOVE_ACC;
-    LMOVEType LMOVES;
-#endif
-
-} model;
-
-
-#if !SHARED_WEIGHTS
-#ifdef USE_WEIGHTS_H
-/* Legacy debug path: weights baked in as constexpr arrays from weights.h */
-#define INIT_LAYER(layer, name) layer.set_weights(name ## _w, name ## _b)
-
-void Model::init()
+template <size_t N>
+static void write_json_array(std::ostream& out, const char* name, const uint64_t (&a)[N])
 {
-    /* POOL not in legacy weights.h; constructor default (1/8 == avg pool) applies */
-    INIT_LAYER(L1A, hidden_1a);
-    INIT_LAYER(L1B, hidden_1b);
-    INIT_LAYER(L2, hidden_2);
-    INIT_LAYER(L3, hidden_3);
-    INIT_LAYER(EVAL, out);
-
-#if USE_MOVE_PREDICTION
-    INIT_LAYER(LMOVE_ACC, move_acc);
-    INIT_LAYER(LMOVES, move);
-#endif
+    out << "\"" << name << "\": [";
+    for (size_t i = 0; i != N; ++i)
+        out << (i ? ", " : "") << a[i];
+    out << "]";
 }
-#else /* default: C23/C++26 #embed of weights.bin */
-#if !defined(__has_embed)
-  #error "embedded build requires #embed support (GCC 15+, Clang 19+, MSVC 17.15+); define USE_WEIGHTS_H to use the weights.h fallback"
-#endif
-#if __has_embed("weights.bin") != __STDC_EMBED_FOUND__
-  #error "weights.bin not found; run tools/fetch_weights.py before building"
-#endif
 
-/* #embed is a C23/C++26 feature; under -std=c++20 -Werror it is diagnosed as an
- * extension (clang: -Wc23-extensions, gcc: -Wc++26-extensions). Silence it here so
- * every compiler/build path is covered in one place rather than via build flags. */
-#if defined(__clang__)
-  #pragma clang diagnostic push
-  #pragma clang diagnostic ignored "-Wc23-extensions"
-#elif defined(__GNUC__)
-  #pragma GCC diagnostic push
-  #pragma GCC diagnostic ignored "-Wpedantic"       /* umbrella: any gcc with #embed */
-  #pragma GCC diagnostic ignored "-Wc++26-extensions" /* precise name where recognized */
-#endif
-
-void Model::init()
+void nnue::write_counts()
 {
-    static constexpr unsigned char WEIGHTS_DATA[] = {
-        #embed "weights.bin"
-    };
-
-    struct membuf : std::streambuf
+    NNUECounts total;
+    uint64_t evals = 0;
+    for (const auto& c : NNUE_counts)
     {
-        membuf(const char* data, size_t size)
-        {
-            char* p = const_cast<char*>(data);
-            setg(p, p, p + size);
-        }
-    } buf(reinterpret_cast<const char*>(WEIGHTS_DATA), sizeof(WEIGHTS_DATA));
-
-    std::istream file(&buf);
-    file.exceptions(std::ios::failbit | std::ios::badbit);
-
-    /* Same order as Model::load_weights file-based path */
-    L1A.load_weights(file);
-    L1B.load_weights(file);
-    POOL.load_weights(file);
-    L2.load_weights(file);
-    L3.load_weights(file);
-    EVAL.load_weights(file);
-#if USE_MOVE_PREDICTION
-    LMOVE_ACC.load_weights(file);
-    LMOVES.load_weights(file);
-#endif
-}
-#if defined(__clang__)
-  #pragma clang diagnostic pop
-#elif defined(__GNUC__)
-  #pragma GCC diagnostic pop
-#endif
-#endif /* USE_WEIGHTS_H */
-#else
-
-void Model::init()
-{
-    if (!default_weights_path.empty())
-    {
-        load_weights(default_weights_path);
+        for (int i = 0; i != STACKS; ++i)
+            evals += c.stack[i], total.stack[i] += c.stack[i];
+        for (int i = 0; i != NUM_BLOCKS; ++i)
+            total.block[i] += c.block[i];
     }
+    if (evals == 0)
+        return;
+
+    const std::filesystem::path path("nnue-counts-" + std::to_string(get_pid()) + ".json");
+    auto tmp = path;
+    tmp += ".tmp";
+    {
+        std::ofstream out(tmp);
+        out << "{";
+        write_json_array(out, "stack", total.stack);
+        out << ", ";
+        write_json_array(out, "block", total.block);
+        out << "}\n";
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec); /* atomic replace of the cumulative totals */
 }
-#endif /* SHARED_WEIGHTS */
+#endif /* NNUE_COUNTS */
 
 
 static void _load_weights(const std::string& file_path)
 {
     if (file_path.empty())
+    {
         model.init();
+    }
     else
+    {
         model.load_weights(file_path);
+        search::Context::log_message(LogLevel::DEBUG, "Loaded " + file_path);
+    }
 
     /* cached outputs are only valid for the weights they were computed with */
     for (auto& table : NNUE_refresh)
@@ -509,22 +359,22 @@ static void _load_weights(const std::string& file_path)
 }
 
 
-void Context::load_weights(const std::string& file_path)
+void search::Context::load_weights(const std::string& file_path)
 {
     cython_wrapper::call_nogil(_load_weights, file_path); // catch exception and translate to Python
 }
 
 
-static INLINE void update(Accumulator& accumulator, const Context* ctxt)
+static INLINE void update(Accumulator& accumulator, const search::Context* ctxt)
 {
-    accumulator.update(model.L1A, model.L1B, ctxt->state());
+    model.update(accumulator, ctxt);
 }
 
 
 /* incremental version */
-static INLINE void update(Accumulator& accumulator, const Context* ctxt, Accumulator& prev_acc)
+static INLINE void update(Accumulator& accumulator, const search::Context* ctxt, Accumulator& prev_acc)
 {
-    accumulator.update(model.L1A, model.L1B, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc, NNUE_refresh[ctxt->tid()]);
+    model.update(accumulator, ctxt, prev_acc, NNUE_refresh[ctxt->tid()]);
 }
 
 
@@ -570,7 +420,7 @@ void search::Context::update_accumulators()
 }
 
 
-score_t search::Context::eval_nnue_raw(bool stm_perspective)
+score_t search::Context::eval_nnue_raw(bool side_to_move_pov)
 {
     ASSERT(!is_valid(_eval_raw));
 
@@ -579,9 +429,16 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
     auto& acc = NNUE_data[tid()][_ply];
     ASSERT(!acc.needs_update(state()));
 
-    _eval_raw = nnue::eval(acc, model.POOL, model.L2, model.L3, model.EVAL, state().turn);
+    _eval_raw = model.eval(acc, state());
 
-    if (stm_perspective)
+#if NNUE_COUNTS
+    auto& counts = NNUE_counts[tid()];
+    ++counts.stack[nnue::stack_index(state())];
+    ++counts.block[nnue::view_key(state(), chess::WHITE) / 2]; /* drop the mirrored bit */
+    ++counts.block[nnue::view_key(state(), chess::BLACK) / 2];
+#endif /* NNUE_COUNTS */
+
+    if (!side_to_move_pov)
     {
         _eval_raw *= SIGN[state().turn];
     }
@@ -592,7 +449,7 @@ score_t search::Context::eval_nnue_raw(bool stm_perspective)
 
 /* TODO: define array of margins, using LMP for now as a temporary hack. */
 
-static INLINE score_t eval_margin(const Context& ctxt)
+static INLINE score_t eval_margin(const search::Context& ctxt)
 {
     const auto depth = ctxt.depth();
     const auto pc = ctxt.piece_count();
@@ -664,7 +521,6 @@ int nnue::eval_fen(const std::string& fen)
 
     return ctxt.eval_nnue_raw(false);
 }
-#endif /* WITH_NNUE */
 
 
 namespace search
@@ -672,7 +528,7 @@ namespace search
     /*---------------------------------------------------------------------
      * Context
      *---------------------------------------------------------------------*/
-    atomic_bool Context::_cancel(false);
+    std::atomic<uint8_t> Context::_cancel(0);
     int         Context::_tb_cardinality(0);
     bool        Context::_tb_initialized(false);
     atomic_int  Context::_time_limit(-1); /* milliseconds */
@@ -685,6 +541,8 @@ namespace search
     std::vector<MovesCache> _moves_cache(SMP_CORES);
     std::vector<PV> Context::_pvs(SMP_CORES);
     std::vector<chess::BaseMove> Context::_root_filter;
+    std::vector<chess::BaseMove> Context::_root_excluded;
+    bool Context::_root_restricted = false;
 
 #if NATIVE_BUILD
     /* Default sinks so native builds work without Cython-installed callbacks. */
@@ -792,7 +650,6 @@ namespace search
         setup_crash_handler();
         _init(); /* Init attack masks and other magic bitboards in chess.cpp */
 
-    #if WITH_NNUE
         try
         {
         #if SHARED_WEIGHTS
@@ -809,7 +666,6 @@ namespace search
             std::cerr << e.what() << std::endl;
             _exit(-1);
         }
-    #endif /* WITH_NNUE */
     }
 
 
@@ -870,10 +726,11 @@ namespace search
             for (size_t i = 0; i < n_threads; ++i)
                 _pvs[i].reserve(PLY_MAX);
 
-        #if WITH_NNUE
             NNUE_data.resize(n_threads);
             NNUE_refresh.resize(n_threads);
-        #endif /* WITH_NNUE */
+        #if NNUE_COUNTS
+            NNUE_counts.resize(n_threads);
+        #endif
         }
     }
 
@@ -906,23 +763,25 @@ namespace search
                 if (!next_ctxt->is_null_move())
                 {
                     if (next_ctxt->_prune_reason == PruneReason::PRUNE_TT
-                        && next_ctxt->tt_entry()._depth >= depth() - 1)
+                        && next_ctxt->tt_entry()._depth >= depth() - 1
+                        && (next_ctxt->tt_entry().is_exact() || score >= _beta))
                     {
                         /* Do not retry */
                         ASSERT(next_ctxt->tt_entry().is_valid());
                     }
-                    else if (next_ctxt->_retry_above_alpha == RETRY::Reduced)
+                    else if (next_ctxt->_retry_above_alpha & RETRY::Reduced)
                     {
                         if constexpr(EXTRA_STATS)
                             ++_tt->_retry_reductions;
 
                         return FailHigh::Retry;
                     }
-                    else if (next_ctxt->_retry_above_alpha == RETRY::PVS && score < _beta)
+                    else if ((next_ctxt->_retry_above_alpha & RETRY::PVS) && score < _beta)
                     {
-                        _retry_beta = -score;
                         return FailHigh::Retry;
                     }
+
+                    ASSERT(next_ctxt->_prune_reason == PruneReason::PRUNE_TT || !next_ctxt->_lmr_reduced);
 
                     if (score >= _beta)
                     {
@@ -1043,8 +902,8 @@ namespace search
 
             if (ply + 1 >= PLY_MAX + EXCHANGES_MAX_DEPTH)
             {
-                const auto their_best =
-                    estimate_static_exchanges(next_state, next_state.turn, move.to_square(), PieceType::NONE, bucket);
+                const auto their_best = std::max<score_t>(0,
+                    estimate_static_exchanges(next_state, next_state.turn, move.to_square(), PieceType::NONE, bucket));
                 score = std::max(score, our_gain - their_best);
             }
             else
@@ -1239,11 +1098,9 @@ namespace search
 
 
     /*
-     * Static evaluation has three components:
-     * 1. base = material + piece-square table values (optional)
-     * 2. tactical (positional) - aka Hand-crafted evals (HCE)
-     * 3. capture estimates (in Context::evaluate)
-     * NOTE: when using NNUE for evaluation (default), 2 does not apply.
+     * Static evaluation has two components:
+     * 1. NNUE eval
+     * 2. capture estimates (in Context::evaluate)
      */
     score_t Context::_evaluate()
     {
@@ -1251,27 +1108,7 @@ namespace search
 
         if (!is_valid(_eval))
         {
-        #if WITH_NNUE
             eval_with_nnue();
-        #else
-            /*
-             * 1. Material + piece-squares
-             */
-            _eval = state().eval();
-
-            ASSERT(_eval > SCORE_MIN);
-            ASSERT(_eval < SCORE_MAX);
-
-            _eval += eval_fuzz();
-
-            /*
-             * 2. Tactical (positional) evaluation.
-             */
-            _eval += eval_insufficient_material(state(), _eval, [this]() {
-                return eval_tactical(*this, _eval);
-            });
-
-        #endif /* !WITH_NNUE */
         }
 
         ASSERT(_eval > SCORE_MIN);
@@ -1376,6 +1213,7 @@ namespace search
         ASSERT(is_root());
         ASSERT(!_is_null_move);
         ASSERT(!_is_retry);
+        ASSERT(!_retry_at_depth);
         ASSERT(!_is_singleton);
         ASSERT(_tt->_w_alpha <= _alpha);
         ASSERT(_retry_above_alpha == RETRY::None);
@@ -1396,20 +1234,17 @@ namespace search
 
         if (clear_best_move)
             _best_move = BaseMove();
-        _cancel = false;
+        clear_cancel(Cancel::Internal);
         _can_forward_prune = -1;
 
         _counter_move = Move();
         _cutoff_move = Move();
-        _has_singleton = false;
 
         _max_depth = iteration();
 
         _mate_detected = 0;
 
         _repeated = -1;
-
-        _retry_beta = SCORE_MAX;
 
         rewind(force_reorder_moves);
     }
@@ -1467,15 +1302,17 @@ namespace search
     }
 
 
-    static INLINE float fast_log2(float x)
+    /* Reduce more when an iteration starts late, or when there is no time limit. */
+    static INLINE float lmr_divisor()
     {
-        union { float f; uint32_t i; } u = { x };
-        // Extract exponent directly from IEEE 754 representation
-        const int exp = ((u.i >> 23) & 0xFF) - 127;
-        u.i = (u.i & 0x007FFFFF) | 0x3F800000;
-        const float m = u.f;
-        const float t = m - 1.0f;
-        return exp + t * (1.442695041f + t * (-0.721347520f + t * 0.240449173f));
+        const auto limit = Context::time_limit();
+        if (limit <= 0)
+            return LMR_DIVISOR_RUSHED_PCT / 100.0f;
+
+        const auto elapsed_pct = 100.0f * Context::elapsed_milliseconds() / limit;
+        const auto span = std::max<int>(1, LMR_RUSH_FULL_PCT - LMR_RUSH_START_PCT);
+        const auto t = std::clamp((elapsed_pct - LMR_RUSH_START_PCT) / span, 0.0f, 1.0f);
+        return (LMR_DIVISOR_CALM_PCT + t * (LMR_DIVISOR_RUSHED_PCT - LMR_DIVISOR_CALM_PCT)) / 100.0f;
     }
 
 
@@ -1483,7 +1320,7 @@ namespace search
      * Late move reduction and pruning.
      * https://www.chessprogramming.org/Late_Move_Reductions
      */
-    LMRAction Context::late_move_reduce(int count, int64_t time_left)
+    LMRAction Context::late_move_reduce(int count)
     {
         ASSERT(count > 0);
         ASSERT(!is_null_move());
@@ -1493,13 +1330,7 @@ namespace search
 
         /* late move pruning */
         if (depth > 0 && count >= LMP[depth] && can_prune())
-        {
-        #if CONTINUATION_HISTORY
-            const auto cont_score = _tt->continuation_history_score(*_parent, _parent->turn(), _move);
-            if (cont_score <= CONTINUATION_HISTORY_PRUNING)
-        #endif /* CONTINUATION_HISTORY */
-                return LMRAction::Prune;
-        }
+            return LMRAction::Prune;
 
         /* no reductions at very low depth and in qsearch */
         if (depth < 3 || count < LATE_MOVE_REDUCTION_THRESHOLD || !can_reduce())
@@ -1507,37 +1338,27 @@ namespace search
 
         count += _tt->_pass / 4;
 
+        /* LMR divisor changes once per root iteration */
+        if (_tt->_lmr_iteration != iteration())
+        {
+            _tt->_lmr_iteration = iteration();
+            _tt->_lmr_scale = 1.0f / lmr_divisor();
+        }
+
         /* Lookup reduction in the Late Move Reduction table. */
-        auto reduction = LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)];
+        int reduction = 0.5f + LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)] * _tt->_lmr_scale;
 
         if (_move._group != MoveOrder::TACTICAL_MOVES)
         {
             reduction += !_parent->has_improved<THEM>();
             reduction -= 2 * _parent->is_counter_move(_move);
 
-        #if 0 && CONTINUATION_HISTORY
-            {
-                const auto cont_score = _tt->continuation_history_score(*_parent, _parent->turn(), _move);
-                if (cont_score > 0)
-                    reduction -= std::min(2, int(cont_score * 1000 / CONTINUATION_HISTORY_LMR_DIV));
-            }
-        #endif /* CONTINUATION_HISTORY */
-
             if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= 13)
                 ++reduction;
         }
 
         if (is_capture())
-        {
             --reduction;
-        #if CAPTURE_HISTORY
-            const auto cap_hist = _tt->capture_history_score(_parent->state(), _parent->turn(), _move);
-            if (cap_hist > CAPTURE_HISTORY_LMR_HIGH)
-                /* --reduction */;
-            else if (cap_hist > 0 && cap_hist < CAPTURE_HISTORY_LMR_LOW)
-                ++reduction;
-        #endif /* CAPTURE_HISTORY */
-        }
         else if (_move.from_square() == _parent->_capture_square)
         {
             --reduction;
@@ -1546,15 +1367,6 @@ namespace search
         const auto hist_score = _parent->history_score(_move);
         if (hist_score > 0 && hist_score < HISTORY_LOW)
             ++reduction;
-
-        /* Adjust for time -- main thread only */
-        if (time_left)
-        {
-            auto node_count = time_left * _tt->_nps * 0.001f;
-            auto recip_log_branch = std::min(16u, _tt->_pass) * 0.1 / 16 + 0.5 * piece_count() / 32;
-            auto affordable_depth = fast_log2(1 + node_count) * recip_log_branch;
-            reduction = std::max(reduction, std::max<int>(0, depth - affordable_depth));
-        }
 
         reduction = std::max(1, reduction);
         if (reduction > depth && can_prune())
@@ -1568,8 +1380,8 @@ namespace search
          * "Classical implementation assumes a re-search at full depth
          * if the reduced depth search returns a score above alpha."
          */
-        if (!_retry_above_alpha)
-            _retry_above_alpha = RETRY::Reduced;
+        set_lmr_reduced(true);
+        _retry_above_alpha |= RETRY::Reduced;
 
         if constexpr(EXTRA_STATS)
             ++_tt->_reductions;
@@ -1611,7 +1423,7 @@ namespace search
 
         if (depth() > 0
             || is_null_move()
-            || is_retry()
+            || _retry_at_depth
             || is_promotion()
             || is_check()
             /*
@@ -1623,8 +1435,11 @@ namespace search
             return false;
 
         /* treat it as leaf for now but retry and extend if it beats alpha */
-        if (is_reduced() && !_retry_above_alpha)
-            _retry_above_alpha = RETRY::Reduced;
+        if (is_reduced())
+        {
+            set_lmr_reduced(true);
+            _retry_above_alpha |= RETRY::Reduced;
+        }
 
         return true;
     }
@@ -1643,7 +1458,7 @@ namespace search
     }
 
 
-    int64_t Context::check_time_and_update_nps(int64_t* time_left)
+    int64_t Context::check_time_and_update_nps()
     {
         const auto millisec = elapsed_milliseconds();
 
@@ -1662,10 +1477,6 @@ namespace search
             return -1;
         }
 
-        if (time_left)
-        {
-            *time_left = std::max<int64_t>(0, t - millisec);
-        }
         return millisec;
     }
 
@@ -1777,7 +1588,11 @@ namespace search
                 {
                     ASSERT(move._group >= MoveOrder::UNORDERED_MOVES);
                     ASSERT(move._score == 0);
-                    break;
+
+                    if (move._group == MoveOrder::PRUNED_MOVES)
+                        move._group = MoveOrder::UNORDERED_MOVES;
+
+                    continue;
                 }
 
                 if (move._group == MoveOrder::ILLEGAL_MOVES)
@@ -1792,6 +1607,12 @@ namespace search
                 move._score = 0;
                 move._group = MoveOrder::UNORDERED_MOVES;
             }
+
+            _have_pruned_moves = false;
+
+            ASSERT(std::none_of(moves_list.begin(), moves_list.begin() + _count,
+                [](const Move& move) { return move._group == MoveOrder::PRUNED_MOVES; })
+            );
         }
 
         _current = 0;
@@ -1890,12 +1711,6 @@ namespace search
 
         /* Confidence bar for historical scores */
         const double hist_high = (Phase == 3) ? hist_thresholds[ctxt.iteration()] : 0;
-
-    #if USE_MOVE_PREDICTION
-        int active[nnue::MAX_ACTIVE_INPUTS];
-        int active_count = 0;
-        ALIGN int16_t move_acc[MOVE_ACC];  /* node sub-accumulator, filled with active[] */
-    #endif /* USE_MOVE_PREDICTION */
 
         /********************************************************************/
         /* Iterate over pseudo-legal moves                                  */
@@ -1996,30 +1811,9 @@ namespace search
                 if (make_move<true>(ctxt, move, futility))
                 {
                     move._group = MoveOrder::LATE_MOVES;
-                #if USE_MOVE_PREDICTION
-                    if (ctxt.iteration() <= MOVE_PREDICTION_MAX_ITER)
-                    {
-                        if (active_count == 0)
-                        {
-                            nnue::for_each_active_input(ctxt.state(), [&](int idx) {
-                                ASSERT(active_count < nnue::MAX_ACTIVE_INPUTS);
-                                active[active_count++] = idx;
-                            });
-                            /* Sub-accumulator depends only on the node position (same for all
-                             * moves here), so compute it once when active[] is first filled.
-                             */
-                            nnue::move_accumulate(model.LMOVE_ACC, active, active_count, move_acc);
-                        }
-
-                        nnue::score_move(model.LMOVES, move_acc, move);
-                    }
-                    else
-                #endif /* USE_MOVE_PREDICTION */
-                    {
-                        incremental_update(move, ctxt);
-                        const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
-                        move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
-                    }
+                    incremental_update(move, ctxt);
+                    const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
+                    move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
                 }
             }
         }
@@ -2073,51 +1867,8 @@ namespace search
             ASSERT(compare_moves_ge(moves_list[i-1], moves_list[i]));
         }
     #endif /* NO_ASSERT */
-
-    #if 0 && USE_MOVE_PREDICTION /* debug */
-        if (_phase == 4 && ctxt.iteration() <= MOVE_PREDICTION_MAX_ITER)
-        {
-            for (const auto& m : moves_list)
-            {
-                if (m._group == MoveOrder::LATE_MOVES)
-                    std::cout << m.uci() << ": " << m._score << " (" << float(m._score) / nnue::QSCALE << ")\n";
-            }
-            std::cout << "\n";
-        }
-    #endif /* USE_MOVE_PREDICTION */
-    }
-
-
-    score_t Context::eval(bool as_white, int depth, int millisec)
-    {
-        if (millisec > 0)
-            set_time_limit_ms(millisec);
-
-        const auto score = search::iterative(*this, *get_tt(), depth + 1);
-        return as_white ? score * SIGN[turn()] : score;
     }
 } /* namespace */
-
-
-/* Test */
-score_t eval(const std::string& fen, bool as_white, int depth, int millis)
-{
-    auto ctxt = search::Context();
-    ASSERT(ctxt.tid() == 0);
-    ASSERT(ctxt._ply == 0);
-
-    chess::State state;
-    ctxt._state = &state;
-
-    chess::parse_fen(fen, state);
-    ASSERT(state.piece_count() == chess::popcount(state.occupied()));
-
-    search::TranspositionTable tt;
-    tt.init(true);
-    ctxt.set_tt(&tt);
-
-    return ctxt.eval(as_white, depth, millis);
-}
 
 
 void cancel_search(CancelReason reason)

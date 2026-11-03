@@ -43,9 +43,9 @@ ARCH_SUFFIX = {
     'AVX2_VNNI': '-avx2-vnni', 'AVX512': '-avx512', 'AVX512_BF16': '-avx512-bf16',
 }
 
-SOURCES = ['chess.cpp', 'context.cpp', 'search.cpp', 'uci_native.cpp', 'tbprobe.cpp', 'main_native.cpp']
-INCLUDES = ['.', 'libpopcnt', 'magic-bits/include', 'version2', 'Fathom/src']
-DEFINES = ['NATIVE_BUILD=1', 'NATIVE_UCI=1', 'NATIVE_BOOK=1', 'WITH_NNUE', 'CALLBACK_PERIOD=8192', 'NO_ASSERT']
+SOURCES = ['chess.cpp', 'context.cpp', 'search.cpp', 'uci_native.cpp', 'tbprobe.cpp', 'main_native.cpp', 'nnue/model.cpp']
+INCLUDES = ['.', 'libpopcnt', 'magic-bits/include', 'nnue/version2', 'Fathom/src']
+DEFINES = ['NATIVE_BUILD=1', 'NATIVE_UCI=1', 'NATIVE_BOOK=1', 'CALLBACK_PERIOD=8192', 'NO_ASSERT']
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -154,6 +154,8 @@ def build_linux(arch, version, define_args):
     cxxflags += shlex.split(os.environ.get('CXXFLAGS', ''))
 
     include_args = [f'-I{d}' for d in INCLUDES]
+    if triplet.startswith(('aarch64', 'arm')):
+        include_args.append('-Innue/simde')
 
     with tempfile.TemporaryDirectory(prefix='sturddle-native-') as tmp:
         tmp_dir = Path(tmp)
@@ -177,7 +179,7 @@ def build_linux(arch, version, define_args):
                 f'-L/usr/lib/llvm-{cc_ver}/lib/',
                 f'-L/usr/lib/llvm-{cc_ver}/lib/{triplet}',
                 '-L/usr/local/opt/llvm/lib/c++',
-                '-stdlib=libc++', '-lc++', '-lc++experimental',
+                '-stdlib=libc++', '-lc++', '-lc++abi', '-lc++experimental',
             ]
         print(' '.join(link_cmd))
         rc = subprocess.call(link_cmd, cwd=REPO_ROOT)

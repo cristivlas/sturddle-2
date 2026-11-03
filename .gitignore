@@ -1,5 +1,4 @@
 .vscode
-build*
 __pycache__
 __init__.cpp
 *.bin
@@ -8,8 +7,10 @@ __init__.cpp
 *.log
 *.pdb
 *.pyd
+build*
+docs/
 *.so
 dist/
 models/
-test/old-runs
 tuneup/*/*
+venv/

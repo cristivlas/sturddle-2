@@ -135,6 +135,7 @@ sourcefiles = [
     'search.cpp',
     'uci_native.cpp',
     'tbprobe.cpp',
+    'nnue/model.cpp',
 ]
 
 
@@ -153,7 +154,7 @@ Compiler args.
 inc_dirs = [
     '-I./libpopcnt',
     '-I./magic-bits/include',
-    '-I./version2',
+    '-I./nnue/version2',
     '-I.',
     '-I./Fathom/src',
 ]
@@ -184,7 +185,7 @@ args += environ.get("CXXFLAGS", '').split()
 arm_arch = armcpu.get_arch()
 if not arm_arch is None:
     # Emulate SSE on ARM using: https://github.com/simd-everywhere/simde
-    args += [ '-I./simde', '-Wno-bitwise-instead-of-logical' ]
+    args += [ '-I./nnue/simde', '-Wno-bitwise-instead-of-logical' ]
     if arm_arch == 'armv7':
         args += [ '-mfpu=neon-vfpv4', '-mfloat-abi=hard' ]
 
@@ -193,7 +194,6 @@ if platform.startswith('win'):
     args += [
         '/fp:fast',
         '/std:c++20',
-        '/DWITH_NNUE',
         '/DCALLBACK_PERIOD=8192',
         '/DCYTHON_WITHOUT_ASSERTIONS',
     ]
@@ -251,7 +251,6 @@ else:
         '-DCYTHON_WITHOUT_ASSERTIONS',
         '-DCALLBACK_PERIOD=8192',
         '-fno-stack-protector',
-        '-DWITH_NNUE',
         '-Wno-empty-body',
         '-Wno-int-in-bool-context',
     ]

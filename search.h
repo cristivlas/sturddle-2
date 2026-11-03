@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <limits>
-#include <memory>
 #include <thread>
 #include "chess.h"
 #include "hash_table.h"
@@ -262,57 +261,17 @@ namespace search
         using PlyHistoryCounters = std::array<MoveTable<std::pair<int, int>>, 2>;
         using PlyHistory = std::array<PlyHistoryCounters, PLY_HISTORY_MAX>;
 
-    #if CAPTURE_HISTORY
-        /* Capture history indexed by [attacker_piece_type][victim_piece_type] */
-        using CaptureHistoryTable = std::array<std::array<std::pair<int, int>, 7>, 7>;
-    #endif /* CAPTURE_HISTORY */
-
-    #if CONTINUATION_HISTORY
-        /* Continuation history indexed by [prev_piece_type][prev_to_square] */
-        using ContinuationEntry = PieceMoveTable<std::pair<int, int>>;
-
-        struct ContinuationTable
-        {
-            INLINE void clear()
-            {
-                for (auto& outer : _table)
-                    for (auto& entry : outer)
-                        entry.clear();
-            }
-
-            INLINE auto& operator[](size_t i) { return _table[i]; }
-            INLINE const auto& operator[](size_t i) const { return _table[i]; }
-
-            ContinuationEntry _table[7][64] = {};
-        };
-    #endif /* CONTINUATION_HISTORY */
-
         /* https://www.chessprogramming.org/Countermove_Heuristic */
         IndexedMoves        _countermoves[2];
 
         KillerMovesTable    _killer_moves; /* killer moves at each ply */
         HistoryCounters     _hcounters[2]; /* History heuristic counters. */
-    #if CAPTURE_HISTORY
-        CaptureHistoryTable _capture_hcounters[2]{}; /* Capture history by color */
-    #endif /* CAPTURE_HISTORY */
-    #if CONTINUATION_HISTORY
-        std::unique_ptr<ContinuationTable> _cmh[2]; /* counter move history [color] */
-        std::unique_ptr<ContinuationTable> _followup[2]; /* follow-up history [color] */
-    #endif /* CONTINUATION_HISTORY */
         static HashTable    _table;        /* shared hashtable */
 
         void clear(); /* clear search stats, bump up generation */
 
     public:
-        TranspositionTable()
-        {
-        #if CONTINUATION_HISTORY
-            _cmh[chess::BLACK] = std::make_unique<ContinuationTable>();
-            _cmh[chess::WHITE] = std::make_unique<ContinuationTable>();
-            _followup[chess::BLACK] = std::make_unique<ContinuationTable>();
-            _followup[chess::WHITE] = std::make_unique<ContinuationTable>();
-        #endif /* CONTINUATION_HISTORY */
-        }
+        TranspositionTable() = default;
         ~TranspositionTable() = default;
 
         TranspositionTable(const TranspositionTable&);
@@ -324,6 +283,8 @@ namespace search
         int _tid = 0;
         int16_t _iteration = 0;
         int16_t _eval_depth = 0;
+        int16_t _lmr_iteration = -1; /* root iteration that _lmr_scale was computed for */
+        float _lmr_scale = 0;        /* 1 / LMR divisor at _lmr_iteration */
         PlyHistory _ply_history;
 
         /* search window bounds */
@@ -370,7 +331,7 @@ namespace search
         template<typename C> const int16_t* lookup(C& ctxt);
 
         template<TT_Type=TT_Type::NONE, typename C=struct Context>
-        void store(C& ctxt, int depth);
+        void store(C& ctxt, int depth, score_t alpha);
 
         void update_entry(Context&, TT_Entry&, TT_Type, int depth);
         bool update_and_store(Context&, TT_Type);
@@ -393,16 +354,6 @@ namespace search
 
         void history_update_cutoffs(const Move&);
         void history_update_non_cutoffs(const Move&);
-
-    #if CAPTURE_HISTORY
-        void capture_history_update(const State&, const Move&, bool is_cutoff);
-        int capture_history_score(const State&, Color turn, const Move&) const;
-    #endif /* CAPTURE_HISTORY */
-
-    #if CONTINUATION_HISTORY
-        template<typename C> void  continuation_history_update(const C&, const Move&, bool is_cutoff);
-        template<typename C> float continuation_history_score(const C&, Color turn, const Move&) const;
-    #endif /* CONTINUATION_HISTORY */
 
         void update_stats(const Context&);
 
@@ -493,122 +444,6 @@ namespace search
     }
 
 
-#if CAPTURE_HISTORY
-    INLINE void TranspositionTable::capture_history_update(const State& state, const Move& move, bool is_cutoff)
-    {
-        ASSERT(move._state && move._state->is_capture());
-
-        const auto turn = !move._state->turn;
-        const auto attacker = state.piece_type_at(move.from_square());
-        const auto victim = move._state->capture_type;
-
-        if (attacker != chess::PieceType::NONE && victim != chess::PieceType::NONE)
-        {
-            auto& counts = _capture_hcounters[turn][attacker][victim];
-            saturate_history_update(counts, int(is_cutoff));
-        }
-    }
-
-    INLINE int TranspositionTable::capture_history_score(const State& state, Color turn, const Move& move) const
-    {
-        ASSERT(move._state && move._state->is_capture());
-
-        const auto attacker = state.piece_type_at(move.from_square());
-        /* Use the same indexing as update: move._state->capture_type */
-        const auto victim = move._state->capture_type;
-
-        if (attacker == chess::PieceType::NONE || victim == chess::PieceType::NONE)
-            return 0;
-
-        const auto& counts = _capture_hcounters[turn][attacker][victim];
-        /* Integer math: with WEIGHT=512, cutoff rates >= 0.2% give non-zero scores */
-        return counts.second < 1 ? 0 : (CAPTURE_HISTORY_WEIGHT * counts.first) / counts.second;
-    }
-#endif /* CAPTURE_HISTORY */
-
-
-#if CONTINUATION_HISTORY
-    template<typename C>
-    INLINE void TranspositionTable::continuation_history_update(
-        const C& ctxt, const Move& move, bool is_cutoff)
-    {
-        ASSERT(move);
-        ASSERT(move._state);
-        ASSERT(!move._state->is_capture());
-
-        const auto turn = !move._state->turn; /* side that moved */
-        const auto cur_pt = move._state->piece_type_at(move.to_square());
-        if (cur_pt == chess::PieceType::NONE)
-            return;
-
-        /* Counter move history: index by ctxt._move (opponent's last move) */
-        ASSERT(_cmh[turn]);
-        if (ctxt._move)
-        {
-            const auto prev_pt = ctxt.state().piece_type_at(ctxt._move.to_square());
-            if (prev_pt != chess::PieceType::NONE)
-            {
-                auto& counts = (*_cmh[turn])[prev_pt][ctxt._move.to_square()].lookup(cur_pt, move);
-                saturate_history_update(counts, int(is_cutoff));
-            }
-        }
-
-        /* Follow-up history: index by ctxt._parent->_move (our previous move, 2 plies back) */
-        ASSERT(_followup[turn]);
-        if (ctxt._parent && ctxt._parent->_move)
-        {
-            const auto& gp_move = ctxt._parent->_move;
-            const auto gp_pt = ctxt._parent->state().piece_type_at(gp_move.to_square());
-            if (gp_pt != chess::PieceType::NONE)
-            {
-                auto& counts = (*_followup[turn])[gp_pt][gp_move.to_square()].lookup(cur_pt, move);
-                saturate_history_update(counts, int(is_cutoff));
-            }
-        }
-    }
-
-
-    template<typename C>
-    INLINE float TranspositionTable::continuation_history_score(
-        const C& ctxt, Color turn, const Move& move) const
-    {
-        float score = 0;
-        const auto cur_pt = ctxt.state().piece_type_at(move.from_square());
-        if (cur_pt == chess::PieceType::NONE)
-            return 0;
-
-        /* CMH: index by ctxt._move (the move that brought us to this position) */
-        ASSERT(_cmh[turn]);
-        if (ctxt._move)
-        {
-            const auto prev_pt = ctxt.state().piece_type_at(ctxt._move.to_square());
-            if (prev_pt != chess::PieceType::NONE)
-            {
-                const auto& counts = (*_cmh[turn])[prev_pt][ctxt._move.to_square()].lookup(cur_pt, move);
-                if (counts.second > 0)
-                    score += (double(CONTINUATION_HISTORY_WEIGHT) * counts.first) / counts.second;
-            }
-        }
-
-        /* Follow-up: index by ctxt._parent->_move (our own last move, 2 plies back) */
-        ASSERT(_followup[turn]);
-        if (ctxt._parent && ctxt._parent->_move)
-        {
-            const auto& gp_move = ctxt._parent->_move;
-            const auto gp_pt = ctxt._parent->state().piece_type_at(gp_move.to_square());
-            if (gp_pt != chess::PieceType::NONE)
-            {
-                const auto& counts = (*_followup[turn])[gp_pt][gp_move.to_square()].lookup(cur_pt, move);
-                if (counts.second > 0)
-                    score += (double(FOLLOWUP_HISTORY_WEIGHT) * counts.first) / counts.second;
-            }
-        }
-
-        return score;
-    }
-#endif /* CONTINUATION_HISTORY */
-
-
     template<typename C>
     INLINE BaseMove TranspositionTable::lookup_countermove(const C& ctxt) const
     {
@@ -661,7 +496,7 @@ namespace search
 
 
     template<TT_Type T, typename C>
-    INLINE void TranspositionTable::store(C& ctxt, int depth)
+    INLINE void TranspositionTable::store(C& ctxt, int depth, score_t alpha)
     {
         ASSERT(ctxt._score > SCORE_MIN);
         ASSERT(ctxt._score < SCORE_MAX);
@@ -678,7 +513,7 @@ namespace search
                 {
                     type = TT_Type::LOWER;
                 }
-                else if (ctxt._score <= ctxt._alpha)
+                else if (ctxt._score <= alpha)
                 {
                     type = TT_Type::UPPER;
                 }

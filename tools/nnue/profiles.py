@@ -1,22 +1,4 @@
 #!/usr/bin/env python3
-"""
-Versioned backup / restore of a dataset's sidecar profiles, for experiments.
-
-Resolves the same sidecars the trainers use: the container's own
-<file>.h5.profile.json plus each member's (one level, not recursive), and
-stores them in a portable tar.gz next to the container:
-
-    <vds>.profiles-<tag>.tar.gz
-
-    ./profiles.py backup mix.h5              new archive, auto-numbered tag
-    ./profiles.py backup mix.h5 --tag base   named tag
-    ./profiles.py list mix.h5                show archives and their contents
-    ./profiles.py restore mix.h5 --tag base  deploy an archive's profiles
-
-Restore auto-backups the current profiles first (unless an identical archive
-already exists), so nothing is ever lost.
-"""
-
 import argparse
 import glob
 import io
@@ -108,7 +90,7 @@ def backup(args):
     tag = args.tag or next_tag(args.vds)
     dest = archive_name(args.vds, tag)
     if os.path.exists(dest):
-        print(f"{dest}: exists — pick another --tag")
+        print(f"{dest}: exists, pick another --tag")
         return
     write_archive(dest, snap)
     print(f"wrote {dest} ({len(snap)} profile(s))")
@@ -157,7 +139,7 @@ def restore(args):
 
 
 def clear(args):
-    """Backup current sidecars, then remove them — a clean slate (all-ones ratios,
+    """Backup current sidecars, then remove them for a clean slate (all-ones ratios,
     ready for a from-scratch outcome_scale.py --update-profile run)."""
     backup(argparse.Namespace(vds=args.vds, tag=None))
     removed = 0

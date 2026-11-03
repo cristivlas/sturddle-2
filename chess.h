@@ -261,7 +261,6 @@ namespace chess
 
     constexpr Bitboard BB_ALL = ~0ULL;
     constexpr Bitboard BB_EMPTY = 0ULL;
-    constexpr Bitboard BB_CENTER = (0x3ULL << 35) | (0x3ULL << 27);
 
     extern AttackMasks BB_DIAG_MASKS, BB_FILE_MASKS, BB_RANK_MASKS;
 
@@ -335,26 +334,6 @@ namespace chess
         BB_FILE_G,
         BB_FILE_H,
     };
-
-    constexpr Bitboard bb_neighbour_files_mask[8] = {
-        BB_FILE_B,
-        BB_FILE_A | BB_FILE_C,
-        BB_FILE_B | BB_FILE_D,
-        BB_FILE_C | BB_FILE_E,
-        BB_FILE_D | BB_FILE_F,
-        BB_FILE_E | BB_FILE_G,
-        BB_FILE_F | BB_FILE_H,
-        BB_FILE_G
-    };
-
-
-    /* Quadrants */
-    constexpr Bitboard BB_NW = 0x0F0F0F0F00000000ULL;
-    constexpr Bitboard BB_NE = 0xF0F0F0F000000000ULL;
-    constexpr Bitboard BB_SW = 0x0F0F0F0FULL;
-    constexpr Bitboard BB_SE = 0xF0F0F0F0ULL;
-
-    constexpr Bitboard BB_QUANDRANTS[4] = { BB_NW, BB_NE, BB_SW, BB_SE, };
 
     constexpr Bitboard BB_PASSED[2] = {
         BB_RANK_4 | BB_RANK_3 | BB_RANK_2,
@@ -475,7 +454,7 @@ namespace chess
     }
 
 
-    /* Pawn-count bucket, shared with the NNUE bucketing (nnue.h get_bucket) */
+    /* Pawn-count bucket, for piece grading */
     INLINE int pawn_bucket(Bitboard pawns)
     {
         const int p = popcount(pawns);
@@ -846,16 +825,6 @@ namespace chess
             return king_mask ? Square(msb(king_mask)) : Square::UNDEFINED;
         }
 
-        INLINE Bitboard kings_quarter(Color color) const
-        {
-            const auto king_mask = kings & occupied_co(color);
-            for (auto quadrant : BB_QUANDRANTS)
-                if (king_mask & quadrant)
-                    return quadrant;
-
-            return BB_EMPTY;
-        }
-
         INLINE constexpr Bitboard occupied() const
         {
             return white | black;
@@ -915,7 +884,8 @@ namespace chess
             return colors[(mask & white) != 0];
         }
 
-        Bitboard pin_mask(Color, Square) const;
+        Bitboard pin_mask(Color color, Square square) const { return pin_mask(color, square, occupied()); }
+        Bitboard pin_mask(Color, Square, Bitboard occupied) const;
     };
 
 
@@ -965,14 +935,13 @@ namespace chess
      * Otherwise return BB_ALL (so that the pinned piece's attacks can be restricted
      * to the direction of the pin).
      */
-    INLINE Bitboard Position::pin_mask(Color color, Square square) const
+    INLINE Bitboard Position::pin_mask(Color color, Square square, Bitboard occupied) const
     {
         const auto king_square = king(color);
         ASSERT(king_square >= 0);
 
         const auto square_mask = BB_SQUARES[square];
-        const auto occupied = this->occupied();
-        const auto theirs = this->occupied_co(!color);
+        const auto theirs = this->occupied_co(!color) & occupied;
 
         Bitboard result = BB_EMPTY;
 
@@ -1065,27 +1034,6 @@ namespace chess
 
         void clone_into(State&) const;
 
-        int count_connected_pawns(Color, Bitboard mask = BB_ALL) const;
-        int count_isolated_pawns(Color, Bitboard mask = BB_ALL) const;
-
-        int diff_connected_rooks() const
-        {
-            return has_connected_rooks(WHITE) - has_connected_rooks(BLACK);
-        }
-
-        int diff_bishop_pairs() const;
-
-        /* evaluate doubled pawns, from the white player's perspective */
-        int diff_doubled_pawns() const;
-
-        int diff_isolated_pawns(Bitboard mask = BB_ALL) const
-        {
-            return count_isolated_pawns(WHITE, mask) - count_isolated_pawns(BLACK, mask);
-        }
-
-        /* evaluate base score from the perspective of the side to play */
-        score_t eval() const;
-
         INLINE score_t eval_lazy() const
         {
             if (simple_score == UNKNOWN_SCORE)
@@ -1110,21 +1058,6 @@ namespace chess
         }
 
         void rehash() { _hash = 0; hash(); }
-
-        INLINE bool has_connected_rooks(Color color) const
-        {
-            const auto rook_mask = rooks & occupied_co(color);
-            const auto occupied = this->occupied();
-
-            return for_each_square_r(rook_mask, [&](Square rook) {
-        #if USE_MAGIC_BITS
-                return magic_bits_attacks.Rook(occupied, rook) & rook_mask;
-        #else
-                return (BB_RANK_ATTACKS.get(rook, occupied) & rook_mask)
-                    || (BB_FILE_ATTACKS.get(rook, occupied) & rook_mask);
-        #endif
-            });
-        }
 
         INLINE bool has_fork(Color color) const
         {
@@ -1178,7 +1111,6 @@ namespace chess
             return just_king_and_pawns(turn);
         }
 
-        int longest_pawn_sequence(Bitboard mask) const;
         Bitboard passed_pawns(Color, Bitboard mask = ~(BB_RANK_4 | BB_RANK_5)) const;
 
         const MovesList& generate_pseudo_legal_moves(
@@ -1588,7 +1520,7 @@ namespace chess
     }
 
 
-    /* Evaluate material from white's perspective. For high order evals (HCE, NNUE) see Context. */
+    /* Evaluate material from white's perspective. For NNUE evals see Context. */
     /* NOTE: Does NOT take piece grading into account. */
     INLINE score_t State::eval_simple() const
     {
@@ -1619,83 +1551,6 @@ namespace chess
         }
 
         return score;
-    }
-
-
-    /*
-     * FIXME: doubled-up pawns are double counted as "connected" if there are pawns on
-     * the adjacent files. OTOH doubled-up pawns with no paws on neighboring files will
-     * EACH be considered "isolated" (which may violate the principle of orthogonality,
-     * as doubled and tripled pawns are penalized via diff_doubled_pawns). An alternative
-     * could be to count files with connected/isolated pawns instead.
-     */
-    INLINE int count_pawns(Bitboard pawns, Bitboard color_mask, Bitboard mask, bool connected)
-    {
-        int count = 0;
-
-        for_each_square_r(pawns & color_mask & mask, [&](Square p) {
-            const auto file_mask = bb_neighbour_files_mask[square_file(p)];
-
-            count += bool(pawns & color_mask & file_mask) == connected;
-        });
-        return count;
-    }
-
-
-    INLINE int State::count_connected_pawns(Color color, Bitboard mask) const
-    {
-        return count_pawns(pawns, _occupied_co[color], mask, true);
-    }
-
-
-    INLINE int State::count_isolated_pawns(Color color, Bitboard mask) const
-    {
-        return count_pawns(pawns, _occupied_co[color], mask, false);
-    }
-
-
-    INLINE int State::diff_bishop_pairs() const
-    {
-        int count[] = { 0, 0 };
-
-        if (popcount(bishops) == 3)
-        {
-            for (auto color : { BLACK, WHITE })
-            {
-                if (popcount(bishops & occupied_co(color)) == 2)
-                {
-                    count[color] = 1;
-                    break;
-                }
-            }
-        }
-        return count[WHITE] - count[BLACK];
-    }
-
-
-    INLINE int State::diff_doubled_pawns() const
-    {
-        int count = 0;
-
-        for (const auto& bb_file : BB_FILES)
-        {
-            for (auto color : { BLACK, WHITE })
-            {
-                auto n = popcount(pawns & bb_file & occupied_co(color));
-                if (n > 1)
-                {
-                    count += SIGN[color] * (n - 1);
-                }
-            }
-        }
-        return count;
-    }
-
-
-    INLINE score_t State::eval() const
-    {
-        const auto value = eval_lazy();
-        return value * SIGN[turn];
     }
 
 
@@ -1777,24 +1632,6 @@ namespace chess
             _endgame = is_endgame(*this) ? ENDGAME_TRUE : ENDGAME_FALSE;
         }
         return (_endgame == ENDGAME_TRUE);
-    }
-
-
-
-    INLINE int State::longest_pawn_sequence(Bitboard mask) const
-    {
-        int result = 0, count = 0;
-        auto pawn_mask = (pawns & mask);
-
-        for (int i = 0; pawn_mask != BB_EMPTY && i < 8; pawn_mask &= ~BB_FILES[i++])
-        {
-            if (BB_FILES[i] & pawn_mask)
-                result = std::max(result, ++count);
-            else
-                count = 0;
-        }
-
-        return result == 1 ? 0 : result;
     }
 
 
@@ -1926,7 +1763,7 @@ namespace chess
 
     INLINE Square get_least_valuable_attacker(const State& board, Color color, Square target_square, Bitboard occupied)
     {
-        Bitboard attackers = board.attackers_mask(color, target_square, occupied);
+        Bitboard attackers = board.attackers_mask(color, target_square, occupied) & occupied;
 
         if (attackers != BB_EMPTY)
         {
@@ -1934,9 +1771,9 @@ namespace chess
 
             for (PieceType piece_type : piece_order)
             {
-                Bitboard piece_attackers = attackers & board.pieces_mask(piece_type, color);
-
-                if (piece_attackers != BB_EMPTY)
+                for (auto piece_attackers = attackers & board.pieces_mask(piece_type, color);
+                     piece_attackers != BB_EMPTY;
+                     piece_attackers &= piece_attackers - 1)
                 {
                     Square candidate = Square(lsb(piece_attackers));
 
@@ -1946,14 +1783,14 @@ namespace chess
                         Bitboard temp_occupied = occupied & ~BB_SQUARES[candidate] & ~BB_SQUARES[target_square];
 
                         // Check if king would be in check on target square
-                        if (board.attackers_mask(!color, target_square, temp_occupied) != BB_EMPTY)
+                        if ((board.attackers_mask(!color, target_square, temp_occupied) & temp_occupied) != BB_EMPTY)
                         {
-                            break;
+                            return Square::UNDEFINED;
                         }
                     }
                     else
                     {
-                        Bitboard pin_mask = board.pin_mask(color, candidate);
+                        Bitboard pin_mask = board.pin_mask(color, candidate, occupied);
                         if (pin_mask != BB_ALL && !(pin_mask & BB_SQUARES[target_square]))
                         {
                             continue; // Piece is pinned and target is not on the pin ray
@@ -2011,9 +1848,10 @@ namespace chess
 
                 if ((side == WHITE && target_rank == 7) || (side == BLACK && target_rank == 0))
                 {
-                    /* Assume promotion to queen (most common case). Subtract pawn value, add queen value */
-                    attacker_value = board.piece_value_at(from, side, QUEEN, bucket)
-                                   - board.piece_value_at(from, side, PAWN, bucket);
+                    /* Assume promotion to queen (most common case): gain the difference, expose the queen */
+                    const auto queen_value = board.piece_value_at(from, side, QUEEN, bucket);
+                    gain[d - 1] += queen_value - attacker_value;
+                    attacker_value = queen_value;
                 }
             }
 

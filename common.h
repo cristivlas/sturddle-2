@@ -42,6 +42,14 @@
   #define INLINE inline
 #endif /* _DEBUG */
 
+#if _MSC_VER
+  #define NOINLINE __declspec(noinline)
+#elif __GNUC__
+  #define NOINLINE __attribute__((noinline))
+#else
+  #define NOINLINE
+#endif /* _MSC_VER */
+
 #ifdef _MSC_VER
   #include <xmmintrin.h>
   #define PREFETCH(addr) _mm_prefetch((char*)(addr), _MM_HINT_T0)
@@ -66,10 +74,6 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 // ---------------------------------------------------------------------
 
 #define ADAPTIVE_NULL_MOVE                  true
-
-#define CAPTURE_HISTORY                     false
-
-#define CONTINUATION_HISTORY                false
 
 /*
  * Count valid moves made as nodes if true, otherwise use effectively
@@ -108,8 +112,13 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
   #define NATIVE_UCI                        true
 #endif /* NATIVE_UCI */
 
-/* hidden_2 in int16 at QSCALE (madd_epi16), float from hidden_3 on */
-#define NNUE_L2_INT16                       true
+/* Histogram stacks and L1A blocks of evaluated positions into nnue-counts-<pid>.json */
+#if !defined(NNUE_COUNTS)
+  #define NNUE_COUNTS                       false
+#endif /* NNUE_COUNTS */
+
+/* Experimental: bf16 hidden_3 weights on AVX512_BF16 builds; trade precision for speed */
+  #define NNUE_TAIL_BF16                    true
 
 #define RAZORING                            true
 
@@ -126,12 +135,11 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define SMP                                 true
 
 #if !defined(USE_PIECE_SQUARE_TABLES)
-  #define USE_PIECE_SQUARE_TABLES           true
+  #define USE_PIECE_SQUARE_TABLES           false
 #endif
 
 /* Experimental */
 #define USE_BOOK_HINT                       false
-#define USE_MOVE_PREDICTION                 true
 
 /* Support endtable probing with the Fathom library */
 #define USE_ENDTABLES                       true

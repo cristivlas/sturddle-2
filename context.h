@@ -99,6 +99,12 @@ namespace search
 
     enum POV : bool { US, THEM };
 
+    enum class Cancel : uint8_t
+    {
+        Internal = 1,
+        Stop = 2,     /* UCI "stop"; cleared only at search start */
+    };
+
 
     /* For detecting repeated positions */
     struct History
@@ -216,12 +222,14 @@ namespace search
     enum class LMRAction : int { None = 0, Ok, Prune };
 
     /* Reason for retrying */
-    enum class RETRY : uint8_t { None = 0, Reduced, PVS };
+    enum class RETRY : uint8_t { None = 0, Reduced = 1, PVS = 2 };
 
     /* Result of is_beta_cutoff */
     enum class FailHigh : int { None = 0, Cutoff, Retry };
 
-    INLINE constexpr bool operator!(RETRY retry) { return retry == RETRY::None; }
+    INLINE constexpr RETRY operator|(RETRY a, RETRY b) { return RETRY(to_underlying(a) | to_underlying(b)); }
+    INLINE constexpr RETRY& operator|=(RETRY& a, RETRY b) { return a = a | b; }
+    INLINE constexpr bool operator&(RETRY a, RETRY b) { return to_underlying(a) & to_underlying(b); }
 
     struct IterationInfo
     {
@@ -230,6 +238,8 @@ namespace search
         float   knps;
         int     milliseconds;
         size_t  tbhits;
+        size_t  multipv = 1;
+        int     depth = 0;
     };
 
 
@@ -293,7 +303,6 @@ namespace search
         int16_t     _alpha = SCORE_MIN;
         int16_t     _beta = SCORE_MAX;
         int16_t     _score = SCORE_MIN; /* dynamic eval score */
-        int16_t     _retry_beta = SCORE_MAX; /* NEGASCOUT only */
 
         Algorithm   _algorithm = Algorithm::MTDF;
 
@@ -306,11 +315,20 @@ namespace search
         bool        _is_null_move = false; /* for null-move pruning */
         bool        _is_pv = false;
         bool        _is_retry = false;
+        /*
+         * Set when a retry restores a reduced depth (LMR): search on, even at a leaf.
+         * A window-only (PVS) retry re-evaluates a leaf instead; expanding it would
+         * let its scout children retry and expand without a depth limit.
+         */
+        bool        _retry_at_depth = false;
         bool        _is_singleton = false;
         bool        _leftmost = false;
         bool        _multicut_allowed = MULTICUT;
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
+    #if !defined(NO_ASSERT)
+        bool        _lmr_reduced = false;
+    #endif /* !(NO_ASSERT) */
         int8_t      _nnue_prev_offs = 1; /* NNUE */
 
         uint8_t     _double_ext = 0;
@@ -334,23 +352,36 @@ namespace search
         BaseMove    _excluded;      /* singular extension search */
 
         /* Returns true if this move should be skipped at the current node:
-         * either it's the singular-extension excluded move, or (at root only,
-         * when "go searchmoves" is active) it's not in the user-supplied list.
+         * either it's the singular-extension excluded move, or (at root only)
+         * it's excluded by "go searchmoves" or by an earlier MultiPV line.
          */
         INLINE bool is_excluded(const BaseMove& m) const
         {
             if (m == _excluded)
                 return true;
-            if (!_root_filter.empty() && is_root())
-                return std::find(_root_filter.begin(), _root_filter.end(), m) == _root_filter.end();
+            if (_root_restricted && is_root())
+                return is_root_excluded(m);
             return false;
+        }
+
+        static void exclude_root_move(const BaseMove& m)
+        {
+            _root_excluded.emplace_back(m);
+            _root_restricted = true;
+        }
+
+        static void clear_root_exclusions()
+        {
+            _root_excluded.clear();
+            _root_restricted = !_root_filter.empty();
         }
 
         State*      _state = nullptr;
 
         void        cache_scores(bool force_write /* bypass eviction strategy */ = false);
 
-        static void cancel() { _cancel.store(true, std::memory_order_relaxed); }
+        static void cancel() { _cancel.fetch_or(to_underlying(Cancel::Internal), std::memory_order_relaxed); }
+        static void stop() { _cancel.fetch_or(to_underlying(Cancel::Stop), std::memory_order_relaxed); }
 
         bool        can_forward_prune() const;
         bool        can_probe_endtables() const { return piece_count() <= tb_cardinality(); }
@@ -360,7 +391,7 @@ namespace search
 
         bool        can_reduce() const;
 
-        int64_t     check_time_and_update_nps(int64_t* = nullptr); /* return elapsed milliseconds */
+        int64_t     check_time_and_update_nps(); /* return elapsed milliseconds */
 
         static void clear_caches_and_stacks();
 
@@ -381,8 +412,6 @@ namespace search
         template<bool EvalCaptures = true> score_t evaluate();
 
         score_t     evaluate_material() const;
-
-        score_t     eval(bool as_white, int depth, int millisec); /* testing and tuning */
 
         score_t     eval_nnue_raw(bool side_to_move_pov);
         void        eval_with_nnue();
@@ -410,7 +439,7 @@ namespace search
         static void init(const std::string& exe_dir);
 
         FailHigh    is_beta_cutoff(Context*, score_t);
-        static bool is_cancelled() { return _cancel.load(std::memory_order_relaxed); }
+        static bool is_cancelled() { return _cancel.load(std::memory_order_relaxed) != 0; }
         INLINE bool is_capture() const { return state().is_capture(); }
         INLINE bool is_check() const { return state().is_check(); }
         bool        is_counter_move(const Move&) const;
@@ -418,6 +447,7 @@ namespace search
         bool        is_extended() const;
         bool        is_fifty_move_rule_draw() const { return _fifty >= 100; }
         bool        is_last_move();
+        INLINE bool is_first_pv_move() const { return _parent->is_pv_node() && _parent->next_move_index() == 1; }
         INLINE bool is_leftmost() const { return is_root() || _leftmost; }
         bool        is_leaf(); /* treat as terminal node ? */
         bool        is_mate_bound() const;
@@ -431,11 +461,12 @@ namespace search
         bool        is_reduced() const;
         bool        is_repeated() const;
         INLINE bool is_retry() const { return _is_retry; }
+        bool        is_tactically_quiet() const;
         INLINE bool is_root() const { return _ply == 0; }
 
         INLINE int  iteration() const { ASSERT(_tt); return _tt->_iteration; }
 
-        LMRAction   late_move_reduce(int move_count, int64_t time_left);
+        LMRAction   late_move_reduce(int move_count);
         static void load_weights(const std::string& file_path);
 
         static void log_message(LogLevel, const std::string&, bool force = false);
@@ -443,21 +474,30 @@ namespace search
         int         move_count() const { return _move_maker.count(); }
         int64_t     nanosleep(int nanosec);
 
-        Context*    next(bool null_move, score_t, int& move_count, int64_t* time_left = nullptr);
+        Context*    next(bool null_move, score_t, int& move_count);
 
         template<bool Construct = false> Context* next_ply() const;
 
         INLINE int  next_move_index() { return _move_maker.current(*this); }
 
-        bool        on_next(int64_t*);
+        bool        on_next();
         INLINE int  piece_count() const { return state().piece_count(); }
 
+        void        prepare_retry(int max_depth);
         static void print_board(std::ostream&, const State&, bool unicode);
 
         void        reset(bool force_reorder_moves = true, bool clear_best_move = true);
         int         rewind(bool reorder = false);
 
         INLINE void set_counter_move(const BaseMove& move) { _counter_move = move; }
+
+        INLINE void set_lmr_reduced(bool reduced)
+        {
+        #if !defined(NO_ASSERT)
+            _lmr_reduced = reduced;
+        #endif /* !(NO_ASSERT) */
+        }
+
         void        set_search_window(score_t score, score_t& prev_score);
         static void set_start_time();
         static void set_time_limit_ms(int milliseconds);
@@ -519,12 +559,23 @@ namespace search
 
         static HistoryPtr   _history;
 
-        /* "go searchmoves" filter — populated by the UCI front-end before each
+        /* "go searchmoves" filter, populated by the UCI front-end before each
          * search starts and read-only thereafter. Empty means no restriction.
          */
         static std::vector<chess::BaseMove> _root_filter;
 
     private:
+        static std::vector<chess::BaseMove> _root_excluded;
+        static bool _root_restricted;
+
+        static bool is_root_excluded(const BaseMove& m)
+        {
+            if (std::find(_root_excluded.begin(), _root_excluded.end(), m) != _root_excluded.end())
+                return true;
+            return !_root_filter.empty()
+                && std::find(_root_filter.begin(), _root_filter.end(), m) == _root_filter.end();
+        }
+
         const Move* get_next_move(score_t);
         bool has_cycle(const State&) const;
 
@@ -537,7 +588,12 @@ namespace search
         TranspositionTable* _tt = nullptr;
 
         /* search can be cancelled from any thread */
-        static atomic_bool  _cancel;
+        static std::atomic<uint8_t> _cancel;
+
+        static INLINE void clear_cancel(Cancel flag)
+        {
+            _cancel.fetch_and(uint8_t(~to_underlying(flag)), std::memory_order_relaxed);
+        }
 
         static size_t       _callback_count;
         static atomic_int   _time_limit; /* milliseconds */
@@ -600,9 +656,9 @@ namespace search
 
             if constexpr(StaticExchangeEvaluation)
             {
-                /* Approximate without playing the moves. */
-                val = estimate_static_exchanges(
-                    *move._state, move._state->turn, move.to_square(), chess::PieceType::NONE, bucket);
+                /* Approximate without playing the moves; the opponent may decline a losing recapture. */
+                val = std::max<score_t>(0, estimate_static_exchanges(
+                    *move._state, move._state->turn, move.to_square(), chess::PieceType::NONE, bucket));
             }
             else
             {
@@ -715,17 +771,21 @@ namespace search
     }
 
 
-    INLINE bool Context::can_reduce() const
+    INLINE bool Context::is_tactically_quiet() const
     {
-        ASSERT(!is_null_move());
-
-        return !is_leftmost()
-            && !is_retry()
-            && (state().pushed_pawns_score == 0)
+        return (state().pushed_pawns_score == 0)
             && !is_extended()
             && (_move.from_square() != _parent->_capture_square)
             && !is_recapture()
             && !is_check();
+    }
+
+
+    INLINE bool Context::can_reduce() const
+    {
+        ASSERT(!is_null_move());
+
+        return !is_leftmost() && !is_retry() && is_tactically_quiet();
     }
 
 
@@ -769,13 +829,6 @@ namespace search
         }
         return eval;
     }
-
-
-#if !WITH_NNUE
-    INLINE void search::Context::eval_with_nnue() {}
-    INLINE score_t search::Context::eval_nnue_raw(bool) { return 0; }
-    INLINE void search::Context::update_root_accumulators() {}
-#endif /* !WITH_NNUE */
 
 
     template<bool EvalCaptures> INLINE score_t Context::evaluate()
@@ -824,7 +877,7 @@ namespace search
     #if 0
         return { static_cast<int>(75 * I + pow(I, 1.99)) ... };
     #else
-        return { static_cast<int>(std::min(75.0 * I + pow(I, 1.99), 1289.0 + 200.0 * log(I))) ... };
+        return { static_cast<int>(std::min(125.0 * I + pow(I, 1.99), 1289.0 + 200.0 * log(I))) ... };
     #endif
     }
 
@@ -868,9 +921,6 @@ namespace search
 
         auto score = _tt->history_score(_ply, state(), turn(), move);
         score += COUNTER_MOVE_BONUS * is_counter_move(move);
-    #if CONTINUATION_HISTORY
-        score += _tt->continuation_history_score(*this, turn(), move);
-    #endif /* CONTINUATION_HISTORY */
         return score;
     }
 
@@ -883,7 +933,7 @@ namespace search
     template<POV pov>
     INLINE score_t Context::improvement() const
     {
-        if (_ply < 2 || _excluded)
+        if (_excluded || !_parent || !_parent->_parent)
             return 0;
 
         const auto prev = _parent->_parent; /* 2 plies ago */
@@ -1001,7 +1051,7 @@ namespace search
 
     INLINE bool Context::is_pvs_ok() const
     {
-        return (_algorithm == NEGASCOUT) && !is_retry() && !is_leftmost();
+        return (_algorithm == NEGASCOUT) && !is_first_pv_move();
     }
 
 
@@ -1019,11 +1069,11 @@ namespace search
     /*
      * Get the next move and wrap it into a Context object.
      */
-    INLINE Context* Context::next(bool make_null_move, score_t futility, int& move_count, int64_t* time_left)
+    INLINE Context* Context::next(bool make_null_move, score_t futility, int& move_count)
     {
         ASSERT(_alpha < _beta);
 
-        if (!on_next(time_left))
+        if (!on_next())
             return nullptr;
 
         /* null move must be tried before actual moves */
@@ -1171,14 +1221,14 @@ namespace search
     /*
      * Check how much time is left, update NPS, call optional Python callback.
      */
-    INLINE bool Context::on_next(int64_t* time_left)
+    INLINE bool Context::on_next()
     {
         if (tid() == 0)
         {
             if (++_callback_count >= CALLBACK_PERIOD)
             {
                 _callback_count = 0; /* reset */
-                const auto millisec = check_time_and_update_nps(time_left);
+                const auto millisec = check_time_and_update_nps();
 
                 if (millisec < 0) /* time is up? */
                     return false;
@@ -1195,6 +1245,30 @@ namespace search
     INLINE int Context::rewind(bool reorder)
     {
         return _move_maker.rewind(*this, reorder);
+    }
+
+
+    INLINE void Context::prepare_retry(int max_depth)
+    {
+        /* reduced scout: restore depth first, widen the window on the next retry */
+        const bool reduced_scout = _retry_above_alpha == (RETRY::Reduced | RETRY::PVS);
+        _retry_at_depth |= _retry_above_alpha & RETRY::Reduced;
+
+        _max_depth = max_depth;
+        _alpha = reduced_scout ? -_parent->_alpha - 1 : -_parent->_beta;
+        _beta = -_parent->_alpha;
+        _score = SCORE_MIN;
+        _is_retry = true;
+        _retry_above_alpha = reduced_scout ? RETRY::PVS : RETRY::None;
+        _can_forward_prune = -1;
+        _pruned_count = 0;
+        _prune_reason = PruneReason::PRUNE_NONE;
+        _best_move = BaseMove();
+        _cutoff_move = BaseMove();
+        set_lmr_reduced(false);
+
+        if (move_count() >= 0)
+            rewind(true);
     }
 
 
@@ -1249,7 +1323,7 @@ namespace search
 
     /* static */ INLINE void Context::set_start_time()
     {
-        _cancel = false;
+        _cancel.store(0, std::memory_order_relaxed);
         _time_start.store(std::chrono::steady_clock::now(), std::memory_order_relaxed);
         _callback_count = 0;
     }
@@ -1490,11 +1564,7 @@ namespace search
                     move._group = MoveOrder::WINNING_CAPTURES + (gain == 0);
                 }
 
-            #if CAPTURE_HISTORY
-                move._score = gain + ctxt._tt->capture_history_score(ctxt.state(), ctxt.turn(), move);
-            #else
                 move._score = gain;
-            #endif /* CAPTURE_HISTORY */
             }
         }
     }
@@ -1709,7 +1779,6 @@ namespace search
 
 
 /*** Export misc. stuff to Cython ***/
-score_t eval(const std::string& epd, bool as_side_to_move, int depth = 0, int millis = -1);
 
 /* C++ implementation of UCI protocol if NATIVE_UCI is defined,
  * or just a stub otherwise (and the uci.pyx impl is used instead).
@@ -1727,9 +1796,12 @@ namespace nnue
     /**
      * Evaluate FEN from White's point of view, for testing.
      */
-#if WITH_NNUE
     int eval_fen(const std::string&);
-#else
-    INLINE int eval_fen(const std::string&) { return 0; }
+
+#if NNUE_COUNTS
+    /**
+     * Write cumulative stack / L1A block counts of evaluated positions.
+     */
+    void write_counts();
 #endif
 }

@@ -303,6 +303,7 @@ GROUP(Settings)
 #if SMP
     DECLARE_ALIAS( SMP_CORES, Threads,         THREAD_VAL,  1,  THREAD_MAX)
 #endif
+DECLARE_ALIAS(  MULTIPV,  MultiPV,                    1,    1,     256)
 
 DECLARE_CONST(  ASPIRATION_WINDOW,                    1,    0,       1)
 DECLARE_CONST(  DEBUG_CAPTURES,                       0,    0,       1)
@@ -328,6 +329,11 @@ DECLARE_VALUE(  IMPROVEMENT_MARGIN,                  45,    0,     400)
 
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_THRESHOLD,        4,    0,      10)
 
+DECLARE_VALUE(  LMR_DIVISOR_CALM_PCT,               400,  100,     800)
+DECLARE_VALUE(  LMR_DIVISOR_RUSHED_PCT,             200,  100,     800)
+DECLARE_VALUE(  LMR_RUSH_START_PCT,                  20,    0,     100)
+DECLARE_VALUE(  LMR_RUSH_FULL_PCT,                   50,    0,     100)
+
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
 
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                 25,    0,     100)
@@ -337,14 +343,8 @@ DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,       7)
 DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,      15)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    105,    0,     441)
 
-#if USE_MOVE_PREDICTION
-DECLARE_VALUE(  MOVE_PREDICTION_MAX_ITER,             3,    0,      10)
-#endif
-
-#if WITH_NNUE
 DECLARE_VALUE(  NNUE_BLEND_PERCENT,                 100,   50,     100)
 DECLARE_VALUE(  NNUE_MAX_EVAL,                      469,  249,     690)
-#endif /* WITH_NNUE */
 
 /* is_null_move_ok */
 DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT_PCT,         305,   84,     525)
@@ -390,20 +390,6 @@ DECLARE_VALUE(  WINDOW_HALF,                         25,    5,      50)
 
 GROUP(MoveOrdering)
 
-#if CAPTURE_HISTORY
-DECLARE_VALUE(  CAPTURE_HISTORY_LMR_HIGH,           113,   27,     174)
-DECLARE_VALUE(  CAPTURE_HISTORY_LMR_LOW,             26,    0,     147)
-DECLARE_VALUE(  CAPTURE_HISTORY_WEIGHT,             372,  286,     433)
-#endif /* CAPTURE_HISTORY */
-
-#if CONTINUATION_HISTORY
-DECLARE_VALUE(  CONTINUATION_HISTORY_WEIGHT,         67,   46,     193)
-DECLARE_VALUE(  FOLLOWUP_HISTORY_WEIGHT,            144,   63,     210)
-DECLARE_VALUE(  CONTINUATION_HISTORY_MIN_DEPTH,       2,    0,       7)
-DECLARE_VALUE(  CONTINUATION_HISTORY_LMR_DIV,       593,  519,     666)
-DECLARE_VALUE(  CONTINUATION_HISTORY_PRUNING,        59,    0,     147)
-#endif /* CONTINUATION_HISTORY */
-
 DECLARE_VALUE(  COUNTER_MOVE_BONUS,                 200,  131,     278)
 DECLARE_VALUE(  COUNTER_MOVE_MIN_DEPTH,               2,    0,       5)
 
@@ -414,48 +400,6 @@ DECLARE_VALUE(  HISTORY_HIGH,                        91,   50,     150)
 DECLARE_VALUE(  HISTORY_LOW,                         12,    0,      30)
 DECLARE_VALUE(  HISTORY_MIN_DEPTH,                    3,    0,      15)
 
-GROUP(Eval)
-
-/****************************************************************************/
-#if !WITH_NNUE /* HCE tunable parameters */
-
-DECLARE_VALUE(  BISHOP_PAIR,                         53,    0,     100)
-DECLARE_VALUE(  CASTLING_RIGHTS_BONUS,               32,    0,     100)
-DECLARE_VALUE(  CENTER_ATTACKS,                      65,    0,     100)
-DECLARE_VALUE(  CENTER_OCCUPANCY,                    60,    0,     100)
-DECLARE_VALUE(  EVAL_MARGIN,                        300,    0,    5000)
-DECLARE_VALUE(  EVAL_LOW_DEPTH,                       5,    0,     100)
-DECLARE_VALUE(  KING_ATTACK_DIV,                     48,    1,     100)
-DECLARE_VALUE(  KING_OUT_PENALTY,                  -120, -500,       0)
-DECLARE_VALUE(  PAWN_SHIELD,                         21,    0,     100)
-DECLARE_VALUE(  MATERIAL_IMBALANCE,                -235, -500,       0)
-DECLARE_VALUE(  REDUNDANT_ROOK,                    -302, -500,       0)
-
-DECLARE_VALUE(  ENDGAME_CONNECTED_ROOKS,             39,    0,     100)
-DECLARE_VALUE(  ENDGAME_DEFENDED_PASSED,             29,    0,     100)
-DECLARE_VALUE(  ENDGAME_KING_QUADRANT,               22,    0,     100)
-DECLARE_VALUE(  ENDGAME_DOUBLED_PAWNS,              -42, -100,       0)
-DECLARE_VALUE(  ENDGAME_ISOLATED_PAWNS,             -38, -100,       0)
-DECLARE_VALUE(  ENDGAME_PASSED_FORMATION,            81,    0,     250)
-DECLARE_VALUE(  ENDGAME_PAWN_MAJORITY,               65,    0,     250)
-DECLARE_VALUE(  ENDGAME_THREATS,                     74,    0,     250)
-DECLARE_VALUE(  ENDGAME_UNBLOCKED_PASSED_6,         148,    0,     250)
-DECLARE_VALUE(  ENDGAME_UNBLOCKED_PASSED_7,         227,    0,     500)
-
-DECLARE_VALUE(  MIDGAME_CONNECTED_ROOKS,             48,    0,     100)
-DECLARE_VALUE(  MIDGAME_DEFENDED_PASSED,             68,    0,     100)
-DECLARE_VALUE(  MIDGAME_KING_QUADRANT,               18,    0,     100)
-DECLARE_VALUE(  MIDGAME_DOUBLED_PAWNS,              -28, -100,       0)
-DECLARE_VALUE(  MIDGAME_ISOLATED_PAWNS,             -36, -100,       0)
-DECLARE_VALUE(  MIDGAME_HALF_OPEN_FILE,              48,    0,     250)
-DECLARE_VALUE(  MIDGAME_OPEN_FILE,                   65,    0,     250)
-DECLARE_VALUE(  MIDGAME_PASSED_FORMATION,            79,    0,     250)
-DECLARE_VALUE(  MIDGAME_PAWN_MAJORITY,              109,    0,     250)
-DECLARE_VALUE(  MIDGAME_THREATS,                     83,    0,     250)
-DECLARE_VALUE(  MIDGAME_UNBLOCKED_PASSED_6,         124,    0,     250)
-DECLARE_VALUE(  MIDGAME_UNBLOCKED_PASSED_7,         163,    0,     250)
-#endif /* !WITH_NNUE */
-/****************************************************************************/
 #undef DECLARE_ALIAS
 #undef DECLARE_PARAM
 #undef DECLARE_VALUE

@@ -47,7 +47,7 @@ from worker import WorkerThread
 
 
 from libcpp.string cimport string
-cdef extern from 'nnue.h' namespace 'nnue':
+cdef extern from 'nnue/nnue.h' namespace 'nnue':
     string instrset
 
 flavors = {'chess_engine': lambda *_: True }
