@@ -347,11 +347,10 @@ def test_single_legal_move():
 
 
 def test_nnue_eval():
-    sys.path.append(os.path.join(root_path(), 'tools', 'nnue'))
     import golds as nnue_golds
 
     gold = nnue_golds.load_golds()
-    assert gold is not None, 'tools/nnue/golds.json missing; run: python tools/nnue/golds.py <weights.bin>'
+    assert gold is not None, 'test/golds.json missing; run: python test/golds.py <weights.bin>'
 
     for fen in nnue_golds.TESTS:
         assert fen in gold, f'no gold for {fen}; regenerate golds.json'

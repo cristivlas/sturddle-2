@@ -24,6 +24,6 @@ python tools/nnue/train_torch.py --import "$WEIGHTS_FILE" --export weights.bin -
 [[ -s weights.bin ]] || die "weights.bin not produced"
 
 python tools/nnue/pack_weights.py
-python tools/nnue/golds.py weights.bin
+python test/golds.py weights.bin
 
 echo "$(basename "$0"): done"

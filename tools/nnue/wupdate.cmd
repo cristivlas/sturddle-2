@@ -21,7 +21,7 @@ python tools\nnue\train_torch.py --import "%WEIGHTS_FILE%" --export weights.bin 
 call :nonempty weights.bin || (set "MSG=weights.bin not produced" & goto :die)
 
 python tools\nnue\pack_weights.py || (set "MSG=pack_weights.py failed" & goto :die)
-python tools\nnue\golds.py weights.bin || (set "MSG=golds.py failed" & goto :die)
+python test\golds.py weights.bin || (set "MSG=golds.py failed" & goto :die)
 
 echo %~nx0: done
 popd
