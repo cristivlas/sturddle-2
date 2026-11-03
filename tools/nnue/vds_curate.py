@@ -353,7 +353,7 @@ def report(members, chunks, stats):
     weight = rows * keep  # estimated trainer rows per chunk
     ci = Z95 * stats["se"] * SHOW
 
-    print(f"\n{'member':<32} {'rows':>14} {'chunks':>6} {'keep%':>6} {'draw%':>6} {'excess':>16} {'copies':>8}")
+    print(f"\n{'member':<32} {'rows':>14} {'chunks':>6} {'keep%':>6} {'draw%':>6} {'excess':>18} {'copies':>8}")
     for m, (_, mrows, _, mpath) in enumerate(members):
         sel = (member == m) & np.isfinite(stats["excess"])
         w = weight[sel] / max(weight[sel].sum(), 1)
@@ -363,12 +363,12 @@ def report(members, chunks, stats):
         draw = 100 * np.sum(w * stats["draw"][sel])
         line = f"{name:<32} {mrows:>14,} {(member == m).sum():>6}"
         if not sel.any():  # nothing sampled, all filtered, or nothing to compare with
-            print(f"{line} {'-':>6} {'-':>6} {'-':>16} {'-':>8}")
+            print(f"{line} {'-':>6} {'-':>6} {'-':>18} {'-':>8}")
             continue
         dup = mean_of(weight[member == m], stats["copies"][member == m], 8)
-        print(f"{line} {keep_pct:>6.1f} {draw:>6.1f} {ex:>+8.2f} ±{exci:<6.2f} {dup}")
+        print(f"{line} {keep_pct:>6.1f} {draw:>6.1f} {ex:>+8.2f} +/-{exci:<6.2f} {dup}")
 
-    print(f"\n{'chunk (worst first)':<40} {'member':<24} {'rows':>13} {'excess':>16} {'rel':>5} {'copies':>8}")
+    print(f"\n{'chunk (worst first)':<40} {'member':<24} {'rows':>13} {'excess':>18} {'rel':>5} {'copies':>8}")
     for c in np.argsort(-np.where(np.isfinite(stats["excess"]), stats["excess"], -np.inf)):
         if not np.isfinite(stats["excess"][c]):
             continue
@@ -376,7 +376,7 @@ def report(members, chunks, stats):
         no_spread = stats["tau_ref"][c] == 0 and stats["se"][c] > 0  # stopped: chunks indistinguishable
         rel = f"{'-':>5}" if no_spread else f"{stats['reliability'][c]:>5.2f}"
         print(
-            f"{name:<40} {mname:<24} {chunks[c][3]:>13,} {stats['excess'][c] * SHOW:>+8.2f} ±{ci[c]:<6.2f}"
+            f"{name:<40} {mname:<24} {chunks[c][3]:>13,} {stats['excess'][c] * SHOW:>+8.2f} +/-{ci[c]:<6.2f}"
             f" {rel} {mean_of(weight[c : c + 1], stats['copies'][c : c + 1], 8)}"
         )
 
@@ -421,7 +421,7 @@ def inspect(args):
     elif np.isnan(DS.member_oscales).any():  # as the trainer: fitted, for members without their own
         args.outcome_scale, ci = tt.fit_outcome_scale(DS)
         DS.set_default_outcome_scale(args.outcome_scale)
-        print(f"outcome scale {args.outcome_scale:.1f} ±{ci:.1f} (fitted)")
+        print(f"outcome scale {args.outcome_scale:.1f} +/-{ci:.1f} (fitted)")
     with h5py.File(args.input, "r") as hf:
         unmapped = hf["data"].shape[0] - sum(c[3] for c in chunks)  # container gaps, and gaps inside members
     if unmapped:
