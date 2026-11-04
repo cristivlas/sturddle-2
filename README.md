@@ -1,12 +1,11 @@
 # Sturddle 2
 
-Sturddle 2 is a UCI chess engine, the successor to my original [Sturddle Chess Engine](https://github.com/cristivlas/sturddle-chess-engine),
-with many bug fixes and its own neural network, trained from scratch.
-
-History, architecture and research notes: https://cristivlas.github.io/sturddle-2/
+Sturddle 2 is a UCI chess engine. It replaces my earlier [Sturddle Chess Engine](https://github.com/cristivlas/sturddle-chess-engine),
+which is no longer maintained, and adds many bug fixes and its own neural network, trained from scratch.
+The [project page](https://cristivlas.github.io/sturddle-2/) tells the story: history, architecture, and the research behind it.
 
 The engine is a command-line program. You need a UCI chess GUI to use it, such as Arena, Cute Chess,
-or my own Sturddle View (https://github.com/cristivlas/sturddle-view).
+or my own [Sturddle View](https://github.com/cristivlas/sturddle-view).
 
 ## Building the Engine
 
