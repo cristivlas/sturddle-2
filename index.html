@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sturddle Chess Engine</title>
+<meta name="description" content="History, architecture and research notes behind the Sturddle chess engine.">
+<style>
+:root {
+  --bg: #fbfaf7;
+  --fg: #1f2328;
+  --muted: #5d636b;
+  --rule: #e3e0d8;
+  --card: #ffffff;
+  --accent: #7a4b1e;
+  --accent-soft: #f3ebe1;
+  --code-bg: #f1efea;
+  --plot: #7a4b1e;
+  --grid: #e3e0d8;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16181b;
+    --fg: #e6e4df;
+    --muted: #9aa0a6;
+    --rule: #2e3236;
+    --card: #1d2024;
+    --accent: #e0a96d;
+    --accent-soft: #2a241d;
+    --code-bg: #24272b;
+    --plot: #e0a96d;
+    --grid: #2e3236;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #16181b;
+  --fg: #e6e4df;
+  --muted: #9aa0a6;
+  --rule: #2e3236;
+  --card: #1d2024;
+  --accent: #e0a96d;
+  --accent-soft: #2a241d;
+  --code-bg: #24272b;
+  --plot: #e0a96d;
+  --grid: #2e3236;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 17px/1.65 Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+}
+main { max-width: 760px; margin: 0 auto; padding: 48px 16px 96px; }
+header { margin-bottom: 40px; }
+h1 { font-size: 2.4rem; line-height: 1.15; margin: 0 0 8px; letter-spacing: -0.01em; }
+h2 { font-size: 1.45rem; margin: 56px 0 12px; padding-top: 12px; border-top: 1px solid var(--rule); }
+h3 { font-size: 1.1rem; margin: 32px 0 8px; }
+p, li { margin: 0 0 14px; }
+ul, ol { padding-left: 1.3em; }
+a { color: var(--accent); text-underline-offset: 2px; }
+.lede { font-size: 1.15rem; color: var(--muted); margin: 0; }
+nav.toc { font-family: system-ui, sans-serif; font-size: 0.92rem; background: var(--accent-soft); border-radius: 8px; padding: 14px 18px; }
+nav.toc ol { margin: 0; columns: 2; column-gap: 32px; }
+nav.toc li { margin: 0 0 4px; }
+code { font: 0.86em/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+.note { font-family: system-ui, sans-serif; font-size: 0.92rem; color: var(--muted); border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; margin: 18px 0; }
+.table-wrap { overflow-x: auto; margin: 16px 0 24px; border: 1px solid var(--rule); border-radius: 8px; background: var(--card); }
+table { border-collapse: collapse; width: 100%; font: 0.84rem/1.45 system-ui, sans-serif; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+th { font-weight: 600; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+figure { margin: 20px 0 28px; }
+figcaption { font: 0.85rem/1.5 system-ui, sans-serif; color: var(--muted); margin-top: 6px; }
+svg.chart { width: 100%; height: auto; display: block; background: var(--card); border: 1px solid var(--rule); border-radius: 8px; }
+svg.chart text { font: 12px system-ui, sans-serif; fill: var(--muted); }
+svg.chart .grid { stroke: var(--grid); stroke-width: 1; }
+svg.chart .line { stroke: var(--plot); stroke-width: 2.5; fill: none; }
+svg.chart .dot { fill: var(--plot); }
+svg.chart .val { fill: var(--fg); font-weight: 600; }
+.diagrams { display: grid; gap: 28px; margin-top: 16px; }
+.diagrams figure { margin: 0; }
+.diagrams a { display: block; background: #ffffff; border: 1px solid var(--rule); border-radius: 8px; padding: 8px; }
+.diagrams img { display: block; width: 100%; height: auto; }
+@media (max-width: 560px) {
+  body { font-size: 16px; }
+  h1 { font-size: 1.9rem; }
+  nav.toc ol { columns: 1; }
+}
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>Sturddle</h1>
+  <p class="lede">A chess engine I wrote to learn how chess engines work: its history, its architecture, and the experiments along the way.</p>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <ol>
+    <li><a href="#origins">Why and where it started</a></li>
+    <li><a href="#packaging">A C++ engine in a Python shell</a></li>
+    <li><a href="#ratings">Strength over time</a></li>
+    <li><a href="#movegen">Move generation: what's magic about it?</a></li>
+    <li><a href="#search">Search: MTD(f), with twists</a></li>
+    <li><a href="#nnue">The neural network, the long way round</a></li>
+    <li><a href="#data">Training data and the trainer</a></li>
+    <li><a href="#lab">The lab</a></li>
+    <li><a href="#next">What didn't work, and what's next</a></li>
+    <li><a href="#credits">Credits</a></li>
+    <li><a href="#diagrams">Appendix: network diagrams</a></li>
+  </ol>
+</nav>
+
+<h2 id="origins">Why and where it started</h2>
+<p>I wanted to understand how chess engines work and which algorithms are involved, and the best way I know to learn something is to build it.</p>
+<p>Sturddle started as a Python prototype. I took move generation and the other basics from <a href="https://github.com/niklasf/python-chess">python-chess</a> and wrote the search first. I was intrigued by <a href="https://people.csail.mit.edu/plaat/mtdf.html">MTD(f)</a>, and curious whether I could write one search "skeleton" that switches at runtime between bare negamax, NegaScout and MTD(f). At first the evaluation was material-only, then a naive hand-crafted eval.</p>
+<p>Over time I rewrote the search in C++. Over many more iterations I studied move generation and the rest, and replaced the python-chess parts with my own code. What's left of Python today is a bootstrap script and some glue.</p>
+<p>That history explains the name. A <em>sturddlefish</em> is the accidental hybrid of a sturgeon and a paddlefish, and this engine started life as a hybrid too, part Python and part C++.</p>
+
+<h2 id="packaging">A C++ engine in a Python shell</h2>
+<p>To this day Sturddle builds as a Python extension module. That's partly history, but it also enabled a trick I stumbled into more or less by accident.</p>
+<p>When I was looking into submitting Sturddle to <a href="https://computerchess.org.uk/4040/">CCRL</a> for testing, they wanted a Windows executable, not a bunch of Python scripts. So I bundled everything with <a href="https://pyinstaller.org/">PyInstaller</a>. Some time later it occurred to me that the compiled engine modules are small next to the network weights and the opening book, so I could ship <em>several</em> of them in one bundle, built for AVX-512, AVX-512 with BF16, AVX2, AVX2 with VNNI, AVX, and a generic x86-64 baseline. At startup, a small boot script (<code>main.py</code>) checks the processor's features and loads the best "kernel". Other engines ship one binary per instruction set and let the user pick; Sturddle picks for you.</p>
+<p>PyInstaller also compresses the bundle. In early versions the weights were compiled into every flavor, and compression squeezed out the redundancy. Since 2.3 they're shared across flavors and included once. Quantized weights compress well too, thanks to sparsity and rounding.</p>
+<p class="note">I build with Clang on every platform; on Windows, <code>setup.py</code> patches the Python build tools to use <code>clang-cl</code>. Other compilers may work, but I rarely check. MSVC is occasionally useful for its debug runtime checks. In July 2025 its <code>/RTCc</code> check (data lost when converting to a smaller type) found 16-bit overflows in the NNUE code, which I fixed the next day.</p>
+<p class="note">The UCI loop is native C++ (<code>uci_native.cpp</code>) by default. The old Python UCI implementation (<code>uci.pyx</code>) and helpers like <code>worker.py</code> are still in the tree as historical reference, but unused.</p>
+
+<h2 id="ratings">Strength over time</h2>
+<figure>
+<svg class="chart" viewBox="0 0 660 270" role="img" aria-labelledby="chart-title chart-desc">
+  <title id="chart-title">Sturddle CCRL 40/15 ratings by version</title>
+  <desc id="chart-desc">Rating rises from 3114 for version 1.04 to 3351 for version 2.7.0.</desc>
+  <line class="grid" x1="50" y1="230" x2="640" y2="230"/>
+  <line class="grid" x1="50" y1="155" x2="640" y2="155"/>
+  <line class="grid" x1="50" y1="80" x2="640" y2="80"/>
+  <text x="44" y="234" text-anchor="end">3100</text>
+  <text x="44" y="159" text-anchor="end">3200</text>
+  <text x="44" y="84" text-anchor="end">3300</text>
+  <polyline class="line" points="80,219.5 155,186.5 230,182 305,141.5 380,103.25 455,92.75 530,68 605,41.75"/>
+  <circle class="dot" cx="80" cy="219.5" r="4"/><text class="val" x="80" y="208" text-anchor="middle">3114</text>
+  <circle class="dot" cx="155" cy="186.5" r="4"/><text class="val" x="155" y="175" text-anchor="middle">3158</text>
+  <circle class="dot" cx="230" cy="182" r="4"/><text class="val" x="230" y="200" text-anchor="middle">3164</text>
+  <circle class="dot" cx="305" cy="141.5" r="4"/><text class="val" x="305" y="130" text-anchor="middle">3218</text>
+  <circle class="dot" cx="380" cy="103.25" r="4"/><text class="val" x="380" y="92" text-anchor="middle">3269</text>
+  <circle class="dot" cx="455" cy="92.75" r="4"/><text class="val" x="455" y="112" text-anchor="middle">3283</text>
+  <circle class="dot" cx="530" cy="68" r="4"/><text class="val" x="530" y="57" text-anchor="middle">3316</text>
+  <circle class="dot" cx="605" cy="41.75" r="4"/><text class="val" x="605" y="30" text-anchor="middle">3351</text>
+  <text x="80" y="254" text-anchor="middle">1.04</text>
+  <text x="155" y="254" text-anchor="middle">2.01</text>
+  <text x="230" y="254" text-anchor="middle">2.02</text>
+  <text x="305" y="254" text-anchor="middle">2.3.1</text>
+  <text x="380" y="254" text-anchor="middle">2.4.0</text>
+  <text x="455" y="254" text-anchor="middle">2.5.0</text>
+  <text x="530" y="254" text-anchor="middle">2.6.0</text>
+  <text x="605" y="254" text-anchor="middle">2.7.0</text>
+</svg>
+<figcaption>CCRL 40/15 ratings (error bars +/-12 to +/-20). 1.04 is the original Sturddle; the rest are Sturddle 2. Source: CCRL, November 2026.</figcaption>
+</figure>
+
+<h2 id="movegen">Move generation: what's magic about it?</h2>
+<p>When I first read about <a href="https://www.chessprogramming.org/Magic_Bitboards">magic bitboards</a>, I kept asking myself what exactly was magic. Multiply the occupancy by a constant, shift, look up the attacks: isn't that just collision-free hashing? The wiki does call it a perfect-hashing scheme. The "magic" is only the constant, found by trial and error.</p>
+<p>So the first thing I did was write my own code generator, which searches for hash parameters and writes the attack tables out as C++. The tables are very large, and as I recall some compilers of the time didn't like that. A few months later I adopted Goutham Bhat's <a href="https://github.com/goutham/magic-bits">magic-bits</a> library. In December 2025 the generated tables gained a PEXT path for CPUs with BMI2.</p>
+<p>Sturddle uses both today. On hardware with PEXT, my generated tables are slightly faster; elsewhere (the generic, AVX and ARM builds) magic-bits wins.</p>
+
+<h2 id="search">Search: MTD(f), with twists</h2>
+<p>The default search is still MTD(f). Switching algorithms at runtime survived as a UCI option, visible only when the engine runs with <code>--dev-mode</code>. Three changes to the textbook version seem to matter.</p>
+<ol>
+  <li><strong>Bisection.</strong> Each pass tests the midpoint between the current lower and upper bound, instead of stepping from the last score. This is Coplan's C*, which Aske Plaat describes on his MTD(f) page, noting that bisection's windows are less efficient than MTD(f)'s choice.</li>
+  <li><strong>Re-sorting moves between passes.</strong> After every null-window pass, the root's moves are re-sorted using what that pass just learned (<code>MTDF_REORDER_MOVES</code>). Plaat notes that root move sorting is possible with MTD(f).</li>
+  <li><strong>What counts as a PV node.</strong> The usual test, an open window (<code>alpha + 1 &lt; beta</code>), rarely fires in MTD(f), because nearly every search is null-window. Engines often conclude that MTD(f) "has no PV nodes". Sturddle also treats the <em>leftmost</em> node as PV, meaning the one reached by taking the first move at every ply. That's the structural definition from Knuth and Moore's 1975 analysis of alpha-beta. Combined with the re-sorting above, the leftmost path follows the latest best line, so PV-specific logic still has something to work with.</li>
+</ol>
+<p>I haven't found re-sorting after every pass, or the leftmost-PV idea, described elsewhere, but I haven't read everything, so I don't claim they're new.</p>
+<p class="note">Does MTD(f) beat NegaScout here? In my tests, yes. But it's not a fair fight. All the pruning, reductions and heuristics were tuned with MTD(f) as the default, and, embarrassingly, the NegaScout path had nasty bugs until recently. I underestimated how much tuning matters.</p>
+
+<h3>Multi-cut, slightly bent</h3>
+<p>Multi-cut prunes a node when several of its first moves already fail high at reduced depth. A <a href="https://skemman.is/bitstream/1946/9180/1/research-report.pdf">research report</a> proposes trying it only at nodes that produced cutoffs before. Sturddle always tries it, but needs one fewer cutoff (2 of the first 6 moves instead of 3) when the transposition table already holds a lower bound near beta. It's a soft version of the paper's filter.</p>
+
+<h3>Late-move reductions vs. the clock</h3>
+<p>Sturddle didn't scale well at long time controls. My hunch was that late-move reductions were too aggressive and never relaxed, even when there was time to spare.</p>
+<p>The reduction table is the classic <code>log(depth) * log(moves) / divisor</code>. Until July 2025 the divisor was 2. Then I added a "dynamic" reduction based on time left (badly buggy) and changed the divisor to <em>e</em>; 2.3.1 shipped with both and was the first version past 3200. The divisor became 4 in 2.5.0. In the upcoming 2.8 the divisor depends on the clock. It is 4 while an iteration starts early in the move's time budget, and falls linearly to 2 as the start time moves from 20% to 50% of the budget, so late iterations reduce harder and still finish.</p>
+<p class="note">I credit most of the long-TC gain to reducing less overall, not to the clock-dependent part. Pruning by time control was <a href="https://talkchess.com/viewtopic.php?p=498929">debated on CCC in 2012</a>, mostly skeptically. Sturddle's per-iteration version is a different mechanism, and it's too early to say how much it helps.</p>
+
+<h2 id="nnue">The neural network, the long way round</h2>
+
+<h3>Beginnings</h3>
+<p>The first network came from a TensorFlow script. It had no buckets and a single perspective, and every evaluation was from White's point of view. The weights were small enough to export as a C++ header and compile straight in, and a nice side effect was that the compiler checked that layer shapes and order matched.</p>
+<p>I focused first on the "UE" in NNUE, the efficient incremental updates. For SIMD I found Agner Fog's <a href="https://github.com/vectorclass/version2">Vector Class Library</a>, which let me think about algorithms instead of intrinsics, and later made the ARM port much easier. Where it was simpler, I wrote NEON by hand.</p>
+<p>I read the docs the Stockfish people published when NNUE first arrived in chess, and there were three things in that design I didn't understand at first:</p>
+<ol>
+  <li>how to avoid overflow with 8-bit quantization (16-bit I got right away);</li>
+  <li>king buckets;</li>
+  <li>dual perspective: I didn't understand why it was needed, and was skeptical that it was.</li>
+</ol>
+<p>So I worked around all three. The workarounds date from 2023 and held up through 2.7.0, in October 2026.</p>
+
+<h3>Three workarounds</h3>
+<ul>
+  <li><strong>No int8: pool and use floats.</strong> The first layer (the accumulator) is int16. Everything after it was float. An average-pooling layer shrinks the accumulator output, and the small layers that follow run on FMA. Later releases added VNNI for the int16 first layer and BF16 for the second layer, where the CPU supports them.</li>
+  <li><strong>No king buckets: a kings-and-pawns side path.</strong> I had a hunch the king's position mattered but found the Stockfish design too complicated. Instead, a separate small network sees only kings and pawns, and its output <em>modulates</em> the main path, multiplicatively in early versions and as <code>pooled * (1 + modulation)</code> from 2.3 on. Kings and pawns alone say a lot about the phase of the game and the pawn formations around each king.</li>
+  <li><strong>No dual perspective: flip the labels.</strong> All training labels are converted to White's point of view, and the engine flips the sign for Black to move. To teach the net symmetry, the trainer's <code>--balance</code> flag (2.4.0) doubled each batch with color-mirrored copies, with evaluations negated and outcomes flipped.</li>
+</ul>
+
+<h3>When bucketing finally clicked</h3>
+<p>Eventually my mental model changed, I think while reading about mixture-of-experts models. I stopped thinking of buckets as "the relationship between the king and stuff", and started thinking "several sub-networks, each specialized to a situation". It's a mixture of experts with a hard gate, where a simple chess rule picks exactly one expert, so there's no router to train.</p>
+<p>I still wanted to be original. The king was already covered by the side path, so in 2.4.0 I bucketed by <em>pawn count</em> instead, with four buckets, since pawns say a lot about game phase and how open the position is.</p>
+<p>Switching buckets mid-search was boneheaded but worked. Every ply kept four bucketed copies of the accumulator, tagged by position hash, and on a bucket change the engine copied the parent's matching copy if it had one, or otherwise re-weighted the parent's accumulator into the new bucket. In 2.5.0 the pawn buckets also selected weights in two more places: the side path's output layer (64 -&gt; 32, the one that produces the modulation) and the main path's second layer. That lasted one release: from 2.6.0 on, the buckets select only the first layer again.</p>
+<p>By then the weights were too big to compile in, so I wrote the binary export, a loader and a validation script. Freed from size limits, 2.6.0 added a second kind of bucket: which wing each king is on (<code>KK</code>, <code>KQ</code>, <code>QK</code>, <code>QQ</code>), for 16 buckets in all. That many buckets needs refresh tables (a.k.a. "Finny tables"), and there I didn't try to be original. I researched what others do.</p>
+
+<h3>Rediscovering output stacks</h3>
+<p>The pooling layer was a plain average from the start. At some point I saw a training opportunity there and gave it weights, and then realized I could pick which pooling weights to use based on the side to move (2.7.0). The leap from there was "I could select on more criteria, and have several outputs". Then I found out others had been doing exactly that, as output stacks, for a while. Ha.</p>
+
+<h3>2.8: trying it the "standard" way</h3>
+<p>My own architecture seemed to hit a ceiling. 2.7.0, the last public release, still uses it. The upcoming 2.8 uses what's now the accepted design: king buckets with horizontal mirroring, dual perspective, pairwise-multiplied int8 activations, sparse int8 second layer, and 32 output stacks selected by piece count and queens. None of that is original. I want to see how my old ways compare. It won't be apples to apples, though, since 2.8 also fixes a lot of bugs.</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Release</th><th>CCRL</th><th>First layer</th><th>K+P side path</th><th>Pooling</th><th>Buckets</th><th>Perspective</th><th>Notable</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>2.00-2.02</td><td class="num">3158-3164</td><td>897 -&gt; 640</td><td>256 -&gt; 64 -&gt; 32, multiply</td><td>average, 4</td><td>none</td><td>White POV</td><td>TF trainer, AMSGrad, Huber loss</td></tr>
+    <tr><td>2.3.1</td><td class="num">3218</td><td>897 -&gt; 1280</td><td>256 -&gt; 64 -&gt; 32, * (1 + m)</td><td>average, 8</td><td>none</td><td>White POV</td><td>AVX-VNNI; weights shared across flavors</td></tr>
+    <tr><td>2.4.0</td><td class="num">3269</td><td>4 x 897 -&gt; 1280</td><td>256 -&gt; 64 -&gt; 32 (linear), * (1 + m)</td><td>average, 8</td><td>4 pawn</td><td>White POV</td><td><code>weights.bin</code>; <code>--balance</code></td></tr>
+    <tr><td>2.5.0</td><td class="num">3283</td><td>4 x 897 -&gt; 1280</td><td>256 -&gt; 64 -&gt; 32 (bucketed), * (1 + m)</td><td>average, 8</td><td>4 pawn (first layer, side-path output, second layer)</td><td>White POV</td><td>BF16 second layer, AVX-512 VNNI</td></tr>
+    <tr><td>2.6.0</td><td class="num">3316</td><td>16 x 769 -&gt; 2048</td><td>256 -&gt; 256, * (1 + m)</td><td>average, 8</td><td>16: pawn x king wing</td><td>White POV</td><td>Refresh tables; PyTorch trainer; data profiles</td></tr>
+    <tr><td>2.7.0</td><td class="num">3351</td><td>16 x 769 -&gt; 2048</td><td>256 -&gt; 256, * (1 + m)</td><td>learned, by side to move</td><td>16: pawn x king wing</td><td>White POV</td><td>int16 second layer</td></tr>
+    <tr><td>2.8 (dev)</td><td class="num">-</td><td>32 x 768 -&gt; 1024 per side</td><td>none</td><td>none</td><td>16 king x 2 (opp. queen)</td><td>dual</td><td>32 output stacks; pairwise activations, sparse int8, VNNI <code>dpbusd</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="data">Training data and the trainer</h2>
+<p>The data came from Lichess rated games first, then Leela data, as with many engines at the time. The engine was too weak for self-play to be worth anything. These days I generate my own too. A bash self-play script runs <a href="https://github.com/Disservin/fastchess">fastchess</a>, which records evaluations in the PGN; my tools parse and stage the games in SQLite, then convert to HDF5.</p>
+<p>SQLite is probably overkill. I picked it thinking I'd dedupe and analyze, before I understood how much data training really needs. It earns its keep anyway. The PGN parser is Python (I was lazy), so harvesting is slow, and it commits to SQLite periodically. If a bug or a crash stops the run, everything up to the last commit is kept, and so is the compute time that went into it.</p>
+<p>Storage started as naive NumPy memory-mapped files and soon "graduated" to HDF5, whose <em>virtual datasets</em> let me mix and match data sets spread across physical disks. When the data outgrew a drive, I added another NVMe drive and pointed a virtual dataset at files on both; the trainer still sees one dataset.</p>
+<p>I also reuse games from tuning runs as training data, except from coarse tuning of parameters never tuned before, because wild parameter values mean bad play, and bad play means bad labels.</p>
+
+<h3>The two-week mystery, and data profiles</h3>
+<p>Around 2.6.0 a new architecture underperformed for a couple of weeks. It turned out that over time I'd accumulated data scored by different engine versions, each with its own evaluation scale, and the labels didn't agree.</p>
+<p>Re-scoring everything was too expensive, so I settled for what I'd call relabeling-light: <em>data profiles</em>. I pick a reference engine version (usually the latest release), score a sample from each data source with it, and write a small "sidecar" file next to that source. The trainer then scales the labels by provenance, per bucket, without rewriting the data. Each profile also carries an <em>outcome scale</em>, the constant <i>S</i> in sigmoid(eval / <i>S</i>) that best predicts game results, fitted with <a href="https://en.wikipedia.org/wiki/Newton%27s_method_in_optimization">Newton's method</a>. It sets the sigmoid scale in the loss function.</p>
+
+<h3>From TensorFlow to PyTorch</h3>
+<p>The original trainer was TensorFlow/Keras, defaulting to Adam with AMSGrad and a clipped Huber loss. Over time it collected cruft, like multi-GPU code from when I trained on a pair of Tesla K80s. In mid-2026 I ported it to PyTorch, partly because the code came out more compact. The 2.6.0 and 2.7.0 nets were trained with PyTorch, and the TensorFlow script is gone in 2.8.</p>
+
+<h2 id="lab">The lab</h2>
+<p>Every x86 flavor in the bundle has a machine to test it on, and ARM at least gets compiled:</p>
+<ul>
+  <li><strong>Intel i9-14900K</strong> (Windows), with AVX-VNNI but no AVX-512.</li>
+  <li><strong>AMD Ryzen 7 8845HS</strong> laptop (Zen 4, Windows), with AVX-512 including VNNI and BF16. Thermal throttling makes it a shaky benchmark.</li>
+  <li><strong>Intel Xeon W-2195</strong> (Linux) with an RTX 3090: the training box.</li>
+  <li><strong>Dual Xeon Platinum 8160</strong> (Linux), 48 cores and 96 threads, for self-play. It took me an embarrassingly long time to realize self-play has to be NUMA-aware; <code>selfplay.sh -N</code> now pins each run's CPUs and memory to one node.</li>
+  <li><strong>An old Dell rack server</strong> (Linux) with twin Tesla K80s, now mostly storage and occasional AVX testing. It's loud as heck, and the Dell BIOS knows nothing about passively cooled Teslas, so I wrote <a href="https://github.com/cristivlas/dell-thermal-manager">my own fan-control daemon</a>.</li>
+  <li><strong>An ODROID</strong>, but only to check that the ARM build compiles. Real ARM testing, including Apple Silicon, is on the list for when I have a Mac again.</li>
+</ul>
+<h3>P-cores, E-cores and fair games</h3>
+<p>The 14900K mixes fast performance cores with slower efficiency cores. Running many games in parallel with fastchess or cutechess-cli, there's no control over which kind of core each engine lands on, so a game might effectively be played at two different time controls. Since 2.3.1 Sturddle raises its process priority on Windows. 2.7.0 added binding to P-cores through Windows CPU sets. That version has a bug where the process can sit waiting for a P-core in a window that time management doesn't account for, and occasionally lose on time. It's fixed for 2.8. My impression is that binding made test results more consistent, but long-time-control tests are slow and I don't have a proper A/B comparison.</p>
+
+<h2 id="next">What didn't work, and what's next</h2>
+<p>Sturddle is an ongoing quest, and the code shows it. Most search features and experiments sit behind compile-time flags in <code>common.h</code>, such as <code>MTDF_REORDER_MOVES</code>, <code>SINGULAR_EXTENSION</code> or <code>RAZORING</code>. Experiments that haven't paid off stay in the tree switched off, like <code>EVAL_PIECE_GRADING</code> below. The flags also help with debugging. When something breaks, I can switch features off one at a time until the problem goes away.</p>
+<ul>
+  <li><strong>Piece-square tables in exchange evaluation</strong>, making capture sequences position-aware, and <strong>piece values graded by pawn bucket</strong>. Neither has shown a strength gain yet. Engine bug, tuner bug, or bad hyperparameters? Still open.</li>
+  <li><strong>A distributed SPSA tuner</strong> (<a href="https://github.com/cristivlas/sturddle-spsa">sturddle-spsa</a>): mixed results so far, work in progress.</li>
+  <li><strong>A fair old-vs-new network comparison</strong>: port the 2.7.0 architecture into the 2.8 code and train both on the same data.</li>
+  <li><strong>Native builds without the Python glue.</strong> An experimental script exists (<code>tools/make-native.py</code>), but official releases still go through Python and PyInstaller.</li>
+</ul>
+
+<h2 id="credits">Credits</h2>
+<ul>
+  <li>Agner Fog's <a href="https://github.com/vectorclass/version2">Vector Class Library</a>, without which I'd still be fighting intrinsics. <a href="https://github.com/simd-everywhere/simde">SIMDe</a> helped on ARM.</li>
+  <li>Goutham Bhat's <a href="https://github.com/goutham/magic-bits">magic-bits</a> for sliding-piece attacks.</li>
+  <li><a href="https://github.com/jdart1/Fathom">Fathom</a> for Syzygy tablebase probing.</li>
+  <li><a href="https://github.com/niklasf/python-chess">python-chess</a>, which got the prototype off the ground.</li>
+  <li>Aske Plaat for <a href="https://people.csail.mit.edu/plaat/mtdf.html">MTD(f)</a>, the algorithm that started all this, and his write-ups on it.</li>
+  <li>The Stockfish team's NNUE documentation, and the <a href="https://www.chessprogramming.org/">Chess Programming Wiki</a>.</li>
+  <li>Lichess and the Leela Chess Zero project for early training data.</li>
+  <li>The <a href="https://computerchess.org.uk/4040/">CCRL</a> testers, and the authors of <a href="https://github.com/Disservin/fastchess">fastchess</a>, <a href="https://github.com/cutechess/cutechess">cutechess-cli</a>, <a href="https://github.com/kiudee/chess-tuning-tools">chess-tuning-tools</a> and <a href="https://github.com/fsmosca/Lakas">Lakas</a>.</li>
+</ul>
+<p class="note">Two small fixes went back upstream: one for 32-bit ARM in magic-bits, and one in Fathom for a crash caused by mixing C and C++ memory management.</p>
+
+<h2 id="diagrams">Appendix: network diagrams</h2>
+<div class="diagrams">
+  <figure>
+    <a href="img/nnue-2.0x.png"><img src="img/nnue-2.0x.png" alt="Network diagram for Sturddle 2.00 to 2.02" loading="lazy"></a>
+    <figcaption>2.00 to 2.02: average pooling before the multiply, and an extra hidden layer.</figcaption>
+  </figure>
+  <figure>
+    <a href="img/nnue-2.3.png"><img src="img/nnue-2.3.png" alt="Network diagram for Sturddle 2.3.x" loading="lazy"></a>
+    <figcaption>2.3.x: a 1280-wide first layer and residual modulation.</figcaption>
+  </figure>
+  <figure>
+    <a href="img/nnue-2.4.0.png"><img src="img/nnue-2.4.0.png" alt="Network diagram for Sturddle 2.4.0" loading="lazy"></a>
+    <figcaption>2.4.0: four pawn buckets select the first layer's weights.</figcaption>
+  </figure>
+  <figure>
+    <a href="img/nnue-2.5.0.png"><img src="img/nnue-2.5.0.png" alt="Network diagram for Sturddle 2.5.0" loading="lazy"></a>
+    <figcaption>2.5.0: pawn buckets also select the side path's output layer and the main path's second layer.</figcaption>
+  </figure>
+  <figure>
+    <a href="img/nnue-2.6.0.png"><img src="img/nnue-2.6.0.png" alt="Network diagram for Sturddle 2.6.0" loading="lazy"></a>
+    <figcaption>2.6.0: 16 buckets (pawn count x king wings) and a 2048-wide first layer.</figcaption>
+  </figure>
+  <figure>
+    <a href="img/nnue-2.7.0.png"><img src="img/nnue-2.7.0.png" alt="Network diagram for Sturddle 2.7.0" loading="lazy"></a>
+    <figcaption>2.7.0: pooling weights learned and selected by side to move.</figcaption>
+  </figure>
+</div>
+
+
+</main>
+</body>
+</html>
