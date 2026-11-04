@@ -1,7 +1,7 @@
 # Sturddle 2
 
-Sturddle 2 is a fork of my Sturddle Chess Engine (https://github.com/cristivlas/sturddle-chess-engine)
-with many bug fixes and a rewritten (and trained from scratch) neural network.
+Sturddle 2 is a UCI chess engine, the successor to my original [Sturddle Chess Engine](https://github.com/cristivlas/sturddle-chess-engine),
+with many bug fixes and its own neural network, trained from scratch.
 
 History, architecture and research notes: https://cristivlas.github.io/sturddle-2/
 
