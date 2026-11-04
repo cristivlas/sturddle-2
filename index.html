@@ -186,7 +186,7 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
 <h2 id="nnue">The neural network, the long way round</h2>
 
 <h3>Beginnings</h3>
-<p>The first network came from a TensorFlow script. It had no buckets and a single perspective, and every evaluation was from White's point of view. The weights were small enough to export as a C++ header and compile straight in, and a nice side effect was that the compiler checked that layer shapes and order matched.</p>
+<p>Sturddle 1.x didn't have a network of its own: it used Daniel Shawul's <a href="https://github.com/dshawul/nnue-probe">nnue-probe</a> library to run existing Stockfish-format networks. My first own network came from a TensorFlow script. It had no buckets and a single perspective, and every evaluation was from White's point of view. The weights were small enough to export as a C++ header and compile straight in, and a nice side effect was that the compiler checked that layer shapes and order matched.</p>
 <p>I focused first on the "UE" in NNUE, the efficient incremental updates. For SIMD I found Agner Fog's <a href="https://github.com/vectorclass/version2">Vector Class Library</a>, which let me think about algorithms instead of intrinsics, and later made the ARM port much easier. Where it was simpler, I wrote NEON by hand.</p>
 <p>I read the docs the Stockfish people published when NNUE first arrived in chess, and there were three things in that design I didn't understand at first:</p>
 <ol>
@@ -272,6 +272,7 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
   <li>Agner Fog's <a href="https://github.com/vectorclass/version2">Vector Class Library</a>, without which I'd still be fighting intrinsics. <a href="https://github.com/simd-everywhere/simde">SIMDe</a> helped on ARM.</li>
   <li>Goutham Bhat's <a href="https://github.com/goutham/magic-bits">magic-bits</a> for sliding-piece attacks.</li>
   <li><a href="https://github.com/jdart1/Fathom">Fathom</a> for Syzygy tablebase probing.</li>
+  <li>Daniel Shawul's <a href="https://github.com/dshawul/nnue-probe">nnue-probe</a>, which ran the networks in Sturddle 1.x.</li>
   <li><a href="https://github.com/niklasf/python-chess">python-chess</a>, which got the prototype off the ground.</li>
   <li>Aske Plaat for <a href="https://people.csail.mit.edu/plaat/mtdf.html">MTD(f)</a>, the algorithm that started all this, and his write-ups on it.</li>
   <li>The Stockfish team's NNUE documentation, and the <a href="https://www.chessprogramming.org/">Chess Programming Wiki</a>.</li>
