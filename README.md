@@ -3,7 +3,10 @@
 Sturddle 2 is a fork of my Sturddle Chess Engine (https://github.com/cristivlas/sturddle-chess-engine)
 with many bug fixes and a rewritten (and trained from scratch) neural network.
 
-The engine is a command-line program. You need a GUI (such as https://github.com/cristivlas/sturddle-view) to use it.
+History, architecture and research notes: https://cristivlas.github.io/sturddle-2/
+
+The engine is a command-line program. You need a UCI chess GUI to use it, such as Arena, Cute Chess,
+or my own Sturddle View (https://github.com/cristivlas/sturddle-view).
 
 ## Building the Engine
 
