@@ -762,9 +762,12 @@ namespace search
             {
                 if (!next_ctxt->is_null_move())
                 {
+                    const auto& entry = next_ctxt->tt_entry();
+
+                    /* fail-high here means the child was cut by its upper bound */
                     if (next_ctxt->_prune_reason == PruneReason::PRUNE_TT
-                        && next_ctxt->tt_entry()._depth >= depth() - 1
-                        && (next_ctxt->tt_entry().is_exact() || score >= _beta))
+                        && entry.upper_depth() >= depth() - 1
+                        && (entry.is_exact() || score >= _beta))
                     {
                         /* Do not retry */
                         ASSERT(next_ctxt->tt_entry().is_valid());
@@ -1741,7 +1744,7 @@ namespace search
                 }
                 else if (move == ctxt.tt_entry()._hash_move)
                 {
-                    make_move<false>(ctxt, move, MoveOrder::HASH_MOVES, ctxt.tt_entry()._value);
+                    make_move<false>(ctxt, move, MoveOrder::HASH_MOVES, ctxt.tt_entry().value());
                 }
                 else if (move.promotion())
                 {

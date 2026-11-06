@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstdlib>
 
 #if _WIN32
@@ -335,7 +336,7 @@ namespace search
     };
 
 
-    template <typename T, size_t BUCKET_SIZE = 14>
+    template <typename T, size_t BUCKET_SIZE = 12>
     class hash_table
     {
         using clock_t = uint8_t;
@@ -381,12 +382,13 @@ namespace search
         clock_t _clock = 0;
         count_t _used = 0;
         uint8_t _generation = 0;
+        bool _pow2 = false;
         data_t _data; /* table entries */
 
     private:
         static INLINE size_t get_num_buckets(size_t megabytes)
         {
-            static_assert(sizeof(T) == 18);
+            static_assert(sizeof(T) == 21);
             static_assert(bucket_size() == 256);
 
             auto buckets = megabytes * ONE_MEGABYTE / bucket_size();
@@ -398,7 +400,8 @@ namespace search
             ASSERT(!_data.empty());
             ASSERT(_data.size() % 2 == 0);
 
-            const auto idx = hash & (_data.size() - 1);
+            const auto n = _data.size();
+            const auto idx = _pow2 ? hash & (n - 1) : ((hash >> 32) * n) >> 32;
             ASSERT(idx >= 0 && idx < _data.size());
 
             PREFETCH(&_data[idx]);
@@ -458,6 +461,7 @@ namespace search
                 throw std::bad_alloc();
 
             _data.resize(buckets, bucket_t());
+            _pow2 = std::has_single_bit(buckets);
         }
 
         struct Result
@@ -490,8 +494,9 @@ namespace search
                 else
                 {
                     int replacement_score = depth + 1;
+                    size_t slot = 0;
 
-                    for (size_t slot = 0; slot < bucket_t::size(); ++slot)
+                    for (; slot < bucket_t::size(); ++slot)
                     {
                         auto& e = bucket._entries[slot];
 
@@ -509,7 +514,7 @@ namespace search
                         }
 
                         const int age = (32 + generation() - e._generation) & 31;
-                        const int score = e._depth - 2 * age + e.is_exact();
+                        const int score = e.depth() - 2 * age + e.is_exact();
 
                         if (replacement_score > score)
                         {
@@ -517,15 +522,24 @@ namespace search
                             result._replacement_slot = slot;
                         }
                     }
+
+                    /* all entries deeper: last slot is always-replace */
+                    if (slot == bucket_t::size() && result._replacement_slot < 0)
+                        result._replacement_slot = bucket_t::size() - 1;
                 }
             }
 
             return result;
         }
 
-        INLINE void store(const Result& r)
+        /* Apply the update to the live slot under the lock,
+         * so that concurrent writes to the same position are merged (instead of being lost).
+         */
+        template <typename F>
+        INLINE void store(Result& r, uint64_t hash, F&& update)
         {
-            ASSERT(r._replacement_slot >= 0 && r._entry.is_valid());
+            ASSERT(hash);
+            ASSERT(r._replacement_slot >= 0);
             ASSERT(r._bucket);
             // validate that bucket is in data range
             ASSERT(r._bucket >= &_data[0]);
@@ -551,6 +565,10 @@ namespace search
                 {
                     increment_usage();
                 }
+
+                r._entry = e._hash == hash ? e : entry_t();
+                update(r._entry);
+                ASSERT(r._entry._hash == hash);
 
                 e = r._entry;
             }

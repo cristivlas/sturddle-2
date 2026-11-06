@@ -176,65 +176,96 @@ namespace search
     };
 
 
-#pragma pack(push, 2)
+#pragma pack(push, 1)
 
+    /* Lower and upper bounds kept side by side, so MTD(f) passes do not erase each other's results */
     class TT_Entry
     {
+        static constexpr int8_t NO_DEPTH = std::numeric_limits<int8_t>::min();
+
     public:
         uint64_t    _hash = 0;
-        TT_Type     _type : 2;
         uint8_t     _generation : 5;
         bool        _pv : 1;
-        int8_t      _depth = std::numeric_limits<int8_t>::min();
+        int8_t      _depth_lower = NO_DEPTH;
+        int8_t      _depth_upper = NO_DEPTH;
         BaseMove    _best_move;
         BaseMove    _hash_move;
         int16_t     _eval = SCORE_MIN; /* static eval */
-        int16_t     _value = SCORE_MIN; /* search score */
+        int16_t     _value_lower = SCORE_MIN;
+        int16_t     _value_upper = SCORE_MAX;
 
-        TT_Entry() : _type(TT_Type::NONE), _generation(0), _pv(false) {}
+        TT_Entry() : _generation(0), _pv(false) {}
 
-        INLINE bool is_exact() const { return _type == TT_Type::EXACT; }
-        INLINE bool is_lower() const { return _type == TT_Type::LOWER; }
-        INLINE bool is_upper() const { return _type == TT_Type::UPPER; }
-        INLINE bool is_valid() const { return _type != TT_Type::NONE; }
+        INLINE bool is_exact() const { return _value_lower == _value_upper; }
+        INLINE bool is_lower() const { return _depth_lower != NO_DEPTH; }
+        INLINE bool is_upper() const { return _depth_upper != NO_DEPTH; }
+        INLINE bool is_valid() const { return _hash != 0; }
 
         INLINE bool matches(const State& state) const
         {
             return _hash == state.hash();
         }
 
-        template<typename C>
-        INLINE const int16_t* lookup_score(C& ctxt) const
-        {
-            if (_depth >= ctxt.depth())
-            {
-                ASSERT(is_valid());
+        /* lower bound if any: it guarantees a score, the upper bound only caps it */
+        INLINE int8_t depth() const { return is_upper() && !is_lower() ? _depth_upper : _depth_lower; }
+        INLINE int16_t value() const { return is_upper() && !is_lower() ? _value_upper : _value_lower; }
 
-                if (is_lower())
+        /* depth the upper bound cuts at; an exact cut needs both bounds */
+        INLINE int8_t upper_depth() const { return is_exact() ? std::min(_depth_lower, _depth_upper) : _depth_upper; }
+
+        /** Record a search result; refuse to overwrite a deeper bound of the same kind */
+        INLINE bool set_bound(TT_Type type, int16_t value, int depth)
+        {
+            ASSERT(type != TT_Type::NONE);
+
+            const bool lower = type != TT_Type::UPPER;
+            const bool upper = type != TT_Type::LOWER;
+
+            if ((lower && _depth_lower > depth + TT_OVERWRITE_MARGIN) || (upper && _depth_upper > depth + TT_OVERWRITE_MARGIN))
+                return false;
+
+            if (lower)
+            {
+                _value_lower = value;
+                _depth_lower = depth;
+            }
+            if (upper)
+            {
+                _value_upper = value;
+                _depth_upper = depth;
+            }
+
+            /* drop the other bound if the two contradict */
+            if (_value_lower > _value_upper)
+            {
+                if (lower)
                 {
-                    ctxt._alpha = std::max<score_t>(ctxt._alpha, _value);
-                }
-                else if (is_upper())
-                {
-                    ctxt._beta = std::min<score_t>(ctxt._beta, _value);
+                    _value_upper = SCORE_MAX;
+                    _depth_upper = NO_DEPTH;
                 }
                 else
                 {
-                    ctxt._alpha = ctxt._beta = _value;
-                }
-
-                if (ctxt._alpha >= ctxt._beta)
-                {
-                    if (is_upper())
-                    {
-                        return &ctxt._beta; // return the tightened beta
-                    }
-                    else
-                    {
-                        return &_value; // return TT value for lower/exact
-                    }
+                    _value_lower = SCORE_MIN;
+                    _depth_lower = NO_DEPTH;
                 }
             }
+            return true;
+        }
+
+        template<typename C>
+        INLINE const int16_t* lookup_score(C& ctxt) const
+        {
+            const bool lower = _depth_lower >= ctxt.depth();
+            const bool upper = _depth_upper >= ctxt.depth();
+
+            if (lower)
+                ctxt._alpha = std::max<score_t>(ctxt._alpha, _value_lower);
+            if (upper)
+                ctxt._beta = std::min<score_t>(ctxt._beta, _value_upper);
+
+            if (ctxt._alpha >= ctxt._beta)
+                return lower && _value_lower >= ctxt._beta ? &_value_lower : &ctxt._beta;
 
             return nullptr;
         }
@@ -465,7 +496,7 @@ namespace search
         /* expect repetitions to be dealt with before calling into this function */
         ASSERT(!ctxt.is_repeated());
 
-        if (!ctxt.tt_entry().is_valid() || ctxt.tt_entry()._depth < ctxt.depth())
+        if (!ctxt.tt_entry().is_valid() || ctxt.tt_entry().depth() < ctxt.depth())
             StorageView<HashTable::Result>::store(ctxt._state->tt_result, ctxt._state->has_tt_result, _table.probe(ctxt.state(), ctxt.depth()));
         else
             ASSERT(ctxt.tt_entry()._hash == ctxt.state().hash());
@@ -519,8 +550,9 @@ namespace search
                 }
             }
 
-            update_entry(ctxt, ctxt.tt_entry(), type, depth);
-            _table.store(ctxt.tt_result());
+            _table.store(ctxt.tt_result(), ctxt.state().hash(), [&](TT_Entry& entry) {
+                update_entry(ctxt, entry, type, depth);
+            });
         }
     }
 

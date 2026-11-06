@@ -971,7 +971,7 @@ namespace search
 
     INLINE bool Context::is_mate_bound() const
     {
-        return tt_entry()._value >= MATE_HIGH && tt_entry()._depth >= depth();
+        return tt_entry().value() >= MATE_HIGH && tt_entry().depth() >= depth();
     }
 
 

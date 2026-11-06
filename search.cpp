@@ -273,8 +273,9 @@ bool TranspositionTable::update_and_store(Context& ctxt, TT_Type tt_type)
 {
     if (ctxt.depth() > 0 && ctxt.tt_result()._replacement_slot >= 0)
     {
-        update_entry(ctxt, ctxt.tt_entry(), tt_type, ctxt.depth());
-        _table.store(ctxt.tt_result());
+        _table.store(ctxt.tt_result(), ctxt.state().hash(), [&](TT_Entry& entry) {
+            update_entry(ctxt, entry, tt_type, ctxt.depth());
+        });
         return true;
     }
 
@@ -287,18 +288,24 @@ void TranspositionTable::update_entry(Context& ctxt, TT_Entry& entry, TT_Type ty
     ASSERT(ctxt._score > SCORE_MIN);
     ASSERT(ctxt._score < SCORE_MAX);
 
+    /* refresh the age even when a deeper bound is kept, so it does not get evicted */
+    entry._generation = _table.generation();
+
+    if (!entry.set_bound(type, ctxt._score, depth))
+        return;
+
     if (type == TT_Type::LOWER || type == TT_Type::EXACT)
     {
         entry._best_move = ctxt._best_move;
     }
-    entry._type = type;
-    entry._generation = _table.generation();
-    entry._pv = ctxt.is_pv_node();
+    /* keep the move and PV flag of the lower bound, a fail-low does not know better */
+    if (type != TT_Type::UPPER || !entry.is_lower())
+    {
+        entry._hash_move = ctxt._best_move;
+        entry._pv = ctxt.is_pv_node();
+    }
     entry._eval = ctxt._eval; /* static eval */
-    entry._value = ctxt._score;
-    entry._hash_move = ctxt._best_move;
     entry._hash = ctxt.state().hash();
-    entry._depth = depth;
 }
 
 
@@ -410,7 +417,7 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
      * produced cutoffs before.
      */
     const auto min_cutoffs = MULTICUT_C
-       - (ctxt.tt_entry().is_lower() && ctxt.tt_entry()._value + MULTICUT_MARGIN >= ctxt._beta);
+       - (ctxt.tt_entry().is_lower() && ctxt.tt_entry().value() + MULTICUT_MARGIN >= ctxt._beta);
 
     while (auto next_ctxt = ctxt.next(false, 0, move_count))
     {
@@ -776,7 +783,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         #if IMPROVEMENT_EXTENSION
             else if (ctxt.is_reduced()
                 && ctxt.depth() < IMPROVEMENT_EXTENSION_DEPTH
-                && ctxt.tt_entry()._value > ctxt.tt_entry()._eval + 2 * IMPROVEMENT_MARGIN
+                && ctxt.tt_entry().value() > ctxt.tt_entry()._eval + 2 * IMPROVEMENT_MARGIN
                 && ctxt.has_improved<US>())
             {
                 ++ctxt._max_depth;
@@ -844,15 +851,15 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     if (ctxt.depth() >= (ctxt.is_pv_node() ? SINGULAR_MIN_DEPTH_PV : SINGULAR_MIN_DEPTH_NON_PV)
                         && ctxt.tt_entry().is_lower()
                         && next_ctxt->_move == ctxt.tt_entry()._best_move
-                        && abs(ctxt.tt_entry()._value) < MATE_HIGH
+                        && abs(ctxt.tt_entry().value()) < MATE_HIGH
                         && !ctxt._excluded
-                        && ctxt.tt_entry()._depth >= ctxt.depth() - 3
+                        && ctxt.tt_entry().depth() >= ctxt.depth() - 3
                        )
                     {
-                        ASSERT(is_valid(ctxt.tt_entry()._value));
+                        ASSERT(is_valid(ctxt.tt_entry().value()));
 
                         const auto margin = ctxt.tt_entry()._pv && !ctxt.is_pv_node() ? SINGULAR_MARGIN_TT_PV : SINGULAR_MARGIN_NORMAL;
-                        const auto s_beta = std::max(score_t(ctxt.tt_entry()._value) - margin * ctxt.depth() / SINGULAR_DEPTH_SCALE, MATE_LOW);
+                        const auto s_beta = std::max(score_t(ctxt.tt_entry().value()) - margin * ctxt.depth() / SINGULAR_DEPTH_SCALE, MATE_LOW);
 
                         /*
                          * Hack: use ply + 2 for the singular search to avoid clobbering
@@ -897,7 +904,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                             ctxt._prune_reason = PruneReason::PRUNE_SINGULAR;
                             return s_beta;
                         }
-                        else if (ctxt.tt_entry()._value >= ctxt._beta && next_ctxt->can_reduce())
+                        else if (ctxt.tt_entry().value() >= ctxt._beta && next_ctxt->can_reduce())
                         {
                             next_ctxt->_max_depth -= 2;
                         }
