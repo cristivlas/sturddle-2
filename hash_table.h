@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstdlib>
 
 #if _WIN32
@@ -381,6 +382,7 @@ namespace search
         clock_t _clock = 0;
         count_t _used = 0;
         uint8_t _generation = 0;
+        bool _pow2 = false;
         data_t _data; /* table entries */
 
     private:
@@ -398,7 +400,8 @@ namespace search
             ASSERT(!_data.empty());
             ASSERT(_data.size() % 2 == 0);
 
-            const auto idx = hash & (_data.size() - 1);
+            const auto n = _data.size();
+            const auto idx = _pow2 ? hash & (n - 1) : ((hash >> 32) * n) >> 32;
             ASSERT(idx >= 0 && idx < _data.size());
 
             PREFETCH(&_data[idx]);
@@ -458,6 +461,7 @@ namespace search
                 throw std::bad_alloc();
 
             _data.resize(buckets, bucket_t());
+            _pow2 = std::has_single_bit(buckets);
         }
 
         struct Result
@@ -490,8 +494,9 @@ namespace search
                 else
                 {
                     int replacement_score = depth + 1;
+                    size_t slot = 0;
 
-                    for (size_t slot = 0; slot < bucket_t::size(); ++slot)
+                    for (; slot < bucket_t::size(); ++slot)
                     {
                         auto& e = bucket._entries[slot];
 
@@ -517,6 +522,10 @@ namespace search
                             result._replacement_slot = slot;
                         }
                     }
+
+                    /* all entries deeper: last slot is always-replace */
+                    if (slot == bucket_t::size() && result._replacement_slot < 0)
+                        result._replacement_slot = bucket_t::size() - 1;
                 }
             }
 
@@ -546,6 +555,13 @@ namespace search
                 }
 
                 auto& e = bucket._entries[r._replacement_slot];
+
+                /* keep the deeper result, but refresh its age so it does not get evicted */
+                if (e._hash == r._entry._hash && e._depth > r._entry._depth + TT_OVERWRITE_MARGIN)
+                {
+                    e._generation = r._entry._generation;
+                    return;
+                }
 
                 if (!e.is_valid())
                 {

@@ -382,6 +382,7 @@ DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    1,      10)
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 DECLARE_VALUE(  STANDPAT_MARGIN,                     85,   50,     350)
+DECLARE_VALUE(  TT_OVERWRITE_MARGIN,                  3,    0,       8)
 
 /* Aspiration window */
 DECLARE_VALUE(  WINDOW_COEFF,                         6,    0,      20)
