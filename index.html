@@ -132,22 +132,22 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
 <figure>
 <svg class="chart" viewBox="0 0 660 270" role="img" aria-labelledby="chart-title chart-desc">
   <title id="chart-title">Sturddle CCRL 40/15 ratings by version</title>
-  <desc id="chart-desc">Rating rises from 3114 for version 1.04 to 3351 for version 2.7.0.</desc>
+  <desc id="chart-desc">Rating rises from 3114 for version 1.04 to 3349 for version 2.7.0.</desc>
   <line class="grid" x1="50" y1="230" x2="640" y2="230"/>
   <line class="grid" x1="50" y1="155" x2="640" y2="155"/>
   <line class="grid" x1="50" y1="80" x2="640" y2="80"/>
   <text x="44" y="234" text-anchor="end">3100</text>
   <text x="44" y="159" text-anchor="end">3200</text>
   <text x="44" y="84" text-anchor="end">3300</text>
-  <polyline class="line" points="80,219.5 155,186.5 230,182 305,141.5 380,103.25 455,92.75 530,68 605,41.75"/>
+  <polyline class="line" points="80,219.5 155,185.75 230,182 305,141.5 380,103.25 455,93.5 530,68 605,43.25"/>
   <circle class="dot" cx="80" cy="219.5" r="4"/><text class="val" x="80" y="208" text-anchor="middle">3114</text>
-  <circle class="dot" cx="155" cy="186.5" r="4"/><text class="val" x="155" y="175" text-anchor="middle">3158</text>
+  <circle class="dot" cx="155" cy="185.75" r="4"/><text class="val" x="155" y="174.25" text-anchor="middle">3159</text>
   <circle class="dot" cx="230" cy="182" r="4"/><text class="val" x="230" y="200" text-anchor="middle">3164</text>
   <circle class="dot" cx="305" cy="141.5" r="4"/><text class="val" x="305" y="130" text-anchor="middle">3218</text>
   <circle class="dot" cx="380" cy="103.25" r="4"/><text class="val" x="380" y="92" text-anchor="middle">3269</text>
-  <circle class="dot" cx="455" cy="92.75" r="4"/><text class="val" x="455" y="112" text-anchor="middle">3283</text>
+  <circle class="dot" cx="455" cy="93.5" r="4"/><text class="val" x="455" y="112.75" text-anchor="middle">3282</text>
   <circle class="dot" cx="530" cy="68" r="4"/><text class="val" x="530" y="57" text-anchor="middle">3316</text>
-  <circle class="dot" cx="605" cy="41.75" r="4"/><text class="val" x="605" y="30" text-anchor="middle">3351</text>
+  <circle class="dot" cx="605" cy="43.25" r="4"/><text class="val" x="605" y="31.5" text-anchor="middle">3349</text>
   <text x="80" y="254" text-anchor="middle">1.04</text>
   <text x="155" y="254" text-anchor="middle">2.01</text>
   <text x="230" y="254" text-anchor="middle">2.02</text>
@@ -180,8 +180,8 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
 
 <h3>Late-move reductions vs. the clock</h3>
 <p>Sturddle didn't scale well at long time controls. My hunch was that late-move reductions were too aggressive and never relaxed, even when there was time to spare.</p>
-<p>The reduction table is the classic <code>log(depth) * log(moves) / divisor</code>. Until July 2025 the divisor was 2. Then I added a "dynamic" reduction based on time left (badly buggy) and changed the divisor to <em>e</em>; 2.3.1 shipped with both and was the first version past 3200. The divisor became 4 in 2.5.0. In the upcoming 2.8 the divisor depends on the clock. It is 4 while an iteration starts early in the move's time budget, and falls linearly to 2 as the start time moves from 20% to 50% of the budget, so late iterations reduce harder and still finish.</p>
-<p class="note">I credit most of the long-TC gain to reducing less overall, not to the clock-dependent part. Pruning by time control was <a href="https://talkchess.com/viewtopic.php?p=498929">debated on CCC in 2012</a>, mostly skeptically. Sturddle's per-iteration version is a different mechanism, and it's too early to say how much it helps.</p>
+<p>The reduction table is the classic <code>log(depth) * log(moves) / divisor</code>. Until July 2025 the divisor was 2. Then I added a "dynamic" reduction based on time left (badly buggy) and changed the divisor to <em>e</em>; 2.3.1 shipped with both and was the first version past 3200. The divisor became 4 in 2.5.0. In the 2.8 code the divisor can depend on the clock, behind the <code>LMR_TIME_SCALING</code> flag. It is 4 while an iteration starts early in the move's time budget, and falls linearly to 2 as the start time moves from 20% to 50% of the budget, so late iterations reduce harder and still finish.</p>
+<p class="note">I credit most of the long-TC gain to reducing less overall, not to the clock-dependent part. Pruning by time control was <a href="https://talkchess.com/viewtopic.php?p=498929">debated on CCC in 2012</a>, mostly skeptically. Sturddle's per-iteration version is a different mechanism. I'm still experimenting with it, and the results so far don't show whether it helps.</p>
 
 <h2 id="nnue">The neural network, the long way round</h2>
 
@@ -205,12 +205,12 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
 
 <h3>When bucketing finally clicked</h3>
 <p>Eventually my mental model changed, I think while reading about mixture-of-experts models. I stopped thinking of buckets as "the relationship between the king and stuff", and started thinking "several sub-networks, each specialized to a situation". It's a mixture of experts with a hard gate, where a simple chess rule picks exactly one expert, so there's no router to train.</p>
-<p>I still wanted to be original. The king was already covered by the side path, so in 2.4.0 I bucketed by <em>pawn count</em> instead, with four buckets, since pawns say a lot about game phase and how open the position is.</p>
+<p>I still wanted to be original. The king was already covered by the side path, so in 2.4.0 I bucketed by <em>pawn count</em> instead, with four buckets, since pawns say a lot about game phase and how open the position is. Four sets of first-layer weights were too big to compile in, so for 2.4.0 I also wrote the binary export, a loader and a validation script.</p>
 <p>Switching buckets mid-search was boneheaded but worked. Every ply kept four bucketed copies of the accumulator, tagged by position hash, and on a bucket change the engine copied the parent's matching copy if it had one, or otherwise re-weighted the parent's accumulator into the new bucket. In 2.5.0 the pawn buckets also selected weights in two more places: the side path's output layer (64 -&gt; 32, the one that produces the modulation) and the main path's second layer. That lasted one release: from 2.6.0 on, the buckets select only the first layer again.</p>
-<p>By then the weights were too big to compile in, so I wrote the binary export, a loader and a validation script. Freed from size limits, 2.6.0 added a second kind of bucket: which wing each king is on (<code>KK</code>, <code>KQ</code>, <code>QK</code>, <code>QQ</code>), for 16 buckets in all. That many buckets needs refresh tables (a.k.a. "Finny tables"), and there I didn't try to be original. I researched what others do.</p>
+<p>Freed from size limits, 2.6.0 added a second kind of bucket: which wing each king is on (<code>KK</code>, <code>KQ</code>, <code>QK</code>, <code>QQ</code>), for 16 buckets in all. That many buckets needs refresh tables (a.k.a. "Finny tables"), and there I didn't try to be original. I researched what others do.</p>
 
 <h3>Rediscovering output stacks</h3>
-<p>The pooling layer was a plain average from the start. At some point I saw a training opportunity there and gave it weights, and then realized I could pick which pooling weights to use based on the side to move (2.7.0). The leap from there was "I could select on more criteria, and have several outputs". Then I found out others had been doing exactly that, as output stacks, for a while. Ha.</p>
+<p>At first the pooling layer was a plain average. At some point I saw a training opportunity there and gave it weights, and then realized I could pick which pooling weights to use based on the side to move (2.7.0). The leap from there was "I could select on more criteria, and have several outputs". Then I found out others had been doing exactly that, as output stacks, for a while. Ha.</p>
 
 <h3>2.8: trying it the "standard" way</h3>
 <p>My own architecture seemed to hit a ceiling. 2.7.0, the last public release, still uses it. The upcoming 2.8 uses what's now the accepted design: king buckets with horizontal mirroring, dual perspective, pairwise-multiplied int8 activations, sparse int8 second layer, and 32 output stacks selected by piece count and queens. None of that is original. I want to see how my old ways compare. It won't be apples to apples, though, since 2.8 also fixes a lot of bugs.</p>
@@ -221,12 +221,12 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
     <tr><th>Release</th><th>CCRL</th><th>First layer</th><th>K+P side path</th><th>Pooling</th><th>Buckets</th><th>Perspective</th><th>Notable</th></tr>
   </thead>
   <tbody>
-    <tr><td>2.00-2.02</td><td class="num">3158-3164</td><td>897 -&gt; 640</td><td>256 -&gt; 64 -&gt; 32, multiply</td><td>average, 4</td><td>none</td><td>White POV</td><td>TF trainer, AMSGrad, Huber loss</td></tr>
+    <tr><td>2.00-2.02</td><td class="num">3159-3164</td><td>897 -&gt; 640</td><td>256 -&gt; 64 -&gt; 32, multiply</td><td>average, 4</td><td>none</td><td>White POV</td><td>TF trainer, AMSGrad, Huber loss</td></tr>
     <tr><td>2.3.1</td><td class="num">3218</td><td>897 -&gt; 1280</td><td>256 -&gt; 64 -&gt; 32, * (1 + m)</td><td>average, 8</td><td>none</td><td>White POV</td><td>AVX-VNNI; weights shared across flavors</td></tr>
     <tr><td>2.4.0</td><td class="num">3269</td><td>4 x 897 -&gt; 1280</td><td>256 -&gt; 64 -&gt; 32 (linear), * (1 + m)</td><td>average, 8</td><td>4 pawn</td><td>White POV</td><td><code>weights.bin</code>; <code>--balance</code></td></tr>
-    <tr><td>2.5.0</td><td class="num">3283</td><td>4 x 897 -&gt; 1280</td><td>256 -&gt; 64 -&gt; 32 (bucketed), * (1 + m)</td><td>average, 8</td><td>4 pawn (first layer, side-path output, second layer)</td><td>White POV</td><td>BF16 second layer, AVX-512 VNNI</td></tr>
+    <tr><td>2.5.0</td><td class="num">3282</td><td>4 x 897 -&gt; 1280</td><td>256 -&gt; 64 -&gt; 32 (bucketed), * (1 + m)</td><td>average, 8</td><td>4 pawn (first layer, side-path output, second layer)</td><td>White POV</td><td>BF16 second layer, AVX-512 VNNI</td></tr>
     <tr><td>2.6.0</td><td class="num">3316</td><td>16 x 769 -&gt; 2048</td><td>256 -&gt; 256, * (1 + m)</td><td>average, 8</td><td>16: pawn x king wing</td><td>White POV</td><td>Refresh tables; PyTorch trainer; data profiles</td></tr>
-    <tr><td>2.7.0</td><td class="num">3351</td><td>16 x 769 -&gt; 2048</td><td>256 -&gt; 256, * (1 + m)</td><td>learned, by side to move</td><td>16: pawn x king wing</td><td>White POV</td><td>int16 second layer</td></tr>
+    <tr><td>2.7.0</td><td class="num">3349</td><td>16 x 769 -&gt; 2048</td><td>256 -&gt; 256, * (1 + m)</td><td>learned, by side to move</td><td>16: pawn x king wing</td><td>White POV</td><td>int16 second layer</td></tr>
     <tr><td>2.8 (dev)</td><td class="num">-</td><td>32 x 768 -&gt; 1024 per side</td><td>none</td><td>none</td><td>16 king x 2 (opp. queen)</td><td>dual</td><td>32 output stacks; pairwise activations, sparse int8, VNNI <code>dpbusd</code></td></tr>
   </tbody>
 </table>
@@ -243,7 +243,7 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
 <p>Re-scoring everything was too expensive, so I settled for what I'd call relabeling-light: <em>data profiles</em>. I pick a reference engine version (usually the latest release), score a sample from each data source with it, and write a small "sidecar" file next to that source. The trainer then scales the labels by provenance, per bucket, without rewriting the data. Each profile also carries an <em>outcome scale</em>, the constant <i>S</i> in sigmoid(eval / <i>S</i>) that best predicts game results, fitted with <a href="https://en.wikipedia.org/wiki/Newton%27s_method_in_optimization">Newton's method</a>. It sets the sigmoid scale in the loss function.</p>
 
 <h3>From TensorFlow to PyTorch</h3>
-<p>The original trainer was TensorFlow/Keras, defaulting to Adam with AMSGrad and a clipped Huber loss. Over time it collected cruft, like multi-GPU code from when I trained on a pair of Tesla K80s. In mid-2026 I ported it to PyTorch, partly because the code came out more compact. The 2.6.0 and 2.7.0 nets were trained with PyTorch, and the TensorFlow script is gone in 2.8.</p>
+<p>The original trainer was TensorFlow/Keras, defaulting to Adam with AMSGrad and a clipped Huber loss. Over time it collected cruft, like multi-GPU code from when I trained on a pair of Tesla K80s. In mid-2026 I ported it to PyTorch, partly because the code came out more compact. The TensorFlow trainer had also gained experiments, like an option that forced the label to 0 for drawn games ending in opposite-colored-bishop endgames (bishops and pawns only), where the evaluation was already close to even. That one didn't make it into the PyTorch trainer. The 2.6.0 and 2.7.0 nets were trained with PyTorch, and the TensorFlow script is gone in 2.8.</p>
 
 <h2 id="lab">The lab</h2>
 <p>Every x86 flavor in the bundle has a machine to test it on, and ARM at least gets compiled:</p>
@@ -251,7 +251,7 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
   <li><strong>Intel i9-14900K</strong> (Windows), with AVX-VNNI but no AVX-512.</li>
   <li><strong>AMD Ryzen 7 8845HS</strong> laptop (Zen 4, Windows), with AVX-512 including VNNI and BF16. Thermal throttling makes it a shaky benchmark.</li>
   <li><strong>Intel Xeon W-2195</strong> (Linux) with an RTX 3090: the training box.</li>
-  <li><strong>Dual Xeon Platinum 8160</strong> (Linux), 48 cores and 96 threads, for self-play. It took me an embarrassingly long time to realize self-play has to be NUMA-aware; <code>selfplay.sh -N</code> now pins each run's CPUs and memory to one node.</li>
+  <li><strong>Dual Xeon Platinum 8160</strong> (Linux), 48 cores and 96 threads, for self-play. It took me an embarrassingly long time to realize self-play runs faster when it's NUMA-aware: games run fine either way, but keeping each engine's memory on the same node as its CPU avoids slow cross-node access. <code>selfplay.sh -N</code> now pins each run's CPUs and memory to one node.</li>
   <li><strong>An old Dell rack server</strong> (Linux) with twin Tesla K80s, now mostly storage and occasional AVX testing. It's loud as heck, and the Dell BIOS knows nothing about passively cooled Teslas, so I wrote <a href="https://github.com/cristivlas/dell-thermal-manager">my own fan-control daemon</a>.</li>
   <li><strong>An ODROID</strong>, but only to check that the ARM build compiles. Real ARM testing, including Apple Silicon, is on the list for when I have a Mac again.</li>
 </ul>
@@ -262,6 +262,7 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
 <p>Sturddle is an ongoing quest, and the code shows it. Most search features and experiments sit behind compile-time flags in <code>common.h</code>, such as <code>MTDF_REORDER_MOVES</code>, <code>SINGULAR_EXTENSION</code> or <code>RAZORING</code>. Experiments that haven't paid off stay in the tree switched off, like <code>EVAL_PIECE_GRADING</code> below. The flags also help with debugging. When something breaks, I can switch features off one at a time until the problem goes away.</p>
 <ul>
   <li><strong>Piece-square tables in exchange evaluation</strong>, making capture sequences position-aware, and <strong>piece values graded by pawn bucket</strong>. Neither has shown a strength gain yet. Engine bug, tuner bug, or bad hyperparameters? Still open.</li>
+  <li><strong>LMR scaled by the clock</strong> (<code>LMR_TIME_SCALING</code>): still an experiment; so far it isn't clear whether it helps.</li>
   <li><strong>A distributed SPSA tuner</strong> (<a href="https://github.com/cristivlas/sturddle-spsa">sturddle-spsa</a>): mixed results so far, work in progress.</li>
   <li><strong>A fair old-vs-new network comparison</strong>: port the 2.7.0 architecture into the 2.8 code and train both on the same data.</li>
   <li><strong>Native builds without the Python glue.</strong> An experimental script exists (<code>tools/make-native.py</code>), but official releases still go through Python and PyInstaller.</li>
@@ -273,7 +274,7 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
   <li>Goutham Bhat's <a href="https://github.com/goutham/magic-bits">magic-bits</a> for sliding-piece attacks.</li>
   <li><a href="https://github.com/jdart1/Fathom">Fathom</a> for Syzygy tablebase probing.</li>
   <li>Daniel Shawul's <a href="https://github.com/dshawul/nnue-probe">nnue-probe</a>, which ran the networks in Sturddle 1.x.</li>
-  <li><a href="https://github.com/niklasf/python-chess">python-chess</a>, which got the prototype off the ground.</li>
+  <li><a href="https://github.com/niklasf/python-chess">python-chess</a>, which got the prototype off the ground and still powers my testing scripts, the PGN-to-training-data pipeline and the opening-book tools.</li>
   <li>Aske Plaat for <a href="https://people.csail.mit.edu/plaat/mtdf.html">MTD(f)</a>, the algorithm that started all this, and his write-ups on it.</li>
   <li>The Stockfish team's NNUE documentation, and the <a href="https://www.chessprogramming.org/">Chess Programming Wiki</a>.</li>
   <li>Lichess and the Leela Chess Zero project for early training data.</li>
