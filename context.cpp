@@ -702,6 +702,7 @@ namespace search
         ctxt->_excluded = _excluded;
         ctxt->_counter_move = _counter_move;
         ctxt->_is_null_move = _is_null_move;
+        ctxt->_cut_node = _cut_node;
         ctxt->_double_ext = _double_ext;
         ctxt->_extension = _extension;
 
@@ -1347,6 +1348,8 @@ namespace search
 
         /* Lookup reduction in the Late Move Reduction table. */
         int reduction = 0.5f + LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)] * _tt->_lmr_scale;
+
+        reduction += _parent->_cut_node && !_parent->is_pv_node();
 
         if (_move._group != MoveOrder::TACTICAL_MOVES)
         {
