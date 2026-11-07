@@ -702,6 +702,7 @@ namespace search
         ctxt->_excluded = _excluded;
         ctxt->_counter_move = _counter_move;
         ctxt->_is_null_move = _is_null_move;
+        ctxt->_cut_node = _cut_node;
         ctxt->_double_ext = _double_ext;
         ctxt->_extension = _extension;
 
@@ -1305,6 +1306,7 @@ namespace search
     }
 
 
+#if LMR_TIME_SCALING
     /* Reduce more when an iteration starts late, or when there is no time limit. */
     static INLINE float lmr_divisor()
     {
@@ -1317,6 +1319,7 @@ namespace search
         const auto t = std::clamp((elapsed_pct - LMR_RUSH_START_PCT) / span, 0.0f, 1.0f);
         return (LMR_DIVISOR_CALM_PCT + t * (LMR_DIVISOR_RUSHED_PCT - LMR_DIVISOR_CALM_PCT)) / 100.0f;
     }
+#endif /* LMR_TIME_SCALING */
 
 
     /*
@@ -1341,15 +1344,22 @@ namespace search
 
         count += _tt->_pass / 4;
 
+    #if LMR_TIME_SCALING
         /* LMR divisor changes once per root iteration */
         if (_tt->_lmr_iteration != iteration())
         {
             _tt->_lmr_iteration = iteration();
             _tt->_lmr_scale = 1.0f / lmr_divisor();
         }
+        const auto lmr_scale = _tt->_lmr_scale;
+    #else
+        constexpr float lmr_scale = 0.5f;
+    #endif /* LMR_TIME_SCALING */
 
         /* Lookup reduction in the Late Move Reduction table. */
-        int reduction = 0.5f + LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)] * _tt->_lmr_scale;
+        int reduction = 0.5f + LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)] * lmr_scale;
+
+        reduction += _parent->_cut_node && !_parent->is_pv_node();
 
         if (_move._group != MoveOrder::TACTICAL_MOVES)
         {

@@ -666,15 +666,6 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         && !ctxt.is_null_move()
         && (ctxt.is_leftmost() || ctxt._alpha + 1 < ctxt._beta);
 
-    /* reduce by one ply at expected cut nodes */
-    if (   !ctxt.is_pv_node()
-        && !ctxt.is_null_move()
-        && ctxt.depth() > 7
-        && ctxt.can_reduce())
-    {
-        --ctxt._max_depth;
-    }
-
     /* prevent overflow */
     ctxt._max_depth = std::min<int>(ctxt._max_depth, PLY_MAX - 1);
 
@@ -771,14 +762,14 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         if (!ctxt.is_root())
         {
             /* Internal Iterative Reduction: reduce depth when TT miss means we lack move ordering guidance. */
-            if (ctxt.is_pv_node()
-                && ctxt.depth() >= 6
+            if (ctxt.depth() >= 6
+                && !ctxt.is_null_move()
                 && !ctxt.tt_entry().is_valid()
                 && ctxt.is_tactically_quiet()
                 && !ctxt.is_retry()
                )
             {
-                ctxt._max_depth -= 2;
+                ctxt._max_depth -= ctxt.is_pv_node() ? 2 : 1;
             }
         #if IMPROVEMENT_EXTENSION
             else if (ctxt.is_reduced()
