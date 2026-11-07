@@ -98,6 +98,9 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define KILLER_MOVE_HEURISTIC               true
 
+/* Scale LMR divisor by time pressure; fixed divisor of 2 otherwise */
+#define LMR_TIME_SCALING                    true
+
 #define MTDF_CSTAR_BISECT                   true
 
 #define MTDF_REORDER_MOVES                  true
