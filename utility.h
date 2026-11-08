@@ -32,6 +32,9 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#if __cplusplus >= 202002L
+  #include <bit>
+#endif
 #if _WIN32
   #include "winutil.h"
 #else
@@ -160,6 +163,17 @@ namespace
         return static_cast<std::underlying_type_t<E>>(e);
     }
 #endif /* __cpp_lib_to_underlying */
+
+
+#if __cplusplus >= 202002L
+    using std::has_single_bit;
+#else
+    template<typename T>
+    constexpr bool has_single_bit(T x) noexcept
+    {
+        return x != 0 && (x & (x - 1)) == 0;
+    }
+#endif
 
 
     /*

@@ -2,7 +2,6 @@
 
 #include <array>
 #include <atomic>
-#include <bit>
 #include <cstdlib>
 
 #if _WIN32
@@ -461,7 +460,7 @@ namespace search
                 throw std::bad_alloc();
 
             _data.resize(buckets, bucket_t());
-            _pow2 = std::has_single_bit(buckets);
+            _pow2 = has_single_bit(buckets);
         }
 
         struct Result

@@ -163,6 +163,7 @@ namespace search
 
         INLINE void swap(MoveMaker& other)
         {
+            std::swap(_from_cache, other._from_cache);
             std::swap(_group_quiet_moves, other._group_quiet_moves);
             std::swap(_have_move, other._have_move);
             std::swap(_have_quiet_moves, other._have_quiet_moves);
@@ -206,6 +207,7 @@ namespace search
         MoveMaker(const MoveMaker&) = delete;
         MoveMaker& operator=(const MoveMaker&) = delete;
 
+        bool        _from_cache = false;
         bool        _group_quiet_moves = false;
         bool        _have_move = false;
         bool        _have_quiet_moves = false;

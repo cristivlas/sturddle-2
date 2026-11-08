@@ -87,23 +87,40 @@ namespace
     class MovesCache
     {
         static constexpr size_t BUCKET_SIZE = 2;
+
+        struct PackedMove
+        {
+            uint16_t    _move;
+            int16_t     _old_score;
+            int8_t      _old_group;
+        };
+
         struct Entry
         {
             uint64_t    _hash = 0;
-            MovesList   _moves;
             int         _use_count = 0;
             int         _write_attempts = 0;
+            uint16_t    _count = 0;
+            std::array<PackedMove, MOVES_CACHE_MAX_MOVES> _moves;
         };
 
         std::vector<Entry> _data;
 
+        INLINE size_t index(uint64_t hash) const
+        {
+            return ((hash >> 32) * _data.size()) >> 32;
+        }
+
+        INLINE Entry& probe(size_t idx, size_t j)
+        {
+            const auto i = idx + j;
+            return _data[i < _data.size() ? i : i - _data.size()];
+        }
+
     public:
-        /* Non-power-of-2 on purpose: mask gaps scatter the 2nd probe for better
-           eviction spread. Do NOT make this a power of two -- regresses strength. */
-        explicit MovesCache(size_t size = 4000) : _data(size)
+        explicit MovesCache(size_t size = MOVES_CACHE_SIZE) : _data(size)
         {
             ASSERT_ALWAYS(size);
-            ASSERT_ALWAYS(size % 2 == 0);
         }
 
         INLINE void clear()
@@ -114,18 +131,21 @@ namespace
         INLINE bool lookup(const State& state, MovesList& moves)
         {
             const auto hash = state.hash();
+            const auto idx = index(hash);
 
             for (size_t j = 0; j < BUCKET_SIZE; ++j)
             {
-                const auto i = (hash + j) & (_data.size() - 1);
-                ASSERT(i < _data.size());
-                auto& entry = _data[i];
+                auto& entry = probe(idx, j);
 
                 if (hash == entry._hash)
                 {
                     ++entry._use_count;
-                    moves.assign(entry._moves.begin(), entry._moves.end());
-                    ASSERT(moves.size() == entry._moves.size());
+                    moves.clear();
+                    for (size_t k = 0; k != entry._count; ++k)
+                    {
+                        const auto& packed = entry._moves[k];
+                        moves.emplace_back(packed._move, packed._old_group, packed._old_score);
+                    }
                     return true;
                 }
             }
@@ -134,20 +154,24 @@ namespace
 
         INLINE void write(const State& state, const MovesList& moves, bool force_write = false)
         {
+            if (moves.size() > MOVES_CACHE_MAX_MOVES)
+                return;
+
             const auto hash = state.hash();
+            const auto idx = index(hash);
 
             for (size_t j = 0; j < BUCKET_SIZE; ++j)
             {
-                const auto i = (hash + j) & (_data.size() - 1);
-                ASSERT(i < _data.size());
-                auto& entry = _data[i];
+                auto& entry = probe(idx, j);
 
                 if (force_write /* bypass eviction mechanism and forcefully write */
                     || hash == entry._hash
                     || ++entry._write_attempts > 2 * entry._use_count)
                 {
-                    entry._moves.assign(moves.begin(), moves.end());
-                    ASSERT(entry._moves.size() == moves.size());
+                    entry._count = moves.size();
+                    for (size_t k = 0; k != entry._count; ++k)
+                        entry._moves[k] = { moves[k].encoded(), moves[k]._old_score, moves[k]._old_group };
+
                     if (hash != entry._hash)
                         entry._use_count = 0;
                     entry._hash = hash;
@@ -1586,6 +1610,7 @@ namespace search
 
         if (force_reorder)
         {
+            _from_cache = false;
             _phase = 0;
             _reorder_depth = ctxt._max_depth;
 
@@ -1645,18 +1670,13 @@ namespace search
         if (moves_cache.lookup(ctxt.state(), moves_list))
         {
             from_cache = true;
-            for (auto& move : moves_list)
-            {
-                move._state = nullptr;
-                move._score = 0;
-                move._group = MoveOrder::UNORDERED_MOVES;
-            }
         }
         else
         {
             ctxt.state().generate_pseudo_legal_moves(moves_list);
         }
 
+        _from_cache = from_cache;
         _count = int(moves_list.size());
         _current = 0;
         _reorder_depth = ctxt._max_depth;
@@ -1799,6 +1819,8 @@ namespace search
                 else if (move._old_group == MoveOrder::TACTICAL_MOVES)
                 {
                     remake_move(ctxt, move);
+                    if (_from_cache)
+                        move._score = hist_score;
                 }
                 else if (ctxt.is_counter_move(move)
                     || move.from_square() == ctxt._capture_square
@@ -1815,6 +1837,11 @@ namespace search
                 if (move._old_group == MoveOrder::LATE_MOVES)
                 {
                     remake_move(ctxt, move);
+                    if (_from_cache)
+                    {
+                        const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
+                        move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
+                    }
                     continue;
                 }
 

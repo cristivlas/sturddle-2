@@ -582,7 +582,9 @@ namespace chess
     /* Move representation */
     class BaseMove
     {
-        uint16_t _move = 0xFFFF;
+        static constexpr uint16_t NONE = 0xFFFF;
+
+        uint16_t _move = NONE;
 
     public:
         BaseMove() = default;
@@ -605,21 +607,23 @@ namespace chess
 
         BaseMove(uint16_t move) : _move(move) {}
 
+        INLINE uint16_t encoded() const { return _move; }
+
         INLINE constexpr Square to_square() const
         {
-            ASSERT(_move != 0xFFFF);
+            ASSERT(_move != NONE);
             return static_cast<Square>(_move & 0x3F);
         }
 
         INLINE constexpr Square from_square() const
         {
-            ASSERT(_move != 0xFFFF);
+            ASSERT(_move != NONE);
             return static_cast<Square>((_move >> 6) & 0x3F);
         }
 
         constexpr PieceType promotion() const
         {
-            if (_move == 0xFFFF) return PieceType::NONE;
+            if (_move == NONE) return PieceType::NONE;
             return static_cast<PieceType>((_move >> 12) & 0x7);
         }
 
@@ -637,7 +641,7 @@ namespace chess
 
         bool is_none() const
         {
-            return _move == 0xFFFF;
+            return _move == NONE;
         }
     };
 
@@ -662,6 +666,14 @@ namespace chess
 
         Move(const BaseMove& base) noexcept
             : BaseMove(base)
+        {
+        }
+
+        /* restore a move from the moves cache */
+        Move(uint16_t encoded, int8_t old_group, int16_t old_score) noexcept
+            : BaseMove(encoded)
+            , _old_group(old_group)
+            , _old_score(old_score)
         {
         }
 
