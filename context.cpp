@@ -82,108 +82,6 @@ static void setup_crash_handler()
 }
 #endif /* __linux__ */
 
-namespace
-{
-    class MovesCache
-    {
-        static constexpr size_t BUCKET_SIZE = 2;
-
-        struct PackedMove
-        {
-            uint16_t    _move;
-            int16_t     _old_score;
-            int8_t      _old_group;
-        };
-
-        struct Entry
-        {
-            uint64_t    _hash = 0;
-            int         _use_count = 0;
-            int         _write_attempts = 0;
-            uint16_t    _count = 0;
-            std::array<PackedMove, MOVES_CACHE_MAX_MOVES> _moves;
-        };
-
-        std::vector<Entry> _data;
-
-        INLINE size_t index(uint64_t hash) const
-        {
-            return ((hash >> 32) * _data.size()) >> 32;
-        }
-
-        INLINE Entry& probe(size_t idx, size_t j)
-        {
-            const auto i = idx + j;
-            return _data[i < _data.size() ? i : i - _data.size()];
-        }
-
-    public:
-        explicit MovesCache(size_t size = MOVES_CACHE_SIZE) : _data(size)
-        {
-            ASSERT_ALWAYS(size);
-        }
-
-        INLINE void clear()
-        {
-            std::fill_n(&_data[0], _data.size(), Entry());
-        }
-
-        INLINE bool lookup(const State& state, MovesList& moves)
-        {
-            const auto hash = state.hash();
-            const auto idx = index(hash);
-
-            for (size_t j = 0; j < BUCKET_SIZE; ++j)
-            {
-                auto& entry = probe(idx, j);
-
-                if (hash == entry._hash)
-                {
-                    ++entry._use_count;
-                    moves.clear();
-                    for (size_t k = 0; k != entry._count; ++k)
-                    {
-                        const auto& packed = entry._moves[k];
-                        moves.emplace_back(packed._move, packed._old_group, packed._old_score);
-                    }
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        INLINE void write(const State& state, const MovesList& moves, bool force_write = false)
-        {
-            if (moves.size() > MOVES_CACHE_MAX_MOVES)
-                return;
-
-            const auto hash = state.hash();
-            const auto idx = index(hash);
-
-            for (size_t j = 0; j < BUCKET_SIZE; ++j)
-            {
-                auto& entry = probe(idx, j);
-
-                if (force_write /* bypass eviction mechanism and forcefully write */
-                    || hash == entry._hash
-                    || ++entry._write_attempts > 2 * entry._use_count)
-                {
-                    entry._count = moves.size();
-                    for (size_t k = 0; k != entry._count; ++k)
-                        entry._moves[k] = { moves[k].encoded(), moves[k]._old_score, moves[k]._old_group };
-
-                    if (hash != entry._hash)
-                        entry._use_count = 0;
-                    entry._hash = hash;
-                    entry._write_attempts = 0;
-                    break;
-                }
-            }
-        }
-    };
-} /* namespace */
-
-
 /*
  * Late-move reduction tables (adapted from berserk)
  */
@@ -562,7 +460,6 @@ namespace search
     std::vector<Context::ContextStack> Context::_context_stacks(SMP_CORES);
     std::vector<Context::MoveStack> Context::_move_stacks(SMP_CORES);
     std::vector<Context::StateStack> Context::_state_stacks(SMP_CORES);
-    std::vector<MovesCache> _moves_cache(SMP_CORES);
     std::vector<PV> Context::_pvs(SMP_CORES);
     std::vector<chess::BaseMove> Context::_root_filter;
     std::vector<chess::BaseMove> Context::_root_excluded;
@@ -650,11 +547,6 @@ namespace search
 
     /* static */ void Context::clear_caches_and_stacks()
     {
-        for (auto& cache : _moves_cache)
-        {
-            cache.clear();
-        }
-
         for (auto& stack : _move_stacks)
         {
             for (auto& moves : stack)
@@ -743,7 +635,6 @@ namespace search
         if (_context_stacks.size() < n_threads)
         {
             _context_stacks.resize(n_threads);
-            _moves_cache.resize(n_threads);
             _move_stacks.resize(n_threads);
             _state_stacks.resize(n_threads);
 
@@ -1544,18 +1435,15 @@ namespace search
     }
 
 
-    void Context::cache_scores(bool force_write)
+    void Context::cache_scores()
     {
         ASSERT(move_count() >= 0);
-        auto& moves_list = moves();
 
-        for (auto& move: moves_list)
+        for (auto& move: moves())
         {
             move._old_score = move._score;
             move._old_group = move._group;
         }
-
-        _moves_cache[tid()].write(state(), moves_list, force_write);
     }
 
 
@@ -1610,7 +1498,6 @@ namespace search
 
         if (force_reorder)
         {
-            _from_cache = false;
             _phase = 0;
             _reorder_depth = ctxt._max_depth;
 
@@ -1663,20 +1550,9 @@ namespace search
         ASSERT(_phase == 0);
         ASSERT(_state_index == 0);
 
-        bool from_cache = false;
         auto& moves_list = ctxt.moves();
+        ctxt.state().generate_pseudo_legal_moves(moves_list);
 
-        auto& moves_cache = _moves_cache[ctxt.tid()];
-        if (moves_cache.lookup(ctxt.state(), moves_list))
-        {
-            from_cache = true;
-        }
-        else
-        {
-            ctxt.state().generate_pseudo_legal_moves(moves_list);
-        }
-
-        _from_cache = from_cache;
         _count = int(moves_list.size());
         _current = 0;
         _reorder_depth = ctxt._max_depth;
@@ -1694,9 +1570,6 @@ namespace search
          */
         _group_quiet_moves = (ctxt.depth() < 0 && !ctxt.is_check());
     #endif /* GROUP_QUIET_MOVES */
-
-        if (!from_cache)
-            moves_cache.write(ctxt.state(), moves_list);
     }
 
 
@@ -1816,12 +1689,6 @@ namespace search
                 {
                     make_move<true>(ctxt, move, MoveOrder::HISTORY_COUNTERS, hist_score);
                 }
-                else if (move._old_group == MoveOrder::TACTICAL_MOVES)
-                {
-                    remake_move(ctxt, move);
-                    if (_from_cache)
-                        move._score = hist_score;
-                }
                 else if (ctxt.is_counter_move(move)
                     || move.from_square() == ctxt._capture_square
                     || is_pawn_push(ctxt, move))
@@ -1834,17 +1701,6 @@ namespace search
             }
             else /* Phase == 4 */
             {
-                if (move._old_group == MoveOrder::LATE_MOVES)
-                {
-                    remake_move(ctxt, move);
-                    if (_from_cache)
-                    {
-                        const auto eval = eval_material_for_side_that_moved(*move._state, ctxt._state, move);
-                        move._score = ctxt.history_score(move) / (1 + HISTORY_LOW) + eval;
-                    }
-                    continue;
-                }
-
                 if (make_move<true>(ctxt, move, futility))
                 {
                     move._group = MoveOrder::LATE_MOVES;

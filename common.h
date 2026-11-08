@@ -87,14 +87,6 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 /* Collect extra stats for troubleshooting */
 #define EXTRA_STATS                         false
 
-#ifndef MOVES_CACHE_SIZE
-  #define MOVES_CACHE_SIZE                  32768
-#endif
-
-#ifndef MOVES_CACHE_MAX_MOVES
-  #define MOVES_CACHE_MAX_MOVES             64
-#endif
-
 #define FRACTIONAL_EXTENSIONS               true
 
 /* Filter out quiet moves if extended at leaf (depth < 0) */

@@ -607,8 +607,6 @@ namespace chess
 
         BaseMove(uint16_t move) : _move(move) {}
 
-        INLINE uint16_t encoded() const { return _move; }
-
         INLINE constexpr Square to_square() const
         {
             ASSERT(_move != NONE);
@@ -666,14 +664,6 @@ namespace chess
 
         Move(const BaseMove& base) noexcept
             : BaseMove(base)
-        {
-        }
-
-        /* restore a move from the moves cache */
-        Move(uint16_t encoded, int8_t old_group, int16_t old_score) noexcept
-            : BaseMove(encoded)
-            , _old_group(old_group)
-            , _old_score(old_score)
         {
         }
 

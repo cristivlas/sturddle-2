@@ -163,7 +163,6 @@ namespace search
 
         INLINE void swap(MoveMaker& other)
         {
-            std::swap(_from_cache, other._from_cache);
             std::swap(_group_quiet_moves, other._group_quiet_moves);
             std::swap(_have_move, other._have_move);
             std::swap(_have_quiet_moves, other._have_quiet_moves);
@@ -207,7 +206,6 @@ namespace search
         MoveMaker(const MoveMaker&) = delete;
         MoveMaker& operator=(const MoveMaker&) = delete;
 
-        bool        _from_cache = false;
         bool        _group_quiet_moves = false;
         bool        _have_move = false;
         bool        _have_quiet_moves = false;
@@ -381,7 +379,7 @@ namespace search
 
         State*      _state = nullptr;
 
-        void        cache_scores(bool force_write /* bypass eviction strategy */ = false);
+        void        cache_scores();
 
         static void cancel() { _cancel.fetch_or(to_underlying(Cancel::Internal), std::memory_order_relaxed); }
         static void stop() { _cancel.fetch_or(to_underlying(Cancel::Stop), std::memory_order_relaxed); }
@@ -1524,6 +1522,17 @@ namespace search
     }
 
 
+    static INLINE bool can_see_prune(const Context& ctxt, score_t gain)
+    {
+        return SEE_PRUNING
+            && gain < SEE_PRUNING_MARGIN
+            && !ctxt.is_root()
+            && ctxt.depth() > 0
+            && ctxt.depth() <= SEE_PRUNING_DEPTH
+            && !ctxt.is_check();
+    }
+
+
     INLINE void MoveMaker::make_capture(Context& ctxt, Move& move)
     {
         /* captures of the last piece moved by the opponent are handled separately */
@@ -1535,8 +1544,11 @@ namespace search
             || move._old_group == MoveOrder::WINNING_CAPTURES
             || move._old_group == MoveOrder::EQUAL_CAPTURES)
         {
-            /* Use values from before rewind / reorder */
+            /* Reuse the gain from before rewind / reorder; the pruning decision depends on depth */
             remake_move(ctxt, move);
+
+            if (can_see_prune(ctxt, move._score))
+                mark_as_pruned(ctxt, move);
         }
         else if (make_move<false>(ctxt, move))
         {
@@ -1547,12 +1559,7 @@ namespace search
             const auto gain = capture_gain(ctxt.state(), *move._state, move, bucket)
                             - eval_exchanges<true>(ctxt.tid(), move, bucket);
 
-            if (SEE_PRUNING
-                && gain < SEE_PRUNING_MARGIN
-                && !ctxt.is_root()
-                && ctxt.depth() > 0
-                && ctxt.depth() <= SEE_PRUNING_DEPTH
-                && !ctxt.is_check())
+            if (can_see_prune(ctxt, gain))
             {
                 mark_as_pruned(ctxt, move);
             }
