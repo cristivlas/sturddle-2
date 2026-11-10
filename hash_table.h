@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <cstdlib>
+#include <limits>
 
 #if _WIN32
   #include "ms_windows.h"
@@ -335,6 +336,157 @@ namespace search
     };
 
 
+#if TT_SPILLED_BOUNDS
+    /** Bounds lost to same-position TT overwrites; key = hash ^ data detects torn writes */
+    class SpilledBounds
+    {
+    public:
+        static constexpr int8_t NO_DEPTH = std::numeric_limits<int8_t>::min();
+
+        struct Bounds
+        {
+            int16_t lower = 0;
+            int16_t upper = 0;
+            int8_t  lower_depth = NO_DEPTH;
+            int8_t  upper_depth = NO_DEPTH;
+            int16_t reserved = 0; /* pad to 8 bytes for bit_cast */
+        };
+        static_assert(sizeof(Bounds) == sizeof(uint64_t));
+
+    private:
+        static constexpr size_t SIZE = size_t(1) << 18; /* 16-byte records, 4 MB */
+
+        struct alignas(16) Record
+        {
+            std::atomic<uint64_t> key = 0;
+            std::atomic<uint64_t> data = 0;
+        };
+
+        std::array<Record, SIZE> _records;
+
+        static INLINE size_t index(uint64_t hash) { return hash & (SIZE - 1); }
+
+        template <typename E> static INLINE bool covers(const E& a, const E& b)
+        {
+            return a._depth >= b._depth && (a.is_exact() || a._type == b._type);
+        }
+
+        template <typename E> static INLINE bool contradicts(const E& a, const E& b)
+        {
+            return (!a.is_lower() && !b.is_upper() && a._value < b._value)
+                || (!a.is_upper() && !b.is_lower() && a._value > b._value);
+        }
+
+        template <typename E> static INLINE void add(Bounds& b, const E& spilled)
+        {
+            if (!spilled.is_upper() && spilled._depth > b.lower_depth)
+            {
+                b.lower = spilled._value;
+                b.lower_depth = spilled._depth;
+            }
+            if (!spilled.is_lower() && spilled._depth > b.upper_depth)
+            {
+                b.upper = spilled._value;
+                b.upper_depth = spilled._depth;
+            }
+        }
+
+        /* drop spilled bounds that a newer result contradicts or makes redundant */
+        template <typename E> static INLINE void drop_stale(Bounds& b, const E& result)
+        {
+            if (!result.is_upper())
+            {
+                if (b.upper < result._value && result._depth + TT_OVERWRITE_MARGIN >= b.upper_depth)
+                    b.upper_depth = NO_DEPTH;
+                if (b.lower_depth <= result._depth)
+                    b.lower_depth = NO_DEPTH;
+            }
+            if (!result.is_lower())
+            {
+                if (b.lower > result._value && result._depth + TT_OVERWRITE_MARGIN >= b.lower_depth)
+                    b.lower_depth = NO_DEPTH;
+                if (b.upper_depth <= result._depth)
+                    b.upper_depth = NO_DEPTH;
+            }
+        }
+
+        INLINE void write(uint64_t hash, const Bounds& b)
+        {
+            const auto data = bit_cast<uint64_t>(b);
+            auto& r = _records[index(hash)];
+            r.data.store(data, std::memory_order_relaxed);
+            r.key.store(hash ^ data, std::memory_order_relaxed);
+        }
+
+    public:
+        INLINE bool lookup(uint64_t hash, Bounds& bounds) const
+        {
+            const auto& r = _records[index(hash)];
+            const auto data = r.data.load(std::memory_order_relaxed);
+            if ((r.key.load(std::memory_order_relaxed) ^ data) != hash)
+                return false;
+
+            bounds = bit_cast<Bounds>(data);
+            return true;
+        }
+
+        INLINE void prefetch(uint64_t hash) const { PREFETCH(&_records[index(hash)]); }
+
+        /* the TT replaced old with result */
+        template <typename E> INLINE void replaced(const E& result, const E& old)
+        {
+            Bounds bounds;
+            const bool found = lookup(result._hash, bounds);
+            const bool spill = !covers(result, old);
+
+            if (found || spill)
+            {
+                if (spill)
+                    add(bounds, old);
+                drop_stale(bounds, result);
+                write(result._hash, bounds);
+            }
+        }
+
+        /* the TT kept the deeper entry and refused result */
+        template <typename E> INLINE void refused(const E& result, const E& kept)
+        {
+            Bounds bounds;
+            const bool found = lookup(result._hash, bounds);
+            const bool spill = !covers(kept, result) && !contradicts(kept, result);
+
+            if (found || spill)
+            {
+                drop_stale(bounds, result);
+                if (spill)
+                    add(bounds, result);
+                write(result._hash, bounds);
+            }
+        }
+
+        /* the TT stored result for a position that was not in the bucket */
+        template <typename E> INLINE void stored(const E& result)
+        {
+            Bounds bounds;
+            if (lookup(result._hash, bounds))
+            {
+                drop_stale(bounds, result);
+                write(result._hash, bounds);
+            }
+        }
+
+        void clear()
+        {
+            for (auto& r : _records)
+            {
+                r.key.store(0, std::memory_order_relaxed);
+                r.data.store(0, std::memory_order_relaxed);
+            }
+        }
+    };
+#endif /* TT_SPILLED_BOUNDS */
+
+
     template <typename T, size_t BUCKET_SIZE = 14>
     class hash_table
     {
@@ -383,6 +535,9 @@ namespace search
         uint8_t _generation = 0;
         bool _pow2 = false;
         data_t _data; /* table entries */
+    #if TT_SPILLED_BOUNDS
+        SpilledBounds _spilled_bounds;
+    #endif /* TT_SPILLED_BOUNDS */
 
     private:
         static INLINE size_t get_num_buckets(size_t megabytes)
@@ -435,7 +590,14 @@ namespace search
             _used = 0;
 
             _generation = 0;
+        #if TT_SPILLED_BOUNDS
+            _spilled_bounds.clear();
+        #endif /* TT_SPILLED_BOUNDS */
         }
+
+    #if TT_SPILLED_BOUNDS
+        INLINE const SpilledBounds& spilled_bounds() const { return _spilled_bounds; }
+    #endif /* TT_SPILLED_BOUNDS */
 
         INLINE uint8_t generation() const { return _generation; }
         INLINE void increment_generation() { _generation = (_generation + 1) & 31; }
@@ -480,6 +642,9 @@ namespace search
             ASSERT(h);
 
             auto& bucket = get_bucket(h);
+        #if TT_SPILLED_BOUNDS
+            _spilled_bounds.prefetch(h);
+        #endif /* TT_SPILLED_BOUNDS */
             shared_lock_t lock(bucket.mutex());
 
             if (lock.is_valid())
@@ -506,7 +671,8 @@ namespace search
                             break;
                         }
 
-                        if (!e.is_valid())
+                        /* take empty last slot only without other candidates */
+                        if (!e.is_valid() && (slot != bucket_t::size() - 1 || result._replacement_slot < 0))
                         {
                             result._replacement_slot = slot;
                             break;
@@ -515,7 +681,8 @@ namespace search
                         const int age = (32 + generation() - e._generation) & 31;
                         const int score = e._depth - 2 * age + e.is_exact();
 
-                        if (replacement_score > score)
+                        /* last slot is reserved for always-replace, keep deep entries out of it */
+                        if (replacement_score > score && slot != bucket_t::size() - 1)
                         {
                             replacement_score = score;
                             result._replacement_slot = slot;
@@ -558,6 +725,9 @@ namespace search
                 /* keep the deeper result, but refresh its age so it does not get evicted */
                 if (e._hash == r._entry._hash && e._depth > r._entry._depth + TT_OVERWRITE_MARGIN)
                 {
+                #if TT_SPILLED_BOUNDS
+                    _spilled_bounds.refused(r._entry, e);
+                #endif /* TT_SPILLED_BOUNDS */
                     e._generation = r._entry._generation;
                     return;
                 }
@@ -566,6 +736,13 @@ namespace search
                 {
                     increment_usage();
                 }
+
+            #if TT_SPILLED_BOUNDS
+                if (e._hash == r._entry._hash)
+                    _spilled_bounds.replaced(r._entry, e);
+                else
+                    _spilled_bounds.stored(r._entry);
+            #endif /* TT_SPILLED_BOUNDS */
 
                 e = r._entry;
             }

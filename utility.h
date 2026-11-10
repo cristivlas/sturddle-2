@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -163,6 +164,22 @@ namespace
         return static_cast<std::underlying_type_t<E>>(e);
     }
 #endif /* __cpp_lib_to_underlying */
+
+
+#if __cplusplus >= 202002L
+    using std::bit_cast;
+#else
+    /* C++20 std::bit_cast polyfill */
+    template<typename To, typename From>
+    INLINE To bit_cast(const From& from) noexcept
+    {
+        static_assert(sizeof(To) == sizeof(From));
+        static_assert(std::is_trivially_copyable_v<To> && std::is_trivially_copyable_v<From>);
+        To to;
+        std::memcpy(&to, &from, sizeof(To));
+        return to;
+    }
+#endif /* __cplusplus >= 202002L */
 
 
 #if __cplusplus >= 202002L

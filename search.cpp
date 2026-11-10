@@ -360,6 +360,9 @@ NOINLINE bool verify_null_move(Context& ctxt, Context& null_move_ctxt)
     verify_ctxt->_null_move_allowed[1] = ctxt._null_move_allowed[1];
     verify_ctxt->_null_move_allowed[ctxt.turn()] = false;
     verify_ctxt->_nnue_prev_offs = 3; /* skip 2 plies */
+#if BLANKET_REDUCTION
+    verify_ctxt->_is_null_verify = true;
+#endif /* BLANKET_REDUCTION */
 
     if (negamax(*verify_ctxt, *ctxt.get_tt()) >= ctxt._beta)
         return true; /* verification successful */
@@ -659,6 +662,18 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         && !ctxt.is_null_move()
         && (ctxt.is_leftmost() || ctxt._alpha + 1 < ctxt._beta);
 
+#if BLANKET_REDUCTION
+    if (   !ctxt.is_pv_node()
+        && !ctxt.is_null_move()
+        && !ctxt._excluded
+        && !ctxt._is_null_verify
+        && ctxt.depth() > 7
+        && ctxt.can_reduce())
+    {
+        --ctxt._max_depth;
+    }
+#endif /* BLANKET_REDUCTION */
+
     /* prevent overflow */
     ctxt._max_depth = std::min<int>(ctxt._max_depth, PLY_MAX - 1);
 
@@ -757,12 +772,19 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
             /* Internal Iterative Reduction: reduce depth when TT miss means we lack move ordering guidance. */
             if (ctxt.depth() >= 6
                 && !ctxt.is_null_move()
+            #if BLANKET_REDUCTION
+                && ctxt.is_pv_node()
+            #endif /* BLANKET_REDUCTION */
                 && !ctxt.tt_entry().is_valid()
                 && ctxt.is_tactically_quiet()
                 && !ctxt.is_retry()
                )
             {
+            #if BLANKET_REDUCTION
+                ctxt._max_depth -= 2;
+            #else
                 ctxt._max_depth -= ctxt.is_pv_node() ? 2 : 1;
+            #endif /* BLANKET_REDUCTION */
             }
         #if IMPROVEMENT_EXTENSION
             else if (ctxt.is_reduced()

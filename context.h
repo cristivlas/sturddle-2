@@ -323,7 +323,11 @@ namespace search
         bool        _retry_at_depth = false;
         bool        _is_singleton = false;
         bool        _leftmost = false;
+    #if BLANKET_REDUCTION
+        bool        _is_null_verify = false; /* null move verification search */
+    #else
         bool        _cut_node = false; /* expected cut node */
+    #endif /* BLANKET_REDUCTION */
         bool        _multicut_allowed = MULTICUT;
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
@@ -1135,7 +1139,9 @@ namespace search
 
         ctxt->_algorithm = _algorithm;
         ctxt->_parent = this;
+    #if !BLANKET_REDUCTION
         ctxt->_cut_node = is_pv_node() || !_cut_node; /* cut and all nodes alternate */
+    #endif /* !BLANKET_REDUCTION */
         ctxt->_max_depth = _max_depth;
         ctxt->_ply = _ply + 1;
         ctxt->_double_ext = _double_ext;

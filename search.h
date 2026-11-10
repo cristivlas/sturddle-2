@@ -486,6 +486,22 @@ namespace search
                 ctxt._score = *value;
                 return value;
             }
+
+        #if TT_SPILLED_BOUNDS
+            SpilledBounds::Bounds spilled;
+            if (_table.spilled_bounds().lookup(ctxt.state().hash(), spilled))
+            {
+                const bool lower_cut = spilled.lower_depth >= ctxt.depth() && spilled.lower >= ctxt._beta;
+                const bool upper_cut = spilled.upper_depth >= ctxt.depth() && spilled.upper <= ctxt._alpha;
+
+                /* crossed bounds: the deeper one wins */
+                if (lower_cut && (!upper_cut || spilled.lower_depth >= spilled.upper_depth))
+                    return &(ctxt._score = spilled.lower);
+
+                if (upper_cut)
+                    return &(ctxt._score = spilled.upper);
+            }
+        #endif /* TT_SPILLED_BOUNDS */
         }
 
         if (ctxt._move)

@@ -75,6 +75,9 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define ADAPTIVE_NULL_MOVE                  true
 
+/* Reduce deep non-PV nodes by one ply */
+#define BLANKET_REDUCTION                   true
+
 /*
  * Count valid moves made as nodes if true, otherwise use effectively
  * searched nodes (not including TT pruned, FP and late-move pruned).
@@ -136,6 +139,9 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 /* Compile with multithread (symmetric multiprocessing) support */
 #define SMP                                 true
+
+/* Keep TT bounds spilled by same-position overwrites in a small side table */
+#define TT_SPILLED_BOUNDS                   true
 
 #if !defined(USE_PIECE_SQUARE_TABLES)
   #define USE_PIECE_SQUARE_TABLES           false
