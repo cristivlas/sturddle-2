@@ -319,6 +319,8 @@ namespace search
         /* Re-initialize before new search or new game*/
         void init(bool new_game);
 
+        static INLINE void prefetch(uint64_t hash) { _table.prefetch(hash); }
+
         template<typename C>
         BaseMove lookup_countermove(const C& ctxt) const;
 

@@ -549,13 +549,18 @@ namespace search
             return get_even(buckets);
         }
 
+        INLINE size_t index(uint64_t hash) const
+        {
+            const auto n = _data.size();
+            return _pow2 ? hash & (n - 1) : ((hash >> 32) * n) >> 32;
+        }
+
         INLINE bucket_t &get_bucket(uint64_t hash)
         {
             ASSERT(!_data.empty());
             ASSERT(_data.size() % 2 == 0);
 
-            const auto n = _data.size();
-            const auto idx = _pow2 ? hash & (n - 1) : ((hash >> 32) * n) >> 32;
+            const auto idx = index(hash);
             ASSERT(idx >= 0 && idx < _data.size());
 
             PREFETCH(&_data[idx]);
@@ -574,6 +579,18 @@ namespace search
 
         hash_table(const hash_table &) = delete;
         hash_table &operator=(const hash_table &) = delete;
+
+        /* Start loading the bucket ahead of probe; it spans several cache lines */
+        INLINE void prefetch(uint64_t hash) const
+        {
+            const auto p = reinterpret_cast<const char*>(&_data[index(hash)]);
+
+            for (size_t i = 0; i < bucket_size(); i += 64)
+                PREFETCH(p + i);
+        #if TT_SPILLED_BOUNDS
+            _spilled_bounds.prefetch(hash);
+        #endif /* TT_SPILLED_BOUNDS */
+        }
 
         INLINE size_t byte_capacity() const { return _data.size() * sizeof(_data[0]); }
 

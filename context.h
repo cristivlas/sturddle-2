@@ -1701,6 +1701,11 @@ namespace search
         /* consistency check */
         ASSERT((move._state->is_capture()) == ctxt.state().is_capture(move));
 
+        /* prefetch the TT bucket ahead of the search */
+        ctxt.state().hash(); /* the update below needs the parent's hash */
+        zobrist_update(ctxt.state(), move, *move._state);
+        TranspositionTable::prefetch(move._state->hash());
+
         if constexpr(COUNT_VALID_MOVES_AS_NODES)
             ++ctxt.get_tt()->_nodes;
 
