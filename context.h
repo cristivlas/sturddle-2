@@ -1020,12 +1020,16 @@ namespace search
     {
         const auto hash = state.hash();
 
-        for (auto ctxt = _parent; ctxt; ctxt = ctxt->_parent)
+        for (auto ctxt = this; ctxt->_parent; ctxt = ctxt->_parent)
         {
-            if (hash == ctxt->state().hash() && state == ctxt->state())
-            {
+            const auto& prev = ctxt->_parent->state();
+
+            /* nothing repeats across a capture or pawn move */
+            if (ctxt->_move && (ctxt->is_capture() || (prev.pawns & chess::BB_SQUARES[ctxt->_move.from_square()])))
+                break;
+
+            if (hash == prev.hash() && state == prev)
                 return true;
-            }
         }
         return false;
     }

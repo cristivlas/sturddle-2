@@ -1,11 +1,13 @@
 .vscode
 __pycache__
 __init__.cpp
+*.bat
 *.bin
 *.json
 !test/golds.json
 *.log
 *.pdb
+*.pgn
 *.pyd
 build*
 docs/
