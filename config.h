@@ -322,7 +322,7 @@ DECLARE_PARAM(  MinTimeMargin,                       15,    0,     100)
 GROUP(Search)
 
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
-DECLARE_CONST(  DOUBLE_EXT_MAX,                       2,    0,       5)
+DECLARE_CONST(  DOUBLE_EXT_MAX,                       3,    0,       5)
 DECLARE_VALUE(  EXCHANGES_MAX_DEPTH,                  4,    2,      32)
 DECLARE_VALUE(  IMPROVEMENT_EXTENSION_DEPTH,          6,    0,      15)
 DECLARE_VALUE(  IMPROVEMENT_MARGIN,                  45,    0,     400)

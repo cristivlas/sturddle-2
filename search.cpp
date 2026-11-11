@@ -895,7 +895,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                             if (!ctxt.is_pv_node()
                                 && eval + SINGULAR_DOUBLE_EXT_MARGIN < s_beta
-                                && next_ctxt->_double_ext <= DOUBLE_EXT_MAX)
+                                && next_ctxt->_double_ext < DOUBLE_EXT_MAX)
                             {
                                 ++next_ctxt->_max_depth; /* extend more */
                                 ++next_ctxt->_double_ext;

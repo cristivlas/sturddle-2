@@ -1055,7 +1055,7 @@ namespace search
             _extension += _move.from_square() == _parent->_capture_square;
             _extension += is_recapture() * (is_pv_node() * (ONE_PLY - 1) + 1);
 
-            const auto double_extension_ok = (_double_ext <= DOUBLE_EXT_MAX);
+            const auto double_extension_ok = (_double_ext < DOUBLE_EXT_MAX);
             const auto extend = std::min(1 + double_extension_ok, _extension / ONE_PLY);
 
             ASSERT(extend >= 0);
