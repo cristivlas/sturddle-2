@@ -304,7 +304,7 @@ void TranspositionTable::update_entry(Context& ctxt, TT_Entry& entry, TT_Type ty
 
 void TranspositionTable::store_killer_move(const Context& ctxt)
 {
-    ASSERT(ctxt._score); /* do not store draws */
+    ASSERT(STORE_DRAW_SCORES || ctxt._score); /* do not store draws */
 
 #if KILLER_MOVE_HEURISTIC
     ASSERT(ctxt._ply < PLY_MAX);
@@ -999,8 +999,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     ASSERT (next_ctxt->_move == ctxt._cutoff_move);
                     ASSERT (!ctxt.state().is_capture(ctxt._cutoff_move));
 
-                    /* zero-score moves may mean draw (path-dependent) */
-                    if (move_score && ctxt.depth() > 0)
+                    /* zero may be a path-dependent draw: skipped unless STORE_DRAW_SCORES */
+                    if ((STORE_DRAW_SCORES || move_score) && ctxt.depth() > 0)
                     {
                         if (ctxt._ply < PLY_HISTORY_MAX && abs(move_score) < MATE_HIGH)
                         {
@@ -1068,7 +1068,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
      * The conventional wisdom is to not store root nodes
      * (https://www.stmintz.com/ccc/index.php?id=93686)
      */
-    if (ctxt._score && !ctxt.is_root() && ctxt.depth() > 0 && !ctxt._excluded && !ctxt.is_cancelled())
+    if ((STORE_DRAW_SCORES || ctxt._score) && !ctxt.is_root() && ctxt.depth() > 0 && !ctxt._excluded && !ctxt.is_cancelled())
     {
         table.store(ctxt, ctxt.depth(), entry_alpha);
     }

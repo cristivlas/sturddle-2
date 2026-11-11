@@ -945,7 +945,13 @@ namespace search
         const auto eval = static_eval();
         const auto prev_eval = prev->static_eval();
 
+    #if STORE_DRAW_SCORES
+        /* no static eval at nodes that returned a draw early */
+        if (!is_valid(eval) || !is_valid(prev_eval))
+            return 0;
+    #else
         ASSERT(is_valid(eval) && is_valid(prev_eval));
+    #endif /* STORE_DRAW_SCORES */
 
         if (abs(eval) >= MATE_HIGH || abs(prev_eval) >= MATE_HIGH)
             return 0;

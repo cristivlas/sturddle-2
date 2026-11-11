@@ -137,6 +137,9 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
  */
 #define SINGULAR_EXTENSION                  true
 
+/* Store zero (draw) scores in the TT and credit cutoffs in history */
+#define STORE_DRAW_SCORES                   false
+
 /* Compile with multithread (symmetric multiprocessing) support */
 #define SMP                                 true
 
