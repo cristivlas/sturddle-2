@@ -54,6 +54,7 @@ SCALE = 100.0
 OUTCOME_SCALE_CI = 0.02  # fitted outcome scale: 95% CI as a fraction of S
 OUTCOME_SCALE_START = 400.0  # Newton start, cp
 FIT_READ_SLICES = 256  # slices per read while fitting
+SCHED_THRESHOLD = 0.1  # --schedule: min relative improvement, as a fraction of the learn rate
 
 
 # ---------------------------------------------------------------------------
@@ -789,8 +790,9 @@ def main(args):
 
     sched = None
     if args.schedule:
+        threshold = SCHED_THRESHOLD * args.learn_rate if args.sched_threshold is None else args.sched_threshold
         sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            opt, factor=0.5, patience=args.patience, threshold=args.sched_threshold
+            opt, factor=0.5, patience=args.patience, threshold=threshold
         )
 
     use_amp = args.mixed_precision and device.type == "cuda"
@@ -915,6 +917,8 @@ def main(args):
             avg_acc = acc_sum / max(count, 1)
             avg_mae = mae_sum / max(count, 1)
             if sched:
+                if args.sched_threshold is None:
+                    sched.threshold = SCHED_THRESHOLD * opt.param_groups[0]["lr"]
                 sched.step(avg)
             lr = opt.param_groups[0]["lr"]
             print(f"epoch {epoch} loss {avg:.6f} acc {avg_acc:.4f} mae {avg_mae:.4f} lr {lr:.2e}")
@@ -981,7 +985,7 @@ if __name__ == "__main__":
     p.add_argument("--mem-limit", type=int, default=0, help="GPU memory limit in MB (0 = unlimited)")
     p.add_argument("--schedule", action="store_true")
     p.add_argument("--patience", type=int, default=3)
-    p.add_argument("--sched-threshold", type=float, default=1e-4, help="--schedule: min relative improvement")
+    p.add_argument("--sched-threshold", type=float, help="min relative improvement (default: from learn rate)")
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--ncols", type=int, default=120, help="progress bar width (0 = auto/full terminal)")
     p.add_argument("--log-every", type=float, default=30, help="seconds between status lines when tqdm is missing")
