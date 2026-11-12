@@ -359,8 +359,8 @@ def combined_loss(y_pred, y_true, args):
         loss_eval = torch.where(a <= d, 0.5 * err * err, d * (a - 0.5 * d))
         loss_outcome = F.binary_cross_entropy_with_logits(logits, outcome_target, reduction="none")
     else:
-        loss_eval = (wdl_pred - wdl_target) ** 2
-        loss_outcome = (wdl_pred - outcome_target) ** 2
+        loss_eval = (wdl_pred - wdl_target).abs() ** args.loss_power
+        loss_outcome = (wdl_pred - outcome_target).abs() ** args.loss_power
 
     if args.focal_gamma:
         # focal loss with soft targets: weight the outcome term by |error|^gamma;
@@ -970,6 +970,7 @@ if __name__ == "__main__":
     p.add_argument("--loss-mae", action="store_true")
     p.add_argument("--loss-bce", action="store_true")
     p.add_argument("--loss-blend", action="store_true")
+    p.add_argument("--loss-power", type=float, default=2.0, help="error exponent of the default loss")
     p.add_argument("--huber-delta", type=float, default=1.5)
     p.add_argument("--focal-gamma", type=float, default=0.0, help="focal modulation of the outcome loss term (0 = off)")
     p.add_argument("--profile", help="JSON dataset profile with per-bucket label scale ratios")
@@ -998,6 +999,8 @@ if __name__ == "__main__":
         p.error("input dataset required (or use --export)")
     if args.focal_gamma < 0:
         p.error("--focal-gamma must be >= 0")
+    if args.loss_power < 1:
+        p.error("--loss-power must be >= 1")
     if args.sparsity < 0:
         p.error("--sparsity must be >= 0")
     if not 0 < args.slice_rows <= args.batch_size or args.batch_size % args.slice_rows:
