@@ -21,6 +21,7 @@
  */
 #include <cstdio>
 #include <filesystem>
+#include <print>
 #include <string>
 #include <unordered_map>
 
@@ -35,11 +36,13 @@ static constexpr const char* ENGINE_VERSION = STURDDLE_VERSION;
 
 static void print_usage(const char* argv0)
 {
-    std::fprintf(stderr,
-        "Usage: %s [options]\n"
-        "  -D, --dev-mode    enable developer-mode UCI options\n"
-        "  -v, --verbose     enable verbose (debug) logging\n"
-        "  -h, --help        show this help\n",
+    std::print(stderr,
+        "Usage: {} [options]\n"
+        "  -D, --dev-mode       enable developer-mode UCI options\n"
+        "  -l, --logfile FILE   log file (default: sturddle.log)\n"
+        "  -s, --separate-logs  append the process id to the log file name\n"
+        "  -v, --verbose        enable verbose (debug) logging\n"
+        "  -h, --help           show this help\n",
         argv0);
 }
 
@@ -47,6 +50,8 @@ int main(int argc, char** argv)
 {
     bool debug = false;
     bool dev_mode = false;
+    bool separate_logs = false;
+    std::string logfile = "sturddle.log";
 
     for (int i = 1; i < argc; ++i)
     {
@@ -55,6 +60,12 @@ int main(int argc, char** argv)
             dev_mode = true;
         else if (arg == "-v" || arg == "--verbose")
             debug = true;
+        else if (arg == "-s" || arg == "--separate-logs")
+            separate_logs = true;
+        else if (arg == "-l" || arg == "--logfile")
+            logfile = (i + 1 < argc) ? argv[++i] : "";
+        else if (arg.starts_with("--logfile="))
+            logfile = arg.substr(10);
         else if (arg == "-h" || arg == "--help")
         {
             print_usage(argv[0]);
@@ -62,11 +73,19 @@ int main(int argc, char** argv)
         }
         else
         {
-            std::fprintf(stderr, "Unknown option: %s\n", arg.c_str());
+            std::println(stderr, "Unknown option: {}", arg);
             print_usage(argv[0]);
             return 1;
         }
     }
+
+    if (logfile.empty())
+    {
+        std::println(stderr, "--logfile requires a file name");
+        print_usage(argv[0]);
+        return 1;
+    }
+    native_log_open(logfile, separate_logs);
 
     const auto exe_dir = fs::absolute(fs::path(argv[0])).parent_path().string();
 
@@ -76,7 +95,7 @@ int main(int argc, char** argv)
     }
     catch (const std::exception& e)
     {
-        std::fprintf(stderr, "init failed: %s\n", e.what());
+        std::println(stderr, "init failed: {}", e.what());
         return 2;
     }
 

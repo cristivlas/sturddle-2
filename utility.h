@@ -54,6 +54,23 @@ enum class CancelReason
     PY_SIGNAL = 2,
 };
 
+enum class LogLevel : int
+{
+    DEBUG = 1,
+    INFO = 2,
+    WARN = 3,
+    ERROR = 4
+};
+
+#if NATIVE_BUILD
+extern std::atomic<LogLevel> native_log_level;
+
+/* falls back to stderr if the file cannot be opened */
+void native_log_open(const std::string& path, bool separate);
+
+void native_log_message(int level, const std::string& msg, bool force);
+#endif /* NATIVE_BUILD */
+
 extern void cancel_search(CancelReason);
 
 namespace

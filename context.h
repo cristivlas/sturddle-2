@@ -57,26 +57,8 @@ extern void _set_param(const std::string&, int value, bool echo=false);
 extern std::map<std::string, int> _get_params();
 
 
-enum class LogLevel : int
-{
-    DEBUG = 1,
-    INFO = 2,
-    WARN = 3,
-    ERROR = 4
-};
-
-
-
 namespace search
 {
-#if NATIVE_BUILD
-    /* Threshold consumed by native_log_message(). Messages below this
-     * level are dropped unless `force` is set. Toggled by --verbose,
-     * the UCI `debug` startup param, and `setoption name Debug`.
-     * Matches Python's logging.setLevel() semantics on the Cython side. */
-    extern LogLevel native_log_level;
-#endif /* NATIVE_BUILD */
-
     using time = std::chrono::time_point<std::chrono::steady_clock>;
 
     using Bitboard = chess::Bitboard;

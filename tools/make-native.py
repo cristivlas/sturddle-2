@@ -43,7 +43,7 @@ ARCH_SUFFIX = {
     'AVX2_VNNI': '-avx2-vnni', 'AVX512': '-avx512', 'AVX512_BF16': '-avx512-bf16',
 }
 
-SOURCES = ['chess.cpp', 'context.cpp', 'search.cpp', 'uci_native.cpp', 'tbprobe.cpp', 'main_native.cpp', 'nnue/model.cpp']
+SOURCES = ['chess.cpp', 'context.cpp', 'search.cpp', 'uci_native.cpp', 'utility.cpp', 'tbprobe.cpp', 'main_native.cpp', 'nnue/model.cpp']
 INCLUDES = ['.', 'libpopcnt', 'magic-bits/include', 'nnue/version2', 'Fathom/src']
 DEFINES = ['NATIVE_BUILD=1', 'NATIVE_UCI=1', 'NATIVE_BOOK=1', 'CALLBACK_PERIOD=8192', 'NO_ASSERT']
 
@@ -83,7 +83,7 @@ def build_windows(arch, version, define_args):
 
     exe = OUT_DIR / f'sturddle-{version}{ARCH_SUFFIX[arch]}.exe'
 
-    cxxflags = ['/std:c++20', '/EHsc', '/fp:fast', '/O2', '/MT'] + ARCH_FLAGS[arch] + [
+    cxxflags = ['/std:c++latest', '/EHsc', '/fp:fast', '/O2', '/MT'] + ARCH_FLAGS[arch] + [
         '-O3', '-Ofast', '-Werror', '-Wmissing-field-initializers',
         '-Wno-deprecated-declarations', '-Wno-unused-command-line-argument',
         '-Wno-unused-label', '-Wno-unused-variable', '-Wno-nan-infinity-disabled',
@@ -131,14 +131,14 @@ def build_linux(arch, version, define_args):
     is_clang = 'clang' in Path(cxx).name
     triplet = subprocess.check_output([cxx, '-dumpmachine'], text=True).strip()
 
-    if is_clang and cc_ver < 16:
-        sys.exit(f'ERROR: {cxx} v{cc_ver}. clang >= 16 required.')
-    if (not is_clang) and cc_ver < 13:
-        sys.exit(f'ERROR: {cxx} v{cc_ver}. gcc >= 13 required.')
+    if is_clang and cc_ver < 18:
+        sys.exit(f'ERROR: {cxx} v{cc_ver}. clang >= 18 required.')
+    if (not is_clang) and cc_ver < 14:
+        sys.exit(f'ERROR: {cxx} v{cc_ver}. gcc >= 14 required.')
 
     exe = OUT_DIR / f'sturddle-{version}{ARCH_SUFFIX[arch]}'
 
-    cxxflags = ['-std=c++20', '-O3', '-ffast-math'] + ARCH_FLAGS[arch] + [
+    cxxflags = ['-std=c++23', '-O3', '-ffast-math'] + ARCH_FLAGS[arch] + [
         '-Wextra', '-Werror',
         '-Wno-unused-label', '-Wno-unknown-pragmas',
         '-Wno-unused-parameter', '-Wno-unused-variable',

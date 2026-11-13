@@ -258,7 +258,7 @@ namespace
     static void sync_native_log_level()
     {
 #if NATIVE_BUILD
-        search::native_log_level = _debug ? LogLevel::DEBUG : LogLevel::INFO;
+        native_log_level.store(_debug ? LogLevel::DEBUG : LogLevel::INFO, std::memory_order_relaxed);
 #endif /* NATIVE_BUILD */
     }
 

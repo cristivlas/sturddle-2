@@ -466,18 +466,6 @@ namespace search
     bool Context::_root_restricted = false;
 
 #if NATIVE_BUILD
-    /* Default sinks so native builds work without Cython-installed callbacks. */
-    LogLevel native_log_level = LogLevel::INFO;
-
-    static void native_log_message(int level, const std::string& msg, bool force)
-    {
-        if (!force && level < int(native_log_level))
-            return;
-        static constexpr const char* names[] = { "?", "DEBUG", "INFO", "WARN", "ERROR" };
-        const auto name = (level >= 1 && level <= 4) ? names[level] : names[0];
-        std::fprintf(stderr, "[%s] %s\n", name, msg.c_str());
-    }
-
     /* Last-resort fallback for initial_hash_size(); the OS-native branches in
      * search.cpp handle all three platforms, so this is only hit if those fail.
      */
@@ -494,6 +482,7 @@ namespace search
     BaseMove (*Context::_book_lookup)(const State&, bool) = nullptr;
     std::string (*Context::_epd)(const State&) = nullptr;
 #if NATIVE_BUILD
+    /* see utility.cpp */
     void (*Context::_log_message)(int, const std::string&, bool) = native_log_message;
 #else
     void (*Context::_log_message)(int, const std::string&, bool) = nullptr;
