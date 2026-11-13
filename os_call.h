@@ -46,7 +46,8 @@ struct NonZero
 
 [[noreturn]] inline void throw_last_error(std::string_view api)
 {
-    throw std::system_error(last_os_error(), std::system_category(), std::string(api) + " failed");
+    const int error = last_os_error();
+    throw std::system_error(error, std::system_category(), std::string(api) + " failed");
 }
 
 
