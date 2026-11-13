@@ -76,7 +76,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define ADAPTIVE_NULL_MOVE                  true
 
 /* Reduce deep non-PV nodes by one ply */
-#define BLANKET_REDUCTION                   true
+#define BLANKET_REDUCTION                   false
 
 /*
  * Count valid moves made as nodes if true, otherwise use effectively
