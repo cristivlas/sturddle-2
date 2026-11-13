@@ -34,6 +34,14 @@ namespace fs = std::filesystem;
 static constexpr const char* ENGINE_NAME = "Sturddle";
 static constexpr const char* ENGINE_VERSION = STURDDLE_VERSION;
 
+#ifndef BUILD_FLAVOR
+  #define BUILD_FLAVOR unknown
+#endif
+
+#define FLAVOR_TAG_PREFIX "STURDDLE_FLAVOR="
+static constexpr char FLAVOR_TAG[] = FLAVOR_TAG_PREFIX _TOSTR(BUILD_FLAVOR);
+static constexpr const char* FLAVOR = FLAVOR_TAG + sizeof(FLAVOR_TAG_PREFIX) - 1;
+
 static void print_usage(const char* argv0)
 {
     std::print(stderr,
@@ -42,8 +50,9 @@ static void print_usage(const char* argv0)
         "  -l, --logfile FILE   log file (default: sturddle.log)\n"
         "  -s, --separate-logs  append the process id to the log file name\n"
         "  -v, --verbose        enable verbose (debug) logging\n"
-        "  -h, --help           show this help\n",
-        argv0);
+        "  -h, --help           show this help\n"
+        "Build flavor: {}\n",
+        argv0, FLAVOR);
 }
 
 int main(int argc, char** argv)

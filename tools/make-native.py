@@ -214,7 +214,7 @@ def main():
     fetch_weights.ensure()
 
     defines = DEFINES if embed else DEFINES + ['SHARED_WEIGHTS']
-    define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}']
+    define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}', f'-DBUILD_FLAVOR={args.arch}']
 
     if sys.platform.startswith('win'):
         exe = build_windows(args.arch, version, define_args)
