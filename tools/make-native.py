@@ -4,6 +4,7 @@ Build native Sturddle executable (no Python runtime embedded).
 
 Usage:
     python tools/make-native.py [ARCH] [--embed]
+    python tools/make-native.py --launcher
 
 ARCH is one of: native (default), AVX, AVX2, AVX2_VNNI, AVX512, AVX512_BF16.
 
@@ -43,6 +44,7 @@ ARCH_SUFFIX = {
     'AVX2_VNNI': '-avx2-vnni', 'AVX512': '-avx512', 'AVX512_BF16': '-avx512-bf16',
 }
 
+LAUNCHER_SOURCES = ['launcher.cpp']
 SOURCES = ['chess.cpp', 'context.cpp', 'search.cpp', 'uci_native.cpp', 'utility.cpp', 'tbprobe.cpp', 'main_native.cpp', 'nnue/model.cpp']
 INCLUDES = ['.', 'libpopcnt', 'magic-bits/include', 'nnue/version2', 'Fathom/src']
 DEFINES = ['NATIVE_BUILD=1', 'NATIVE_UCI=1', 'NATIVE_BOOK=1', 'CALLBACK_PERIOD=8192', 'NO_ASSERT']
@@ -75,15 +77,15 @@ def init_msvc_env():
             os.environ[k] = v
 
 
-def build_windows(arch, version, define_args):
+def build_windows(name, arch_flags, sources, define_args):
     cl_exe = Path(r'C:\Program Files\LLVM\bin\clang-cl.exe')
     if not cl_exe.exists():
         sys.exit(f'ERROR: clang-cl not found at {cl_exe}')
     init_msvc_env()
 
-    exe = OUT_DIR / f'sturddle-{version}{ARCH_SUFFIX[arch]}.exe'
+    exe = OUT_DIR / f'{name}.exe'
 
-    cxxflags = ['/std:c++latest', '/EHsc', '/fp:fast', '/O2', '/MT'] + ARCH_FLAGS[arch] + [
+    cxxflags = ['/std:c++latest', '/EHsc', '/fp:fast', '/O2', '/MT'] + arch_flags + [
         '-O3', '-Ofast', '-Werror', '-Wmissing-field-initializers',
         '-Wno-deprecated-declarations', '-Wno-unused-command-line-argument',
         '-Wno-unused-label', '-Wno-unused-variable', '-Wno-nan-infinity-disabled',
@@ -104,7 +106,7 @@ def build_windows(arch, version, define_args):
             return obj
 
         with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
-            objs = list(pool.map(compile_one, SOURCES))
+            objs = list(pool.map(compile_one, sources))
 
         link_cmd = [str(cl_exe)] + [str(o) for o in objs] + [
             f'/Fe{exe}',
@@ -118,7 +120,7 @@ def build_windows(arch, version, define_args):
     return exe
 
 
-def build_linux(arch, version, define_args):
+def build_linux(name, arch_flags, sources, define_args):
     cxx = os.environ.get('CXX')
     if not cxx:
         sys.exit('ERROR: set CXX (e.g. CXX=clang++-20) before invoking this script.')
@@ -136,9 +138,9 @@ def build_linux(arch, version, define_args):
     if (not is_clang) and cc_ver < 14:
         sys.exit(f'ERROR: {cxx} v{cc_ver}. gcc >= 14 required.')
 
-    exe = OUT_DIR / f'sturddle-{version}{ARCH_SUFFIX[arch]}'
+    exe = OUT_DIR / name
 
-    cxxflags = ['-std=c++23', '-O3', '-ffast-math'] + ARCH_FLAGS[arch] + [
+    cxxflags = ['-std=c++23', '-O3', '-ffast-math'] + arch_flags + [
         '-Wextra', '-Werror',
         '-Wno-unused-label', '-Wno-unknown-pragmas',
         '-Wno-unused-parameter', '-Wno-unused-variable',
@@ -170,7 +172,7 @@ def build_linux(arch, version, define_args):
             return obj
 
         with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
-            objs = list(pool.map(compile_one, SOURCES))
+            objs = list(pool.map(compile_one, sources))
 
         link_cmd = [cxx] + [str(o) for o in objs] + ['-o', str(exe), '-lpthread']
         if is_clang:
@@ -200,35 +202,43 @@ def main():
     parser.add_argument('arch', nargs='?', default='native', choices=list(ARCH_FLAGS.keys()), help='Target SIMD architecture')
     parser.add_argument('--embed', action='store_true',
                         help='Embed weights.bin in the binary via #embed (no separate weights.bin needed at runtime).')
+    parser.add_argument('--launcher', action='store_true',
+                        help='Build only the launcher, which runs the best flavor for the CPU.')
     args = parser.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     version = parse_version()
     build_stamp = datetime.now().strftime('%m%d%y')
 
-    embed = args.embed
-
-    # weights.bin is needed either way: #embed reads it at compile time, the
-    # shared build copies it next to the exe. Decompress/verify it in-process
-    # (same as setup.py) so a clean checkout with only weights.bin.gz works.
-    fetch_weights.ensure()
-
-    defines = DEFINES if embed else DEFINES + ['SHARED_WEIGHTS']
-    define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}', f'-DBUILD_FLAVOR={args.arch}']
-
     if sys.platform.startswith('win'):
-        exe = build_windows(args.arch, version, define_args)
+        build = build_windows
     elif sys.platform.startswith('linux'):
-        exe = build_linux(args.arch, version, define_args)
+        build = build_linux
     else:
         sys.exit(f'Unsupported platform: {sys.platform}')
 
-    assets = ('book.bin',) if embed else ('weights.bin', 'book.bin')
-    for asset in assets:
-        src = REPO_ROOT / asset
-        if not src.exists():
-            sys.exit(f'ERROR: required asset {asset} not found at {src}')
-        shutil.copy(src, OUT_DIR / asset)
+    if args.launcher:
+        # baseline x86-64, so that it runs on any CPU
+        exe = build(f'sturddle-{version}-launcher', [], LAUNCHER_SOURCES, ['-DNATIVE_BUILD=1', '-DNO_ASSERT'])
+    else:
+        embed = args.embed
+
+        # weights.bin is needed either way: #embed reads it at compile time, the
+        # shared build copies it next to the exe. Decompress/verify it in-process
+        # (same as setup.py) so a clean checkout with only weights.bin.gz works.
+        fetch_weights.ensure()
+
+        defines = DEFINES if embed else DEFINES + ['SHARED_WEIGHTS']
+        define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}', f'-DBUILD_FLAVOR={args.arch}']
+
+        exe = build(f'sturddle-{version}{ARCH_SUFFIX[args.arch]}', ARCH_FLAGS[args.arch], SOURCES, define_args)
+
+        assets = ('book.bin',) if embed else ('weights.bin', 'book.bin')
+        for asset in assets:
+            src = REPO_ROOT / asset
+            if not src.exists():
+                sys.exit(f'ERROR: required asset {asset} not found at {src}')
+            shutil.copy(src, OUT_DIR / asset)
 
     dgst = write_sha256(exe)
 

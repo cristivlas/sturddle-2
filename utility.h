@@ -46,6 +46,7 @@
 #if !NATIVE_BUILD
   #include "Python.h"
 #endif /* !NATIVE_BUILD */
+#include "os_call.h"
 
 
 enum class CancelReason
@@ -77,8 +78,8 @@ namespace
 {
 #if NATIVE_BUILD
     /*
-     * Native-build shim: no Python, no GIL. `call` is a direct invocation;
-     * `call_nogil` keeps the noexcept contract (required by the search entry
+     * Native-build shim: no Python, no GIL. 'call' is a direct invocation;
+     * 'call_nogil' keeps the noexcept contract (required by the search entry
      * wrappers in search.h) and logs uncaught exceptions to stderr.
      */
     struct cython_wrapper
@@ -185,6 +186,8 @@ namespace
 
 #if __cplusplus >= 202002L
     using std::bit_cast;
+    using std::has_single_bit;
+    using std::shift_left;
 #else
     /* C++20 std::bit_cast polyfill */
     template<typename To, typename From>
@@ -196,18 +199,20 @@ namespace
         std::memcpy(&to, &from, sizeof(To));
         return to;
     }
-#endif /* __cplusplus >= 202002L */
 
-
-#if __cplusplus >= 202002L
-    using std::has_single_bit;
-#else
     template<typename T>
     constexpr bool has_single_bit(T x) noexcept
     {
         return x != 0 && (x & (x - 1)) == 0;
     }
-#endif
+
+    /* C++20 std::shift_left polyfill */
+    template<typename I>
+    INLINE I shift_left(I first, I last, typename std::iterator_traits<I>::difference_type n)
+    {
+        return std::rotate(first, first + n, last);
+    }
+#endif /* __cplusplus >= 202002L */
 
 
     /*
@@ -237,12 +242,7 @@ namespace
 
         using V = typename std::iterator_traits<I>::value_type;
 
-    #if __cplusplus >= 202002L
-        /* C++20 */
-        auto i = std::shift_left(first, last, 2);
-    #else
-        auto i = std::rotate(first, first + 2, last);
-    #endif
+        auto i = shift_left(first, last, 2);
         *i++ = V(); *i = V();
     }
 
@@ -430,11 +430,10 @@ namespace cpu
     inline void set_high_priority()
     {
     #if _WIN32
-        if (!SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS))
-            win::throw_last_error("SetPriorityClass");
-    #else /* requires "sudo setcap cap_sys_nice+ep <engine_name>" */
-        if (setpriority(PRIO_PROCESS, 0, high_priority_nice) != 0)
-            throw std::runtime_error("setpriority failed: " + std::to_string(errno));
+        OS_CALL(SetPriorityClass, GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    #else
+	/* requires "sudo setcap cap_sys_nice+ep <engine_name>" */
+        OS_CALL_CHECK(PosixResult, setpriority, PRIO_PROCESS, 0, high_priority_nice);
     #endif /* !_WIN32 */
     }
 } /* namespace cpu */

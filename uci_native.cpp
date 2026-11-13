@@ -596,10 +596,14 @@ private:
         if (!_opening_book.is_open())
         {
             log_debug(std::format("Opening: {}", _book));
-            if (!_opening_book.open(_book))
+            try
+            {
+                _opening_book.open(_book);
+            }
+            catch (const std::exception& e)
             {
                 _use_opening_book = false;
-                log_error(std::format("Failed opening: {}", _book));
+                log_error(std::format("Failed opening {}: {}", _book, e.what()));
                 return chess::BaseMove();
             }
         }
