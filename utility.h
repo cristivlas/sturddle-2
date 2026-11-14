@@ -187,7 +187,6 @@ namespace
 #if __cplusplus >= 202002L
     using std::bit_cast;
     using std::has_single_bit;
-    using std::shift_left;
 #else
     /* C++20 std::bit_cast polyfill */
     template<typename To, typename From>
@@ -205,14 +204,20 @@ namespace
     {
         return x != 0 && (x & (x - 1)) == 0;
     }
+#endif /* __cplusplus >= 202002L */
 
+
+/* MSVC reports an old __cplusplus unless /Zc:__cplusplus is set */
+#if __cpp_lib_shift
+    using std::shift_left;
+#else
     /* C++20 std::shift_left polyfill */
     template<typename I>
     INLINE I shift_left(I first, I last, typename std::iterator_traits<I>::difference_type n)
     {
         return std::rotate(first, first + n, last);
     }
-#endif /* __cplusplus >= 202002L */
+#endif /* __cpp_lib_shift */
 
 
     /*

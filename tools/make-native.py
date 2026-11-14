@@ -65,12 +65,34 @@ def parse_version():
     return f'{major}.{minor}.{patch}'
 
 
-def init_msvc_env():
+MSVC_WARNINGS = [
+    '/wd4068',  # unknown pragma
+]
+
+MSVC_ARCH_FLAGS = {
+    '-march=corei7-avx': '/arch:AVX',
+    '-march=core-avx2': '/arch:AVX2',
+    '-march=skylake-avx512': '/arch:AVX512',
+}
+
+
+def find_visual_studio():
+    program_files = os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')
+    vswhere = Path(program_files) / 'Microsoft Visual Studio/Installer/vswhere.exe'
+    if not vswhere.exists():
+        return None
+    query = ['-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64']
+    result = subprocess.run([vswhere, *query, '-property', 'installationPath'], capture_output=True, text=True)
+    install_dir = result.stdout.strip()
+    return Path(install_dir) if install_dir else None
+
+
+def init_msvc_env(vs_dir):
     if os.environ.get('INCLUDE'):
         return
-    vcvars = Path(r'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat')
-    if not vcvars.exists():
-        sys.exit(f'ERROR: vcvars64.bat not found at {vcvars}')
+    vcvars = vs_dir / 'VC/Auxiliary/Build/vcvars64.bat' if vs_dir else None
+    if not vcvars or not vcvars.exists():
+        sys.exit('ERROR: Visual Studio C++ tools not found')
     result = subprocess.run(f'"{vcvars}" >nul && set', shell=True, capture_output=True, text=True, check=True)
     for line in result.stdout.splitlines():
         if '=' in line:
@@ -78,23 +100,54 @@ def init_msvc_env():
             os.environ[k] = v
 
 
+def find_tool(names, dirs):
+    search_path = os.pathsep.join(str(d) for d in dirs)
+    for name in names:
+        if path := shutil.which(name, path=search_path):
+            return Path(path)
+    sys.exit(f'ERROR: {" or ".join(names)} not found')
+
+
+def msvc_arch_flags(arch_flags):
+    if not arch_flags:
+        return []  # the launcher
+    # MSVC never defines __BMI2__, so there is no PEXT
+    flags = ['-DUSE_MAGIC_BITS']
+    for flag in arch_flags:
+        if flag.startswith('-march=') and flag != '-march=native':
+            if flag not in MSVC_ARCH_FLAGS:
+                print(f'WARNING: {flag} needs clang-cl, skipping')
+                sys.exit(0)
+            flags.append(MSVC_ARCH_FLAGS[flag])
+    return flags
+
+
 def build_windows(out_dir, name, arch_flags, sources, define_args):
-    cl_exe = Path(r'C:\Program Files\LLVM\bin\clang-cl.exe')
-    if not cl_exe.exists():
-        sys.exit(f'ERROR: clang-cl not found at {cl_exe}')
-    rc_exe = cl_exe.parent / 'llvm-rc.exe'
-    if not rc_exe.exists():
-        sys.exit(f'ERROR: llvm-rc not found at {rc_exe}')
-    init_msvc_env()
+    vs_dir = find_visual_studio()
+    init_msvc_env(vs_dir)
+
+    llvm_dirs = [Path(os.environ.get('ProgramFiles', r'C:\Program Files')) / 'LLVM/bin']
+    if vs_dir:
+        llvm_dirs.append(vs_dir / 'VC/Tools/Llvm/x64/bin')
+    names = [os.environ['CL_EXE']] if os.environ.get('CL_EXE') else ['clang-cl', 'cl']
+    cl_exe = find_tool(names, [os.environ['PATH'], *llvm_dirs])
+    is_clang = cl_exe.stem.lower() == 'clang-cl'
+    rc_exe = find_tool(['llvm-rc' if is_clang else 'rc'], [cl_exe.parent, os.environ['PATH']])
 
     exe = out_dir / f'{name}.exe'
 
-    cxxflags = ['/std:c++latest', '/EHsc', '/fp:fast', '/O2', '/MT'] + arch_flags + [
-        '-O3', '-Ofast', '-Werror', '-Wmissing-field-initializers',
-        '-Wno-deprecated-declarations', '-Wno-unused-command-line-argument',
-        '-Wno-unused-label', '-Wno-unused-variable', '-Wno-nan-infinity-disabled',
-        '/D_FORTIFY_SOURCE=0', '/GS-',
-    ] + shlex.split(os.environ.get('CXXFLAGS', ''))
+    cxxflags = ['/nologo', '/std:c++latest', '/EHsc', '/fp:fast', '/O2', '/MT']
+    if is_clang:
+        cxxflags += arch_flags + [
+            '-O3', '-Ofast', '-Werror', '-Wmissing-field-initializers',
+            '-Wno-deprecated-declarations', '-Wno-unused-command-line-argument',
+            '-Wno-unused-label', '-Wno-unused-variable', '-Wno-nan-infinity-disabled',
+        ]
+    else:
+        cxxflags += msvc_arch_flags(arch_flags) + MSVC_WARNINGS
+        # MSVC has no native target
+        define_args = ['-DBUILD_FLAVOR=generic' if d == '-DBUILD_FLAVOR=native' else d for d in define_args]
+    cxxflags += ['/D_FORTIFY_SOURCE=0', '/GS-'] + shlex.split(os.environ.get('CXXFLAGS', ''))
     include_args = [f'-I{d}' for d in INCLUDES]
 
     with tempfile.TemporaryDirectory(prefix='sturddle-native-') as tmp:
