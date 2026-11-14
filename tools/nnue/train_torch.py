@@ -854,7 +854,7 @@ def main(args):
     best = math.inf
     bar = None
     try:
-        for epoch in range(args.epochs):
+        for epoch in range(1, args.epochs + 1):
             model.train()
             total, count = 0.0, 0
             acc_sum, mae_sum, zero_sum = 0.0, 0.0, 0.0
@@ -863,7 +863,7 @@ def main(args):
             bar = (
                 tqdm(
                     loader,
-                    desc=f"epoch {epoch+1}/{args.epochs}",
+                    desc=f"epoch {epoch}/{args.epochs}",
                     total=len(ds),
                     ncols=(args.ncols or None),
                 )
@@ -910,7 +910,7 @@ def main(args):
                     t_last = time.time()
                     rate = count / max(t_last - t0, 1e-9)
                     print(
-                        f"epoch {epoch+1}/{args.epochs} step {i+1}/{len(ds)} "
+                        f"epoch {epoch}/{args.epochs} step {i+1}/{len(ds)} "
                         f"loss {ema_loss:.4f} acc {ema_acc:.4f} mae {ema_mae:.4f} {rate:.2f} it/s"
                     )
             avg = total / max(count, 1)
