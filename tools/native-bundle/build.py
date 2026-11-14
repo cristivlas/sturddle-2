@@ -12,6 +12,7 @@ import argparse
 import importlib.util
 import os
 import platform
+import shutil
 import struct
 import subprocess
 import sys
@@ -26,6 +27,7 @@ except ImportError:
 ROOT = Path(__file__).resolve().parents[2]
 MAKE_NATIVE = ROOT / 'tools' / 'make-native.py'
 OUT_DIR = ROOT / 'dist' / 'bundle'
+ZSTD_LICENSE = Path(__file__).parent / 'zstd' / 'LICENSE'
 
 ASSETS = ['book.bin', 'weights.bin']
 MAGIC = b'STURDBND'
@@ -118,13 +120,15 @@ def main():
         make(build_dir, '--launcher')
         banner('Bundling')
 
-        files = [(build_dir / exe_name(f'sturddle-{version}{make_native.ARCH_SUFFIX[arch]}'), True) for arch in archs]
+        exes = [build_dir / exe_name(f'sturddle-{version}{make_native.ARCH_SUFFIX[arch]}') for arch in archs]
+        files = [(exe, True) for exe in exes if exe.exists()]
         files += [(build_dir / asset, False) for asset in ASSETS]
         launcher = build_dir / exe_name(f'sturddle-{version}-launcher')
 
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         out_path = OUT_DIR / bundle_name(args.name, version)
         write_bundle(out_path, launcher, files, args.level)
+        shutil.copy(ZSTD_LICENSE, OUT_DIR / 'zstd-license.txt')
 
     dgst = make_native.write_sha256(out_path)
     print(f'\nBuilt {out_path}')
