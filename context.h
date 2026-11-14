@@ -411,6 +411,7 @@ namespace search
         const Move* first_valid_move();
 
         score_t     futility_margin() const;
+        int         late_move_count(int child_depth) const;
 
         template<POV pov>
         INLINE bool has_improved() const { return improvement<pov>() > IMPROVEMENT_MARGIN; }
@@ -878,7 +879,21 @@ namespace search
             const auto m = margins(std::make_index_sequence<PLY_MAX>{});
             return m;
         } ();
+    #if IMPROVING_PRUNING
+        if (!has_improved<US>())
+            return fp_margins[depth()] * FUTILITY_NOT_IMPROVING_PCT / 100 * can_forward_prune();
+    #endif /* IMPROVING_PRUNING */
         return fp_margins[depth()] * can_forward_prune();
+    }
+
+
+    INLINE int Context::late_move_count(int child_depth) const
+    {
+    #if IMPROVING_PRUNING
+        if (!has_improved<US>())
+            return LMP[child_depth] * LMP_NOT_IMPROVING_PCT / 100;
+    #endif /* IMPROVING_PRUNING */
+        return LMP[child_depth];
     }
 
 
@@ -1379,7 +1394,7 @@ namespace search
         ASSERT(_phase > 1);
 
         return ctxt.depth() > 1 /* do not LMP leaf nodes */
-            && _current >= LMP[ctxt.depth() - 1]
+            && _current >= ctxt.late_move_count(ctxt.depth() - 1)
             && ctxt.can_forward_prune();
     }
 

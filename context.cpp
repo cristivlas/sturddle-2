@@ -1238,7 +1238,7 @@ namespace search
         const int depth = this->depth();
 
         /* late move pruning */
-        if (depth > 0 && count >= LMP[depth] && can_prune())
+        if (depth > 0 && count >= _parent->late_move_count(depth) && can_prune())
             return LMRAction::Prune;
 
         /* no reductions at very low depth and in qsearch */

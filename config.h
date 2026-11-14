@@ -338,6 +338,11 @@ DECLARE_VALUE(  LMR_RUSH_FULL_PCT,                   50,    0,     100)
 
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
 
+#if IMPROVING_PRUNING
+DECLARE_VALUE(  FUTILITY_NOT_IMPROVING_PCT,          75,   50,     100)
+DECLARE_VALUE(  LMP_NOT_IMPROVING_PCT,               66,   50,     100)
+#endif /* IMPROVING_PRUNING */
+
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                 25,    0,     100)
 DECLARE_VALUE(  KILLER_MOVES_DEPTH_MARGIN,          261,   10,     300)
 DECLARE_VALUE(  KILLER_MOVES_MIN_DEPTH,               1,    0,       7)

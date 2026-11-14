@@ -97,6 +97,9 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define IMPROVEMENT_EXTENSION               false
 
+/* Tighter LMP and futility margins at nodes that are not improving */
+#define IMPROVING_PRUNING                   false
+
 #define IGNORE_CANCELLED_ITER               false
 
 #define KILLER_MOVE_HEURISTIC               true
