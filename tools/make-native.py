@@ -1,22 +1,16 @@
 #!/usr/bin/env python3
 """
-Build native Sturddle executable (no Python runtime embedded).
+Build the native Sturddle executable (no Python runtime).
 
 Usage:
-    python tools/make-native.py [ARCH] [--embed]
-    python tools/make-native.py --launcher
+    python tools/make-native.py [ARCH] [--embed] [--out-dir DIR]
+    python tools/make-native.py --launcher [--out-dir DIR]
 
-ARCH is one of: native (default), AVX, AVX2, AVX2_VNNI, AVX512, AVX512_BF16.
+ARCH: native (default), generic, AVX, AVX2, AVX2_VNNI, AVX512, AVX512_BF16, ARMv8_2.
 
-By default the weights are shared: weights.bin is loaded at runtime from next
-to the binary. With --embed, weights.bin is baked into the binary via C23/C++26
-#embed (see context.cpp) and no separate weights.bin is needed at runtime.
-Either way the weights come from weights.bin / weights.bin.gz at the repo root
-(ensured via tools/fetch_weights.py) -- there is no TensorFlow model dependency.
-
-Output: dist/native/sturddle-<version><arch-suffix>.exe (Windows)
-        dist/native/sturddle-<version><arch-suffix>      (Linux)
-Copies book.bin (and weights.bin unless --embed) next to the binary.
+weights.bin is loaded at runtime from next to the executable, unless --embed
+builds it in. book.bin and weights.bin are copied to the output directory,
+dist/native by default.
 """
 import argparse
 import os
@@ -30,23 +24,30 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
+# magic bits are a bit faster than the attack tables without PEXT
 ARCH_FLAGS = {
     'native':      ['-march=native'],
-    'AVX':         ['-march=corei7-avx', '-mtune=corei7-avx'],
+    'generic':     ['-DUSE_MAGIC_BITS'],
+    'AVX':         ['-DUSE_MAGIC_BITS', '-march=corei7-avx', '-mtune=corei7-avx'],
     'AVX2':        ['-march=core-avx2', '-mtune=znver3'],
     'AVX2_VNNI':   ['-march=alderlake', '-mtune=raptorlake'],
     'AVX512':      ['-march=skylake-avx512', '-mtune=skylake-avx512'],
     'AVX512_BF16': ['-march=cooperlake', '-mtune=znver4'],
+    'ARMv8_2':     ['-DUSE_MAGIC_BITS', '-march=armv8.2-a+fp16+dotprod'],
 }
 
 ARCH_SUFFIX = {
-    'native': '', 'AVX': '-avx', 'AVX2': '-avx2',
+    'native': '', 'generic': '-generic', 'AVX': '-avx', 'AVX2': '-avx2',
     'AVX2_VNNI': '-avx2-vnni', 'AVX512': '-avx512', 'AVX512_BF16': '-avx512-bf16',
+    'ARMv8_2': '-armv8-2',
 }
 
-LAUNCHER_SOURCES = ['launcher.cpp']
+LAUNCHER_SOURCES = ['tools/native-bundle/launcher.cpp', 'tools/native-bundle/zstd_decoder.cpp']
 SOURCES = ['chess.cpp', 'context.cpp', 'search.cpp', 'uci_native.cpp', 'utility.cpp', 'tbprobe.cpp', 'main_native.cpp', 'nnue/model.cpp']
 INCLUDES = ['.', 'libpopcnt', 'magic-bits/include', 'nnue/version2', 'Fathom/src']
+# Windows only, same icon and manifest as tools/build.py
+RESOURCES = ['sturddle.rc']
+MANIFEST = 'manifest.xml'
 DEFINES = ['NATIVE_BUILD=1', 'NATIVE_UCI=1', 'NATIVE_BOOK=1', 'CALLBACK_PERIOD=8192', 'NO_ASSERT']
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -77,13 +78,16 @@ def init_msvc_env():
             os.environ[k] = v
 
 
-def build_windows(name, arch_flags, sources, define_args):
+def build_windows(out_dir, name, arch_flags, sources, define_args):
     cl_exe = Path(r'C:\Program Files\LLVM\bin\clang-cl.exe')
     if not cl_exe.exists():
         sys.exit(f'ERROR: clang-cl not found at {cl_exe}')
+    rc_exe = cl_exe.parent / 'llvm-rc.exe'
+    if not rc_exe.exists():
+        sys.exit(f'ERROR: llvm-rc not found at {rc_exe}')
     init_msvc_env()
 
-    exe = OUT_DIR / f'{name}.exe'
+    exe = out_dir / f'{name}.exe'
 
     cxxflags = ['/std:c++latest', '/EHsc', '/fp:fast', '/O2', '/MT'] + arch_flags + [
         '-O3', '-Ofast', '-Werror', '-Wmissing-field-initializers',
@@ -97,8 +101,12 @@ def build_windows(name, arch_flags, sources, define_args):
         tmp_dir = Path(tmp)
 
         def compile_one(src):
-            obj = tmp_dir / (Path(src).stem + '.obj')
-            cmd = [str(cl_exe), '/c'] + cxxflags + define_args + include_args + [src, f'/Fo{obj}']
+            if src.endswith('.rc'):
+                obj = tmp_dir / (Path(src).stem + '.res')
+                cmd = [str(rc_exe), '/FO', str(obj), src]
+            else:
+                obj = tmp_dir / (Path(src).stem + '.obj')
+                cmd = [str(cl_exe), '/c'] + cxxflags + define_args + include_args + [src, f'/Fo{obj}']
             print(' '.join(cmd))
             rc = subprocess.call(cmd, cwd=REPO_ROOT)
             if rc != 0:
@@ -106,11 +114,12 @@ def build_windows(name, arch_flags, sources, define_args):
             return obj
 
         with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
-            objs = list(pool.map(compile_one, sources))
+            objs = list(pool.map(compile_one, sources + RESOURCES))
 
         link_cmd = [str(cl_exe)] + [str(o) for o in objs] + [
             f'/Fe{exe}',
             '/link', '/SUBSYSTEM:CONSOLE', '/LTCG:OFF', '/STACK:33554432',
+            '/MANIFEST:EMBED', f'/MANIFESTINPUT:{REPO_ROOT / MANIFEST}',
         ]
         print(' '.join(link_cmd))
         rc = subprocess.call(link_cmd, cwd=REPO_ROOT)
@@ -120,7 +129,7 @@ def build_windows(name, arch_flags, sources, define_args):
     return exe
 
 
-def build_linux(name, arch_flags, sources, define_args):
+def build_linux(out_dir, name, arch_flags, sources, define_args):
     cxx = os.environ.get('CXX')
     if not cxx:
         sys.exit('ERROR: set CXX (e.g. CXX=clang++-20) before invoking this script.')
@@ -138,7 +147,7 @@ def build_linux(name, arch_flags, sources, define_args):
     if (not is_clang) and cc_ver < 14:
         sys.exit(f'ERROR: {cxx} v{cc_ver}. gcc >= 14 required.')
 
-    exe = OUT_DIR / name
+    exe = out_dir / name
 
     cxxflags = ['-std=c++23', '-O3', '-ffast-math'] + arch_flags + [
         '-Wextra', '-Werror',
@@ -181,7 +190,9 @@ def build_linux(name, arch_flags, sources, define_args):
                 f'-L/usr/lib/llvm-{cc_ver}/lib/',
                 f'-L/usr/lib/llvm-{cc_ver}/lib/{triplet}',
                 '-L/usr/local/opt/llvm/lib/c++',
-                '-stdlib=libc++', '-lc++', '-lc++abi', '-lc++experimental',
+                # most distros do not ship libc++
+                '-stdlib=libc++', '-nostdlib++',
+                '-Wl,-Bstatic', '-lc++experimental', '-lc++', '-lc++abi', '-Wl,-Bdynamic',
             ]
         print(' '.join(link_cmd))
         rc = subprocess.call(link_cmd, cwd=REPO_ROOT)
@@ -200,13 +211,13 @@ def write_sha256(exe_path):
 def main():
     parser = argparse.ArgumentParser(description='Build native Sturddle binary')
     parser.add_argument('arch', nargs='?', default='native', choices=list(ARCH_FLAGS.keys()), help='Target SIMD architecture')
-    parser.add_argument('--embed', action='store_true',
-                        help='Embed weights.bin in the binary via #embed (no separate weights.bin needed at runtime).')
-    parser.add_argument('--launcher', action='store_true',
-                        help='Build only the launcher, which runs the best flavor for the CPU.')
+    parser.add_argument('--embed', action='store_true', help='Build weights.bin into the executable.')
+    parser.add_argument('--launcher', action='store_true', help='Build the launcher instead of the engine.')
+    parser.add_argument('--out-dir', type=Path, default=OUT_DIR, help='Output directory (default: dist/native).')
     args = parser.parse_args()
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = args.out_dir.resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
     version = parse_version()
     build_stamp = datetime.now().strftime('%m%d%y')
 
@@ -218,27 +229,24 @@ def main():
         sys.exit(f'Unsupported platform: {sys.platform}')
 
     if args.launcher:
-        # baseline x86-64, so that it runs on any CPU
-        exe = build(f'sturddle-{version}-launcher', [], LAUNCHER_SOURCES, ['-DNATIVE_BUILD=1', '-DNO_ASSERT'])
+        # no -march, must run on any CPU
+        exe = build(out_dir, f'sturddle-{version}-launcher', [], LAUNCHER_SOURCES, ['-DNATIVE_BUILD=1', '-DNO_ASSERT'])
     else:
         embed = args.embed
 
-        # weights.bin is needed either way: #embed reads it at compile time, the
-        # shared build copies it next to the exe. Decompress/verify it in-process
-        # (same as setup.py) so a clean checkout with only weights.bin.gz works.
         fetch_weights.ensure()
 
         defines = DEFINES if embed else DEFINES + ['SHARED_WEIGHTS']
         define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}', f'-DBUILD_FLAVOR={args.arch}']
 
-        exe = build(f'sturddle-{version}{ARCH_SUFFIX[args.arch]}', ARCH_FLAGS[args.arch], SOURCES, define_args)
+        exe = build(out_dir, f'sturddle-{version}{ARCH_SUFFIX[args.arch]}', ARCH_FLAGS[args.arch], SOURCES, define_args)
 
         assets = ('book.bin',) if embed else ('weights.bin', 'book.bin')
         for asset in assets:
             src = REPO_ROOT / asset
             if not src.exists():
                 sys.exit(f'ERROR: required asset {asset} not found at {src}')
-            shutil.copy(src, OUT_DIR / asset)
+            shutil.copy(src, out_dir / asset)
 
     dgst = write_sha256(exe)
 
