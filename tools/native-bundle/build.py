@@ -56,8 +56,15 @@ def bundle_name(base, version):
     return f'{base}-{version}-{platform.system()}-{platform.machine()}'
 
 
+def banner(text):
+    print('*********************************************************')
+    print(text)
+    print('*********************************************************')
+
+
 def make(out_dir, *args):
-    subprocess.check_call([sys.executable, str(MAKE_NATIVE), *args, '--out-dir', str(out_dir)], cwd=ROOT)
+    if subprocess.call([sys.executable, str(MAKE_NATIVE), *args, '--out-dir', str(out_dir)], cwd=ROOT):
+        sys.exit(f'ERROR: make-native.py {" ".join(args)} failed')
 
 
 def write_record(writer, path, is_exe):
@@ -105,8 +112,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix='sturddle-bundle-build-') as tmp:
         build_dir = Path(tmp)
         for arch in archs:
+            banner(f'Building {arch}')
             make(build_dir, arch)
+        banner('Building launcher')
         make(build_dir, '--launcher')
+        banner('Bundling')
 
         files = [(build_dir / exe_name(f'sturddle-{version}{make_native.ARCH_SUFFIX[arch]}'), True) for arch in archs]
         files += [(build_dir / asset, False) for asset in ASSETS]
