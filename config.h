@@ -357,11 +357,11 @@ DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,      15)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    105,    0,     441)
 
 DECLARE_VALUE(  NNUE_BLEND_PERCENT,                 100,   50,     100)
-DECLARE_VALUE(  NNUE_MAX_EVAL,                      469,  249,     690)
+DECLARE_VALUE(  NNUE_MAX_EVAL,                      594,  249,     690)
 
 /* is_null_move_ok */
-DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT_PCT,         305,   84,     525)
-DECLARE_VALUE(  NULL_MOVE_MARGIN,                   319,   98,     539)
+DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT_PCT,         320,   84,     525)
+DECLARE_VALUE(  NULL_MOVE_MARGIN,                   432,   98,     539)
 DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  3,    2,       5)
 
 /* Minimum depth when verifying */
@@ -375,16 +375,16 @@ DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,             59,    1,     442)
 /* Do not verify null move below this depth */
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,      20)
 
-DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  248,   25,     500)
-DECLARE_VALUE(  RAZOR_INTERCEPT,                    224,  150,     400)
+DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  315,   25,     500)
+DECLARE_VALUE(  RAZOR_INTERCEPT,                    246,  150,     400)
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
 DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     150)
-DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             17,    0,     150)
+DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             26,    0,     150)
 
 /* SEE */
 DECLARE_VALUE(  SEE_PRUNING,                          1,    0,       1)
-DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    3,    1,      20)
-DECLARE_VALUE(  SEE_PRUNING_MARGIN,                -115, -200,       0)
+DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    4,    1,      20)
+DECLARE_VALUE(  SEE_PRUNING_MARGIN,                 -61, -200,       0)
 
 DECLARE_VALUE(  SINGULAR_DEPTH_SCALE,                57,   30,     100)
 DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,         277,  150,     350)
@@ -394,7 +394,7 @@ DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                7,    3,      10)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    1,      10)
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
-DECLARE_VALUE(  STANDPAT_MARGIN,                     85,   50,     350)
+DECLARE_VALUE(  STANDPAT_MARGIN,                     93,   50,     350)
 DECLARE_VALUE(  TT_OVERWRITE_MARGIN,                  3,    0,       8)
 
 /* Aspiration window */

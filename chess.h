@@ -414,7 +414,7 @@ namespace chess
 #if EVAL_PIECE_GRADING
     #define PIECE_VALUES { 0, 106, 340, 363, 526, 1035, 20000 }
 #else
-    #define PIECE_VALUES { 0,  87, 339, 365, 545, 1046, 20000 }
+    #define PIECE_VALUES { 0,  87, 341, 357, 540, 1058, 20000 }
 #endif /* EVAL_PIECE_GRADING */
 
     constexpr int PAWN_BUCKETS = 4;
