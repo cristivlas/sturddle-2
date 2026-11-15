@@ -388,6 +388,7 @@ void search::Context::eval_with_nnue()
         {
             ASSERT(!is_root());
             _eval = tt_entry()._eval;
+            correct_eval();
             return;
         }
 
@@ -412,6 +413,7 @@ void search::Context::eval_with_nnue()
         }
 
         _eval = eval + eval_fuzz();
+        correct_eval();
     }
 }
 
@@ -597,6 +599,9 @@ namespace search
         ctxt->_beta = _beta;
         ctxt->_score = _score;
         ctxt->_eval = _eval;
+    #if CORRECTION_HISTORY
+        ctxt->_eval_uncorrected = _eval_uncorrected;
+    #endif /* CORRECTION_HISTORY */
         ctxt->_max_depth = _max_depth;
         ctxt->_parent = _parent;
         ctxt->_ply = ply;

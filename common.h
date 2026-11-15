@@ -90,6 +90,9 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 /* Collect extra stats for troubleshooting */
 #define EXTRA_STATS                         false
 
+/* Adjust static eval by how far off it was for the same pawn structure */
+#define CORRECTION_HISTORY                  false
+
 #define FRACTIONAL_EXTENSIONS               true
 
 /* Filter out quiet moves if extended at leaf (depth < 0) */

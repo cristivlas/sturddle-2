@@ -324,6 +324,9 @@ namespace search
 
         score_t     _eval = SCORE_MIN; /* static eval */
         score_t     _eval_raw = SCORE_MIN; /* unscaled _eval */
+    #if CORRECTION_HISTORY
+        score_t     _eval_uncorrected = SCORE_MIN; /* raw static eval, as stored in the TT */
+    #endif /* CORRECTION_HISTORY */
 
         int         _extension = 0; /* count pending fractional extensions */
         int         _fifty = 0;
@@ -405,13 +408,17 @@ namespace search
 
         static void update_root_accumulators();
 
-        score_t     static_eval() const { return is_valid(_eval) ? _eval : tt_entry()._eval; }
+        score_t     static_eval() const { return is_valid(_eval) ? _eval : corrected_eval(tt_entry()._eval); }
 
         void        extend(); /* fractional and other extensions */
         const Move* first_valid_move();
 
         score_t     futility_margin() const;
         int         late_move_count(int child_depth) const;
+
+        void        correct_eval();
+        score_t     corrected_eval(score_t eval) const;
+        score_t     uncorrected_eval() const;
 
         template<POV pov>
         INLINE bool has_improved() const { return improvement<pov>() > IMPROVEMENT_MARGIN; }
@@ -894,6 +901,35 @@ namespace search
             return LMP[child_depth] * LMP_NOT_IMPROVING_PCT / 100;
     #endif /* IMPROVING_PRUNING */
         return LMP[child_depth];
+    }
+
+
+    INLINE score_t Context::corrected_eval(score_t eval) const
+    {
+    #if CORRECTION_HISTORY
+        if (is_valid(eval) && abs(eval) < MATE_HIGH)
+            return std::clamp<score_t>(eval + _tt->eval_correction(state()), -MATE_HIGH + 1, MATE_HIGH - 1);
+    #endif /* CORRECTION_HISTORY */
+        return eval;
+    }
+
+
+    INLINE void Context::correct_eval()
+    {
+    #if CORRECTION_HISTORY
+        _eval_uncorrected = _eval;
+        _eval = corrected_eval(_eval);
+    #endif /* CORRECTION_HISTORY */
+    }
+
+
+    INLINE score_t Context::uncorrected_eval() const
+    {
+    #if CORRECTION_HISTORY
+        return _eval_uncorrected;
+    #else
+        return _eval;
+    #endif /* CORRECTION_HISTORY */
     }
 
 

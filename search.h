@@ -244,6 +244,26 @@ namespace search
 
     using HashTable = hash_table<TT_Entry>;
 
+#if CORRECTION_HISTORY
+    constexpr int CORRECTION_BITS = 14;
+    constexpr int CORRECTION_GRAIN = 256; /* per centipawn */
+    constexpr int CORRECTION_WEIGHT_SCALE = 256;
+
+    /* 2^64 / golden ratio, spreads bits into the high bits (Knuth) */
+    constexpr uint64_t FIBONACCI_HASH = 0x9E3779B97F4A7C15ULL;
+
+    /* xxHash64 prime, so white and black hash differently */
+    constexpr uint64_t XXHASH64_PRIME_2 = 0xC2B2AE3D27D4EB4FULL;
+
+    /* pawn structure slot: hash of white and black pawns, top bits */
+    INLINE size_t pawn_correction_index(const State& state)
+    {
+        const uint64_t white = state.pawns & state.occupied_co(chess::WHITE);
+        const uint64_t black = state.pawns & state.occupied_co(chess::BLACK);
+        return ((white * FIBONACCI_HASH) ^ (black * XXHASH64_PRIME_2)) >> (64 - CORRECTION_BITS);
+    }
+#endif /* CORRECTION_HISTORY */
+
     /*
      * Hash table, counter moves, historical counts.
      * Under SMP the hash table is shared between threads.
@@ -266,6 +286,19 @@ namespace search
 
         KillerMovesTable    _killer_moves; /* killer moves at each ply */
         HistoryCounters     _hcounters[2]; /* History heuristic counters. */
+    #if CORRECTION_HISTORY
+       /*
+        * The idea is that static eval (NNUE) errors tend to repeat for the same pawn structure.
+        * Each time a node finishes searching, the code compares the search result with the static eval.
+        * Only search results that prove the eval wrong update the table.
+        * The difference goes into a running average stored in the slot for that pawn structure and side to move.
+        * The next time the static eval is computed for any position with the same pawn structure,
+        * the stored average is added to it. So the eval comes "pre-corrected" by what the search learned.
+        */
+        using CorrectionTable = std::array<int16_t, 1 << CORRECTION_BITS>;
+        CorrectionTable     _pawn_correction[2] = {};
+    #endif /* CORRECTION_HISTORY */
+
         static HashTable    _table;        /* shared hashtable */
 
         void clear(); /* clear search stats, bump up generation */
@@ -356,6 +389,15 @@ namespace search
 
         void history_update_cutoffs(const Move&);
         void history_update_non_cutoffs(const Move&);
+
+    #if CORRECTION_HISTORY
+        score_t eval_correction(const State& state) const
+        {
+            return _pawn_correction[state.turn][pawn_correction_index(state)] / CORRECTION_GRAIN;
+        }
+    #endif /* CORRECTION_HISTORY */
+
+        void update_correction(Context&, score_t alpha);
 
         void update_stats(const Context&);
 

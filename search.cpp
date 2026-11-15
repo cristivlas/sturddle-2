@@ -95,6 +95,9 @@ TranspositionTable::TranspositionTable(const TranspositionTable& other)
     : _countermoves{other._countermoves[BLACK], other._countermoves[WHITE]}
     , _killer_moves(other._killer_moves)
     , _hcounters{other._hcounters[BLACK], other._hcounters[WHITE]}
+#if CORRECTION_HISTORY
+    , _pawn_correction{other._pawn_correction[BLACK], other._pawn_correction[WHITE]}
+#endif /* CORRECTION_HISTORY */
     , _tid(other._tid)
     , _iteration(other._iteration)
     , _eval_depth(other._eval_depth)
@@ -125,6 +128,10 @@ void TranspositionTable::swap(TranspositionTable& other) noexcept
     swap(_killer_moves, other._killer_moves);
     swap(_hcounters[BLACK], other._hcounters[BLACK]);
     swap(_hcounters[WHITE], other._hcounters[WHITE]);
+#if CORRECTION_HISTORY
+    swap(_pawn_correction[BLACK], other._pawn_correction[BLACK]);
+    swap(_pawn_correction[WHITE], other._pawn_correction[WHITE]);
+#endif /* CORRECTION_HISTORY */
     swap(_tid, other._tid);
     swap(_iteration, other._iteration);
     swap(_eval_depth, other._eval_depth);
@@ -241,6 +248,10 @@ void TranspositionTable::init(bool new_game)
 
         _killer_moves.fill({});
         _ply_history.fill({});
+    #if CORRECTION_HISTORY
+        _pawn_correction[BLACK].fill(0);
+        _pawn_correction[WHITE].fill(0);
+    #endif /* CORRECTION_HISTORY */
     }
     else
     {
@@ -250,6 +261,38 @@ void TranspositionTable::init(bool new_game)
     }
 
     _eval_depth = 0; /* Reset selective depth */
+}
+
+
+/* skip bounds that do not contradict the static eval */
+void TranspositionTable::update_correction(Context& ctxt, score_t alpha)
+{
+#if CORRECTION_HISTORY
+    const auto score = ctxt._score;
+    const auto eval = ctxt._eval_uncorrected;
+
+    if (!is_valid(eval)
+        || ctxt.is_root()
+        || ctxt._excluded
+        || ctxt.is_cancelled()
+        || ctxt.depth() < 1
+        || ctxt.is_check()
+        || abs(score) >= MATE_HIGH
+        || abs(eval) >= MATE_HIGH
+        || (ctxt._best_move && ctxt.state().is_capture(ctxt._best_move))
+        || (score >= ctxt._beta && score <= ctxt._eval)
+        || (score <= alpha && score >= ctxt._eval))
+        return;
+
+    auto& entry = _pawn_correction[ctxt.turn()][pawn_correction_index(ctxt.state())];
+
+    const int weight = std::min(ctxt.depth() + 1, CORRECTION_WEIGHT_MAX);
+    const int limit = CORRECTION_MAX * CORRECTION_GRAIN;
+    const int error = std::clamp<int>(score - eval, -CORRECTION_MAX, CORRECTION_MAX);
+    const int value = (entry * (CORRECTION_WEIGHT_SCALE - weight) + error * CORRECTION_GRAIN * weight) / CORRECTION_WEIGHT_SCALE;
+
+    entry = std::clamp(value, -limit, limit);
+#endif /* CORRECTION_HISTORY */
 }
 
 
@@ -294,7 +337,7 @@ void TranspositionTable::update_entry(Context& ctxt, TT_Entry& entry, TT_Type ty
     entry._type = type;
     entry._generation = _table.generation();
     entry._pv = ctxt.is_pv_node();
-    entry._eval = ctxt._eval; /* static eval */
+    entry._eval = ctxt.uncorrected_eval(); /* static eval */
     entry._value = ctxt._score;
     entry._hash_move = ctxt._best_move;
     entry._hash = ctxt.state().hash();
@@ -719,6 +762,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         {
             ASSERT(!ctxt.is_root());
             ctxt._eval = eval;
+            ctxt.correct_eval();
+            eval = ctxt._eval;
         }
         else
         {
@@ -789,7 +834,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         #if IMPROVEMENT_EXTENSION
             else if (ctxt.is_reduced()
                 && ctxt.depth() < IMPROVEMENT_EXTENSION_DEPTH
-                && ctxt.tt_entry()._value > ctxt.tt_entry()._eval + 2 * IMPROVEMENT_MARGIN
+                && ctxt.tt_entry()._value > ctxt.corrected_eval(ctxt.tt_entry()._eval) + 2 * IMPROVEMENT_MARGIN
                 && ctxt.has_improved<US>())
             {
                 ++ctxt._max_depth;
@@ -1062,6 +1107,9 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
         ASSERT(ctxt._score < SCORE_MAX);
         ASSERT(ctxt._score > SCORE_MIN);
+
+        if (move_count > 0)
+            table.update_correction(ctxt, entry_alpha);
     }
 
     /*
