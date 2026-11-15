@@ -28,6 +28,11 @@ To build just a python module:
 or:
 <code>CC=clang++ CFLAGS=-march=native python3 setup.py build_ext --inplace</code>
 
+**Starting with version 2.8.0 there is an alternative way to build** a (smaller) bundle, which does
+not require PyInstaller:
+<code>python3 tools/native-bundle/build.py</code>
+It constructs a self-contained executable, same as the PyInstaller bundle, but without a Python bootstrap.
+
 ## Tuning the Engine
 
 Search and evaluation parameters are defined in `config.h` using tuning macros
