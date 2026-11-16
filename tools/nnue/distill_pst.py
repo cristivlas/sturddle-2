@@ -307,6 +307,7 @@ def main():
     p.add_argument("--ridge", type=float, default=1.0, help="L2 penalty for the least-squares fit")
     p.add_argument("--device", help="default: cuda if available, else cpu")
     p.add_argument("--eval-chunk", type=int, default=65536, help="positions per net forward pass")
+    p.add_argument("--king-only", action="store_true", help="debug: stop once the king tables converge")
     args = p.parse_args()
 
     if not args.device:
@@ -327,16 +328,13 @@ def main():
             with h5py.File(path, "r") as hf:
                 data = hf["data"]
                 total = data.shape[0]
-                if args.limit and args.limit < total:
-                    slices = total // args.slice_rows
-                    k = min(slices, -(-args.limit // args.slice_rows))
-                    starts = np.sort(rng.choice(slices, size=k, replace=False)) * args.slice_rows
-                    groups = np.array_split(starts, -(-k * args.slice_rows // args.batch_size))
-                    reads = (read_slices(data, g, args.slice_rows) for g in groups)
-                    n, num_batches = k * args.slice_rows, len(groups)
-                else:
-                    reads = (data[s : s + args.batch_size] for s in range(0, total, args.batch_size))
-                    n, num_batches = total, -(-total // args.batch_size)
+                # random slices even for a full pass: the king step stops early and must see the whole file
+                slices = total // args.slice_rows
+                k = min(slices, -(-args.limit // args.slice_rows)) if args.limit else slices
+                starts = rng.choice(slices, size=k, replace=False) * args.slice_rows
+                groups = np.array_split(starts, -(-k * args.slice_rows // args.batch_size))  # each batch spans the file
+                reads = (read_slices(data, np.sort(g), args.slice_rows) for g in groups)
+                n, num_batches = k * args.slice_rows, len(groups)
                 print(f"{path}: {n:,} rows", file=sys.stderr)
                 bar = tqdm(reads, total=num_batches, unit="batch")
                 for rows in bar:
@@ -374,6 +372,10 @@ def main():
                     king_done = CONFIDENCE_Z * max(errors) <= KING_PRECISION
                     if king_done:
                         print(f"king tables converged after {king_rows:,} rows", file=sys.stderr)
+                        if args.king_only:
+                            break
+            if king_done and args.king_only:
+                break
 
     # table means stay in: engine adds tables to WEIGHT, so the mean is the net's value delta
     theta = np.linalg.solve(gram.cpu().numpy() + args.ridge * np.eye(PARAMS), rhs.cpu().numpy())
