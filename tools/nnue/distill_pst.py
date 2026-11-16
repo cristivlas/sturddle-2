@@ -96,8 +96,18 @@ def features_and_material(rows):
     return x, material
 
 
+def read_slices(data, starts, slice_rows):
+    # one read for all slices: a VDS walks every mapping per read call
+    space = data.id.get_space()
+    space.select_none()
+    for s in starts:
+        space.select_hyperslab((int(s), 0), (slice_rows, data.shape[1]), op=h5py.h5s.SELECT_OR)
+    rows = np.empty((len(starts) * slice_rows, data.shape[1]), dtype=data.dtype)
+    data.id.read(h5py.h5s.create_simple(rows.shape), space, rows)
+    return rows
+
+
 def load_model(bin_path, device):
-    import torch
     import train_torch as tt
 
     model = tt.NNUE()
@@ -160,19 +170,23 @@ def main():
     p.add_argument("data", nargs="+", help="H5 training data file(s)")
     p.add_argument("-m", "--model", default="weights.bin", help="weights.bin")
     p.add_argument("-o", "--output", help="output file (default: stdout)")
-    p.add_argument("-b", "--batch-size", type=int, default=8192)
-    p.add_argument("--limit", type=int, help="max positions per file")
-    p.add_argument("--ridge", type=float, default=1.0)
+    p.add_argument("-b", "--batch-size", type=int, default=8192, help="rows per read")
+    p.add_argument("--limit", type=int, help="max positions per file, sampled as random slices")
+    p.add_argument("--slice-rows", type=int, default=64, help="rows per random slice")
+    p.add_argument("--seed", type=int, default=0, help="sampling seed")
+    p.add_argument("--ridge", type=float, default=1.0, help="L2 penalty for the least-squares fit")
     p.add_argument("--device", help="default: cuda if available, else cpu")
     args = p.parse_args()
 
     import torch
+    import train_torch as tt
 
     if not args.device:
         args.device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"device: {args.device}", file=sys.stderr)
 
     model = load_model(args.model, args.device)
+    rng = np.random.default_rng(args.seed)
 
     gram = np.zeros((PARAMS, PARAMS))
     rhs = np.zeros(PARAMS)
@@ -183,10 +197,20 @@ def main():
         for path in args.data:
             with h5py.File(path, "r") as hf:
                 data = hf["data"]
-                n = min(data.shape[0], args.limit) if args.limit else data.shape[0]
+                total = data.shape[0]
+                if args.limit and args.limit < total:
+                    slices = total // args.slice_rows
+                    k = min(slices, -(-args.limit // args.slice_rows))
+                    starts = np.sort(rng.choice(slices, size=k, replace=False)) * args.slice_rows
+                    groups = np.array_split(starts, -(-k * args.slice_rows // args.batch_size))
+                    reads = (read_slices(data, g, args.slice_rows) for g in groups)
+                    n, num_batches = k * args.slice_rows, len(groups)
+                else:
+                    reads = (data[s : s + args.batch_size] for s in range(0, total, args.batch_size))
+                    n, num_batches = total, -(-total // args.batch_size)
                 print(f"{path}: {n:,} rows", file=sys.stderr)
-                for s in tqdm(range(0, n - n % args.batch_size, args.batch_size), unit="batch"):
-                    rows = data[s : s + args.batch_size]
+                for rows in tqdm(reads, total=num_batches, unit="batch"):
+                    rows = rows[(tt.popcount(rows[:, 0]) == 1) & (tt.popcount(rows[:, 1]) == 1)]  # one king per side
                     packed = rows[:, :13].astype(np.int64)
                     y_nn = model(torch.from_numpy(packed).to(args.device))[:, 0].cpu().numpy() * 100.0
                     y_nn = np.where(packed[:, 12] == 1, y_nn, -y_nn)
@@ -212,14 +236,15 @@ def main():
         means[i] = theta[i * 64 : (i + 1) * 64].mean()
         theta[i * 64 : (i + 1) * 64] -= means[i]
     tables = np.rint(theta).astype(int)
-
+    emit_sq = sum_sq - 2 * tables @ rhs + tables @ gram @ tables
     labels = PST_ORDER + ["KING_EG"]
     deltas = ", ".join(f"{n} {m:+.0f}" for n, m in zip(labels, means))
     print(f"discarded constants (net's implied value deltas): {deltas}", file=sys.stderr)
 
     print(f"{count:,} positions", file=sys.stderr)
     print(
-        f"residual RMSE: material-only {np.sqrt(sum_sq / count):.1f}cp, +PST {np.sqrt(fit_sq / count):.1f}cp",
+        f"residual RMSE: material-only {np.sqrt(sum_sq / count):.1f}cp, +PST {np.sqrt(fit_sq / count):.1f}cp, "
+        f"emitted {np.sqrt(emit_sq / count):.1f}cp",
         file=sys.stderr,
     )
 
