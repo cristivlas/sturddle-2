@@ -91,7 +91,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define EXTRA_STATS                         false
 
 /* Adjust static eval by how far off it was for the same pawn structure */
-#define CORRECTION_HISTORY                  false
+#define CORRECTION_HISTORY                  true
 
 #define FRACTIONAL_EXTENSIONS               true
 
@@ -153,7 +153,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define TT_SPILLED_BOUNDS                   true
 
 #if !defined(USE_PIECE_SQUARE_TABLES)
-  #define USE_PIECE_SQUARE_TABLES           true
+  #define USE_PIECE_SQUARE_TABLES           false
 #endif
 
 /* Experimental */
