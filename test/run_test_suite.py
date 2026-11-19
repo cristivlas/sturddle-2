@@ -52,9 +52,9 @@ class Timer:
 
 
 def print_header():
-    print (f'Algorithm | {"Test":34s} | Time  | Result |    Depth    |  Evals   |   Nodes   |  Hash  |\
-     Speed     |   Solved')
-    print (f"{'-'*10}+{'-'*36}+{'-'*7}+{'-'*8}+{'-'*13}+{'-'*10}+{'-'*11}+{'-'*8}+{'-'*15}+{'-'*15}")
+    print (f'Algorithm | {"Test":34s} | Time  | Result |    Depth    |    Evals   |    Nodes    |  Hash  |\
+      Speed      |   Solved')
+    print (f"{'-'*10}+{'-'*36}+{'-'*7}+{'-'*8}+{'-'*13}+{'-'*12}+{'-'*13}+{'-'*8}+{'-'*17}+{'-'*15}")
 
 
 """
@@ -135,7 +135,7 @@ def search(algo_class, name, board, expected, depths, **kwargs):
     secs = timer.seconds_elapsed()
     nps = n / secs if secs else n
     u = algo.tt_usage
-    stats = f'|{d:3d} {t:2d} ({a:4.1f})| {e:8d} | {n:9d} |{u:6.2f}% | {nps/1000:8.1f} knps |'
+    stats = f'|{d:3d} {t:2d} ({a:4.1f})| {e:10d} | {n:11d} |{u:6.2f}% | {nps/1000:10.1f} knps |'
     if uci in expected or san in expected:
         print (f' \u001b[32mOK.\u001b[0m   {stats}', end='')
         result = True
@@ -212,7 +212,7 @@ def test_epd(args, filename, tests, algo_class, **kwargs):
         print(f' {succeeded:3d} ({succeeded * 100 / total:6.2f}%)')
         if args.verbose:
             for n in sorted(results[1].items()):
-                print (f'{" "*77} | {n[1]["eval-count"]:8d} | {n[1]["nodes"]:9d} |')
+                print (f'{" "*77} | {n[1]["eval-count"]:10d} | {n[1]["nodes"]:11d} |')
 
 
     print(f'Succeeded: {succeeded} / {total}')
