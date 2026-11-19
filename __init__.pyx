@@ -1117,6 +1117,15 @@ cpdef eval_static_exchanges(board, Color color, Square square):
         state._state, color, square, state._state.piece_type_at(square))
 
 
+cdef extern from 'context.h' namespace 'search':
+    int capture_estimate(const State&, bool)
+
+
+cpdef capture_estimate_py(board, bool scan_replies):
+    cdef BoardState state = BoardState(board)
+    return capture_estimate(state._state, scan_replies)
+
+
 # ---------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------

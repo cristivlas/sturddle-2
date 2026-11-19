@@ -621,9 +621,10 @@ namespace search
 
 
     template<bool Debug = false>
-    int do_exchanges(const State&, Bitboard, int tid, int ply = FIRST_EXCHANGE_PLY, int bucket = -1);
+    int do_exchanges(const State&, Bitboard, int tid, int ply = FIRST_EXCHANGE_PLY, int bucket = -1, Bitboard attackers = chess::BB_ALL);
 
     extern score_t eval_captures(Context& ctxt, score_t);
+    extern int capture_estimate(const State&, bool scan_replies);
 
 
     static int INLINE capture_gain(const State& state, const State& next_state, const BaseMove& move, int bucket)

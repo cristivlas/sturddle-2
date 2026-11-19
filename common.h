@@ -78,6 +78,8 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 /* Reduce deep non-PV nodes by one ply */
 #define BLANKET_REDUCTION                   false
 
+#define CAPTURE_REPLIES                     true
+
 /*
  * Count valid moves made as nodes if true, otherwise use effectively
  * searched nodes (not including TT pruned, FP and late-move pruned).
