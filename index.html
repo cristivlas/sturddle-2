@@ -108,8 +108,7 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
     <li><a href="#search">Search: MTD(f), with twists</a></li>
     <li><a href="#nnue">The neural network, the long way round</a></li>
     <li><a href="#data">Training data and the trainer</a></li>
-    <li><a href="#lab">The lab</a></li>
-    <li><a href="#next">What didn't work, and what's next</a></li>
+    <li><a href="#next">What doesn't work (yet)</a></li>
     <li><a href="#credits">Credits</a></li>
     <li><a href="#diagrams">Appendix: network diagrams</a></li>
   </ol>
@@ -118,13 +117,14 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
 <h2 id="origins">Why and where it started</h2>
 <p>I wanted to understand how chess engines work and which algorithms are involved, and the best way I know to learn something is to build it.</p>
 <p>Sturddle started as a Python prototype. I took move generation and the other basics from <a href="https://github.com/niklasf/python-chess">python-chess</a> and wrote the search first. I was intrigued by <a href="https://people.csail.mit.edu/plaat/mtdf.html">MTD(f)</a>, and curious whether I could write one search "skeleton" that switches at runtime between bare negamax, NegaScout and MTD(f). At first the evaluation was material-only, then a naive hand-crafted eval.</p>
-<p>Over time I rewrote the search in C++. Over many more iterations I studied move generation and the rest, and replaced the python-chess parts with my own code. What's left of Python today is a bootstrap script and some glue.</p>
+<p>Over time I rewrote the search in C++. Over many more iterations I studied move generation and the rest, and replaced the python-chess parts with my own code. What's left of Python is a bootstrap script and some glue, and the upcoming 2.8 release drops even that.</p>
 <p>That history explains the name. A <em>sturddlefish</em> is the accidental hybrid of a sturgeon and a paddlefish, and this engine started life as a hybrid too, part Python and part C++.</p>
 
 <h2 id="packaging">A C++ engine in a Python shell</h2>
-<p>To this day Sturddle builds as a Python extension module. That's partly history, but it also enabled a trick I stumbled into more or less by accident.</p>
+<p>For most of its life Sturddle has been built as a Python extension module. That's partly history, but it also enabled a trick I stumbled into more or less by accident.</p>
 <p>When I was looking into submitting Sturddle to <a href="https://computerchess.org.uk/4040/">CCRL</a> for testing, they wanted a Windows executable, not a bunch of Python scripts. So I bundled everything with <a href="https://pyinstaller.org/">PyInstaller</a>. Some time later it occurred to me that the compiled engine modules are small next to the network weights and the opening book, so I could ship <em>several</em> of them in one bundle, built for AVX-512, AVX-512 with BF16, AVX2, AVX2 with VNNI, AVX, and a generic x86-64 baseline. At startup, a small boot script (<code>main.py</code>) checks the processor's features and loads the best "kernel". Other engines ship one binary per instruction set and let the user pick; Sturddle picks for you.</p>
 <p>PyInstaller also compresses the bundle. In early versions the weights were compiled into every flavor, and compression squeezed out the redundancy. Since 2.3 they're shared across flavors and included once. Quantized weights compress well too, thanks to sparsity and rounding.</p>
+<p>The upcoming 2.8.0 goes a step further and takes Python out of the release. A small C++ launcher carries all the engine flavors, the opening book and the weights, compressed with zstd. At startup it checks the CPU, extracts the matching engine to a temporary directory, runs it, and cleans up when it exits. The PyInstaller build still works.</p>
 <p class="note">I build with Clang on every platform; on Windows, <code>setup.py</code> patches the Python build tools to use <code>clang-cl</code>. Other compilers may work, but I rarely check. MSVC is occasionally useful for its debug runtime checks. In July 2025 its <code>/RTCc</code> check (data lost when converting to a smaller type) found 16-bit overflows in the NNUE code, which I fixed the next day.</p>
 <p class="note">The UCI loop is native C++ (<code>uci_native.cpp</code>) by default. The old Python UCI implementation (<code>uci.pyx</code>) and helpers like <code>worker.py</code> are still in the tree as historical reference, but unused.</p>
 
@@ -132,22 +132,22 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
 <figure>
 <svg class="chart" viewBox="0 0 660 270" role="img" aria-labelledby="chart-title chart-desc">
   <title id="chart-title">Sturddle CCRL 40/15 ratings by version</title>
-  <desc id="chart-desc">Rating rises from 3114 for version 1.04 to 3349 for version 2.7.0.</desc>
+  <desc id="chart-desc">Rating rises from 3114 for version 1.04 to 3351 for version 2.7.0.</desc>
   <line class="grid" x1="50" y1="230" x2="640" y2="230"/>
   <line class="grid" x1="50" y1="155" x2="640" y2="155"/>
   <line class="grid" x1="50" y1="80" x2="640" y2="80"/>
   <text x="44" y="234" text-anchor="end">3100</text>
   <text x="44" y="159" text-anchor="end">3200</text>
   <text x="44" y="84" text-anchor="end">3300</text>
-  <polyline class="line" points="80,219.5 155,185.75 230,182 305,141.5 380,103.25 455,93.5 530,68 605,43.25"/>
+  <polyline class="line" points="80,219.5 155,185.75 230,182 305,141.5 380,103.25 455,94.25 530,68 605,41.75"/>
   <circle class="dot" cx="80" cy="219.5" r="4"/><text class="val" x="80" y="208" text-anchor="middle">3114</text>
   <circle class="dot" cx="155" cy="185.75" r="4"/><text class="val" x="155" y="174.25" text-anchor="middle">3159</text>
   <circle class="dot" cx="230" cy="182" r="4"/><text class="val" x="230" y="200" text-anchor="middle">3164</text>
   <circle class="dot" cx="305" cy="141.5" r="4"/><text class="val" x="305" y="130" text-anchor="middle">3218</text>
   <circle class="dot" cx="380" cy="103.25" r="4"/><text class="val" x="380" y="92" text-anchor="middle">3269</text>
-  <circle class="dot" cx="455" cy="93.5" r="4"/><text class="val" x="455" y="112.75" text-anchor="middle">3282</text>
+  <circle class="dot" cx="455" cy="94.25" r="4"/><text class="val" x="455" y="113.5" text-anchor="middle">3281</text>
   <circle class="dot" cx="530" cy="68" r="4"/><text class="val" x="530" y="57" text-anchor="middle">3316</text>
-  <circle class="dot" cx="605" cy="43.25" r="4"/><text class="val" x="605" y="31.5" text-anchor="middle">3349</text>
+  <circle class="dot" cx="605" cy="41.75" r="4"/><text class="val" x="605" y="30" text-anchor="middle">3351</text>
   <text x="80" y="254" text-anchor="middle">1.04</text>
   <text x="155" y="254" text-anchor="middle">2.01</text>
   <text x="230" y="254" text-anchor="middle">2.02</text>
@@ -179,9 +179,7 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
 <p>Multi-cut prunes a node when several of its first moves already fail high at reduced depth. A <a href="https://skemman.is/bitstream/1946/9180/1/research-report.pdf">research report</a> proposes trying it only at nodes that produced cutoffs before. Sturddle always tries it, but needs one fewer cutoff (2 of the first 6 moves instead of 3) when the transposition table already holds a lower bound near beta. It's a soft version of the paper's filter.</p>
 
 <h3>Late-move reductions vs. the clock</h3>
-<p>Sturddle didn't scale well at long time controls. My hunch was that late-move reductions were too aggressive and never relaxed, even when there was time to spare.</p>
-<p>The reduction table is the classic <code>log(depth) * log(moves) / divisor</code>. Until July 2025 the divisor was 2. Then I added a "dynamic" reduction based on time left (badly buggy) and changed the divisor to <em>e</em>; 2.3.1 shipped with both and was the first version past 3200. The divisor became 4 in 2.5.0. In the 2.8 code the divisor can depend on the clock, behind the <code>LMR_TIME_SCALING</code> flag. It is 4 while an iteration starts early in the move's time budget, and falls linearly to 2 as the start time moves from 20% to 50% of the budget, so late iterations reduce harder and still finish.</p>
-<p class="note">I credit most of the long-TC gain to reducing less overall, not to the clock-dependent part. Pruning by time control was <a href="https://talkchess.com/viewtopic.php?p=498929">debated on CCC in 2012</a>, mostly skeptically. Sturddle's per-iteration version is a different mechanism. I'm still experimenting with it, and the results so far don't show whether it helps.</p>
+<p>Sturddle didn't scale well at long time controls, and my hunch was that late-move reductions were too aggressive. I've tried several variations, including one that relaxes them when there's time to spare: the divisor in the classic <code>log(depth) * log(moves) / divisor</code> formula depends on how much of the move's time budget is already spent (the <code>LMR_TIME_SCALING</code> flag). So far the data isn't conclusive, and the flag is off for now. Pruning by time control was <a href="https://talkchess.com/viewtopic.php?p=498929">debated on CCC in 2012</a>, mostly skeptically.</p>
 
 <h2 id="nnue">The neural network, the long way round</h2>
 
@@ -213,7 +211,7 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
 <p>At first the pooling layer was a plain average. At some point I saw a training opportunity there and gave it weights, and then realized I could pick which pooling weights to use based on the side to move (2.7.0). The leap from there was "I could select on more criteria, and have several outputs". Then I found out others had been doing exactly that, as output stacks, for a while. Ha.</p>
 
 <h3>2.8: trying it the "standard" way</h3>
-<p>My own architecture seemed to hit a ceiling. 2.7.0, the last public release, still uses it. The upcoming 2.8 uses what's now the accepted design: king buckets with horizontal mirroring, dual perspective, pairwise-multiplied int8 activations, sparse int8 second layer, and 32 output stacks selected by piece count and queens. None of that is original. I want to see how my old ways compare. It won't be apples to apples, though, since 2.8 also fixes a lot of bugs.</p>
+<p>My own architecture seemed to hit a ceiling. 2.7.0, the last public release, still uses it. The upcoming 2.8 uses what's now the accepted design: king buckets with horizontal mirroring, dual perspective, pairwise-multiplied int8 activations, sparse int8 second layer, and 32 output stacks selected by piece count and queens. None of that is original.</p>
 
 <div class="table-wrap">
 <table>
@@ -224,9 +222,9 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
     <tr><td>2.00-2.02</td><td class="num">3159-3164</td><td>897 -&gt; 640</td><td>256 -&gt; 64 -&gt; 32, multiply</td><td>average, 4</td><td>none</td><td>White POV</td><td>TF trainer, AMSGrad, Huber loss</td></tr>
     <tr><td>2.3.1</td><td class="num">3218</td><td>897 -&gt; 1280</td><td>256 -&gt; 64 -&gt; 32, * (1 + m)</td><td>average, 8</td><td>none</td><td>White POV</td><td>AVX-VNNI; weights shared across flavors</td></tr>
     <tr><td>2.4.0</td><td class="num">3269</td><td>4 x 897 -&gt; 1280</td><td>256 -&gt; 64 -&gt; 32 (linear), * (1 + m)</td><td>average, 8</td><td>4 pawn</td><td>White POV</td><td><code>weights.bin</code>; <code>--balance</code></td></tr>
-    <tr><td>2.5.0</td><td class="num">3282</td><td>4 x 897 -&gt; 1280</td><td>256 -&gt; 64 -&gt; 32 (bucketed), * (1 + m)</td><td>average, 8</td><td>4 pawn (first layer, side-path output, second layer)</td><td>White POV</td><td>BF16 second layer, AVX-512 VNNI</td></tr>
+    <tr><td>2.5.0</td><td class="num">3281</td><td>4 x 897 -&gt; 1280</td><td>256 -&gt; 64 -&gt; 32 (bucketed), * (1 + m)</td><td>average, 8</td><td>4 pawn (first layer, side-path output, second layer)</td><td>White POV</td><td>BF16 second layer, AVX-512 VNNI</td></tr>
     <tr><td>2.6.0</td><td class="num">3316</td><td>16 x 769 -&gt; 2048</td><td>256 -&gt; 256, * (1 + m)</td><td>average, 8</td><td>16: pawn x king wing</td><td>White POV</td><td>Refresh tables; PyTorch trainer; data profiles</td></tr>
-    <tr><td>2.7.0</td><td class="num">3349</td><td>16 x 769 -&gt; 2048</td><td>256 -&gt; 256, * (1 + m)</td><td>learned, by side to move</td><td>16: pawn x king wing</td><td>White POV</td><td>int16 second layer</td></tr>
+    <tr><td>2.7.0</td><td class="num">3351</td><td>16 x 769 -&gt; 2048</td><td>256 -&gt; 256, * (1 + m)</td><td>learned, by side to move</td><td>16: pawn x king wing</td><td>White POV</td><td>int16 second layer</td></tr>
     <tr><td>2.8 (dev)</td><td class="num">-</td><td>32 x 768 -&gt; 1024 per side</td><td>none</td><td>none</td><td>16 king x 2 (opp. queen)</td><td>dual</td><td>32 output stacks; pairwise activations, sparse int8, VNNI <code>dpbusd</code></td></tr>
   </tbody>
 </table>
@@ -238,34 +236,17 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
 <p>Storage started as naive NumPy memory-mapped files and soon "graduated" to HDF5, whose <em>virtual datasets</em> let me mix and match data sets spread across physical disks. When the data outgrew a drive, I added another NVMe drive and pointed a virtual dataset at files on both; the trainer still sees one dataset.</p>
 <p>I also reuse games from tuning runs as training data, except from coarse tuning of parameters never tuned before, because wild parameter values mean bad play, and bad play means bad labels.</p>
 
-<h3>The two-week mystery, and data profiles</h3>
-<p>Around 2.6.0 a new architecture underperformed for a couple of weeks. It turned out that over time I'd accumulated data scored by different engine versions, each with its own evaluation scale, and the labels didn't agree.</p>
+<h3>Mismatched label scales and data profiles</h3>
+<p>Around 2.6.0 a new architecture underperformed for a couple of weeks. It turned out that over time I'd accumulated data scored by different engine versions, each with its own evaluation scale, so the labels from different sources weren't on the same scale.</p>
 <p>Re-scoring everything was too expensive, so I settled for what I'd call relabeling-light: <em>data profiles</em>. I pick a reference engine version (usually the latest release), score a sample from each data source with it, and write a small "sidecar" file next to that source. The trainer then scales the labels by provenance, per bucket, without rewriting the data. Each profile also carries an <em>outcome scale</em>, the constant <i>S</i> in sigmoid(eval / <i>S</i>) that best predicts game results, fitted with <a href="https://en.wikipedia.org/wiki/Newton%27s_method_in_optimization">Newton's method</a>. It sets the sigmoid scale in the loss function.</p>
 
 <h3>From TensorFlow to PyTorch</h3>
 <p>The original trainer was TensorFlow/Keras, defaulting to Adam with AMSGrad and a clipped Huber loss. Over time it collected cruft, like multi-GPU code from when I trained on a pair of Tesla K80s. In mid-2026 I ported it to PyTorch, partly because the code came out more compact. The TensorFlow trainer had also gained experiments, like an option that forced the label to 0 for drawn games ending in opposite-colored-bishop endgames (bishops and pawns only), where the evaluation was already close to even. That one didn't make it into the PyTorch trainer. The 2.6.0 and 2.7.0 nets were trained with PyTorch, and the TensorFlow script is gone in 2.8.</p>
 
-<h2 id="lab">The lab</h2>
-<p>Every x86 flavor in the bundle has a machine to test it on, and ARM at least gets compiled:</p>
-<ul>
-  <li><strong>Intel i9-14900K</strong> (Windows), with AVX-VNNI but no AVX-512.</li>
-  <li><strong>AMD Ryzen 7 8845HS</strong> laptop (Zen 4, Windows), with AVX-512 including VNNI and BF16. Thermal throttling makes it a shaky benchmark.</li>
-  <li><strong>Intel Xeon W-2195</strong> (Linux) with an RTX 3090: the training box.</li>
-  <li><strong>Dual Xeon Platinum 8160</strong> (Linux), 48 cores and 96 threads, for self-play. It took me an embarrassingly long time to realize self-play runs faster when it's NUMA-aware: games run fine either way, but keeping each engine's memory on the same node as its CPU avoids slow cross-node access. <code>selfplay.sh -N</code> now pins each run's CPUs and memory to one node.</li>
-  <li><strong>An old Dell rack server</strong> (Linux) with twin Tesla K80s, now mostly storage and occasional AVX testing. It's loud as heck, and the Dell BIOS knows nothing about passively cooled Teslas, so I wrote <a href="https://github.com/cristivlas/dell-thermal-manager">my own fan-control daemon</a>.</li>
-  <li><strong>An ODROID</strong>, but only to check that the ARM build compiles. Real ARM testing, including Apple Silicon, is on the list for when I have a Mac again.</li>
-</ul>
-<h3>P-cores, E-cores and fair games</h3>
-<p>The 14900K mixes fast performance cores with slower efficiency cores. Running many games in parallel with fastchess or cutechess-cli, there's no control over which kind of core each engine lands on, so a game might effectively be played at two different time controls. Since 2.3.1 Sturddle raises its process priority on Windows. 2.7.0 added binding to P-cores through Windows CPU sets. That version has a bug where the process can sit waiting for a P-core in a window that time management doesn't account for, and occasionally lose on time. It's fixed for 2.8. My impression is that binding made test results more consistent, but long-time-control tests are slow and I don't have a proper A/B comparison.</p>
-
-<h2 id="next">What didn't work, and what's next</h2>
+<h2 id="next">What doesn't work (yet)</h2>
 <p>Sturddle is an ongoing quest, and the code shows it. Most search features and experiments sit behind compile-time flags in <code>common.h</code>, such as <code>MTDF_REORDER_MOVES</code>, <code>SINGULAR_EXTENSION</code> or <code>RAZORING</code>. Experiments that haven't paid off stay in the tree switched off, like <code>EVAL_PIECE_GRADING</code> below. The flags also help with debugging. When something breaks, I can switch features off one at a time until the problem goes away.</p>
 <ul>
-  <li><strong>Piece-square tables in exchange evaluation</strong>, making capture sequences position-aware, and <strong>piece values graded by pawn bucket</strong>. Neither has shown a strength gain yet. Engine bug, tuner bug, or bad hyperparameters? Still open.</li>
-  <li><strong>LMR scaled by the clock</strong> (<code>LMR_TIME_SCALING</code>): still an experiment; so far it isn't clear whether it helps.</li>
-  <li><strong>A distributed SPSA tuner</strong> (<a href="https://github.com/cristivlas/sturddle-spsa">sturddle-spsa</a>): mixed results so far, work in progress.</li>
-  <li><strong>A fair old-vs-new network comparison</strong>: port the 2.7.0 architecture into the 2.8 code and train both on the same data.</li>
-  <li><strong>Native builds without the Python glue.</strong> An experimental script exists (<code>tools/make-native.py</code>), but official releases still go through Python and PyInstaller.</li>
+  <li><strong>Piece-square tables in exchange evaluation</strong>, making capture sequences position-aware, and <strong>piece values graded by pawn bucket</strong>. Neither has shown a strength gain yet. Engine bug or bad tuning? Still open.</li>
 </ul>
 
 <h2 id="credits">Credits</h2>
