@@ -65,7 +65,7 @@ def banner(text):
 
 
 def make(out_dir, *args):
-    if subprocess.call([sys.executable, str(MAKE_NATIVE), *args, '--out-dir', str(out_dir)], cwd=ROOT):
+    if subprocess.call([sys.executable, str(MAKE_NATIVE), *args, '--no-digest', '--out-dir', str(out_dir)], cwd=ROOT):
         sys.exit(f'ERROR: make-native.py {" ".join(args)} failed')
 
 
@@ -106,6 +106,7 @@ def main():
     parser = argparse.ArgumentParser(description='Build the native single-file bundle')
     parser.add_argument('-n', '--name', default='sturddle', help='Executable base name (default: "sturddle")')
     parser.add_argument('--level', type=int, default=19, help='zstd compression level (default: 19)')
+    parser.add_argument('--pgo', action='store_true', help='Profile-guided optimization (see make-native.py).')
     args = parser.parse_args()
 
     archs = flavors()
@@ -113,17 +114,19 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix='sturddle-bundle-build-') as tmp:
         build_dir = Path(tmp)
-        for arch in archs:
-            banner(f'Building {arch}')
-            make(build_dir, arch)
         banner('Building launcher')
         make(build_dir, '--launcher')
+        launcher = build_dir / exe_name(f'sturddle-{version}-launcher')
+
+        pgo = ['--pgo', '--launcher-exe', str(launcher)] if args.pgo else []
+        for arch in archs:
+            banner(f'Building {arch}')
+            make(build_dir, arch, *pgo)
         banner('Bundling')
 
         exes = [build_dir / exe_name(f'sturddle-{version}{make_native.ARCH_SUFFIX[arch]}') for arch in archs]
         files = [(exe, True) for exe in exes if exe.exists()]
         files += [(build_dir / asset, False) for asset in ASSETS]
-        launcher = build_dir / exe_name(f'sturddle-{version}-launcher')
 
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         out_path = OUT_DIR / bundle_name(args.name, version)

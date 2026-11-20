@@ -598,8 +598,16 @@ private:
     fs::path _path;
 };
 
-int main(int, char** argv)
+int main(int argc, char** argv)
 {
+    /* for make-native.py --pgo */
+    if (argc == 2 && std::string_view(argv[1]) == "--flavors")
+    {
+        for (const auto flavor : supported_flavors())
+            std::println("{}", flavor);
+        return 0;
+    }
+
     try
     {
         const auto self = self_path();
