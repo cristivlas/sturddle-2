@@ -834,7 +834,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         #if IMPROVEMENT_EXTENSION
             else if (ctxt.is_reduced()
                 && ctxt.depth() < IMPROVEMENT_EXTENSION_DEPTH
-                && ctxt.tt_entry()._value > ctxt.corrected_eval(ctxt.tt_entry()._eval) + 2 * IMPROVEMENT_MARGIN
+                && ctxt.tt_entry()._value > ctxt.corrected_eval(ctxt.tt_entry()._eval)
                 && ctxt.has_improved<US>())
             {
                 ++ctxt._max_depth;

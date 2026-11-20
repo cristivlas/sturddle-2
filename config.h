@@ -130,10 +130,10 @@ Config::Namespace Config::_namespace = {
     { "QUEEN", Config::Param{ &WEIGHT[PieceType::QUEEN], 880, 1190, "Eval", normalize_weights } },
 #else
     { "PAWN", Config::Param{ &WEIGHT[PieceType::PAWN], 70, 110, "Eval", normalize_weights} },
-    { "KNIGHT", Config::Param{ &WEIGHT[PieceType::KNIGHT], 280, 380, "Eval", normalize_weights } },
-    { "BISHOP", Config::Param{ &WEIGHT[PieceType::BISHOP], 320, 400, "Eval", normalize_weights } },
-    { "ROOK", Config::Param{ &WEIGHT[PieceType::ROOK], 455, 625, "Eval", normalize_weights } },
-    { "QUEEN", Config::Param{ &WEIGHT[PieceType::QUEEN], 900, 1200, "Eval", normalize_weights } },
+    { "KNIGHT", Config::Param{ &WEIGHT[PieceType::KNIGHT], 298, 398, "Eval", normalize_weights } },
+    { "BISHOP", Config::Param{ &WEIGHT[PieceType::BISHOP], 327, 407, "Eval", normalize_weights } },
+    { "ROOK", Config::Param{ &WEIGHT[PieceType::ROOK], 461, 631, "Eval", normalize_weights } },
+    { "QUEEN", Config::Param{ &WEIGHT[PieceType::QUEEN], 939, 1239, "Eval", normalize_weights } },
 #endif /* EVAL_PIECE_GRADING */
 #endif /* WEIGHT_TUNING_ENABLED */
 };
@@ -324,14 +324,13 @@ GROUP(Search)
 DECLARE_VALUE(  CAPTURES_THRESHOLD,           MATE_HIGH,    0,   30000)
 
 #if CORRECTION_HISTORY
-DECLARE_VALUE(  CORRECTION_MAX,                      36,   16,     127)
-DECLARE_VALUE(  CORRECTION_WEIGHT_MAX,                8,    1,      64)
+DECLARE_VALUE(  CORRECTION_MAX,                      27,    1,      51)
+DECLARE_VALUE(  CORRECTION_WEIGHT_MAX,               13,    1,      25)
 #endif /* CORRECTION_HISTORY */
 
 DECLARE_CONST(  DOUBLE_EXT_MAX,                       3,    0,       5)
 DECLARE_VALUE(  EXCHANGES_MAX_DEPTH,                  4,    2,      32)
 DECLARE_VALUE(  IMPROVEMENT_EXTENSION_DEPTH,          6,    0,      15)
-DECLARE_VALUE(  IMPROVEMENT_MARGIN,                   8,    0,     150)
 
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_THRESHOLD,        4,    0,      10)
 
@@ -345,8 +344,7 @@ DECLARE_VALUE(  LMR_RUSH_FULL_PCT,                   50,    0,     100)
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
 
 #if IMPROVING_PRUNING
-DECLARE_VALUE(  FUTILITY_NOT_IMPROVING_PCT,          71,   50,     100)
-DECLARE_VALUE(  LMP_NOT_IMPROVING_PCT,               83,   50,     100)
+DECLARE_VALUE(  FUTILITY_NOT_IMPROVING_PCT,          62,   42,      92)
 #endif /* IMPROVING_PRUNING */
 
 DECLARE_VALUE(  KILLER_MOVES_MARGIN,                 25,    0,     100)
@@ -357,11 +355,11 @@ DECLARE_VALUE(  MIN_EXT_DEPTH,                        7,    0,      15)
 DECLARE_VALUE(  MULTICUT_MARGIN,                    105,    0,     441)
 
 DECLARE_VALUE(  NNUE_BLEND_PERCENT,                 100,   50,     100)
-DECLARE_VALUE(  NNUE_MAX_EVAL,                      608,  249,     690)
+DECLARE_VALUE(  NNUE_MAX_EVAL,                      591,  396,     837)
 
 /* is_null_move_ok */
-DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT_PCT,         317,   84,     525)
-DECLARE_VALUE(  NULL_MOVE_MARGIN,                   400,   98,     539)
+DECLARE_VALUE(  NULL_MOVE_DEPTH_WEIGHT_PCT,         295,   87,     528)
+DECLARE_VALUE(  NULL_MOVE_MARGIN,                   409,  149,     590)
 DECLARE_VALUE(  NULL_MOVE_MIN_DEPTH,                  3,    2,       5)
 
 /* Minimum depth when verifying */
@@ -375,16 +373,16 @@ DECLARE_VALUE(  NULL_MOVE_REDUCTION_DIV,             59,    1,     442)
 /* Do not verify null move below this depth */
 DECLARE_VALUE(  NULL_MOVE_MIN_VERIFICATION_DEPTH,    14,    0,      20)
 
-DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  441,   25,     700)
-DECLARE_VALUE(  RAZOR_INTERCEPT,                    231,  150,     400)
+DECLARE_VALUE(  RAZOR_DEPTH_COEFF,                  523,  147,     822)
+DECLARE_VALUE(  RAZOR_INTERCEPT,                    199,   95,     345)
 DECLARE_VALUE(  REBEL_EXTENSION,                      3,    1,       4)
 DECLARE_VALUE(  REBEL_EXTENSION_MARGIN,              56,    0,     150)
-DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             27,    0,     150)
+DECLARE_VALUE(  REVERSE_FUTILITY_MARGIN,             18,    0,      52)
 
 /* SEE */
 DECLARE_VALUE(  SEE_PRUNING,                          1,    0,       1)
 DECLARE_VALUE(  SEE_PRUNING_DEPTH,                    4,    1,      20)
-DECLARE_VALUE(  SEE_PRUNING_MARGIN,                 -58, -200,       0)
+DECLARE_VALUE(  SEE_PRUNING_MARGIN,                 -80, -142,       0)
 
 DECLARE_VALUE(  SINGULAR_DEPTH_SCALE,                57,   30,     100)
 DECLARE_VALUE(  SINGULAR_DOUBLE_EXT_MARGIN,         277,  150,     350)
@@ -394,7 +392,7 @@ DECLARE_VALUE(  SINGULAR_MIN_DEPTH_PV,                7,    3,      10)
 DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    1,      10)
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
-DECLARE_VALUE(  STANDPAT_MARGIN,                     49,    0,     350)
+DECLARE_VALUE(  STANDPAT_MARGIN,                    116,    0,     230)
 DECLARE_VALUE(  TT_OVERWRITE_MARGIN,                  3,    0,       8)
 
 /* Aspiration window */

@@ -421,7 +421,7 @@ namespace search
         score_t     uncorrected_eval() const;
 
         template<POV pov>
-        INLINE bool has_improved() const { return improvement<pov>() > IMPROVEMENT_MARGIN; }
+        INLINE bool has_improved() const { return improvement<pov>() > 0; }
 
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
         INLINE bool has_pruned_moves() const { return _pruned_count || _move_maker.have_skipped_moves(); }
@@ -621,9 +621,10 @@ namespace search
 
 
     template<bool Debug = false>
-    int do_exchanges(const State&, Bitboard, int tid, int ply = FIRST_EXCHANGE_PLY, int bucket = -1);
+    int do_exchanges(const State&, Bitboard, int tid, int ply = FIRST_EXCHANGE_PLY, int bucket = -1, Bitboard attackers = chess::BB_ALL);
 
     extern score_t eval_captures(Context& ctxt, score_t);
+    extern int capture_estimate(const State&, bool scan_replies);
 
 
     static int INLINE capture_gain(const State& state, const State& next_state, const BaseMove& move, int bucket)
@@ -896,10 +897,6 @@ namespace search
 
     INLINE int Context::late_move_count(int child_depth) const
     {
-    #if IMPROVING_PRUNING
-        if (!has_improved<US>())
-            return LMP[child_depth] * LMP_NOT_IMPROVING_PCT / 100;
-    #endif /* IMPROVING_PRUNING */
         return LMP[child_depth];
     }
 

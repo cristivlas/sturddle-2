@@ -78,6 +78,8 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 /* Reduce deep non-PV nodes by one ply */
 #define BLANKET_REDUCTION                   false
 
+#define CAPTURE_REPLIES                     true
+
 /*
  * Count valid moves made as nodes if true, otherwise use effectively
  * searched nodes (not including TT pruned, FP and late-move pruned).
@@ -100,8 +102,8 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define IMPROVEMENT_EXTENSION               false
 
-/* Tighter LMP and futility margins at nodes that are not improving */
-#define IMPROVING_PRUNING                   false
+/* Tighter futility margins at nodes that are not improving */
+#define IMPROVING_PRUNING                   true
 
 #define IGNORE_CANCELLED_ITER               false
 
@@ -153,7 +155,7 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define TT_SPILLED_BOUNDS                   true
 
 #if !defined(USE_PIECE_SQUARE_TABLES)
-  #define USE_PIECE_SQUARE_TABLES           false
+  #define USE_PIECE_SQUARE_TABLES           true
 #endif
 
 /* Experimental */
