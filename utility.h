@@ -26,12 +26,16 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <random>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
+#if __cplusplus >= 202002L
+  #include <bit>
+#endif
 #if _WIN32
   #include "winutil.h"
 #else
@@ -42,6 +46,7 @@
 #if !NATIVE_BUILD
   #include "Python.h"
 #endif /* !NATIVE_BUILD */
+#include "os_call.h"
 
 
 enum class CancelReason
@@ -50,14 +55,31 @@ enum class CancelReason
     PY_SIGNAL = 2,
 };
 
+enum class LogLevel : int
+{
+    DEBUG = 1,
+    INFO = 2,
+    WARN = 3,
+    ERROR = 4
+};
+
+#if NATIVE_BUILD
+extern std::atomic<LogLevel> native_log_level;
+
+/* falls back to stderr if the file cannot be opened */
+void native_log_open(const std::string& path, bool separate);
+
+void native_log_message(int level, const std::string& msg, bool force);
+#endif /* NATIVE_BUILD */
+
 extern void cancel_search(CancelReason);
 
 namespace
 {
 #if NATIVE_BUILD
     /*
-     * Native-build shim: no Python, no GIL. `call` is a direct invocation;
-     * `call_nogil` keeps the noexcept contract (required by the search entry
+     * Native-build shim: no Python, no GIL. 'call' is a direct invocation;
+     * 'call_nogil' keeps the noexcept contract (required by the search entry
      * wrappers in search.h) and logs uncaught exceptions to stderr.
      */
     struct cython_wrapper
@@ -162,6 +184,42 @@ namespace
 #endif /* __cpp_lib_to_underlying */
 
 
+#if __cplusplus >= 202002L
+    using std::bit_cast;
+    using std::has_single_bit;
+#else
+    /* C++20 std::bit_cast polyfill */
+    template<typename To, typename From>
+    INLINE To bit_cast(const From& from) noexcept
+    {
+        static_assert(sizeof(To) == sizeof(From));
+        static_assert(std::is_trivially_copyable_v<To> && std::is_trivially_copyable_v<From>);
+        To to;
+        std::memcpy(&to, &from, sizeof(To));
+        return to;
+    }
+
+    template<typename T>
+    constexpr bool has_single_bit(T x) noexcept
+    {
+        return x != 0 && (x & (x - 1)) == 0;
+    }
+#endif /* __cplusplus >= 202002L */
+
+
+/* MSVC reports an old __cplusplus unless /Zc:__cplusplus is set */
+#if __cpp_lib_shift
+    using std::shift_left;
+#else
+    /* C++20 std::shift_left polyfill */
+    template<typename I>
+    INLINE I shift_left(I first, I last, typename std::iterator_traits<I>::difference_type n)
+    {
+        return std::rotate(first, first + n, last);
+    }
+#endif /* __cpp_lib_shift */
+
+
     /*
      * For sorting small vectors of small objects.
      */
@@ -189,12 +247,7 @@ namespace
 
         using V = typename std::iterator_traits<I>::value_type;
 
-    #if __cplusplus >= 202002L
-        /* C++20 */
-        auto i = std::shift_left(first, last, 2);
-    #else
-        auto i = std::rotate(first, first + 2, last);
-    #endif
+        auto i = shift_left(first, last, 2);
         *i++ = V(); *i = V();
     }
 
@@ -382,11 +435,10 @@ namespace cpu
     inline void set_high_priority()
     {
     #if _WIN32
-        if (!SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS))
-            win::throw_last_error("SetPriorityClass");
-    #else /* requires "sudo setcap cap_sys_nice+ep <engine_name>" */
-        if (setpriority(PRIO_PROCESS, 0, high_priority_nice) != 0)
-            throw std::runtime_error("setpriority failed: " + std::to_string(errno));
+        OS_CALL(SetPriorityClass, GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    #else
+	/* requires "sudo setcap cap_sys_nice+ep <engine_name>" */
+        OS_CALL_CHECK(PosixResult, setpriority, PRIO_PROCESS, 0, high_priority_nice);
     #endif /* !_WIN32 */
     }
 } /* namespace cpu */

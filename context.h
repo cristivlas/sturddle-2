@@ -57,26 +57,8 @@ extern void _set_param(const std::string&, int value, bool echo=false);
 extern std::map<std::string, int> _get_params();
 
 
-enum class LogLevel : int
-{
-    DEBUG = 1,
-    INFO = 2,
-    WARN = 3,
-    ERROR = 4
-};
-
-
-
 namespace search
 {
-#if NATIVE_BUILD
-    /* Threshold consumed by native_log_message(). Messages below this
-     * level are dropped unless `force` is set. Toggled by --verbose,
-     * the UCI `debug` startup param, and `setoption name Debug`.
-     * Matches Python's logging.setLevel() semantics on the Cython side. */
-    extern LogLevel native_log_level;
-#endif /* NATIVE_BUILD */
-
     using time = std::chrono::time_point<std::chrono::steady_clock>;
 
     using Bitboard = chess::Bitboard;
@@ -323,6 +305,11 @@ namespace search
         bool        _retry_at_depth = false;
         bool        _is_singleton = false;
         bool        _leftmost = false;
+    #if BLANKET_REDUCTION
+        bool        _is_null_verify = false; /* null move verification search */
+    #else
+        bool        _cut_node = false; /* expected cut node */
+    #endif /* BLANKET_REDUCTION */
         bool        _multicut_allowed = MULTICUT;
         bool        _null_move_allowed[2] = { true, true };
         RETRY       _retry_above_alpha = RETRY::None;
@@ -337,6 +324,9 @@ namespace search
 
         score_t     _eval = SCORE_MIN; /* static eval */
         score_t     _eval_raw = SCORE_MIN; /* unscaled _eval */
+    #if CORRECTION_HISTORY
+        score_t     _eval_uncorrected = SCORE_MIN; /* raw static eval, as stored in the TT */
+    #endif /* CORRECTION_HISTORY */
 
         int         _extension = 0; /* count pending fractional extensions */
         int         _fifty = 0;
@@ -378,7 +368,7 @@ namespace search
 
         State*      _state = nullptr;
 
-        void        cache_scores(bool force_write /* bypass eviction strategy */ = false);
+        void        cache_scores();
 
         static void cancel() { _cancel.fetch_or(to_underlying(Cancel::Internal), std::memory_order_relaxed); }
         static void stop() { _cancel.fetch_or(to_underlying(Cancel::Stop), std::memory_order_relaxed); }
@@ -418,15 +408,20 @@ namespace search
 
         static void update_root_accumulators();
 
-        score_t     static_eval() const { return is_valid(_eval) ? _eval : tt_entry()._eval; }
+        score_t     static_eval() const { return is_valid(_eval) ? _eval : corrected_eval(tt_entry()._eval); }
 
         void        extend(); /* fractional and other extensions */
         const Move* first_valid_move();
 
         score_t     futility_margin() const;
+        int         late_move_count(int child_depth) const;
+
+        void        correct_eval();
+        score_t     corrected_eval(score_t eval) const;
+        score_t     uncorrected_eval() const;
 
         template<POV pov>
-        INLINE bool has_improved() const { return improvement<pov>() > IMPROVEMENT_MARGIN; }
+        INLINE bool has_improved() const { return improvement<pov>() > 0; }
 
         INLINE bool has_moves() { return _move_maker.has_moves(*this); }
         INLINE bool has_pruned_moves() const { return _pruned_count || _move_maker.have_skipped_moves(); }
@@ -626,9 +621,10 @@ namespace search
 
 
     template<bool Debug = false>
-    int do_exchanges(const State&, Bitboard, int tid, int ply = FIRST_EXCHANGE_PLY, int bucket = -1);
+    int do_exchanges(const State&, Bitboard, int tid, int ply = FIRST_EXCHANGE_PLY, int bucket = -1, Bitboard attackers = chess::BB_ALL);
 
     extern score_t eval_captures(Context& ctxt, score_t);
+    extern int capture_estimate(const State&, bool scan_replies);
 
 
     static int INLINE capture_gain(const State& state, const State& next_state, const BaseMove& move, int bucket)
@@ -891,7 +887,46 @@ namespace search
             const auto m = margins(std::make_index_sequence<PLY_MAX>{});
             return m;
         } ();
+    #if IMPROVING_PRUNING
+        if (!has_improved<US>())
+            return fp_margins[depth()] * FUTILITY_NOT_IMPROVING_PCT / 100 * can_forward_prune();
+    #endif /* IMPROVING_PRUNING */
         return fp_margins[depth()] * can_forward_prune();
+    }
+
+
+    INLINE int Context::late_move_count(int child_depth) const
+    {
+        return LMP[child_depth];
+    }
+
+
+    INLINE score_t Context::corrected_eval(score_t eval) const
+    {
+    #if CORRECTION_HISTORY
+        if (is_valid(eval) && abs(eval) < MATE_HIGH)
+            return std::clamp<score_t>(eval + _tt->eval_correction(state()), -MATE_HIGH + 1, MATE_HIGH - 1);
+    #endif /* CORRECTION_HISTORY */
+        return eval;
+    }
+
+
+    INLINE void Context::correct_eval()
+    {
+    #if CORRECTION_HISTORY
+        _eval_uncorrected = _eval;
+        _eval = corrected_eval(_eval);
+    #endif /* CORRECTION_HISTORY */
+    }
+
+
+    INLINE score_t Context::uncorrected_eval() const
+    {
+    #if CORRECTION_HISTORY
+        return _eval_uncorrected;
+    #else
+        return _eval;
+    #endif /* CORRECTION_HISTORY */
     }
 
 
@@ -940,7 +975,13 @@ namespace search
         const auto eval = static_eval();
         const auto prev_eval = prev->static_eval();
 
+    #if STORE_DRAW_SCORES
+        /* no static eval at nodes that returned a draw early */
+        if (!is_valid(eval) || !is_valid(prev_eval))
+            return 0;
+    #else
         ASSERT(is_valid(eval) && is_valid(prev_eval));
+    #endif /* STORE_DRAW_SCORES */
 
         if (abs(eval) >= MATE_HIGH || abs(prev_eval) >= MATE_HIGH)
             return 0;
@@ -1015,12 +1056,16 @@ namespace search
     {
         const auto hash = state.hash();
 
-        for (auto ctxt = _parent; ctxt; ctxt = ctxt->_parent)
+        for (auto ctxt = this; ctxt->_parent; ctxt = ctxt->_parent)
         {
-            if (hash == ctxt->state().hash() && state == ctxt->state())
-            {
+            const auto& prev = ctxt->_parent->state();
+
+            /* nothing repeats across a capture or pawn move */
+            if (ctxt->_move && (ctxt->is_capture() || (prev.pawns & chess::BB_SQUARES[ctxt->_move.from_square()])))
+                break;
+
+            if (hash == prev.hash() && state == prev)
                 return true;
-            }
         }
         return false;
     }
@@ -1134,6 +1179,9 @@ namespace search
 
         ctxt->_algorithm = _algorithm;
         ctxt->_parent = this;
+    #if !BLANKET_REDUCTION
+        ctxt->_cut_node = is_pv_node() || !_cut_node; /* cut and all nodes alternate */
+    #endif /* !BLANKET_REDUCTION */
         ctxt->_max_depth = _max_depth;
         ctxt->_ply = _ply + 1;
         ctxt->_double_ext = _double_ext;
@@ -1379,7 +1427,7 @@ namespace search
         ASSERT(_phase > 1);
 
         return ctxt.depth() > 1 /* do not LMP leaf nodes */
-            && _current >= LMP[ctxt.depth() - 1]
+            && _current >= ctxt.late_move_count(ctxt.depth() - 1)
             && ctxt.can_forward_prune();
     }
 
@@ -1520,6 +1568,17 @@ namespace search
     }
 
 
+    static INLINE bool can_see_prune(const Context& ctxt, score_t gain)
+    {
+        return SEE_PRUNING
+            && gain < SEE_PRUNING_MARGIN
+            && !ctxt.is_root()
+            && ctxt.depth() > 0
+            && ctxt.depth() <= SEE_PRUNING_DEPTH
+            && !ctxt.is_check();
+    }
+
+
     INLINE void MoveMaker::make_capture(Context& ctxt, Move& move)
     {
         /* captures of the last piece moved by the opponent are handled separately */
@@ -1531,8 +1590,11 @@ namespace search
             || move._old_group == MoveOrder::WINNING_CAPTURES
             || move._old_group == MoveOrder::EQUAL_CAPTURES)
         {
-            /* Use values from before rewind / reorder */
+            /* Reuse the gain from before rewind / reorder; the pruning decision depends on depth */
             remake_move(ctxt, move);
+
+            if (can_see_prune(ctxt, move._score))
+                mark_as_pruned(ctxt, move);
         }
         else if (make_move<false>(ctxt, move))
         {
@@ -1543,12 +1605,7 @@ namespace search
             const auto gain = capture_gain(ctxt.state(), *move._state, move, bucket)
                             - eval_exchanges<true>(ctxt.tid(), move, bucket);
 
-            if (SEE_PRUNING
-                && gain < SEE_PRUNING_MARGIN
-                && !ctxt.is_root()
-                && ctxt.depth() > 0
-                && ctxt.depth() <= SEE_PRUNING_DEPTH
-                && !ctxt.is_check())
+            if (can_see_prune(ctxt, gain))
             {
                 mark_as_pruned(ctxt, move);
             }
@@ -1679,6 +1736,11 @@ namespace search
 
         /* consistency check */
         ASSERT((move._state->is_capture()) == ctxt.state().is_capture(move));
+
+        /* prefetch the TT bucket ahead of the search */
+        ctxt.state().hash(); /* the update below needs the parent's hash */
+        zobrist_update(ctxt.state(), move, *move._state);
+        TranspositionTable::prefetch(move._state->hash());
 
         if constexpr(COUNT_VALID_MOVES_AS_NODES)
             ++ctxt.get_tt()->_nodes;

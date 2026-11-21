@@ -91,7 +91,7 @@ namespace nnue
             accumulator.update(L1A, ctxt->_parent->state(), ctxt->state(), ctxt->_move, prev_acc, refresh);
         }
 
-        /** Eval from the mover's point of view */
+        /* Eval from the mover's point of view */
         INLINE int eval(const Accumulator& acc, const State& state) const
         {
             const int stack = stack_index(state);

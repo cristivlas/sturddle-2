@@ -282,6 +282,20 @@ def test_static_exchanges():
         #assert value == expected, (id, f'expected={expected} got={value}', value)
 
 
+def test_capture_replies():
+    tests = [
+        ('hanging rook', '6k1/1b6/3p4/4n3/3P4/8/8/1K5R w - - 0 1', lambda old, new: old > 0 and new == 0),
+        ('later candidate', '6k1/1b6/3p4/4n2p/3P4/8/8/1K5R w - - 0 1', lambda old, new: 0 < new < old),
+        ('no counter-threat', '6k1/8/3p4/4n3/3P4/8/8/1K5R w - - 0 1', lambda old, new: new == old > 0),
+        ('cutoff', '6k1/1b6/3p4/1p2p3/N2P4/8/8/6KR w - - 0 1', lambda old, new: new == 0),
+    ]
+    for id, fen, check in tests:
+        board = chess.Board(fen=fen)
+        old = engine.capture_estimate_py(board, False)
+        new = engine.capture_estimate_py(board, True)
+        assert check(old, new), (id, f'old={old} new={new}')
+
+
 def test_zobrist():
     tests = [
         ('z.01', '3r4/1pk2p1N/p1n1p3/4Pq2/2Pp1b1Q/8/PP4PP/R1K1R3 w - -'),
@@ -347,11 +361,10 @@ def test_single_legal_move():
 
 
 def test_nnue_eval():
-    sys.path.append(os.path.join(root_path(), 'tools', 'nnue'))
     import golds as nnue_golds
 
     gold = nnue_golds.load_golds()
-    assert gold is not None, 'tools/nnue/golds.json missing; run: python tools/nnue/golds.py <weights.bin>'
+    assert gold is not None, 'test/golds.json missing; run: python test/golds.py <weights.bin>'
 
     for fen in nnue_golds.TESTS:
         assert fen in gold, f'no gold for {fen}; regenerate golds.json'
@@ -393,6 +406,7 @@ test_is_checkmate()
 test_pins()
 test_pin_mask()
 test_static_exchanges()
+test_capture_replies()
 test_zobrist()
 test_forks()
 

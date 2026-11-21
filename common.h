@@ -75,6 +75,11 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define ADAPTIVE_NULL_MOVE                  true
 
+/* Reduce deep non-PV nodes by one ply */
+#define BLANKET_REDUCTION                   false
+
+#define CAPTURE_REPLIES                     true
+
 /*
  * Count valid moves made as nodes if true, otherwise use effectively
  * searched nodes (not including TT pruned, FP and late-move pruned).
@@ -87,6 +92,9 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 /* Collect extra stats for troubleshooting */
 #define EXTRA_STATS                         false
 
+/* Adjust static eval by how far off it was for the same pawn structure */
+#define CORRECTION_HISTORY                  true
+
 #define FRACTIONAL_EXTENSIONS               true
 
 /* Filter out quiet moves if extended at leaf (depth < 0) */
@@ -94,9 +102,15 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define IMPROVEMENT_EXTENSION               false
 
+/* Tighter futility margins at nodes that are not improving */
+#define IMPROVING_PRUNING                   true
+
 #define IGNORE_CANCELLED_ITER               false
 
 #define KILLER_MOVE_HEURISTIC               true
+
+/* Scale LMR divisor by time pressure; fixed divisor of 2 otherwise */
+#define LMR_TIME_SCALING                    false
 
 #define MTDF_CSTAR_BISECT                   true
 
@@ -131,11 +145,17 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
  */
 #define SINGULAR_EXTENSION                  true
 
+/* Store zero (draw) scores in the TT and credit cutoffs in history */
+#define STORE_DRAW_SCORES                   true
+
 /* Compile with multithread (symmetric multiprocessing) support */
 #define SMP                                 true
 
+/* Keep TT bounds spilled by same-position overwrites in a small side table */
+#define TT_SPILLED_BOUNDS                   true
+
 #if !defined(USE_PIECE_SQUARE_TABLES)
-  #define USE_PIECE_SQUARE_TABLES           false
+  #define USE_PIECE_SQUARE_TABLES           true
 #endif
 
 /* Experimental */

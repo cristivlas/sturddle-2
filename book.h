@@ -8,6 +8,7 @@
 #endif /* !_WIN32 */
 #include <string>
 #include <vector>
+#include "utility.h"
 
 
 class MemoryMappedFile
@@ -33,12 +34,12 @@ public:
         _size = 0;
     }
 
-    bool open(const std::string& filename)
+    void open(const std::string& filename)
     {
         close();
 
     #ifdef _WIN32
-        HANDLE hFile = CreateFileA(
+        HANDLE hFile = OS_CALL_CHECK(FileHandle, CreateFileA,
             filename.c_str(),
             GENERIC_READ,
             FILE_SHARE_READ,
@@ -47,30 +48,22 @@ public:
             FILE_ATTRIBUTE_NORMAL,
             nullptr);
 
-        if (hFile == INVALID_HANDLE_VALUE)
-            return false;
+        on_scope_exit close_file([hFile] { CloseHandle(hFile); });
 
-        _size = GetFileSize(hFile, nullptr);
-        HANDLE hMap = CreateFileMappingA(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
-        if (!hMap)
-        {
-            CloseHandle(hFile);
-            return false;
-        }
+        const auto size = OS_CALL_CHECK(DwordResult, GetFileSize, hFile, nullptr);
+        HANDLE hMap = OS_CALL(CreateFileMappingA, hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
+        on_scope_exit close_map([hMap] { CloseHandle(hMap); });
 
-        _data = static_cast<const char*>(MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, _size));
-        CloseHandle(hFile);
-        CloseHandle(hMap);
+        _data = static_cast<const char*>(OS_CALL(MapViewOfFile, hMap, FILE_MAP_READ, 0, 0, size));
+        _size = size;
     #else
-        int fd = ::open(filename.c_str(), O_RDONLY);
-        if (fd < 0)
-            return false;
+        int fd = OS_CALL_CHECK(PosixResult, open, filename.c_str(), O_RDONLY);
+        on_scope_exit close_fd([fd] { ::close(fd); });
 
-        _size = lseek(fd, 0, SEEK_END);
-        _data = static_cast<const char*>(mmap(nullptr, _size, PROT_READ, MAP_PRIVATE, fd, 0));
-        ::close(fd);
+        const auto size = OS_CALL_CHECK(PosixResult, lseek, fd, 0, SEEK_END);
+        _data = static_cast<const char*>(OS_CALL_CHECK(MappedPtr, mmap, nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0));
+        _size = size;
     #endif /* !_WIN32 */
-        return true;
     }
 
     const char* data() const { return _data; }
@@ -106,7 +99,7 @@ class PolyglotBook
 public:
     enum LookupMode { FIRST_MATCH, BEST_WEIGHT, WEIGHTED_CHOICE };
 
-    bool open(const std::string& filename) { return _mapped_file.open(filename); }
+    void open(const std::string& filename) { _mapped_file.open(filename); }
     void close() { _mapped_file.close(); }
 
     bool is_open() const { return _mapped_file.size(); }

@@ -1,6 +1,7 @@
 #! /usr/bin/env python3
 import json
 import os
+import sys
 
 import chess
 
@@ -69,6 +70,7 @@ def load_golds():
 
 def _generate(bin_path):
     """Run a flat weights.bin through the torch NNUE over TESTS, write golds.json."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "nnue"))
     import numpy as np
     import torch
     import train_torch as tt

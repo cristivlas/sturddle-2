@@ -30,6 +30,7 @@
 #include <string_view>
 #include <vector>
 #include "ms_windows.h"
+#include "os_call.h"
 #include <tlhelp32.h>
 
 /*
@@ -86,7 +87,7 @@ namespace win
             _hybrid = min_class < max_class;
         }
 
-        /** true if the process default CPU sets are exactly the P cores */
+        /* true if the process default CPU sets are exactly the P cores */
         bool process_uses_p_cores(HANDLE proc) const
         {
             ULONG ids[MAXIMUM_PROC_PER_GROUP] = {};
@@ -108,13 +109,6 @@ namespace win
         return t;
     }
 
-    /** throw an error with the failed API name and Windows error code */
-    [[noreturn]] inline void throw_last_error(std::string_view api)
-    {
-        const auto code = GetLastError();
-        throw std::runtime_error(std::string(api) + " failed: " + std::to_string(code));
-    }
-
     /* make calling thread follow the process defaults */
     inline void reset_thread()
     {
@@ -123,16 +117,15 @@ namespace win
 
         /* if we can't read the current setting, set it anyway */
         GROUP_AFFINITY ga = {};
-        if (sys_mask && (!GetThreadGroupAffinity(thread, &ga) || ga.Mask != sys_mask)
-            && !SetThreadAffinityMask(thread, sys_mask))
-            throw_last_error("SetThreadAffinityMask");
+        if (sys_mask && (!GetThreadGroupAffinity(thread, &ga) || ga.Mask != sys_mask))
+            OS_CALL(SetThreadAffinityMask, thread, sys_mask);
 
         /* a thread's own CPU sets override the process default;
          * with no buffer, this call just tells us how many there are */
         ULONG count = 1;
         GetThreadSelectedCpuSets(thread, nullptr, 0, &count);
-        if (count && !SetThreadSelectedCpuSets(thread, nullptr, 0))
-            throw_last_error("SetThreadSelectedCpuSets");
+        if (count)
+            OS_CALL(SetThreadSelectedCpuSets, thread, nullptr, 0);
     }
 
     /** restrict the process to P cores; throw std::runtime_error on failure */
@@ -143,18 +136,17 @@ namespace win
         DWORD_PTR proc_mask = 0, unused = 0;
 
         /* only change what differs; setting is slow */
-        if (!GetProcessAffinityMask(proc, &proc_mask, &unused))
-            throw_last_error("GetProcessAffinityMask");
+        OS_CALL(GetProcessAffinityMask, proc, &proc_mask, &unused);
 
         /* affinity beats CPU sets: if someone restricted us to certain cores,
          * Windows ignores our P-core choice; allow all cores first
          */
-        if (proc_mask && proc_mask != sys_mask && !SetProcessAffinityMask(proc, sys_mask))
-            throw_last_error("SetProcessAffinityMask");
+        if (proc_mask && proc_mask != sys_mask)
+            OS_CALL(SetProcessAffinityMask, proc, sys_mask);
 
         const auto& ids = topology()._p_cores;
-        if (!topology().process_uses_p_cores(proc) && !SetProcessDefaultCpuSets(proc, ids.data(), ULONG(ids.size())))
-            throw_last_error("SetProcessDefaultCpuSets");
+        if (!topology().process_uses_p_cores(proc))
+            OS_CALL(SetProcessDefaultCpuSets, proc, ids.data(), ULONG(ids.size()));
 
         reset_thread();
     }
@@ -162,8 +154,7 @@ namespace win
     /** let Windows schedule the process on any core; throw std::runtime_error on failure */
     inline void unbind()
     {
-        if (!SetProcessDefaultCpuSets(GetCurrentProcess(), nullptr, 0))
-            throw_last_error("SetProcessDefaultCpuSets");
+        OS_CALL(SetProcessDefaultCpuSets, GetCurrentProcess(), nullptr, 0);
     }
 
     /** keep Windows from slowing the engine down as a background process; throw std::runtime_error on failure */
@@ -174,8 +165,7 @@ namespace win
         state.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
         state.StateMask = 0; /* never throttle */
         /* fails on Windows 10 before 1709 */
-        if (!SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state)))
-            throw_last_error("SetProcessInformation");
+        OS_CALL(SetProcessInformation, GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state));
     }
 
     /*
@@ -215,8 +205,7 @@ namespace win
         if (GetConsoleWindow())
             return false;
 
-        if (!AllocConsole())
-            throw_last_error("AllocConsole");
+        OS_CALL(AllocConsole);
 
         // Rebind standard handles
         FILE* fp = nullptr;

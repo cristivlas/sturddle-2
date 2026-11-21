@@ -12,9 +12,11 @@
         #define INSTRSET 7 /* use Vec8f half-precision implementation */
         #define ARCH "ARM64/FP16"
     #else
+        #define INSTRSET 0
         #define ARCH "ARM64"
     #endif
 #else
+    #define INSTRSET 0
     #define ARCH "ARM"
 #endif
 
@@ -324,7 +326,7 @@ INLINE Vec8s operator >> (Vec8s a, int b)
 
 INLINE Vec8s operator << (Vec8s a, int b)
 {
-    return _mm_slli_epi16(a, b);
+    return vreinterpretq_s64_s16(vshlq_s16(vreinterpretq_s16_s64(a), vdupq_n_s16(b)));
 }
 
 /** High 16 bits of the signed 16 x 16 products; not vqdmulh, which doubles them */

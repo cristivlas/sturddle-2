@@ -36,7 +36,7 @@ def main():
     print(f"Total Games: {games}")
     print(f"Performance Ratio: {100 * score:.2f}%")
     print(f"ELO Rating: {elo(score):.2f}")
-    print(f"95% Confidence Interval: ±{half:.2f}")
+    print(f"95% Confidence Interval: +/-{half:.2f}")
     print(f"ELO Rating Range: [{low:.2f}, {high:.2f}]")
     print(f"LOS: {100 * los:.2f}%")
 

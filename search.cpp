@@ -95,6 +95,9 @@ TranspositionTable::TranspositionTable(const TranspositionTable& other)
     : _countermoves{other._countermoves[BLACK], other._countermoves[WHITE]}
     , _killer_moves(other._killer_moves)
     , _hcounters{other._hcounters[BLACK], other._hcounters[WHITE]}
+#if CORRECTION_HISTORY
+    , _pawn_correction{other._pawn_correction[BLACK], other._pawn_correction[WHITE]}
+#endif /* CORRECTION_HISTORY */
     , _tid(other._tid)
     , _iteration(other._iteration)
     , _eval_depth(other._eval_depth)
@@ -125,6 +128,10 @@ void TranspositionTable::swap(TranspositionTable& other) noexcept
     swap(_killer_moves, other._killer_moves);
     swap(_hcounters[BLACK], other._hcounters[BLACK]);
     swap(_hcounters[WHITE], other._hcounters[WHITE]);
+#if CORRECTION_HISTORY
+    swap(_pawn_correction[BLACK], other._pawn_correction[BLACK]);
+    swap(_pawn_correction[WHITE], other._pawn_correction[WHITE]);
+#endif /* CORRECTION_HISTORY */
     swap(_tid, other._tid);
     swap(_iteration, other._iteration);
     swap(_eval_depth, other._eval_depth);
@@ -241,6 +248,10 @@ void TranspositionTable::init(bool new_game)
 
         _killer_moves.fill({});
         _ply_history.fill({});
+    #if CORRECTION_HISTORY
+        _pawn_correction[BLACK].fill(0);
+        _pawn_correction[WHITE].fill(0);
+    #endif /* CORRECTION_HISTORY */
     }
     else
     {
@@ -250,6 +261,38 @@ void TranspositionTable::init(bool new_game)
     }
 
     _eval_depth = 0; /* Reset selective depth */
+}
+
+
+/* skip bounds that do not contradict the static eval */
+void TranspositionTable::update_correction(Context& ctxt, score_t alpha)
+{
+#if CORRECTION_HISTORY
+    const auto score = ctxt._score;
+    const auto eval = ctxt._eval_uncorrected;
+
+    if (!is_valid(eval)
+        || ctxt.is_root()
+        || ctxt._excluded
+        || ctxt.is_cancelled()
+        || ctxt.depth() < 1
+        || ctxt.is_check()
+        || abs(score) >= MATE_HIGH
+        || abs(eval) >= MATE_HIGH
+        || (ctxt._best_move && ctxt.state().is_capture(ctxt._best_move))
+        || (score >= ctxt._beta && score <= ctxt._eval)
+        || (score <= alpha && score >= ctxt._eval))
+        return;
+
+    auto& entry = _pawn_correction[ctxt.turn()][pawn_correction_index(ctxt.state())];
+
+    const int weight = std::min(ctxt.depth() + 1, CORRECTION_WEIGHT_MAX);
+    const int limit = CORRECTION_MAX * CORRECTION_GRAIN;
+    const int error = std::clamp<int>(score - eval, -CORRECTION_MAX, CORRECTION_MAX);
+    const int value = (entry * (CORRECTION_WEIGHT_SCALE - weight) + error * CORRECTION_GRAIN * weight) / CORRECTION_WEIGHT_SCALE;
+
+    entry = std::clamp(value, -limit, limit);
+#endif /* CORRECTION_HISTORY */
 }
 
 
@@ -294,7 +337,7 @@ void TranspositionTable::update_entry(Context& ctxt, TT_Entry& entry, TT_Type ty
     entry._type = type;
     entry._generation = _table.generation();
     entry._pv = ctxt.is_pv_node();
-    entry._eval = ctxt._eval; /* static eval */
+    entry._eval = ctxt.uncorrected_eval(); /* static eval */
     entry._value = ctxt._score;
     entry._hash_move = ctxt._best_move;
     entry._hash = ctxt.state().hash();
@@ -304,7 +347,7 @@ void TranspositionTable::update_entry(Context& ctxt, TT_Entry& entry, TT_Type ty
 
 void TranspositionTable::store_killer_move(const Context& ctxt)
 {
-    ASSERT(ctxt._score); /* do not store draws */
+    ASSERT(STORE_DRAW_SCORES || ctxt._score); /* do not store draws */
 
 #if KILLER_MOVE_HEURISTIC
     ASSERT(ctxt._ply < PLY_MAX);
@@ -360,6 +403,9 @@ NOINLINE bool verify_null_move(Context& ctxt, Context& null_move_ctxt)
     verify_ctxt->_null_move_allowed[1] = ctxt._null_move_allowed[1];
     verify_ctxt->_null_move_allowed[ctxt.turn()] = false;
     verify_ctxt->_nnue_prev_offs = 3; /* skip 2 plies */
+#if BLANKET_REDUCTION
+    verify_ctxt->_is_null_verify = true;
+#endif /* BLANKET_REDUCTION */
 
     if (negamax(*verify_ctxt, *ctxt.get_tt()) >= ctxt._beta)
         return true; /* verification successful */
@@ -659,14 +705,17 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         && !ctxt.is_null_move()
         && (ctxt.is_leftmost() || ctxt._alpha + 1 < ctxt._beta);
 
-    /* reduce by one ply at expected cut nodes */
+#if BLANKET_REDUCTION
     if (   !ctxt.is_pv_node()
         && !ctxt.is_null_move()
+        && !ctxt._excluded
+        && !ctxt._is_null_verify
         && ctxt.depth() > 7
         && ctxt.can_reduce())
     {
         --ctxt._max_depth;
     }
+#endif /* BLANKET_REDUCTION */
 
     /* prevent overflow */
     ctxt._max_depth = std::min<int>(ctxt._max_depth, PLY_MAX - 1);
@@ -713,6 +762,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         {
             ASSERT(!ctxt.is_root());
             ctxt._eval = eval;
+            ctxt.correct_eval();
+            eval = ctxt._eval;
         }
         else
         {
@@ -764,19 +815,26 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
         if (!ctxt.is_root())
         {
             /* Internal Iterative Reduction: reduce depth when TT miss means we lack move ordering guidance. */
-            if (ctxt.is_pv_node()
-                && ctxt.depth() >= 6
+            if (ctxt.depth() >= 6
+                && !ctxt.is_null_move()
+            #if BLANKET_REDUCTION
+                && ctxt.is_pv_node()
+            #endif /* BLANKET_REDUCTION */
                 && !ctxt.tt_entry().is_valid()
                 && ctxt.is_tactically_quiet()
                 && !ctxt.is_retry()
                )
             {
+            #if BLANKET_REDUCTION
                 ctxt._max_depth -= 2;
+            #else
+                ctxt._max_depth -= ctxt.is_pv_node() ? 2 : 1;
+            #endif /* BLANKET_REDUCTION */
             }
         #if IMPROVEMENT_EXTENSION
             else if (ctxt.is_reduced()
                 && ctxt.depth() < IMPROVEMENT_EXTENSION_DEPTH
-                && ctxt.tt_entry()._value > ctxt.tt_entry()._eval + 2 * IMPROVEMENT_MARGIN
+                && ctxt.tt_entry()._value > ctxt.corrected_eval(ctxt.tt_entry()._eval)
                 && ctxt.has_improved<US>())
             {
                 ++ctxt._max_depth;
@@ -882,7 +940,7 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
                             if (!ctxt.is_pv_node()
                                 && eval + SINGULAR_DOUBLE_EXT_MARGIN < s_beta
-                                && next_ctxt->_double_ext <= DOUBLE_EXT_MAX)
+                                && next_ctxt->_double_ext < DOUBLE_EXT_MAX)
                             {
                                 ++next_ctxt->_max_depth; /* extend more */
                                 ++next_ctxt->_double_ext;
@@ -986,8 +1044,8 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
                     ASSERT (next_ctxt->_move == ctxt._cutoff_move);
                     ASSERT (!ctxt.state().is_capture(ctxt._cutoff_move));
 
-                    /* zero-score moves may mean draw (path-dependent) */
-                    if (move_score && ctxt.depth() > 0)
+                    /* zero may be a path-dependent draw: skipped unless STORE_DRAW_SCORES */
+                    if ((STORE_DRAW_SCORES || move_score) && ctxt.depth() > 0)
                     {
                         if (ctxt._ply < PLY_HISTORY_MAX && abs(move_score) < MATE_HIGH)
                         {
@@ -1049,13 +1107,16 @@ score_t search::negamax(Context& ctxt, TranspositionTable& table)
 
         ASSERT(ctxt._score < SCORE_MAX);
         ASSERT(ctxt._score > SCORE_MIN);
+
+        if (move_count > 0)
+            table.update_correction(ctxt, entry_alpha);
     }
 
     /*
      * The conventional wisdom is to not store root nodes
      * (https://www.stmintz.com/ccc/index.php?id=93686)
      */
-    if (ctxt._score && !ctxt.is_root() && ctxt.depth() > 0 && !ctxt._excluded && !ctxt.is_cancelled())
+    if ((STORE_DRAW_SCORES || ctxt._score) && !ctxt.is_root() && ctxt.depth() > 0 && !ctxt._excluded && !ctxt.is_cancelled())
     {
         table.store(ctxt, ctxt.depth(), entry_alpha);
     }

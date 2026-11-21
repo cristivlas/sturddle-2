@@ -16,3 +16,6 @@
 [submodule "tools/tuneup/spsa"]
 	path = tools/tuneup/spsa
 	url = https://github.com/cristivlas/sturddle-spsa.git
+[submodule "tools/native-bundle/zstd"]
+	path = tools/native-bundle/zstd
+	url = https://github.com/facebook/zstd.git

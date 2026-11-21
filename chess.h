@@ -414,7 +414,7 @@ namespace chess
 #if EVAL_PIECE_GRADING
     #define PIECE_VALUES { 0, 106, 340, 363, 526, 1035, 20000 }
 #else
-    #define PIECE_VALUES { 0,  87, 339, 365, 545, 1046, 20000 }
+    #define PIECE_VALUES { 0,  87, 350, 364, 559, 1099, 20000 }
 #endif /* EVAL_PIECE_GRADING */
 
     constexpr int PAWN_BUCKETS = 4;
@@ -582,7 +582,9 @@ namespace chess
     /* Move representation */
     class BaseMove
     {
-        uint16_t _move = 0xFFFF;
+        static constexpr uint16_t NONE = 0xFFFF;
+
+        uint16_t _move = NONE;
 
     public:
         BaseMove() = default;
@@ -607,19 +609,19 @@ namespace chess
 
         INLINE constexpr Square to_square() const
         {
-            ASSERT(_move != 0xFFFF);
+            ASSERT(_move != NONE);
             return static_cast<Square>(_move & 0x3F);
         }
 
         INLINE constexpr Square from_square() const
         {
-            ASSERT(_move != 0xFFFF);
+            ASSERT(_move != NONE);
             return static_cast<Square>((_move >> 6) & 0x3F);
         }
 
         constexpr PieceType promotion() const
         {
-            if (_move == 0xFFFF) return PieceType::NONE;
+            if (_move == NONE) return PieceType::NONE;
             return static_cast<PieceType>((_move >> 12) & 0x7);
         }
 
@@ -637,7 +639,7 @@ namespace chess
 
         bool is_none() const
         {
-            return _move == 0xFFFF;
+            return _move == NONE;
         }
     };
 

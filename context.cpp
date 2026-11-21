@@ -82,84 +82,6 @@ static void setup_crash_handler()
 }
 #endif /* __linux__ */
 
-namespace
-{
-    class MovesCache
-    {
-        static constexpr size_t BUCKET_SIZE = 2;
-        struct Entry
-        {
-            uint64_t    _hash = 0;
-            MovesList   _moves;
-            int         _use_count = 0;
-            int         _write_attempts = 0;
-        };
-
-        std::vector<Entry> _data;
-
-    public:
-        /* Non-power-of-2 on purpose: mask gaps scatter the 2nd probe for better
-           eviction spread. Do NOT make this a power of two -- regresses strength. */
-        explicit MovesCache(size_t size = 4000) : _data(size)
-        {
-            ASSERT_ALWAYS(size);
-            ASSERT_ALWAYS(size % 2 == 0);
-        }
-
-        INLINE void clear()
-        {
-            std::fill_n(&_data[0], _data.size(), Entry());
-        }
-
-        INLINE bool lookup(const State& state, MovesList& moves)
-        {
-            const auto hash = state.hash();
-
-            for (size_t j = 0; j < BUCKET_SIZE; ++j)
-            {
-                const auto i = (hash + j) & (_data.size() - 1);
-                ASSERT(i < _data.size());
-                auto& entry = _data[i];
-
-                if (hash == entry._hash)
-                {
-                    ++entry._use_count;
-                    moves.assign(entry._moves.begin(), entry._moves.end());
-                    ASSERT(moves.size() == entry._moves.size());
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        INLINE void write(const State& state, const MovesList& moves, bool force_write = false)
-        {
-            const auto hash = state.hash();
-
-            for (size_t j = 0; j < BUCKET_SIZE; ++j)
-            {
-                const auto i = (hash + j) & (_data.size() - 1);
-                ASSERT(i < _data.size());
-                auto& entry = _data[i];
-
-                if (force_write /* bypass eviction mechanism and forcefully write */
-                    || hash == entry._hash
-                    || ++entry._write_attempts > 2 * entry._use_count)
-                {
-                    entry._moves.assign(moves.begin(), moves.end());
-                    ASSERT(entry._moves.size() == moves.size());
-                    if (hash != entry._hash)
-                        entry._use_count = 0;
-                    entry._hash = hash;
-                    entry._write_attempts = 0;
-                    break;
-                }
-            }
-        }
-    };
-} /* namespace */
-
-
 /*
  * Late-move reduction tables (adapted from berserk)
  */
@@ -466,6 +388,7 @@ void search::Context::eval_with_nnue()
         {
             ASSERT(!is_root());
             _eval = tt_entry()._eval;
+            correct_eval();
             return;
         }
 
@@ -490,6 +413,7 @@ void search::Context::eval_with_nnue()
         }
 
         _eval = eval + eval_fuzz();
+        correct_eval();
     }
 }
 
@@ -538,25 +462,12 @@ namespace search
     std::vector<Context::ContextStack> Context::_context_stacks(SMP_CORES);
     std::vector<Context::MoveStack> Context::_move_stacks(SMP_CORES);
     std::vector<Context::StateStack> Context::_state_stacks(SMP_CORES);
-    std::vector<MovesCache> _moves_cache(SMP_CORES);
     std::vector<PV> Context::_pvs(SMP_CORES);
     std::vector<chess::BaseMove> Context::_root_filter;
     std::vector<chess::BaseMove> Context::_root_excluded;
     bool Context::_root_restricted = false;
 
 #if NATIVE_BUILD
-    /* Default sinks so native builds work without Cython-installed callbacks. */
-    LogLevel native_log_level = LogLevel::INFO;
-
-    static void native_log_message(int level, const std::string& msg, bool force)
-    {
-        if (!force && level < int(native_log_level))
-            return;
-        static constexpr const char* names[] = { "?", "DEBUG", "INFO", "WARN", "ERROR" };
-        const auto name = (level >= 1 && level <= 4) ? names[level] : names[0];
-        std::fprintf(stderr, "[%s] %s\n", name, msg.c_str());
-    }
-
     /* Last-resort fallback for initial_hash_size(); the OS-native branches in
      * search.cpp handle all three platforms, so this is only hit if those fail.
      */
@@ -573,6 +484,7 @@ namespace search
     BaseMove (*Context::_book_lookup)(const State&, bool) = nullptr;
     std::string (*Context::_epd)(const State&) = nullptr;
 #if NATIVE_BUILD
+    /* see utility.cpp */
     void (*Context::_log_message)(int, const std::string&, bool) = native_log_message;
 #else
     void (*Context::_log_message)(int, const std::string&, bool) = nullptr;
@@ -626,11 +538,6 @@ namespace search
 
     /* static */ void Context::clear_caches_and_stacks()
     {
-        for (auto& cache : _moves_cache)
-        {
-            cache.clear();
-        }
-
         for (auto& stack : _move_stacks)
         {
             for (auto& moves : stack)
@@ -692,6 +599,9 @@ namespace search
         ctxt->_beta = _beta;
         ctxt->_score = _score;
         ctxt->_eval = _eval;
+    #if CORRECTION_HISTORY
+        ctxt->_eval_uncorrected = _eval_uncorrected;
+    #endif /* CORRECTION_HISTORY */
         ctxt->_max_depth = _max_depth;
         ctxt->_parent = _parent;
         ctxt->_ply = ply;
@@ -702,6 +612,9 @@ namespace search
         ctxt->_excluded = _excluded;
         ctxt->_counter_move = _counter_move;
         ctxt->_is_null_move = _is_null_move;
+    #if !BLANKET_REDUCTION
+        ctxt->_cut_node = _cut_node;
+    #endif /* !BLANKET_REDUCTION */
         ctxt->_double_ext = _double_ext;
         ctxt->_extension = _extension;
 
@@ -718,7 +631,6 @@ namespace search
         if (_context_stacks.size() < n_threads)
         {
             _context_stacks.resize(n_threads);
-            _moves_cache.resize(n_threads);
             _move_stacks.resize(n_threads);
             _state_stacks.resize(n_threads);
 
@@ -835,8 +747,47 @@ namespace search
     }
 
 
+    /* Pieces of both colors that attack a given square. */
+    static INLINE Bitboard exchange_attackers(const State& state, Square square)
+    {
+        const auto occupied = state.occupied();
+
+        return (state.knights & BB_KNIGHT_ATTACKS[square])
+            | ((state.queens | state.rooks) & rank_and_file_attacks(occupied, square))
+            | ((state.queens | state.bishops) & diagonal_attacks(occupied, square))
+            | (state.kings & BB_KING_ATTACKS[square])
+            | (state.pawns & state.white & BB_PAWN_ATTACKS[BLACK][square])
+            | (state.pawns & state.black & BB_PAWN_ATTACKS[WHITE][square]);
+    }
+
+
+    /* After a capture on the square: remove the capturing piece, add any piece that was behind it. */
+    static INLINE Bitboard update_attackers(
+        const State&    state,
+        const State&    next_state,
+        Bitboard        attackers,
+        Square          from_square,
+        Square          square)
+    {
+        attackers &= ~BB_SQUARES[from_square];
+
+        /* A knight never stands between a piece and the square, so moving it does not uncover any piece,
+         * and the slider lookup can be skipped.
+         */
+        if (state.knights & BB_SQUARES[from_square])
+            return attackers;
+
+        const auto occupied = next_state.occupied();
+
+        if (square_rank(from_square) == square_rank(square) || square_file(from_square) == square_file(square))
+            return attackers | ((next_state.queens | next_state.rooks) & rank_and_file_attacks(occupied, square));
+
+        return attackers | ((next_state.queens | next_state.bishops) & diagonal_attacks(occupied, square));
+    }
+
+
     template<bool Debug>
-    int do_exchanges(const State& state, Bitboard mask, int tid, int ply, int bucket)
+    int do_exchanges(const State& state, Bitboard mask, int tid, int ply, int bucket, Bitboard attackers)
     {
         ASSERT(popcount(mask) == 1); /* same square exchanges */
         ASSERT(ply >= PLY_MAX); /* use top half of moves stacks */
@@ -849,8 +800,41 @@ namespace search
         if (bucket < 0)
             bucket = state.grading_bucket();
 
+        const auto square = Square(lsb(mask));
+
+        ASSERT((state.occupied_co(state.turn) & mask) == 0);
+
+        if (attackers == BB_ALL)
+            attackers = exchange_attackers(state, square);
+
         auto& moves = Context::moves(tid, ply);
-        state.generate_pseudo_legal_moves(moves, mask);
+        moves.clear();
+
+        /* Same list, in the same order, as generate_pseudo_legal_moves(moves, mask) */
+        if ((state.kings & mask) == 0)
+        {
+            const auto ours = attackers & state.occupied_co(state.turn);
+
+            for_each_square_r(ours & ~state.pawns, [&](Square from_square) {
+                moves.emplace_back(from_square, square);
+            });
+
+            const bool promo = square_rank(square) == 0 || square_rank(square) == 7;
+
+            for_each_square_r(ours & state.pawns, [&](Square from_square) {
+                if (promo)
+                {
+                    moves.emplace_back(from_square, square, QUEEN);
+                    moves.emplace_back(from_square, square, ROOK);
+                    moves.emplace_back(from_square, square, BISHOP);
+                    moves.emplace_back(from_square, square, KNIGHT);
+                }
+                else
+                {
+                    moves.emplace_back(from_square, square);
+                }
+            });
+        }
 
         /* sort moves by piece value */
         for (auto& move : moves)
@@ -909,7 +893,8 @@ namespace search
             else
             {
                 next_state.castling_rights = 0;  /* castling moves do not capture */
-                const auto their_best = do_exchanges<Debug>(next_state, mask, tid, ply + 1, bucket);
+                const auto their_best = do_exchanges<Debug>(next_state, mask, tid, ply + 1, bucket,
+                    update_attackers(state, next_state, attackers, move.from_square(), square));
 
                 if constexpr(Debug)
                 {
@@ -930,23 +915,32 @@ namespace search
 
 
     /*
-     * Look at all captures the side-to-move can make, "play" same square exchanges and return the best gain.
+     * Look at all captures the side-to-move can make, "play" the opponent's replies and return the best gain.
      *
-     * Called by eval_captures (if !STATIC_EXCHANGES).
+     * Called by eval_captures (if !STATIC_EXCHANGES), by itself for the reply scan, and by capture_estimate.
      */
-    INLINE int do_captures(int tid, const State& state, score_t standpat_threshold)
+    template<bool ScanReplies>
+    INLINE int do_captures(
+        int             tid, /* thread id (as numbered by us, not the OS) */
+        const State&    state,
+        score_t         standpat_threshold,
+        int             ply = FIRST_EXCHANGE_PLY,
+        int             bucket = -1,
+        int             bound = SCORE_MAX,
+        int             start = 0,
+        Bitboard        skip = BB_EMPTY
+    )
     {
         ASSERT(!state.is_check(!state.turn)); /* expect legal position */
 
-        static constexpr auto ply = FIRST_EXCHANGE_PLY;
-
-        const auto bucket = state.grading_bucket();
+        if (bucket < 0)
+            bucket = state.grading_bucket();
 
         auto mask = state.occupied_co(!state.turn);
         if (state.en_passant_square != Square::UNDEFINED)
             mask |= BB_SQUARES[state.en_passant_square];
 
-        mask &= ~state.kings;
+        mask &= ~(state.kings | skip);
 
         /*
          * Generate all pseudo-legal captures.
@@ -1010,7 +1004,7 @@ namespace search
             Context::log_message(LogLevel::DEBUG, out.str());
         }
 
-        int score = 0;
+        int score = start;
         State next_state;
 
         /*
@@ -1018,6 +1012,9 @@ namespace search
          */
         for (const auto& move : moves)
         {
+            if (score >= bound)
+                break;
+
             if (move._score == 0)
                 continue;
 
@@ -1045,10 +1042,21 @@ namespace search
             ASSERT(USE_PIECE_SQUARE_TABLES || EVAL_PIECE_GRADING || our_gain > score);
 
             /****************************************************************/
-            /* "play through" same square exchanges                         */
+            /* "play through" the opponent's replies                        */
             next_state.castling_rights = 0; /* castling moves can't capture */
             const auto mask_to = BB_SQUARES[move.to_square()];
-            const auto their_best = do_exchanges<DEBUG_CAPTURES>(next_state, mask_to, tid, ply + 1, bucket);
+            auto their_best = do_exchanges<DEBUG_CAPTURES>(next_state, mask_to, tid, ply + 1, bucket);
+
+            if constexpr(ScanReplies)
+            {
+                /* The recapture alone does not refute the capture? Look at their captures elsewhere. */
+                if (our_gain - their_best > score)
+                {
+                    const auto elsewhere = do_captures<false>(
+                        tid, next_state, SCORE_MIN, ply + 1, bucket, our_gain - score, their_best, mask_to);
+                    their_best = std::max(their_best, elsewhere);
+                }
+            }
 
             const auto value = our_gain - their_best;
 
@@ -1069,6 +1077,13 @@ namespace search
     }
 
 
+    /* for unit test */
+    int capture_estimate(const State& state, bool scan_replies)
+    {
+        return scan_replies ? do_captures<true>(0, state, SCORE_MIN) : do_captures<false>(0, state, SCORE_MIN);
+    }
+
+
     score_t eval_captures(Context& ctxt, score_t score)
     {
         if constexpr(DEBUG_CAPTURES)
@@ -1085,7 +1100,7 @@ namespace search
         else
         {
             const int standpat_threshold = ctxt._ply > 1 ? ctxt._alpha - score : SCORE_MIN;
-            result = do_captures(ctxt.tid(), *state, standpat_threshold);
+            result = do_captures<CAPTURE_REPLIES>(ctxt.tid(), *state, standpat_threshold);
         }
 
         ASSERT(result >= 0);
@@ -1137,7 +1152,7 @@ namespace search
             _extension += _move.from_square() == _parent->_capture_square;
             _extension += is_recapture() * (is_pv_node() * (ONE_PLY - 1) + 1);
 
-            const auto double_extension_ok = (_double_ext <= DOUBLE_EXT_MAX);
+            const auto double_extension_ok = (_double_ext < DOUBLE_EXT_MAX);
             const auto extend = std::min(1 + double_extension_ok, _extension / ONE_PLY);
 
             ASSERT(extend >= 0);
@@ -1302,6 +1317,7 @@ namespace search
     }
 
 
+#if LMR_TIME_SCALING
     /* Reduce more when an iteration starts late, or when there is no time limit. */
     static INLINE float lmr_divisor()
     {
@@ -1314,6 +1330,7 @@ namespace search
         const auto t = std::clamp((elapsed_pct - LMR_RUSH_START_PCT) / span, 0.0f, 1.0f);
         return (LMR_DIVISOR_CALM_PCT + t * (LMR_DIVISOR_RUSHED_PCT - LMR_DIVISOR_CALM_PCT)) / 100.0f;
     }
+#endif /* LMR_TIME_SCALING */
 
 
     /*
@@ -1329,7 +1346,7 @@ namespace search
         const int depth = this->depth();
 
         /* late move pruning */
-        if (depth > 0 && count >= LMP[depth] && can_prune())
+        if (depth > 0 && count >= _parent->late_move_count(depth) && can_prune())
             return LMRAction::Prune;
 
         /* no reductions at very low depth and in qsearch */
@@ -1338,15 +1355,24 @@ namespace search
 
         count += _tt->_pass / 4;
 
+    #if LMR_TIME_SCALING
         /* LMR divisor changes once per root iteration */
         if (_tt->_lmr_iteration != iteration())
         {
             _tt->_lmr_iteration = iteration();
             _tt->_lmr_scale = 1.0f / lmr_divisor();
         }
+        const auto lmr_scale = _tt->_lmr_scale;
+    #else
+        constexpr float lmr_scale = 0.5f;
+    #endif /* LMR_TIME_SCALING */
 
         /* Lookup reduction in the Late Move Reduction table. */
-        int reduction = 0.5f + LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)] * _tt->_lmr_scale;
+        int reduction = 0.5f + LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)] * lmr_scale;
+
+    #if !BLANKET_REDUCTION
+        reduction += _parent->_cut_node && !_parent->is_pv_node();
+    #endif /* !BLANKET_REDUCTION */
 
         if (_move._group != MoveOrder::TACTICAL_MOVES)
         {
@@ -1510,18 +1536,15 @@ namespace search
     }
 
 
-    void Context::cache_scores(bool force_write)
+    void Context::cache_scores()
     {
         ASSERT(move_count() >= 0);
-        auto& moves_list = moves();
 
-        for (auto& move: moves_list)
+        for (auto& move: moves())
         {
             move._old_score = move._score;
             move._old_group = move._group;
         }
-
-        _moves_cache[tid()].write(state(), moves_list, force_write);
     }
 
 
@@ -1628,24 +1651,8 @@ namespace search
         ASSERT(_phase == 0);
         ASSERT(_state_index == 0);
 
-        bool from_cache = false;
         auto& moves_list = ctxt.moves();
-
-        auto& moves_cache = _moves_cache[ctxt.tid()];
-        if (moves_cache.lookup(ctxt.state(), moves_list))
-        {
-            from_cache = true;
-            for (auto& move : moves_list)
-            {
-                move._state = nullptr;
-                move._score = 0;
-                move._group = MoveOrder::UNORDERED_MOVES;
-            }
-        }
-        else
-        {
-            ctxt.state().generate_pseudo_legal_moves(moves_list);
-        }
+        ctxt.state().generate_pseudo_legal_moves(moves_list);
 
         _count = int(moves_list.size());
         _current = 0;
@@ -1664,9 +1671,6 @@ namespace search
          */
         _group_quiet_moves = (ctxt.depth() < 0 && !ctxt.is_check());
     #endif /* GROUP_QUIET_MOVES */
-
-        if (!from_cache)
-            moves_cache.write(ctxt.state(), moves_list);
     }
 
 
@@ -1786,10 +1790,6 @@ namespace search
                 {
                     make_move<true>(ctxt, move, MoveOrder::HISTORY_COUNTERS, hist_score);
                 }
-                else if (move._old_group == MoveOrder::TACTICAL_MOVES)
-                {
-                    remake_move(ctxt, move);
-                }
                 else if (ctxt.is_counter_move(move)
                     || move.from_square() == ctxt._capture_square
                     || is_pawn_push(ctxt, move))
@@ -1802,12 +1802,6 @@ namespace search
             }
             else /* Phase == 4 */
             {
-                if (move._old_group == MoveOrder::LATE_MOVES)
-                {
-                    remake_move(ctxt, move);
-                    continue;
-                }
-
                 if (make_move<true>(ctxt, move, futility))
                 {
                     move._group = MoveOrder::LATE_MOVES;

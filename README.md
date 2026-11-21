@@ -1,9 +1,11 @@
 # Sturddle 2
 
-Sturddle 2 is a fork of my Sturddle Chess Engine (https://github.com/cristivlas/sturddle-chess-engine)
-with many bug fixes and a rewritten (and trained from scratch) neural network.
+Sturddle 2 is a UCI chess engine. It replaces my earlier [Sturddle Chess Engine](https://github.com/cristivlas/sturddle-chess-engine),
+which is no longer maintained, and adds many bug fixes and its own neural network, trained from scratch.
+The [project page](https://cristivlas.github.io/sturddle-2/) tells the story: history, architecture, and the research behind it.
 
-The engine is a command-line program. You need a GUI (such as https://github.com/cristivlas/sturddle-view) to use it.
+The engine is a command-line program. You need a UCI chess GUI to use it, such as Arena, Cute Chess,
+or my own [Sturddle View](https://github.com/cristivlas/sturddle-view).
 
 ## Building the Engine
 
@@ -25,6 +27,11 @@ To build just a python module:
 <code>python3 setup.py build_ext --inplace</code>
 or:
 <code>CC=clang++ CFLAGS=-march=native python3 setup.py build_ext --inplace</code>
+
+**Starting with version 2.8.0 there is an alternative way to build** a (smaller) bundle, which does
+not require PyInstaller:
+<code>python3 tools/native-bundle/build.py</code>
+It constructs a self-contained executable, same as the PyInstaller bundle, but without a Python bootstrap.
 
 ## Tuning the Engine
 
