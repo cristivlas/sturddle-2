@@ -24,11 +24,16 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <random>
 #include <set>
 #include <unordered_map>
 #include <vector>
 #include "chess.h"
+
+#if USE_PEXT
+  #error "build codegen without BMI2, it needs hash_info"
+#endif
 
 using namespace chess;
 
@@ -134,27 +139,21 @@ inline uint64_t pext_soft(uint64_t src, uint64_t mask)
     return result;
 }
 
-uint64_t random_uint64()
-{
-    // Create a static random device
-    static std::random_device rd;
-
-    // Use the device to seed a static Mersenne twister engine
-    static std::mt19937_64 engine(rd());
-
-    // Create a static uniform distribution from 0 to UINT64_MAX
-    static std::uniform_int_distribution<uint64_t> dist(0, UINT64_MAX);
-
-    // Generate and return a random number
-    return dist(engine) | dist(engine) | dist(engine) | dist(engine);
-}
-
 class HashBuilder
 {
     std::vector<Group> _groups;
     size_t _pext_total_size = 0;
 
+    // Not set: reuse the magics from attacks.h
+    std::optional<std::mt19937_64> _rng;
+
 public:
+    explicit HashBuilder(std::optional<uint64_t> seed)
+    {
+        if (seed)
+            _rng.emplace(*seed);
+    }
+
     template <AttacksType type>
     bool build_group(const std::vector<int>& deltas)
     {
@@ -174,7 +173,8 @@ public:
 
             if (!build<type>(Square(square), mask, attacks, group))
             {
-                std::cerr << "Could not build hash for: " << square << std::endl;
+                std::cerr << "Could not build hash for: " << square
+                          << (_rng ? "" : " (magic no longer fits, rerun with --search)") << std::endl;
                 return false;
             }
 
@@ -359,9 +359,24 @@ private:
     {
         PerfectHash table;
 
+        if (!_rng)
+        {
+            const size_t i = group._index * 64 + square;
+            if (i >= std::size(hash_info))
+                return false;
+
+            const auto& known = hash_info[i];
+            if (known.mask != mask || !try_hash<type>(mask, attacks, known.mul, known.shift, table))
+                return false;
+
+            group.set_hash_info(square, mask, known.mul, known.shift, table);
+            return true;
+        }
+
         for (size_t n = 0; n != 10000; ++n)
         {
-            const uint64_t mul = random_uint64();
+            // No distribution, they vary across std libs
+            const uint64_t mul = (*_rng)() | (*_rng)() | (*_rng)() | (*_rng)();
             for (uint16_t shift = 1; shift < 64; ++shift)
             {
                 if (try_hash<type>(mask, attacks, mul, shift, table))
