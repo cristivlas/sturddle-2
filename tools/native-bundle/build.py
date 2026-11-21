@@ -10,6 +10,7 @@ Copyright (c) 2023 - 2026 Cristian Vlasceanu.
 '''
 import argparse
 import importlib.util
+import io
 import os
 import platform
 import shutil
@@ -64,9 +65,19 @@ def banner(text):
     print('*********************************************************')
 
 
+# returns the PGO status printed by make-native.py, if any
 def make(out_dir, *args):
-    if subprocess.call([sys.executable, str(MAKE_NATIVE), *args, '--no-digest', '--out-dir', str(out_dir)], cwd=ROOT):
+    cmd = [sys.executable, '-u', str(MAKE_NATIVE), *args, '--no-digest', '--out-dir', str(out_dir)]
+    status = None
+    with subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as proc:
+        # newline='' keeps the \r of the profiling progress
+        for line in io.TextIOWrapper(proc.stdout, newline='', errors='replace'):
+            print(line, end='', flush=True)
+            if line.startswith(make_native.PGO_STATUS):
+                status = line.removeprefix(make_native.PGO_STATUS).strip()
+    if proc.returncode:
         sys.exit(f'ERROR: make-native.py {" ".join(args)} failed')
+    return status
 
 
 def write_record(writer, path, is_exe):
@@ -119,9 +130,10 @@ def main():
         launcher = build_dir / exe_name(f'sturddle-{version}-launcher')
 
         pgo = ['--pgo', '--launcher-exe', str(launcher)] if args.pgo else []
+        pgo_status = {}
         for arch in archs:
             banner(f'Building {arch}')
-            make(build_dir, arch, *pgo)
+            pgo_status[arch] = make(build_dir, arch, *pgo)
         banner('Bundling')
 
         exes = [build_dir / exe_name(f'sturddle-{version}{make_native.arch_suffix(arch)}') for arch in archs]
@@ -136,6 +148,13 @@ def main():
     dgst = make_native.write_sha256(out_path)
     print(f'\nBuilt {out_path}')
     print(f'Digest {dgst}')
+
+    if args.pgo:
+        width = max(map(len, archs))
+        print()
+        for arch, status in pgo_status.items():
+            # no status: make-native skipped the flavor (MSVC)
+            print(f'PGO {arch:<{width}}  {status or "none (not built)"}')
 
 
 if __name__ == '__main__':

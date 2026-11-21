@@ -88,6 +88,8 @@ PHASE_PLIES = [
     (80, 1000),
 ]
 MAX_MISMATCH = 0.1
+# --pgo outcome, read by tools/native-bundle/build.py
+PGO_STATUS = 'PGO: '
 
 
 def parse_version():
@@ -201,10 +203,13 @@ class Build:
         if toolchain:
             # BUILD_STAMP changes daily
             flags = self.cxxflags + [d for d in self.define_args if not d.startswith('-DBUILD_STAMP=')]
-            pgo.build(self.exe, self.make, toolchain, flags)
+            status = pgo.build(self.exe, self.make, toolchain, flags)
         else:
             self.make(self.exe)
+            status = f'none ({self.no_pgo})' if pgo else None
 
+        if pgo:
+            print(f'{PGO_STATUS}{status}')
         return self.exe
 
 
@@ -573,21 +578,23 @@ class Pgo:
                 built = True
                 mismatched, total = toolchain.mismatch(outputs, profile)
                 if mismatched <= MAX_MISMATCH * total:
-                    return
+                    return 'reused'
                 reason = f'{mismatched} of {total} functions mismatched'
         else:
             reason = 'no matching profile'
 
         if not self.can_profile():
             print(f'WARNING: {reason}, cannot profile {self.arch} on this CPU')
-            if not built:
-                make(exe)
-            return
+            if built:
+                return f'stale ({reason}, cannot profile on this CPU)'
+            make(exe)
+            return f'none ({reason}, cannot profile on this CPU)'
 
         print(f'{reason}, profiling {self.arch}')
         self.collect(exe.name, make, toolchain, profile)
         meta_path.write_text(json.dumps(meta, indent=2))
         make(exe, *toolchain.use(profile))
+        return f'profiled ({reason})'
 
     def can_profile(self):
         if self.arch == 'native':
