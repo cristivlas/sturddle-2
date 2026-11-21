@@ -2,9 +2,11 @@
 #
 # Learn piece-square tables from a trained net.
 #
-# The engine values a piece as its nominal worth plus a bonus for its square. We want bonuses that make
-# that simple sum agree with the net as often as possible, so we ask the net about lots of real positions
-# and solve for the bonuses by least squares.
+# The engine values a piece as its nominal worth plus a bonus for its square. We want both to make that
+# simple sum agree with the net as often as possible, so we ask the net about lots of real positions and
+# solve by least squares. The net only sees the sum: we call a piece's worth its average over the squares
+# it stands on, and the bonuses are what's left. Worth goes into chess.h, bonuses into tables.h. With piece
+# grading on, worth also depends on how many pawns are left, while the bonuses stay the same.
 #
 # One table has to cover the whole game, so it can't be right everywhere. We let positions with roughly
 # even material decide where pieces belong, since that's where the bonuses actually swing decisions; how
@@ -47,40 +49,28 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 
 def _parse_engine_constants():
-    """Pull WEIGHT/ADJUST/bucket/endgame constants out of chess.h and common.h."""
+    """Endgame piece count and piece grading from common.h; pawn buckets from chess.h (1 without grading)."""
     with open(os.path.join(REPO_ROOT, "common.h"), encoding="utf-8") as f:
         common = f.read()
+    endgame = int(re.search(r"constexpr int ENDGAME_PIECE_COUNT\s*=\s*(\d+)", common).group(1))
+    if not re.search(r"#define EVAL_PIECE_GRADING\s+true", common):
+        return endgame, False, 1
     with open(os.path.join(REPO_ROOT, "chess.h"), encoding="utf-8") as f:
         chess = f.read()
-
-    grading = re.search(r"#define EVAL_PIECE_GRADING\s+(\w+)", common).group(1) == "true"
-    endgame = int(re.search(r"constexpr int ENDGAME_PIECE_COUNT\s*=\s*(\d+)", common).group(1))
-    buckets = int(re.search(r"constexpr int PAWN_BUCKETS\s*=\s*(\d+)", chess).group(1))
-
-    values = re.findall(r"#define PIECE_VALUES\s*\{([^}]*)\}", chess)
-    weight = [int(v) for v in values[0 if grading else 1].split(",")]
-    assert len(weight) == 7, weight
-
-    if not grading:
-        return weight, [[0] * 7 for _ in range(buckets)], buckets, endgame
-
-    macro = chess[chess.index("#define GRADING_ADJUST") :]
-    macro = macro[: re.search(r"\n[^\\\n]*\n", macro).start()]  # macro ends with the last '\'-continued line
-    macro = re.sub(r"/\*.*?\*/", "", macro, flags=re.S)
-    adjust = [[int(v) for v in row.split(",") if v.strip()] for row in re.findall(r"\{([^{}]*)\}", macro)]
-    assert len(adjust) == buckets and all(len(row) == 7 for row in adjust), adjust
-
-    return weight, adjust, buckets, endgame
+    return endgame, True, int(re.search(r"constexpr int PAWN_BUCKETS\s*=\s*(\d+)", chess).group(1))
 
 
-WEIGHT, GRADING_ADJUST, PAWN_BUCKETS, ENDGAME_PIECE_COUNT = _parse_engine_constants()
+ENDGAME_PIECE_COUNT, GRADING, PAWN_BUCKETS = _parse_engine_constants()
+PAWNS_PER_BUCKET, MAX_PAWNS = 4, 16  # chess::pawn_bucket()
 
-# H5 column base per piece type (+0 black, +1 white); PST emit order and chess.h PieceType index
+# H5 column base per piece type (+0 black, +1 white); PST emit order
 H5_BASE = {"PAWN": 2, "KNIGHT": 4, "BISHOP": 6, "ROOK": 8, "QUEEN": 10, "KING": 0}
 PST_ORDER = ["PAWN", "KNIGHT", "BISHOP", "ROOK", "QUEEN", "KING"]
-PIECE_TYPE = {"PAWN": 1, "KNIGHT": 2, "BISHOP": 3, "ROOK": 4, "QUEEN": 5, "KING": 6}
+VALUED = PST_ORDER[:5]  # kings are never traded: no value to fit
+KING_VALUE = 20000  # chess.h
 
-PARAMS = 7 * 64  # 6 MG tables + endgame king
+TABLES = 7 * 64  # 6 MG tables + endgame king
+PARAMS = TABLES + len(VALUED) * (PAWN_BUCKETS - 1)  # then value shifts per pawn bucket, bucket 0 is the base
 WEIGHTED_FIT = ["PAWN", "KNIGHT", "BISHOP", "ROOK"]  # pieces whose square patterns come from the weighted fit
 
 RELOCATION_STAT_SHAPES = ((2, 128, 128), (2, 128), (2, 128, 128), (2, 64), (2, 2))  # gram, rhs, meat, visits, level
@@ -93,8 +83,10 @@ HUBER_K = 1.345  # 95% efficiency under normal noise
 MAD_SCALE = 1.4826  # MAD -> std under normal noise
 
 
-def pawn_bucket(pawn_count):
-    return torch.where(pawn_count <= 4, 0, ((pawn_count - 1) // 4).clamp(max=PAWN_BUCKETS - 1))
+def pawn_bucket(pawn_count):  # as chess::pawn_bucket()
+    return torch.where(
+        pawn_count <= PAWNS_PER_BUCKET, 0, ((pawn_count - 1) // PAWNS_PER_BUCKET).clamp(max=PAWN_BUCKETS - 1)
+    )
 
 
 def unpack(packed):
@@ -107,8 +99,9 @@ def mirror(bits):
     return bits.reshape(-1, 8, 8).flip(1).reshape(-1, 64)
 
 
-def features_and_material(packed):
-    """(B, 13) int64 tensor -> (B, PARAMS) float32 signed PST features and (B,) float64 graded material."""
+def features(packed):
+    """(B, 13) int64 tensor -> (B, PARAMS) float32 signed features, (B, 5) signed piece counts (pawn to
+    queen) and (B,) pawn buckets."""
     bits = unpack(packed).float()
     n = packed.shape[0]
 
@@ -116,24 +109,65 @@ def features_and_material(packed):
     white = {name: bits[:, base + 1] for name, base in H5_BASE.items()}
 
     eg = (bits.sum(dim=(1, 2)) <= ENDGAME_PIECE_COUNT).float()[:, None]
-
-    buckets = pawn_bucket((black["PAWN"].sum(dim=1) + white["PAWN"].sum(dim=1)).long())
-    adjust = torch.tensor(GRADING_ADJUST, dtype=torch.float64, device=packed.device)[buckets]  # (B, 7)
+    bucket = pawn_bucket((black["PAWN"].sum(dim=1) + white["PAWN"].sum(dim=1)).long())
 
     # one column per table entry: +1 for a white piece there, -1 for black (white looks up the rank-flipped
     # square, as the engine does), so x @ tables is the PST part of a white-view eval
     x = torch.empty((n, PARAMS), device=packed.device)
-    material = torch.zeros(n, dtype=torch.float64, device=packed.device)
     for i, name in enumerate(PST_ORDER):
         block = mirror(white[name]) - black[name]
         if name == "KING":
             x[:, i * 64 : (i + 1) * 64] = block * (1.0 - eg)
-            x[:, (i + 1) * 64 :] = block * eg
+            x[:, (i + 1) * 64 : TABLES] = block * eg
         else:
             x[:, i * 64 : (i + 1) * 64] = block
-            value = WEIGHT[PIECE_TYPE[name]] + adjust[:, PIECE_TYPE[name]]
-            material += value * (white[name].sum(dim=1) - black[name].sum(dim=1))
-    return x, material
+
+    # with grading: signed piece counts again, once per pawn bucket past the first
+    counts = x[:, : len(VALUED) * 64].reshape(n, len(VALUED), 64).sum(dim=2)
+    for b in range(1, PAWN_BUCKETS):
+        x[:, TABLES + (b - 1) * len(VALUED) : TABLES + b * len(VALUED)] = counts * (bucket == b)[:, None]
+    return x, counts, bucket
+
+
+def material(counts, bucket, values):
+    """(B,) float64 white-view material: signed piece counts times their pawn bucket's values."""
+    values = torch.as_tensor(values, dtype=torch.float64, device=counts.device)
+    return (counts.double() * values[bucket]).sum(dim=1)
+
+
+def table_slice(name):
+    i = PST_ORDER.index(name)
+    return slice(i * 64 + 8, i * 64 + 56) if name == "PAWN" else slice(i * 64, (i + 1) * 64)  # pawns: ranks 2-7
+
+
+def piece_levels(theta, occupancy):
+    """Per piece, pawn to queen: table average over the squares the piece stands on."""
+    return np.array([float(occupancy[s] @ theta[s] / occupancy[s].sum()) for s in map(table_slice, VALUED)])
+
+
+def piece_values(theta, occupancy):
+    """(PAWN_BUCKETS, 5) values, pawn to queen: table averages plus each bucket's shift."""
+    shifts = np.vstack([np.zeros(len(VALUED)), theta[TABLES:].reshape(-1, len(VALUED))])
+    return piece_levels(theta, occupancy) + shifts
+
+
+def report_values(values, bucket_rows):
+    """Print piece values for chess.h; with grading, a base set and per-bucket adjustments."""
+
+    def row(values):
+        return ", ".join(f"{v:4d}" for v in values)
+
+    totals = np.rint(values).astype(int)
+    if not GRADING:
+        print(f"chess.h, no grading: #define PIECE_VALUES {{ 0, {row(totals[0])}, {KING_VALUE} }}", file=sys.stderr)
+        return
+    base = np.rint(bucket_rows / bucket_rows.sum() @ values).astype(int)  # typical value over all positions
+    lines = [f"#define PIECE_VALUES {{ 0, {row(base)}, {KING_VALUE} }}", "#define GRADING_ADJUST { \\"]
+    for b, total in enumerate(totals):
+        low = 0 if b == 0 else b * PAWNS_PER_BUCKET + 1
+        high = (b + 1) * PAWNS_PER_BUCKET if b < PAWN_BUCKETS - 1 else MAX_PAWNS
+        lines.append(f"    {{ 0, {row(total - base)}, 0 }}, /* {f'{low}-{high}':>5}: {row(total)} */ \\")
+    print("chess.h, EVAL_PIECE_GRADING:\n" + "\n".join(lines + ["}"]), file=sys.stderr)
 
 
 def _leaper(steps):
@@ -479,8 +513,7 @@ def plain_fit_error(gram, meat, occupancy, ridge):
 
     worst = 0.0
     for name in WEIGHTED_FIT:
-        i = PST_ORDER.index(name)
-        sq = slice(i * 64 + 8, i * 64 + 56) if name == "PAWN" else slice(i * 64, (i + 1) * 64)
+        sq = table_slice(name)
         if not occupancy[sq].sum() > 0:
             return np.inf
         p = occupancy[sq] / occupancy[sq].sum()
@@ -559,7 +592,7 @@ def emit(tables, out):
 
 def main():
     p = argparse.ArgumentParser(
-        description="Fit piece-square tables to a trained net's evals, minus material; writes tables.h format."
+        description="Fit piece values and piece-square tables to a trained net's evals; writes tables.h format."
     )
     p.add_argument("data", nargs="+", help="H5 training data file(s)")
     p.add_argument("-m", "--model", default="weights.bin", help="weights.bin")
@@ -613,7 +646,9 @@ def main():
             return plain_error <= TABLE_PRECISION and max(reloc_error.values()) <= TABLE_PRECISION
         return False
 
-    scale = None  # outcome scale of material, fitted on the first batch
+    prior, scale = None, None  # piece values and outcome scale of material, from the first batch
+    bucket_rows = torch.zeros(PAWN_BUCKETS, dtype=torch.int64, device=args.device)
+    eye = torch.eye(PARAMS, dtype=gram.dtype, device=gram.device)
 
     with torch.no_grad():
         for path in args.data:
@@ -635,21 +670,28 @@ def main():
                     keep = (tt.popcount(rows[:, 0]) == 1) & (tt.popcount(rows[:, 1]) == 1)  # one king per side
                     rows = rows[keep]
                     packed = torch.from_numpy(rows[:, :13].astype(np.int64)).to(args.device)
-                    x, material = features_and_material(packed)
+                    x, counts, bucket = features(packed)
+                    bucket_rows += torch.bincount(bucket, minlength=PAWN_BUCKETS)
+                    evals = net_eval(model, packed, args.eval_chunk)
+                    if prior is None:
+                        # rough values from this batch alone, to weigh positions and center the fit
+                        g = (x.T @ x).double()
+                        first = torch.linalg.solve(g + args.ridge * eye, x.double().T @ evals)
+                        prior = piece_values(first.cpu().numpy(), torch.diagonal(g).cpu().numpy())
+                    mat = material(counts, bucket, prior)
                     if scale is None:
-                        stm = torch.where(packed[:, 12] == 1, material, -material)
+                        stm = torch.where(packed[:, 12] == 1, mat, -mat)
                         outcome = torch.from_numpy(rows[:, 14] / 2.0).to(args.device)  # 0, 1/2, 1 for stm
                         scale = fit_outcome_scale(stm, outcome)
                     # weight by material balance, never by net eval (that biases the fit)
-                    weight = balance_weight(material, scale)
-                    y = net_eval(model, packed, args.eval_chunk) - material
+                    weight = balance_weight(mat, scale)
+                    y = evals - mat
 
                     # rows of a slice are correlated
                     cluster = torch.from_numpy(np.flatnonzero(keep) // args.slice_rows).to(args.device)
 
                     if args.early_stop and rhs[1].any():
                         # residuals against the fit from earlier batches, so this batch does not fit itself
-                        eye = torch.eye(PARAMS, dtype=gram.dtype, device=gram.device)
                         fit = torch.linalg.solve(gram[1] + args.ridge * eye, rhs[1])
                         resid = y - x.double() @ fit
                         scores = torch.zeros((int(cluster.max()) + 1, PARAMS), dtype=torch.float64, device=args.device)
@@ -710,8 +752,6 @@ def main():
         if err > TABLE_PRECISION:
             print(f"warning: {name.lower()} table did not converge ({err:.1f}cp)", file=sys.stderr)
 
-    # table means stay in: engine adds tables to WEIGHT, so the mean is the net's value delta
-    eye = torch.eye(PARAMS, dtype=gram.dtype, device=gram.device)
     plain, theta = torch.linalg.solve(gram + args.ridge * eye, rhs[..., None])[..., 0].cpu().numpy()
 
     # Queen: square pattern from relocation, which keeps the rest of the board fixed. The plain fit credits
@@ -724,14 +764,11 @@ def main():
         theta[queen] = relocation_emit(q_fit, relocation_shift(q_level))[0].cpu().numpy()
         theta[queen] = (theta[queen] + theta[queen][np.arange(64) ^ 7]) / 2  # net is file-symmetric
 
-    # square patterns from the weighted fit (relocation for the queen), per-piece levels from the plain fit
+    # values from the plain fit, square patterns from the weighted fit (relocation for the queen)
     occupancy = torch.diagonal(gram[0]).cpu().numpy()  # how often a piece stands on each square
-    for i, name in enumerate(PST_ORDER):
-        if name == "KING":
-            continue
-        sq = slice(i * 64 + 8, i * 64 + 56) if name == "PAWN" else slice(i * 64, (i + 1) * 64)
-        occ = occupancy[sq] / occupancy[sq].sum()
-        theta[sq] += occ @ plain[sq] - occ @ theta[sq]
+    values = prior + piece_values(plain, occupancy)
+    for name, level in zip(VALUED, piece_levels(theta, occupancy)):
+        theta[table_slice(name)] -= level
     theta[:8] = theta[56:64] = 0.0  # no pawns on ranks 1 and 8
     king = PST_ORDER.index("KING") * 64
     k_gram, k_rhs, _, k_visits, k_level = reloc_stats["KING"]
@@ -742,7 +779,7 @@ def main():
     seen = visits.sum(axis=1, keepdims=True)
     kings -= (kings * visits).sum(axis=1, keepdims=True) / np.where(seen > 0, seen, 1.0)
     theta[king : king + 128] = kings.ravel()
-    tables = np.rint(theta * args.scale).astype(int)
+    tables = np.rint(theta[:TABLES] * args.scale).astype(int)
 
     if args.output:
         with open(args.output, "w") as out:
@@ -750,6 +787,7 @@ def main():
         print(f"wrote {args.output}", file=sys.stderr)
     else:
         emit(tables, sys.stdout)
+    report_values(values, bucket_rows.cpu().numpy())
 
 
 if __name__ == "__main__":
