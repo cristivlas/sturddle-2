@@ -33,16 +33,12 @@ ARCH_FLAGS = {
     'ARMv8_2':     ['-DUSE_MAGIC_BITS', '-march=armv8.2-a+fp16+dotprod'],
 }
 
-ARCH_SUFFIX = {
-    'native':      '',
-    'generic':     '-generic',
-    'AVX':         '-avx',
-    'AVX2':        '-avx2',
-    'AVX2_VNNI':   '-avx2-vnni',
-    'AVX512':      '-avx512',
-    'AVX512_BF16': '-avx512-bf16',
-    'ARMv8_2':     '-armv8-2',
-}
+# gcc ignores unknown -Wno- flags
+SHARED_WARNINGS = [
+    '-Wno-unused-label',
+    '-Wno-unused-variable',
+    '-Wno-nan-infinity-disabled',
+]
 
 LAUNCHER_SOURCES = [
     'tools/native-bundle/launcher.cpp',
@@ -95,10 +91,18 @@ MAX_MISMATCH = 0.1
 
 def parse_version():
     text = (REPO_ROOT / 'version.h').read_text()
-    major = re.search(r'^#define\s+STURDDLE_VERSION_MAJOR\s+(\d+)', text, re.M).group(1)
-    minor = re.search(r'^#define\s+STURDDLE_VERSION_MINOR\s+(\d+)', text, re.M).group(1)
-    patch = re.search(r'^#define\s+STURDDLE_VERSION_PATCH\s+"([^"]+)"', text, re.M).group(1)
+
+    def define(name, value):
+        return re.search(rf'^#define\s+STURDDLE_VERSION_{name}\s+{value}', text, re.M).group(1)
+
+    major = define('MAJOR', r'(\d+)')
+    minor = define('MINOR', r'(\d+)')
+    patch = define('PATCH', r'"([^"]+)"')
     return f'{major}.{minor}.{patch}'
+
+
+def arch_suffix(arch):
+    return '' if arch == 'native' else '-' + arch.lower().replace('_', '-')
 
 
 MSVC_WARNINGS = [
@@ -234,9 +238,7 @@ class WindowsBuild(Build):
                 '-Wmissing-field-initializers',
                 '-Wno-deprecated-declarations',
                 '-Wno-unused-command-line-argument',
-                '-Wno-unused-label',
-                '-Wno-unused-variable',
-                '-Wno-nan-infinity-disabled',
+                *SHARED_WARNINGS,
             ]
         else:
             if arch and arch not in MSVC_ARCH_FLAGS:
@@ -303,25 +305,22 @@ class LinuxBuild(Build):
         cxxflags += ARCH_FLAGS.get(arch, []) + [
             '-Wextra',
             '-Werror',
-            '-Wno-unused-label',
+            *SHARED_WARNINGS,
             '-Wno-unknown-pragmas',
             '-Wno-unused-parameter',
-            '-Wno-unused-variable',
             '-Wno-empty-body',
             '-Wno-int-in-bool-context',
             '-fno-stack-protector',
             '-D_FORTIFY_SOURCE=0',
         ]
+        self.link_flags = ['-lpthread']
         if is_clang:
             cxxflags += [
                 '-Wno-macro-redefined',
                 '-Wno-deprecated-declarations',
-                '-Wno-nan-infinity-disabled',
                 '-stdlib=libc++',
                 '-fexperimental-library',
             ]
-        self.link_flags = ['-lpthread']
-        if is_clang:
             self.link_flags += [
                 '-fuse-ld=lld',
                 f'-L/usr/lib/llvm-{cc_ver}/lib/',
@@ -578,7 +577,7 @@ def main():
         define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}', f'-DBUILD_FLAVOR={args.arch}']
 
         pgo = Pgo(args, build_launcher) if args.pgo else None
-        exe = build(out_dir, f'sturddle-{version}{ARCH_SUFFIX[args.arch]}', args.arch, SOURCES, define_args).run(pgo)
+        exe = build(out_dir, f'sturddle-{version}{arch_suffix(args.arch)}', args.arch, SOURCES, define_args).run(pgo)
 
         assets = ('book.bin',) if embed else ('weights.bin', 'book.bin')
         for asset in assets:

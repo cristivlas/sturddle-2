@@ -124,7 +124,7 @@ def main():
             make(build_dir, arch, *pgo)
         banner('Bundling')
 
-        exes = [build_dir / exe_name(f'sturddle-{version}{make_native.ARCH_SUFFIX[arch]}') for arch in archs]
+        exes = [build_dir / exe_name(f'sturddle-{version}{make_native.arch_suffix(arch)}') for arch in archs]
         files = [(exe, True) for exe in exes if exe.exists()]
         files += [(build_dir / asset, False) for asset in ASSETS]
 
