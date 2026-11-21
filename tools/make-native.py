@@ -334,6 +334,9 @@ class LinuxBuild(Build):
                 '-lc++abi',
                 '-Wl,-Bdynamic',
             ]
+        else:
+            # same as clang: VNNI-VL intrinsics cast their args, float -> __bf16 narrows
+            cxxflags += ['-flax-vector-conversions', '-Wno-narrowing']
         self.cxx = cxx
         self.cc_ver = cc_ver
         self.is_clang = is_clang
