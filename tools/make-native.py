@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -426,7 +427,46 @@ def run_workload(engine, positions, depth):
         sys.exit(f'ERROR: {engine.name} failed (rc={rc})')
 
 
-class ClangPgo:
+class PgoToolchain(ABC):
+    @property
+    @abstractmethod
+    def suffix(self):
+        """
+        goes on the profile name in --pgo-dir
+        """
+
+    @abstractmethod
+    def instrument(self, raw_dir):
+        """
+        compile and link flags for a build that profiles into raw_dir
+        """
+
+    @abstractmethod
+    def use(self, profile):
+        """
+        compile and link flags for a build that uses profile
+        """
+
+    @abstractmethod
+    def merge(self, raw_dir, profile):
+        """
+        raw_dir data -> profile
+        """
+
+    @abstractmethod
+    def unusable(self, output):
+        """
+        failed build output says profile is unreadable
+        """
+
+    @abstractmethod
+    def mismatch(self, outputs, profile):
+        """
+        mismatched and total function counts
+        """
+
+
+class ClangPgo(PgoToolchain):
     suffix = '.profdata'
     mismatch_warning = re.compile(r'of (\d+) functions?, (\d+) ha(?:s|ve) mismatched data')
 
@@ -453,7 +493,7 @@ class ClangPgo:
         return sum(int(m) for _, m in counts), sum(int(t) for t, _ in counts)
 
 
-class GccPgo:
+class GccPgo(PgoToolchain):
     # the profile is a directory with one .gcda file per source
     suffix = '-gcc'
     # gcc names .gcda files after the object path, which is a new temp dir on every build;
