@@ -277,8 +277,6 @@ class WindowsBuild(Build):
 
 
 class LinuxBuild(Build):
-    no_pgo = '--pgo needs clang++' # TODO: add gcc support
-
     def __init__(self, out_dir, name, arch, sources, define_args):
         cxx = os.environ.get('CXX')
         if not cxx:
@@ -354,7 +352,7 @@ class LinuxBuild(Build):
 
     def pgo_toolchain(self):
         if not self.is_clang:
-            return None
+            return GccPgo([f'gcov-dump-{self.cc_ver}', 'gcov-dump'], [os.environ['PATH']])
         return ClangPgo([f'llvm-profdata-{self.cc_ver}', 'llvm-profdata'], [f'/usr/lib/llvm-{self.cc_ver}/bin', os.environ['PATH']])
 
 
@@ -455,6 +453,50 @@ class ClangPgo:
         return sum(int(m) for _, m in counts), sum(int(t) for t, _ in counts)
 
 
+class GccPgo:
+    # the profile is a directory with one .gcda file per source
+    suffix = '-gcc'
+    # gcc names .gcda files after the object path, which is a new temp dir on every build;
+    # these flags name them after the source instead. Any aux files go to the (ignored) pgo/
+    naming = [f'-fprofile-prefix-path={REPO_ROOT}', '-dumpdir', 'pgo/']
+    stale_warnings = ('coverage-mismatch', 'missing-profile')
+    # first quoted name on the line: the function, or the .gcda file if missing altogether
+    stale_warning = re.compile(r"[\u2018'](.+?)[\u2019'].*\[-W(?:coverage-mismatch|missing-profile)\]")
+
+    def __init__(self, dump_names, dump_dirs):
+        self.dump_names = dump_names
+        self.dump_dirs = dump_dirs
+
+    def instrument(self, raw_dir):
+        return [f'-fprofile-generate={raw_dir}', *self.naming], []
+
+    def use(self, profile):
+        return [
+            f'-fprofile-use={profile}',
+            *(f'-Wno-error={w}' for w in self.stale_warnings),
+            *self.naming,
+        ], []
+
+    def merge(self, raw_dir, profile):
+        if profile.exists():
+            shutil.rmtree(profile)
+        shutil.copytree(raw_dir, profile)
+
+    def unusable(self, output):
+        # 'is version': written by another gcc release
+        return any(e in output for e in ('is not a gcov data file', 'is version', 'is corrupted'))
+
+    # gcc only names the stale functions, so count them all in the profile itself;
+    # per output, as the total counts a header function once per source
+    def mismatch(self, outputs, profile):
+        mismatched = sum(len(set(self.stale_warning.findall(output))) for output in outputs)
+        gcda = sorted(profile.glob('*.gcda'))
+        if not mismatched or not gcda:
+            return mismatched, 0
+        dump = subprocess.check_output([find_tool(self.dump_names, self.dump_dirs), *gcda], text=True)
+        return mismatched, dump.count(':FUNCTION ident=')
+
+
 class Pgo:
     def __init__(self, args, build_launcher):
         self.arch = args.arch
@@ -540,7 +582,7 @@ def main():
     parser.add_argument('--launcher', action='store_true', help='Build the launcher instead of the engine.')
     parser.add_argument('--out-dir', type=Path, default=OUT_DIR, help='Output directory (default: dist/native).')
     parser.add_argument('--no-digest', action='store_true', help='Skip writing the -sha256.txt digest.')
-    parser.add_argument('--pgo', action='store_true', help='Profile-guided optimization (clang-cl and clang++ only).')
+    parser.add_argument('--pgo', action='store_true', help='Profile-guided optimization (clang-cl, clang++ and g++ only).')
     parser.add_argument('--pgo-dir', type=Path, default=PGO_DIR, help='Profile directory (default: pgo).')
     parser.add_argument('--pgo-positions', type=int, default=100, help='Positions to profile (default: 100).')
     parser.add_argument('--pgo-games', type=Path, default=PGN_DIR, help='Directory of PGN games to sample --pgo positions from (default: test/runs).')
