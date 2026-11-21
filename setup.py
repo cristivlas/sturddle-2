@@ -291,6 +291,7 @@ else:
 
     else:
         # Not Clang
+        args.append('-Wno-dangling-reference')  # false positive in Position::pin_mask
         if NATIVE_UCI:
             if get_compiler_major_version() < MIN_GCC_VER:
                 raise RuntimeError(f'NATIVE_UCI uses C++20 and requires GCC >= {MIN_GCC_VER} or Clang >= {MIN_CLANG_VER}')

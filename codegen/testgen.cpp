@@ -2,7 +2,7 @@
 #include <chrono>
 #include <unordered_map>
 
-#define DEFINE_ATTACK_TABLE_CTOR
+#define DEFINE_ATTACK_TABLE
 #include "chess.h"
 
 using namespace chess;
@@ -10,7 +10,6 @@ using namespace chess;
 namespace chess
 {
     AttackMasks BB_FILE_MASKS, BB_RANK_MASKS, BB_DIAG_MASKS;
-    const AttackTable attack_table;
 }
 
 template<typename T>

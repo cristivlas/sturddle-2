@@ -36,31 +36,11 @@ namespace chess
 } /* namespace chess */
 
 
-/*
- https://github.com/llvm/llvm-project/issues/55798
-*/
-#if __ARM__
-  #if defined(__clang__)
-      #pragma clang optimize off
-  #elif defined(__GNUC__)
-      #pragma GCC push_options
-      #pragma GCC optimize("O0")
-  #endif
-#endif
-
 /* Attack tables are needed for initializing Rays */
 #if TESTGEN
   #include "codegen/test.h"
 #else
   #include "attacks.h"
-#endif
-
-#if __ARM__
-  #if defined(__clang__)
-      #pragma clang optimize on
-  #elif defined(__GNUC__)
-      #pragma GCC pop_options
-  #endif
 #endif
 
 

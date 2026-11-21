@@ -21,6 +21,7 @@
 #pragma once
 
 #include <array>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <random>
@@ -199,13 +200,7 @@ public:
         out << " * Auto-generated attack tables (see codegen/).\n";
         out << " * https://www.chessprogramming.org/Magic_Bitboards\n";
         out << " */\n";
-    #if LOCK_TABLE_DATA
-        out << "#if defined(__linux__) || defined(__APPLE__)\n";
-        out << "    #include <sys/mman.h>\n";
-        out << "#endif\n";
-    #endif /* LOCK_TABLE_DATA */
-        out << "#include <cstdint>\n";
-        out << "#include <cstring>\n\n";
+        out << "#include <cstdint>\n\n";
 
         // Check for PEXT support
         out << "// PEXT support detection\n";
@@ -267,53 +262,6 @@ public:
         out << "    alignas(64) uint64_t _data[" << total_table_size << "]; // Magic hash tables\n";
         out << "#endif\n\n";
 
-        out << "#ifdef DEFINE_ATTACK_TABLE_CTOR\n";
-        out << "    AttackTable() {\n";
-        out << "        memset(_data, 0, sizeof(_data));\n";
-        out << "#if USE_PEXT\n";
-        // Write PEXT dense tables
-        for (const auto& group : _groups)
-        {
-            for (size_t sq = 0; sq < 64; ++sq)
-            {
-                const auto& pext = group._pext_info[sq];
-                for (size_t idx = 0; idx < pext.dense_table.size(); ++idx)
-                {
-                    if (pext.dense_table[idx] != 0)
-                    {
-                        out << "        _data[" << (pext.base_offset + idx) << "] = 0x"
-                            << std::hex << pext.dense_table[idx] << std::dec << ";\n";
-                    }
-                }
-            }
-        }
-        out << "#else\n";
-        // Write magic hash tables
-        for (const auto& group : _groups)
-        {
-            for (size_t i = 0; i < 64; ++i)
-            {
-                for (const auto& hash : group._hash_info[i].table)
-                {
-                    out << "        _data[";
-                    out << group._offset + i * group._table_size + hash.first << "] = 0x";
-                    out << std::hex << hash.second << std::dec << ";\n";
-                }
-            }
-        }
-        out << "#endif /* USE_PEXT */\n";
-    #if LOCK_TABLE_DATA
-        out << "    #ifdef _WIN32\n";
-        out << "        VirtualLock(_data, sizeof(_data));\n";
-        out << "    #elif defined(__linux__) || defined(__APPLE__)\n";
-        out << "        mlock(_data, sizeof(_data));\n";
-        out << "    #endif\n";
-    #endif /* LOCK_TABLE_DATA */
-        out << "    }\n\n";
-        out << "#else\n";
-        out << "    AttackTable();\n";
-        out << "#endif /* DEFINE_ATTACK_TABLE_CTOR */\n\n";
-
         // get() method with PEXT/Magic dispatch
         out << "    template <int Group>\n";
         out << "    INLINE uint64_t get(int square, uint64_t occupancy_mask) const\n";
@@ -330,7 +278,40 @@ public:
         out << "#endif\n";
         out << "    }\n";
         out << "};\n\n";
-        out << "extern const AttackTable attack_table;\n";
+        out << "extern const AttackTable attack_table;\n\n";
+
+        // Initializer data instead of a constructor: gcc is very slow on huge functions
+        out << "#ifdef DEFINE_ATTACK_TABLE\n";
+        out << "const AttackTable attack_table = {{\n";
+        out << "#if USE_PEXT\n";
+        // Write PEXT dense tables
+        std::vector<uint64_t> data(_pext_total_size, 0);
+        for (const auto& group : _groups)
+        {
+            for (size_t sq = 0; sq < 64; ++sq)
+            {
+                const auto& pext = group._pext_info[sq];
+                std::copy(pext.dense_table.begin(), pext.dense_table.end(), data.begin() + pext.base_offset);
+            }
+        }
+        write_data(out, data);
+        out << "#else\n";
+        // Write magic hash tables
+        data.assign(total_table_size, 0);
+        for (const auto& group : _groups)
+        {
+            for (size_t i = 0; i < 64; ++i)
+            {
+                for (const auto& hash : group._hash_info[i].table)
+                {
+                    data[group._offset + i * group._table_size + hash.first] = hash.second;
+                }
+            }
+        }
+        write_data(out, data);
+        out << "#endif /* USE_PEXT */\n";
+        out << "}};\n";
+        out << "#endif /* DEFINE_ATTACK_TABLE */\n";
 
         static const std::unordered_map<size_t, std::string> type = {
             { size_t(AttacksType::Diag), "AttacksType::Diag" },
@@ -353,6 +334,26 @@ public:
     }
 
 private:
+    // 8 fixed-width values per line
+    static void write_data(std::ostream& out, const std::vector<uint64_t>& data)
+    {
+        const auto fill = out.fill('0');
+
+        for (size_t i = 0; i < data.size(); ++i)
+        {
+            if (i % 8 == 0)
+                out << "    ";
+
+            out << "0x" << std::hex << std::setw(16) << data[i] << std::dec << ",";
+
+            if (i % 8 == 7 || i + 1 == data.size())
+                out << "\n";
+            else
+                out << " ";
+        }
+        out.fill(fill);
+    }
+
     template <AttacksType type>
     bool build(Square square, Bitboard mask, const HashTable& attacks, Group& group)
     {
