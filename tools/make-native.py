@@ -14,7 +14,14 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
+
+# GNU-style flags, used by clang++, g++ and clang-cl
+# MSVC uses MSVC_ARCH_FLAGS instead.
+# Don't reorder: PGO profiles are matched on the exact flag list.
+#
 # magic bits are a bit faster than the attack tables without PEXT
+# https://github.com/goutham/magic-bits
+#
 ARCH_FLAGS = {
     'native':      ['-march=native'],
     'generic':     ['-DUSE_MAGIC_BITS'],
@@ -27,18 +34,47 @@ ARCH_FLAGS = {
 }
 
 ARCH_SUFFIX = {
-    'native': '', 'generic': '-generic', 'AVX': '-avx', 'AVX2': '-avx2',
-    'AVX2_VNNI': '-avx2-vnni', 'AVX512': '-avx512', 'AVX512_BF16': '-avx512-bf16',
-    'ARMv8_2': '-armv8-2',
+    'native':      '',
+    'generic':     '-generic',
+    'AVX':         '-avx',
+    'AVX2':        '-avx2',
+    'AVX2_VNNI':   '-avx2-vnni',
+    'AVX512':      '-avx512',
+    'AVX512_BF16': '-avx512-bf16',
+    'ARMv8_2':     '-armv8-2',
 }
 
-LAUNCHER_SOURCES = ['tools/native-bundle/launcher.cpp', 'tools/native-bundle/zstd_decoder.cpp']
-SOURCES = ['chess.cpp', 'context.cpp', 'search.cpp', 'uci_native.cpp', 'utility.cpp', 'tbprobe.cpp', 'main_native.cpp', 'nnue/model.cpp']
-INCLUDES = ['.', 'libpopcnt', 'magic-bits/include', 'nnue/version2', 'Fathom/src']
+LAUNCHER_SOURCES = [
+    'tools/native-bundle/launcher.cpp',
+    'tools/native-bundle/zstd_decoder.cpp',
+]
+SOURCES = [
+    'chess.cpp',
+    'context.cpp',
+    'search.cpp',
+    'uci_native.cpp',
+    'utility.cpp',
+    'tbprobe.cpp',
+    'main_native.cpp',
+    'nnue/model.cpp',
+]
+INCLUDES = [
+    '.',
+    'libpopcnt',
+    'magic-bits/include',
+    'nnue/version2',
+    'Fathom/src',
+]
 # Windows only, same icon and manifest as tools/build.py
 RESOURCES = ['sturddle.rc']
 MANIFEST = 'manifest.xml'
-DEFINES = ['NATIVE_BUILD=1', 'NATIVE_UCI=1', 'NATIVE_BOOK=1', 'CALLBACK_PERIOD=8192', 'NO_ASSERT']
+DEFINES = [
+    'NATIVE_BUILD=1',
+    'NATIVE_UCI=1',
+    'NATIVE_BOOK=1',
+    'CALLBACK_PERIOD=8192',
+    'NO_ASSERT',
+]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -47,8 +83,13 @@ import fetch_weights
 OUT_DIR = REPO_ROOT / 'dist' / 'native'
 PGO_DIR = REPO_ROOT / 'pgo'
 PGN_DIR = REPO_ROOT / 'test' / 'runs'
-# opening, middlegame, endgame
-PHASE_PLIES = [(0, 30), (30, 80), (80, 1000)]
+
+# For profiling: opening, middlegame, endgame
+PHASE_PLIES = [
+    (0, 30),
+    (30, 80),
+    (80, 1000),
+]
 MAX_MISMATCH = 0.1
 
 
@@ -64,10 +105,13 @@ MSVC_WARNINGS = [
     '/wd4068',  # unknown pragma
 ]
 
+# MSVC never defines __BMI2__, so there is no PEXT; missing archs need clang-cl
 MSVC_ARCH_FLAGS = {
-    '-march=corei7-avx': '/arch:AVX',
-    '-march=core-avx2': '/arch:AVX2',
-    '-march=skylake-avx512': '/arch:AVX512',
+    'native':  ['-DUSE_MAGIC_BITS'],
+    'generic': ['-DUSE_MAGIC_BITS'],
+    'AVX':     ['-DUSE_MAGIC_BITS', '/arch:AVX'],
+    'AVX2':    ['-DUSE_MAGIC_BITS', '/arch:AVX2'],
+    'AVX512':  ['-DUSE_MAGIC_BITS', '/arch:AVX512'],
 }
 
 
@@ -120,179 +164,221 @@ def find_tool(names, dirs):
     sys.exit(f'ERROR: {" or ".join(names)} not found')
 
 
-def msvc_arch_flags(arch_flags):
-    if not arch_flags:
-        return []  # the launcher
-    # MSVC never defines __BMI2__, so there is no PEXT
-    flags = ['-DUSE_MAGIC_BITS']
-    for flag in arch_flags:
-        if flag.startswith('-march=') and flag != '-march=native':
-            if flag not in MSVC_ARCH_FLAGS:
-                print(f'WARNING: {flag} needs clang-cl, skipping')
-                sys.exit(0)
-            flags.append(MSVC_ARCH_FLAGS[flag])
-    return flags
+class Build:
+    def __init__(self, exe, sources, cxxflags, define_args):
+        self.exe = exe
+        self.sources = sources
+        self.cxxflags = cxxflags + shlex.split(os.environ.get('CXXFLAGS', ''))
+        self.define_args = define_args
+        self.include_args = [f'-I{d}' for d in INCLUDES]
 
-
-def build_windows(out_dir, name, arch_flags, sources, define_args, pgo=None):
-    vs_dir = find_visual_studio()
-    init_msvc_env(vs_dir)
-
-    llvm_dirs = [Path(os.environ.get('ProgramFiles', r'C:\Program Files')) / 'LLVM/bin']
-    if vs_dir:
-        llvm_dirs.append(vs_dir / 'VC/Tools/Llvm/x64/bin')
-    names = [os.environ['CL_EXE']] if os.environ.get('CL_EXE') else ['clang-cl', 'cl']
-    cl_exe = find_tool(names, [os.environ['PATH'], *llvm_dirs])
-    is_clang = cl_exe.stem.lower() == 'clang-cl'
-    rc_exe = find_tool(['llvm-rc' if is_clang else 'rc'], [cl_exe.parent, os.environ['PATH']])
-
-    exe = out_dir / f'{name}.exe'
-
-    cxxflags = ['/nologo', '/std:c++latest', '/EHsc', '/fp:fast', '/O2', '/MT']
-    if is_clang:
-        cxxflags += arch_flags + [
-            '-O3', '-Ofast', '-Werror', '-Wmissing-field-initializers',
-            '-Wno-deprecated-declarations', '-Wno-unused-command-line-argument',
-            '-Wno-unused-label', '-Wno-unused-variable', '-Wno-nan-infinity-disabled',
-        ]
-    else:
-        cxxflags += msvc_arch_flags(arch_flags) + MSVC_WARNINGS
-        # MSVC has no native target
-        define_args = ['-DBUILD_FLAVOR=generic' if d == '-DBUILD_FLAVOR=native' else d for d in define_args]
-    cxxflags += ['/D_FORTIFY_SOURCE=0', '/GS-'] + shlex.split(os.environ.get('CXXFLAGS', ''))
-    include_args = [f'-I{d}' for d in INCLUDES]
-
-    # returns the output of each compile step, then the link output
-    def compile_link(exe, compile_flags=(), link_flags=()):
+    def make(self, exe, compile_flags=(), link_flags=()):
         with tempfile.TemporaryDirectory(prefix='sturddle-native-') as tmp:
-            tmp_dir = Path(tmp)
+            obj_dir = Path(tmp)
 
             def compile_one(src):
-                if src.endswith('.rc'):
-                    obj = tmp_dir / (Path(src).stem + '.res')
-                    cmd = [str(rc_exe), '/FO', str(obj), src]
-                else:
-                    obj = tmp_dir / (Path(src).stem + '.obj')
-                    cmd = [str(cl_exe), '/c', *cxxflags, *compile_flags, *define_args, *include_args, src, f'/Fo{obj}']
-                return obj, run_step(cmd, f'compile {src}')
+                obj = obj_dir / (Path(src).stem + self.obj_suffix(src))
+                return obj, run_step(self.compile_cmd(src, obj, compile_flags), f'compile {src}')
 
             with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
-                objs, outputs = zip(*pool.map(compile_one, sources + RESOURCES))
+                objs, outputs = zip(*pool.map(compile_one, self.sources))
 
-            ltcg = [] if any(flag.upper().startswith('/LTCG') for flag in link_flags) else ['/LTCG:OFF']
-            link_cmd = [str(cl_exe), *map(str, objs), *compile_flags] + [
-                f'/Fe{exe}',
-                '/link', '/SUBSYSTEM:CONSOLE', *ltcg, '/STACK:33554432',
-                '/MANIFEST:EMBED', f'/MANIFESTINPUT:{REPO_ROOT / MANIFEST}', *link_flags,
-            ]
-            return [*outputs, run_step(link_cmd, f'link {exe.name}')]
+            return [*outputs, run_step(self.link_cmd(exe, objs, compile_flags, link_flags), f'link {exe.name}')]
 
-    if pgo and not is_clang:
-        print('WARNING: --pgo needs clang-cl, building without PGO')
-        pgo = None
+    def compile_args(self, src, compile_flags):
+        return [*self.cxxflags, *compile_flags, *self.define_args, *self.include_args, src]
 
-    if pgo:
-        # BUILD_STAMP changes daily
-        flags = cxxflags + [d for d in define_args if not d.startswith('-DBUILD_STAMP=')]
-        pgo.build(exe, compile_link, ClangPgo(cl_exe), flags)
-    else:
-        compile_link(exe)
+    def run(self, pgo=None):
+        toolchain = self.pgo_toolchain() if pgo else None
+        if pgo and not toolchain:
+            print(f'WARNING: {self.no_pgo}, building without PGO')
 
-    return exe
+        if toolchain:
+            # BUILD_STAMP changes daily
+            flags = self.cxxflags + [d for d in self.define_args if not d.startswith('-DBUILD_STAMP=')]
+            pgo.build(self.exe, self.make, toolchain, flags)
+        else:
+            self.make(self.exe)
+
+        return self.exe
 
 
-def build_linux(out_dir, name, arch_flags, sources, define_args, pgo=None):
-    if pgo:
-        print('WARNING: --pgo is Windows only for now, building without PGO')
+class WindowsBuild(Build):
+    no_pgo = '--pgo needs clang-cl' # TODO: add MSVC support
 
-    cxx = os.environ.get('CXX')
-    if not cxx:
-        sys.exit('ERROR: set CXX (e.g. CXX=clang++-20) before invoking this script.')
+    def __init__(self, out_dir, name, arch, sources, define_args):
+        vs_dir = find_visual_studio()
+        init_msvc_env(vs_dir)
 
-    cxx_ver = subprocess.check_output([cxx, '--version'], text=True)
-    m = re.search(r'(\d+)\.\d+\.\d+', cxx_ver)
-    if not m:
-        sys.exit(f'ERROR: cannot parse {cxx} version from:\n{cxx_ver}')
-    cc_ver = int(m.group(1))
-    is_clang = 'clang' in Path(cxx).name
-    triplet = subprocess.check_output([cxx, '-dumpmachine'], text=True).strip()
+        llvm_dirs = [Path(os.environ.get('ProgramFiles', r'C:\Program Files')) / 'LLVM/bin']
+        if vs_dir:
+            llvm_dirs.append(vs_dir / 'VC/Tools/Llvm/x64/bin')
+        names = [os.environ['CL_EXE']] if os.environ.get('CL_EXE') else ['clang-cl', 'cl']
+        self.cl_exe = find_tool(names, [os.environ['PATH'], *llvm_dirs])
+        self.is_clang = self.cl_exe.stem.lower() == 'clang-cl'
+        self.rc_exe = find_tool(['llvm-rc' if self.is_clang else 'rc'], [self.cl_exe.parent, os.environ['PATH']])
 
-    if is_clang and cc_ver < 18:
-        sys.exit(f'ERROR: {cxx} v{cc_ver}. clang >= 18 required.')
-    if (not is_clang) and cc_ver < 14:
-        sys.exit(f'ERROR: {cxx} v{cc_ver}. gcc >= 14 required.')
-
-    exe = out_dir / name
-
-    cxxflags = ['-std=c++23', '-O3', '-ffast-math'] + arch_flags + [
-        '-Wextra', '-Werror',
-        '-Wno-unused-label', '-Wno-unknown-pragmas',
-        '-Wno-unused-parameter', '-Wno-unused-variable',
-        '-Wno-empty-body', '-Wno-int-in-bool-context',
-        '-fno-stack-protector', '-D_FORTIFY_SOURCE=0',
-    ]
-    if is_clang:
-        cxxflags += [
-            '-Wno-macro-redefined', '-Wno-deprecated-declarations',
-            '-Wno-nan-infinity-disabled',
-            '-stdlib=libc++', '-fexperimental-library',
+        cxxflags = [
+            '/nologo',
+            '/std:c++latest',
+            '/EHsc',
+            '/fp:fast',
+            '/O2',
+            '/MT',
         ]
-    cxxflags += shlex.split(os.environ.get('CXXFLAGS', ''))
+        if self.is_clang:
+            cxxflags += ARCH_FLAGS.get(arch, []) + [
+                '-O3',
+                '-Ofast',
+                '-Werror',
+                '-Wmissing-field-initializers',
+                '-Wno-deprecated-declarations',
+                '-Wno-unused-command-line-argument',
+                '-Wno-unused-label',
+                '-Wno-unused-variable',
+                '-Wno-nan-infinity-disabled',
+            ]
+        else:
+            if arch and arch not in MSVC_ARCH_FLAGS:
+                print(f'WARNING: {arch} needs clang-cl, skipping')
+                sys.exit(0)
+            cxxflags += MSVC_ARCH_FLAGS.get(arch, []) + MSVC_WARNINGS
+            # MSVC has no native target
+            define_args = ['-DBUILD_FLAVOR=generic' if d == '-DBUILD_FLAVOR=native' else d for d in define_args]
+        cxxflags += ['/D_FORTIFY_SOURCE=0', '/GS-']
 
-    include_args = [f'-I{d}' for d in INCLUDES]
-    if triplet.startswith(('aarch64', 'arm')):
-        include_args.append('-Innue/simde')
+        super().__init__(out_dir / f'{name}.exe', sources + RESOURCES, cxxflags, define_args)
 
-    with tempfile.TemporaryDirectory(prefix='sturddle-native-') as tmp:
-        tmp_dir = Path(tmp)
+    def obj_suffix(self, src):
+        return '.res' if src.endswith('.rc') else '.obj'
 
-        def compile_one(src):
-            obj = tmp_dir / (Path(src).stem + '.o')
-            cmd = [cxx, '-c'] + cxxflags + define_args + include_args + [src, '-o', str(obj)]
-            print(' '.join(cmd))
-            rc = subprocess.call(cmd, cwd=REPO_ROOT)
-            if rc != 0:
-                raise RuntimeError(f'compile failed: {src} (rc={rc})')
-            return obj
+    def compile_cmd(self, src, obj, compile_flags):
+        if src.endswith('.rc'):
+            return [str(self.rc_exe), '/FO', str(obj), src]
+        return [str(self.cl_exe), '/c', *self.compile_args(src, compile_flags), f'/Fo{obj}']
 
-        with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
-            objs = list(pool.map(compile_one, sources))
+    def link_cmd(self, exe, objs, compile_flags, link_flags):
+        ltcg = [] if any(flag.upper().startswith('/LTCG') for flag in link_flags) else ['/LTCG:OFF']
+        return [str(self.cl_exe), *map(str, objs), *compile_flags] + [
+            f'/Fe{exe}',
+            '/link',
+            '/SUBSYSTEM:CONSOLE',
+            *ltcg,
+            '/STACK:33554432',
+            '/MANIFEST:EMBED',
+            f'/MANIFESTINPUT:{REPO_ROOT / MANIFEST}',
+            *link_flags,
+        ]
 
-        link_cmd = [cxx] + [str(o) for o in objs] + ['-o', str(exe), '-lpthread']
+    def pgo_toolchain(self):
+        return ClangPgo(['llvm-profdata'], [self.cl_exe.parent, os.environ['PATH']]) if self.is_clang else None
+
+
+class LinuxBuild(Build):
+    no_pgo = '--pgo needs clang++' # TODO: add gcc support
+
+    def __init__(self, out_dir, name, arch, sources, define_args):
+        cxx = os.environ.get('CXX')
+        if not cxx:
+            sys.exit('ERROR: set CXX (e.g. CXX=clang++-20) before invoking this script.')
+
+        cxx_ver = subprocess.check_output([cxx, '--version'], text=True)
+        m = re.search(r'(\d+)\.\d+\.\d+', cxx_ver)
+        if not m:
+            sys.exit(f'ERROR: cannot parse {cxx} version from:\n{cxx_ver}')
+        cc_ver = int(m.group(1))
+        is_clang = 'clang' in Path(cxx).name
+        triplet = subprocess.check_output([cxx, '-dumpmachine'], text=True).strip()
+
+        if is_clang and cc_ver < 18:
+            sys.exit(f'ERROR: {cxx} v{cc_ver}. clang >= 18 required.')
+        if (not is_clang) and cc_ver < 14:
+            sys.exit(f'ERROR: {cxx} v{cc_ver}. gcc >= 14 required.')
+
+        cxxflags = [
+            '-std=c++23',
+            '-O3',
+            '-ffast-math',
+        ]
+        cxxflags += ARCH_FLAGS.get(arch, []) + [
+            '-Wextra',
+            '-Werror',
+            '-Wno-unused-label',
+            '-Wno-unknown-pragmas',
+            '-Wno-unused-parameter',
+            '-Wno-unused-variable',
+            '-Wno-empty-body',
+            '-Wno-int-in-bool-context',
+            '-fno-stack-protector',
+            '-D_FORTIFY_SOURCE=0',
+        ]
         if is_clang:
-            link_cmd += [
+            cxxflags += [
+                '-Wno-macro-redefined',
+                '-Wno-deprecated-declarations',
+                '-Wno-nan-infinity-disabled',
+                '-stdlib=libc++',
+                '-fexperimental-library',
+            ]
+        self.link_flags = ['-lpthread']
+        if is_clang:
+            self.link_flags += [
                 '-fuse-ld=lld',
                 f'-L/usr/lib/llvm-{cc_ver}/lib/',
                 f'-L/usr/lib/llvm-{cc_ver}/lib/{triplet}',
                 '-L/usr/local/opt/llvm/lib/c++',
                 # most distros do not ship libc++
-                '-stdlib=libc++', '-nostdlib++',
-                '-Wl,-Bstatic', '-lc++experimental', '-lc++', '-lc++abi', '-Wl,-Bdynamic',
+                '-stdlib=libc++',
+                '-nostdlib++',
+                '-Wl,-Bstatic',
+                '-lc++experimental',
+                '-lc++',
+                '-lc++abi',
+                '-Wl,-Bdynamic',
             ]
-        print(' '.join(link_cmd))
-        rc = subprocess.call(link_cmd, cwd=REPO_ROOT)
-        if rc != 0:
-            sys.exit(rc)
+        self.cxx = cxx
+        self.cc_ver = cc_ver
+        self.is_clang = is_clang
 
-    return exe
+        super().__init__(out_dir / name, sources, cxxflags, define_args)
+        if triplet.startswith(('aarch64', 'arm')):
+            self.include_args.append('-Innue/simde')
+
+    def obj_suffix(self, src):
+        return '.o'
+
+    def compile_cmd(self, src, obj, compile_flags):
+        return [self.cxx, '-c', *self.compile_args(src, compile_flags), '-o', str(obj)]
+
+    def link_cmd(self, exe, objs, compile_flags, link_flags):
+        return [self.cxx, *map(str, objs), *compile_flags, '-o', str(exe), *self.link_flags, *link_flags]
+
+    def pgo_toolchain(self):
+        if not self.is_clang:
+            return None
+        return ClangPgo([f'llvm-profdata-{self.cc_ver}', 'llvm-profdata'], [f'/usr/lib/llvm-{self.cc_ver}/bin', os.environ['PATH']])
 
 
-def sample_positions(count):
+def sample_positions(pgn_dir, count):
+    """
+    Positions to search while profiling for PGO.
+    Random non-book positions from the games in pgn_dir, rotating through game phases.
+    """
     import chess.pgn
 
     games = []
-    for path in sorted(PGN_DIR.rglob('*.pgn')):
+    for path in sorted(pgn_dir.rglob('*.pgn')):
         data = path.read_bytes()
         starts = [m.start() for m in re.finditer(rb'^\[Event ', data, re.M)]
         games += [(path, start, end) for start, end in zip(starts, starts[1:] + [len(data)])]
     if not games:
-        sys.exit(f'ERROR: no games in {PGN_DIR}')
+        sys.exit(f'ERROR: no games in {pgn_dir}')
 
     rng = random.Random(0)
     positions = []
-    for _ in range(count * 100):
-        if len(positions) == count:
-            break
+    attempts = count * 100
+    while len(positions) < count and attempts:
+        attempts -= 1
         path, start, end = rng.choice(games)
         with open(path, 'rb') as f:
             f.seek(start)
@@ -308,7 +394,7 @@ def sample_positions(count):
         if searched:
             positions.append(rng.choice(searched))
     if len(positions) < count:
-        sys.exit(f'ERROR: not enough positions in {PGN_DIR}')
+        sys.exit(f'ERROR: not enough positions in {pgn_dir}')
     return positions
 
 
@@ -343,20 +429,13 @@ def run_workload(engine, positions, depth):
         sys.exit(f'ERROR: {engine.name} failed (rc={rc})')
 
 
-# missing or corrupt reads as None
-def read_json(path):
-    try:
-        return json.loads(path.read_text())
-    except (OSError, ValueError):
-        return None
-
-
 class ClangPgo:
     suffix = '.profdata'
     mismatch_warning = re.compile(r'of (\d+) functions?, (\d+) ha(?:s|ve) mismatched data')
 
-    def __init__(self, compiler):
-        self.compiler = compiler
+    def __init__(self, profdata_names, profdata_dirs):
+        self.profdata_names = profdata_names
+        self.profdata_dirs = profdata_dirs
 
     def instrument(self, raw_dir):
         return [f'-fprofile-instr-generate={raw_dir / "sturddle.profraw"}'], []
@@ -365,7 +444,7 @@ class ClangPgo:
         return [f'-fprofile-instr-use={profile}', '-Wno-error=profile-instr-out-of-date'], []
 
     def merge(self, raw_dir, profile):
-        profdata = find_tool(['llvm-profdata'], [self.compiler.parent, os.environ['PATH']])
+        profdata = find_tool(self.profdata_names, self.profdata_dirs)
         subprocess.check_call([profdata, 'merge', '-o', profile, *raw_dir.glob('*.profraw')])
 
     def unusable(self, output):
@@ -382,20 +461,26 @@ class Pgo:
         self.arch = args.arch
         self.positions = args.pgo_positions
         self.depth = args.pgo_depth
+        self.games = args.pgo_games.resolve()
         self.name = f'{sys.platform}-{args.arch}' + ('-embed' if args.embed else '')
         self.pgo_dir = args.pgo_dir.resolve()
         self.launcher_exe = args.launcher_exe
         self.build_launcher = build_launcher
 
-    def build(self, exe, compile_link, toolchain, flags):
+    def build(self, exe, make, toolchain, flags):
         profile = self.pgo_dir / (self.name + toolchain.suffix)
         meta_path = Path(f'{profile}.json')
         meta = {'flags': flags}
         built = False
 
-        if profile.exists() and read_json(meta_path) == meta:
+        try:
+            matches = profile.exists() and json.loads(meta_path.read_text()) == meta
+        except (OSError, ValueError):
+            matches = False
+
+        if matches:
             try:
-                outputs = compile_link(exe, *toolchain.use(profile))
+                outputs = make(exe, *toolchain.use(profile))
             except BuildError as e:
                 if not toolchain.unusable(e.output):
                     raise
@@ -412,13 +497,13 @@ class Pgo:
         if not self.can_profile():
             print(f'WARNING: {reason}, cannot profile {self.arch} on this CPU')
             if not built:
-                compile_link(exe)
+                make(exe)
             return
 
         print(f'{reason}, profiling {self.arch}')
-        self.collect(exe.name, compile_link, toolchain, profile)
+        self.collect(exe.name, make, toolchain, profile)
         meta_path.write_text(json.dumps(meta, indent=2))
-        compile_link(exe, *toolchain.use(profile))
+        make(exe, *toolchain.use(profile))
 
     def can_profile(self):
         if self.arch == 'native':
@@ -431,14 +516,14 @@ class Pgo:
     def supported_by(self, launcher):
         return self.arch in subprocess.check_output([launcher, '--flavors'], text=True).split()
 
-    def collect(self, name, compile_link, toolchain, profile):
+    def collect(self, name, make, toolchain, profile):
         with tempfile.TemporaryDirectory(prefix='sturddle-pgo-') as tmp:
             engine = Path(tmp) / name
             raw_dir = Path(tmp) / 'raw'
             raw_dir.mkdir()
-            compile_link(engine, *toolchain.instrument(raw_dir))
+            make(engine, *toolchain.instrument(raw_dir))
             shutil.copy(REPO_ROOT / 'weights.bin', tmp)
-            run_workload(engine, sample_positions(self.positions), self.depth)
+            run_workload(engine, sample_positions(self.games, self.positions), self.depth)
             profile.parent.mkdir(parents=True, exist_ok=True)
             toolchain.merge(raw_dir, profile)
 
@@ -456,9 +541,10 @@ def main():
     parser.add_argument('--launcher', action='store_true', help='Build the launcher instead of the engine.')
     parser.add_argument('--out-dir', type=Path, default=OUT_DIR, help='Output directory (default: dist/native).')
     parser.add_argument('--no-digest', action='store_true', help='Skip writing the -sha256.txt digest.')
-    parser.add_argument('--pgo', action='store_true', help='Profile-guided optimization (clang-cl only).')
+    parser.add_argument('--pgo', action='store_true', help='Profile-guided optimization (clang-cl and clang++ only).')
     parser.add_argument('--pgo-dir', type=Path, default=PGO_DIR, help='Profile directory (default: pgo).')
     parser.add_argument('--pgo-positions', type=int, default=100, help='Positions to profile (default: 100).')
+    parser.add_argument('--pgo-games', type=Path, default=PGN_DIR, help='Directory of PGN games to sample --pgo positions from (default: test/runs).')
     parser.add_argument('--pgo-depth', type=int, default=20, help='Search depth per position (default: 20).')
     parser.add_argument('--launcher-exe', type=Path, help='Launcher used by --pgo to check CPU support (default: build one).')
     args = parser.parse_args()
@@ -471,15 +557,15 @@ def main():
     build_stamp = datetime.now().strftime('%m%d%y')
 
     if sys.platform.startswith('win'):
-        build = build_windows
+        build = WindowsBuild
     elif sys.platform.startswith('linux'):
-        build = build_linux
+        build = LinuxBuild
     else:
         sys.exit(f'Unsupported platform: {sys.platform}')
 
     # no -march, must run on any CPU
     def build_launcher(launcher_dir):
-        return build(launcher_dir, f'sturddle-{version}-launcher', [], LAUNCHER_SOURCES, ['-DNATIVE_BUILD=1', '-DNO_ASSERT'])
+        return build(launcher_dir, f'sturddle-{version}-launcher', None, LAUNCHER_SOURCES, ['-DNATIVE_BUILD=1', '-DNO_ASSERT']).run()
 
     if args.launcher:
         exe = build_launcher(out_dir)
@@ -492,7 +578,7 @@ def main():
         define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}', f'-DBUILD_FLAVOR={args.arch}']
 
         pgo = Pgo(args, build_launcher) if args.pgo else None
-        exe = build(out_dir, f'sturddle-{version}{ARCH_SUFFIX[args.arch]}', ARCH_FLAGS[args.arch], SOURCES, define_args, pgo)
+        exe = build(out_dir, f'sturddle-{version}{ARCH_SUFFIX[args.arch]}', args.arch, SOURCES, define_args).run(pgo)
 
         assets = ('book.bin',) if embed else ('weights.bin', 'book.bin')
         for asset in assets:
