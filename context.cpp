@@ -459,6 +459,7 @@ namespace search
     atomic_time Context::_time_start;
     size_t Context::_callback_count(0);
     HistoryPtr Context::_history; /* moves played so far */
+    int Context::_prev_depth(0);
     std::vector<Context::ContextStack> Context::_context_stacks(SMP_CORES);
     std::vector<Context::MoveStack> Context::_move_stacks(SMP_CORES);
     std::vector<Context::StateStack> Context::_state_stacks(SMP_CORES);
@@ -1379,7 +1380,17 @@ namespace search
             reduction += !_parent->has_improved<THEM>();
             reduction -= 2 * _parent->is_counter_move(_move);
 
-            if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= 13)
+            /*
+             * Root score is stable (aspiration window never widened) and the search
+             * is deep enough: reduce non-tactical moves one more ply. With LMR_STABLE_AUTO,
+             * "deep enough" tracks the depth reached on the prev move, never below
+             * LMR_STABLE_MIN_ITER.
+             */
+            const int stable_min_iter = LMR_STABLE_AUTO
+                ? std::max<int>(_prev_depth - LMR_STABLE_LAST_ITERS, LMR_STABLE_MIN_ITER)
+                : LMR_STABLE_MIN_ITER;
+
+            if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= stable_min_iter)
                 ++reduction;
         }
 

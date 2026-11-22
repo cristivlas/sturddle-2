@@ -112,6 +112,9 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 /* Scale LMR divisor by time pressure; fixed divisor of 2 otherwise */
 #define LMR_TIME_SCALING                    false
 
+/* Start the stable-window LMR bump a few iterations below prev depth */
+#define LMR_STABLE_AUTO                     true
+
 #define MTDF_CSTAR_BISECT                   true
 
 #define MTDF_REORDER_MOVES                  true

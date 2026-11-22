@@ -341,6 +341,9 @@ DECLARE_VALUE(  LMR_RUSH_START_PCT,                  20,    0,     100)
 DECLARE_VALUE(  LMR_RUSH_FULL_PCT,                   50,    0,     100)
 #endif /* LMR_TIME_SCALING */
 
+DECLARE_VALUE(  LMR_STABLE_MIN_ITER,                 13,    1,      64)
+DECLARE_VALUE(  LMR_STABLE_LAST_ITERS,                4,    1,      16)
+
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
 
 #if IMPROVING_PRUNING
@@ -393,6 +396,7 @@ DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    1,      10)
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 DECLARE_VALUE(  STANDPAT_MARGIN,                    116,    0,     230)
+DECLARE_VALUE(  TT_AGE_WEIGHT,                        8,    0,      32)
 DECLARE_VALUE(  TT_OVERWRITE_MARGIN,                  3,    0,       8)
 
 /* Aspiration window */
