@@ -1322,7 +1322,8 @@ namespace search
     /* Reduce more when an iteration starts late, or when there is no time limit. */
     static INLINE float lmr_divisor()
     {
-        const auto limit = Context::time_limit();
+        /* with adaptive time management, time_limit() is the hard limit; ramp on the target instead */
+        const auto limit = Context::time_optimum() > 0 ? Context::time_optimum() : Context::time_limit();
         if (limit <= 0)
             return LMR_DIVISOR_RUSHED_PCT / 100.0f;
 
