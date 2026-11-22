@@ -75,6 +75,9 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define ADAPTIVE_NULL_MOVE                  true
 
+/* Soft time limit scaled by best move stability, hard limit as a safety net */
+#define ADAPTIVE_TIME_MANAGEMENT            true
+
 /* Reduce deep non-PV nodes by one ply */
 #define BLANKET_REDUCTION                   false
 
@@ -110,10 +113,12 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define KILLER_MOVE_HEURISTIC               true
 
 /* Scale LMR divisor by time pressure; fixed divisor of 2 otherwise */
-#define LMR_TIME_SCALING                    true
+/* TODO: consider removing, with adaptive TM it just halves LMR */
+#define LMR_TIME_SCALING                    false
 
 /* Start the stable-window LMR bump a few iterations below prev depth */
-#define LMR_STABLE_AUTO                     true
+/* TODO: consider removing, barely changes anything */
+#define LMR_STABLE_AUTO                     false
 
 #define MTDF_CSTAR_BISECT                   true
 
