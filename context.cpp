@@ -87,7 +87,7 @@ static void setup_crash_handler()
  */
 static struct LMR
 {
-    float _table[PLY_MAX][64] = {}; /* log(depth) * log(moves), scaled by lmr_divisor() at lookup */
+    int _table[PLY_MAX][64] = {};
 
     LMR()
     {
@@ -95,7 +95,7 @@ static struct LMR
         {
             for (int moves = 1; moves < 64; ++moves)
             {
-                _table[depth][moves] = log(depth) * log(moves);
+                _table[depth][moves] = 0.5 + log(depth) * log(moves) / 2;
             }
         }
     }
@@ -460,7 +460,6 @@ namespace search
     atomic_time Context::_time_start;
     size_t Context::_callback_count(0);
     HistoryPtr Context::_history; /* moves played so far */
-    int Context::_prev_depth(0);
     std::vector<Context::ContextStack> Context::_context_stacks(SMP_CORES);
     std::vector<Context::MoveStack> Context::_move_stacks(SMP_CORES);
     std::vector<Context::StateStack> Context::_state_stacks(SMP_CORES);
@@ -1319,23 +1318,6 @@ namespace search
     }
 
 
-#if LMR_TIME_SCALING
-    /* Reduce more when an iteration starts late, or when there is no time limit. */
-    static INLINE float lmr_divisor()
-    {
-        /* with adaptive time management, time_limit() is the hard limit; ramp on the target instead */
-        const auto limit = Context::time_optimum() > 0 ? Context::time_optimum() : Context::time_limit();
-        if (limit <= 0)
-            return LMR_DIVISOR_RUSHED_PCT / 100.0f;
-
-        const auto elapsed_pct = 100.0f * Context::elapsed_milliseconds() / limit;
-        const auto span = std::max<int>(1, LMR_RUSH_FULL_PCT - LMR_RUSH_START_PCT);
-        const auto t = std::clamp((elapsed_pct - LMR_RUSH_START_PCT) / span, 0.0f, 1.0f);
-        return (LMR_DIVISOR_CALM_PCT + t * (LMR_DIVISOR_RUSHED_PCT - LMR_DIVISOR_CALM_PCT)) / 100.0f;
-    }
-#endif /* LMR_TIME_SCALING */
-
-
     /*
      * Late move reduction and pruning.
      * https://www.chessprogramming.org/Late_Move_Reductions
@@ -1358,20 +1340,8 @@ namespace search
 
         count += _tt->_pass / 4;
 
-    #if LMR_TIME_SCALING
-        /* LMR divisor changes once per root iteration */
-        if (_tt->_lmr_iteration != iteration())
-        {
-            _tt->_lmr_iteration = iteration();
-            _tt->_lmr_scale = 1.0f / lmr_divisor();
-        }
-        const auto lmr_scale = _tt->_lmr_scale;
-    #else
-        constexpr float lmr_scale = 0.5f;
-    #endif /* LMR_TIME_SCALING */
-
         /* Lookup reduction in the Late Move Reduction table. */
-        int reduction = 0.5f + LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)] * lmr_scale;
+        int reduction = LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)];
 
     #if !BLANKET_REDUCTION
         reduction += _parent->_cut_node && !_parent->is_pv_node();
@@ -1384,15 +1354,9 @@ namespace search
 
             /*
              * Root score is stable (aspiration window never widened) and the search
-             * is deep enough: reduce non-tactical moves one more ply. With LMR_STABLE_AUTO,
-             * "deep enough" tracks the depth reached on the prev move, never below
-             * LMR_STABLE_MIN_ITER.
+             * is deep enough: reduce non-tactical moves one more ply.
              */
-            const int stable_min_iter = LMR_STABLE_AUTO
-                ? std::max<int>(_prev_depth - LMR_STABLE_LAST_ITERS, LMR_STABLE_MIN_ITER)
-                : LMR_STABLE_MIN_ITER;
-
-            if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= stable_min_iter)
+            if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= LMR_STABLE_MIN_ITER)
                 ++reduction;
         }
 

@@ -554,9 +554,6 @@ namespace search
         static size_t       (*_vmem_avail)();
 
         static HistoryPtr   _history;
-        static int          _prev_depth; /* depth of the prev search */
-
-        static INLINE void set_prev_depth(int depth) { if constexpr (LMR_STABLE_AUTO) _prev_depth = depth; }
 
         /* "go searchmoves" filter, populated by the UCI front-end before each
          * search starts and read-only thereafter. Empty means no restriction.

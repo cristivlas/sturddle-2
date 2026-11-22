@@ -112,14 +112,6 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define KILLER_MOVE_HEURISTIC               true
 
-/* Scale LMR divisor by time pressure; fixed divisor of 2 otherwise */
-/* TODO: consider removing, with adaptive TM it just halves LMR */
-#define LMR_TIME_SCALING                    false
-
-/* Start the stable-window LMR bump a few iterations below prev depth */
-/* TODO: consider removing, barely changes anything */
-#define LMR_STABLE_AUTO                     false
-
 #define MTDF_CSTAR_BISECT                   true
 
 #define MTDF_REORDER_MOVES                  true

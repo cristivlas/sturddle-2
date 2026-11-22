@@ -101,8 +101,6 @@ TranspositionTable::TranspositionTable(const TranspositionTable& other)
     , _tid(other._tid)
     , _iteration(other._iteration)
     , _eval_depth(other._eval_depth)
-    , _lmr_iteration(other._lmr_iteration)
-    , _lmr_scale(other._lmr_scale)
     , _ply_history(other._ply_history)
     , _w_alpha(other._w_alpha)
     , _w_beta(other._w_beta)
@@ -135,8 +133,6 @@ void TranspositionTable::swap(TranspositionTable& other) noexcept
     swap(_tid, other._tid);
     swap(_iteration, other._iteration);
     swap(_eval_depth, other._eval_depth);
-    swap(_lmr_iteration, other._lmr_iteration);
-    swap(_lmr_scale, other._lmr_scale);
     swap(_ply_history, other._ply_history);
     swap(_w_alpha, other._w_alpha);
     swap(_w_beta, other._w_beta);
@@ -194,7 +190,6 @@ void TranspositionTable::clear()
 {
     _iteration = 0;
     _eval_depth = 0;
-    _lmr_iteration = -1;
 
     /* Clear aspiration window */
     _w_alpha = SCORE_MIN;
@@ -248,7 +243,6 @@ void TranspositionTable::init(bool new_game)
 
         _killer_moves.fill({});
         _ply_history.fill({});
-        Context::set_prev_depth(0);
     #if CORRECTION_HISTORY
         _pawn_correction[BLACK].fill(0);
         _pawn_correction[WHITE].fill(0);
@@ -1486,7 +1480,6 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
         root_lines.reserve(max_lines);
 
     bool exhausted = false; /* found fewer root moves than max_lines */
-    int completed = 0; /* last completed iteration */
     TimeKeeper time_keeper;
 
     for (int i = 1; i != max_iter_count;)
@@ -1656,17 +1649,12 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
         if (singleton && !table._analysis)
             break;
 
-        completed = i;
-
         if (time_keeper.should_stop(ctxt._best_move, score))
             break;
 
         if (i++ == 1)
             ctxt.update_root_accumulators();
     }
-
-    if (completed)
-        Context::set_prev_depth(completed);
 
     return root_lines[0]._score;
 }
