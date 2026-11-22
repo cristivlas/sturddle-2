@@ -318,6 +318,14 @@ DECLARE_CONST(  MULTICUT,                             1,    0,       1)
 DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              36,   20,     100)
 DECLARE_PARAM(  MaxTimeMargin,                       50,    0,     100)
 DECLARE_PARAM(  MinTimeMargin,                       15,    0,     100)
+DECLARE_VALUE(  TM_FALL_CP,                          30,    0,     200)
+DECLARE_VALUE(  TM_FALL_PCT,                        130,  100,     300)
+DECLARE_VALUE(  TM_HARD_PCT,                        200,  100,     500)
+DECLARE_VALUE(  TM_NEW_ITER_PCT,                     50,   10,     100)
+DECLARE_VALUE(  TM_STABLE_ITERS,                      4,    1,      10)
+DECLARE_VALUE(  TM_STABLE_PCT,                       60,   20,     100)
+DECLARE_VALUE(  TM_TARGET_PCT,                      180,  100,     300)
+DECLARE_VALUE(  TM_UNSTABLE_PCT,                    140,  100,     300)
 
 GROUP(Search)
 
@@ -393,6 +401,7 @@ DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    1,      10)
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 DECLARE_VALUE(  STANDPAT_MARGIN,                    116,    0,     230)
+DECLARE_VALUE(  TT_AGE_WEIGHT,                        8,    0,      32)
 DECLARE_VALUE(  TT_OVERWRITE_MARGIN,                  3,    0,       8)
 
 /* Aspiration window */

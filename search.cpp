@@ -1433,6 +1433,42 @@ static void sort_by_score(std::vector<RootLine>::iterator first, std::vector<Roo
 
 
 /*
+ * Adaptive time management. The target is the usual per-move budget scaled up,
+ * and the hard limit gives up to twice that. After each completed iteration the
+ * target shrinks if the best move has held for a while, and grows if the best
+ * move just changed or the score dropped. If more than half the target is already
+ * used, the next iteration likely won't finish, so stop. Time saved on easy moves
+ * stays on the clock for harder ones.
+ */
+class TimeKeeper
+{
+    BaseMove _best_move;
+    int _stable = 0;
+    score_t _score = SCORE_MIN;
+
+public:
+    INLINE bool should_stop(const BaseMove& best_move, score_t score)
+    {
+        const int64_t optimum = Context::time_optimum();
+        if (optimum <= 0)
+            return false;
+
+        _stable = (best_move == _best_move) ? _stable + 1 : 0;
+        _best_move = best_move;
+
+        int pct = _stable >= TM_STABLE_ITERS ? TM_STABLE_PCT : _stable == 0 ? TM_UNSTABLE_PCT : 100;
+
+        if (is_valid(_score) && _score - score >= TM_FALL_CP)
+            pct = pct * TM_FALL_PCT / 100;
+
+        _score = score;
+
+        return Context::elapsed_milliseconds() > optimum * pct / 100 * TM_NEW_ITER_PCT / 100;
+    }
+};
+
+
+/*
  * Search with iterative deepening.
  */
 score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter_count)
@@ -1449,6 +1485,7 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
         root_lines.reserve(max_lines);
 
     bool exhausted = false; /* found fewer root moves than max_lines */
+    TimeKeeper time_keeper;
 
     for (int i = 1; i != max_iter_count;)
     {
@@ -1615,6 +1652,9 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
             break;
 
         if (singleton && !table._analysis)
+            break;
+
+        if (time_keeper.should_stop(ctxt._best_move, score))
             break;
 
         if (i++ == 1)

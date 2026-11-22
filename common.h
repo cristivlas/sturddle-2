@@ -75,6 +75,9 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define ADAPTIVE_NULL_MOVE                  true
 
+/* Soft time limit scaled by best move stability, hard limit as a safety net */
+#define ADAPTIVE_TIME_MANAGEMENT            true
+
 /* Reduce deep non-PV nodes by one ply */
 #define BLANKET_REDUCTION                   false
 

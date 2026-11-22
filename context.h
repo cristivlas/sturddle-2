@@ -502,6 +502,7 @@ namespace search
 
         int         tid() const { return _tt ? _tt->_tid : 0; }
         static int  time_limit() { return _time_limit.load(std::memory_order_relaxed); }
+        static int  time_optimum() { return _time_optimum.load(std::memory_order_relaxed); }
         Color       turn() const { return state().turn; }
 
         INLINE TT_Result& tt_result() { return StorageView<TT_Result>::get(_state->tt_result, _state->has_tt_result); }
@@ -592,6 +593,7 @@ namespace search
 
         static size_t       _callback_count;
         static atomic_int   _time_limit; /* milliseconds */
+        static atomic_int   _time_optimum; /* soft limit, milliseconds; 0 if none */
         static atomic_time  _time_start;
         static std::string  _syzygy_path;
         static int          _tb_cardinality;
@@ -1381,6 +1383,7 @@ namespace search
     {
         set_start_time();
         _time_limit.store(time_limit, std::memory_order_relaxed);
+        _time_optimum.store(0, std::memory_order_relaxed);
     }
 
 
@@ -1417,6 +1420,17 @@ namespace search
 
         // DEBUG
         // std::cout << "info string movestogo " << moves << " time_limit " << time_limit << std::endl;
+
+        if constexpr(ADAPTIVE_TIME_MANAGEMENT)
+        {
+            /*
+             * Early stops leave about half the budget unused, so the target is scaled
+             * up (at most 1/5 of the clock); the hard limit is capped at 1/4 of the clock.
+             */
+            const int optimum = std::max<int64_t>(time_limit, std::min<int64_t>(int64_t(time_limit) * TM_TARGET_PCT / 100, millisec / 5));
+            _time_optimum.store(optimum, std::memory_order_relaxed);
+            time_limit = std::max<int64_t>(optimum, std::min<int64_t>(int64_t(optimum) * TM_HARD_PCT / 100, millisec / 4));
+        }
 
         _time_limit.store(time_limit, std::memory_order_relaxed);
     }

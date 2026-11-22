@@ -456,6 +456,7 @@ namespace search
     int         Context::_tb_cardinality(0);
     bool        Context::_tb_initialized(false);
     atomic_int  Context::_time_limit(-1); /* milliseconds */
+    atomic_int  Context::_time_optimum(0);
     atomic_time Context::_time_start;
     size_t Context::_callback_count(0);
     HistoryPtr Context::_history; /* moves played so far */
