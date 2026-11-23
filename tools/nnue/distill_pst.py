@@ -68,6 +68,7 @@ H5_BASE = {"PAWN": 2, "KNIGHT": 4, "BISHOP": 6, "ROOK": 8, "QUEEN": 10, "KING": 
 PST_ORDER = ["PAWN", "KNIGHT", "BISHOP", "ROOK", "QUEEN", "KING"]
 VALUED = PST_ORDER[:5]  # kings are never traded: no value to fit
 KING_VALUE = 20000  # chess.h
+VALUE_WIDTH, ADJUST_WIDTH = 3, 4  # chess.h number widths: PIECE_VALUES, GRADING_ADJUST
 
 TABLES = 7 * 64  # 6 MG tables + endgame king
 PARAMS = TABLES + len(VALUED) * (PAWN_BUCKETS - 1)  # then value shifts per pawn bucket, bucket 0 is the base
@@ -151,23 +152,53 @@ def piece_values(theta, occupancy):
     return piece_levels(theta, occupancy) + shifts
 
 
-def report_values(values, bucket_rows):
-    """Print piece values for chess.h; with grading, a base set and per-bucket adjustments."""
+def value_row(values, width):
+    return ", ".join(f"{v:{width}d}" for v in values)
 
-    def row(values):
-        return ", ".join(f"{v:4d}" for v in values)
 
+def chess_values(values, bucket_rows):
+    """Rounded values for chess.h: PIECE_VALUES entries (pawn to queen), and GRADING_ADJUST rows with
+    grading (else None)."""
     totals = np.rint(values).astype(int)
     if not GRADING:
-        print(f"chess.h, no grading: #define PIECE_VALUES {{ 0, {row(totals[0])}, {KING_VALUE} }}", file=sys.stderr)
-        return
+        return totals[0], None
     base = np.rint(bucket_rows / bucket_rows.sum() @ values).astype(int)  # typical value over all positions
-    lines = [f"#define PIECE_VALUES {{ 0, {row(base)}, {KING_VALUE} }}", "#define GRADING_ADJUST { \\"]
+    rows = []
     for b, total in enumerate(totals):
         low = 0 if b == 0 else b * PAWNS_PER_BUCKET + 1
         high = (b + 1) * PAWNS_PER_BUCKET if b < PAWN_BUCKETS - 1 else MAX_PAWNS
-        lines.append(f"    {{ 0, {row(total - base)}, 0 }}, /* {f'{low}-{high}':>5}: {row(total)} */ \\")
-    print("chess.h, EVAL_PIECE_GRADING:\n" + "\n".join(lines + ["}"]), file=sys.stderr)
+        adjust, comment = value_row(total - base, ADJUST_WIDTH), value_row(total, ADJUST_WIDTH)
+        rows.append(f"    {{ 0, {adjust}, 0 }}, /* {f'{low}-{high}':>5}: {comment} */ \\")
+    return base, rows
+
+
+def report_values(base, adjust):
+    line = f"#define PIECE_VALUES {{ 0, {value_row(base, VALUE_WIDTH)}, {KING_VALUE} }}"
+    if adjust is None:
+        print(f"chess.h, no grading: {line}", file=sys.stderr)
+    else:
+        lines = [line, "#define GRADING_ADJUST { \\"] + adjust + ["}"]
+        print("chess.h, EVAL_PIECE_GRADING:\n" + "\n".join(lines), file=sys.stderr)
+
+
+def patch_chess(path, base, adjust):
+    """Write piece values into chess.h in place: PIECE_VALUES for the current grading mode (zero and king
+    entries kept), and GRADING_ADJUST with grading."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    found = list(re.finditer(r"#define PIECE_VALUES\s*\{([^}]*)\}", text))
+    if len(found) != 2:
+        raise ValueError(f"{path}: expected 2 PIECE_VALUES, found {len(found)}")
+    m = found[0 if GRADING else 1]
+    old = m.group(1).split(",")
+    text = text[: m.start(1)] + f"{old[0]}, {value_row(base, VALUE_WIDTH)},{old[-1]}" + text[m.end(1) :]
+    if adjust is not None:
+        pattern = r"(#define GRADING_ADJUST \{ \\\n).*?(\n\})"
+        text, n = re.subn(pattern, lambda m: m.group(1) + "\n".join(adjust) + m.group(2), text, count=1, flags=re.S)
+        if not n:
+            raise ValueError(f"{path}: no GRADING_ADJUST")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
 
 
 def _leaper(steps):
@@ -566,8 +597,8 @@ def load_model(bin_path, device):
     return model.to(device)
 
 
-def emit(tables, out):
-    """Write tables into a copy of the repo's tables.h, replacing only the numbers."""
+def emit(tables):
+    """The repo's tables.h with only the numbers replaced."""
 
     def block(values, indent):
         rows = (values[r * 8 : (r + 1) * 8] for r in range(8))
@@ -587,7 +618,7 @@ def emit(tables, out):
         text, found = re.subn(pattern, lambda m, body=body: m.group(1) + body + m.group(2), text, count=1, flags=re.S)
         if not found:
             raise ValueError(f"tables.h: no match for {head}")
-    out.write(text)
+    return text
 
 
 def main():
@@ -597,6 +628,7 @@ def main():
     p.add_argument("data", nargs="+", help="H5 training data file(s)")
     p.add_argument("-m", "--model", default="weights.bin", help="weights.bin")
     p.add_argument("-o", "--output", help="output file (default: stdout)")
+    p.add_argument("--patch-chess", metavar="CHESS_H", help="write piece values into this chess.h, in place")
     p.add_argument("-b", "--batch-size", type=int, default=65536, help="rows per read")
     p.add_argument("--limit", type=int, help="max positions per file, sampled as random slices")
     p.add_argument("--slice-rows", type=int, default=256, help="rows per random slice")
@@ -781,13 +813,18 @@ def main():
     theta[king : king + 128] = kings.ravel()
     tables = np.rint(theta[:TABLES] * args.scale).astype(int)
 
+    text = emit(tables)  # read the template before opening the output: they can be the same file
     if args.output:
         with open(args.output, "w") as out:
-            emit(tables, out)
+            out.write(text)
         print(f"wrote {args.output}", file=sys.stderr)
     else:
-        emit(tables, sys.stdout)
-    report_values(values, bucket_rows.cpu().numpy())
+        sys.stdout.write(text)
+    base, adjust = chess_values(values, bucket_rows.cpu().numpy())
+    report_values(base, adjust)
+    if args.patch_chess:
+        patch_chess(args.patch_chess, base, adjust)
+        print(f"patched {args.patch_chess}", file=sys.stderr)
 
 
 if __name__ == "__main__":
