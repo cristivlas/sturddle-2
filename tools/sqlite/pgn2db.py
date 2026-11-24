@@ -11,6 +11,8 @@ from dbutils.sqlite import SQLConn
 from tqdm import tqdm
 
 CCRL_TRANSLATE_EVAL = str.maketrans(',', '.', '#]')
+MIN_DEPTH_ERROR = '--min-depth requires cutechess or fastchess PGN'
+DEPTH_RE = re.compile(r'\s*[+-]?[\w.,#]+/(\d+)')
 
 class Statistics:
     def __init__(self, args):
@@ -20,6 +22,7 @@ class Statistics:
         self.positions_filtered_check = 0
         self.positions_filtered_capture = 0
         self.positions_filtered_color = 0
+        self.positions_filtered_depth = 0
         self.positions_filtered_limit = 0
         self.positions_filtered_mismatch = 0
         self.positions_inserted = 0
@@ -41,6 +44,7 @@ class Statistics:
             self.positions_filtered_check +
             self.positions_filtered_capture +
             self.positions_filtered_color +
+            self.positions_filtered_depth +
             self.positions_filtered_limit +
             self.positions_filtered_mismatch
         )
@@ -70,6 +74,7 @@ class Statistics:
             logging.info(f"  - Filtered (check): {self.positions_filtered_check:,} ({self.positions_filtered_check/self.positions_parsed*100:.2f}%)")
             logging.info(f"  - Filtered (capture): {self.positions_filtered_capture:,} ({self.positions_filtered_capture/self.positions_parsed*100:.2f}%)")
             logging.info(f"  - Filtered (color): {self.positions_filtered_color:,} ({self.positions_filtered_color/self.positions_parsed*100:.2f}%)")
+            logging.info(f"  - Filtered (depth): {self.positions_filtered_depth:,} ({self.positions_filtered_depth/self.positions_parsed*100:.2f}%)")
             logging.info(f"  - Filtered (eval limit): {self.positions_filtered_limit:,} ({self.positions_filtered_limit/self.positions_parsed*100:.2f}%)")
             logging.info(f"  - Filtered (mismatch): {self.positions_filtered_mismatch:,} ({self.positions_filtered_mismatch/self.positions_parsed*100:.2f}%)")
             logging.info(f"Positions inserted: {positions_inserted:,} ({positions_inserted/self.positions_parsed*100:.2f}%)")
@@ -130,6 +135,9 @@ def pgn_to_epd(args, game, stats):
         # logging.debug('using lichess.org eval format')
         lichess = True
 
+    if lichess and args.min_depth:
+        raise ValueError(MIN_DEPTH_ERROR)
+
     board = game.board()
     epd_list = []
 
@@ -183,6 +191,16 @@ def pgn_to_epd(args, game, stats):
             stats.positions_filtered_book += 1
             board.push(current_move)
             continue  # skip book moves
+
+        if args.min_depth:
+            match = DEPTH_RE.match(current_node.comment)
+            if not match:
+                raise ValueError(f'no depth in comment: {current_node.comment!r}')
+            if int(match.group(1)) < args.min_depth:
+                logging.debug('--- depth\n')
+                stats.positions_filtered_depth += 1
+                board.push(current_move)
+                continue
 
         if args.no_check:
             if board.is_check():
@@ -476,6 +494,7 @@ if __name__ == '__main__':
     parser.add_argument('--discard-mismatch', type=int, help='discard positions where |eval| > threshold (in centipawns) AND game outcome disagrees')
     parser.add_argument('--logfile', type=str, help='log file (default: output filename with .log extension)')
     parser.add_argument('--mate-score', type=int, default=15000, help='mate score in centipawns (default: 15000, 0 skips close-to-mate positions)')
+    parser.add_argument('--min-depth', type=int, help='discard moves searched below this depth (cutechess / fastchess PGN only)')
     parser.add_argument('--min-elo', type=int, help='if specified, only include games with minimum player ELO')
     parser.add_argument('--openings', type=str, help='text file containing allowed opening names (one per line, case-insensitive)')
     parser.add_argument('--capture', action='store_false', dest='no_capture', help='include capturing moves (default: False)')
@@ -489,6 +508,9 @@ if __name__ == '__main__':
     parser.add_argument('--strong-black', action='store_true', help='discard games where black player is weaker than white')
 
     args = parser.parse_args()
+
+    if args.lichess and args.min_depth:
+        parser.error(MIN_DEPTH_ERROR)
 
     # Infer output filenames from input if not provided
     def infer_output_name(filename, extension):
