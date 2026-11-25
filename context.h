@@ -230,7 +230,7 @@ namespace search
         int millisec[2];    /* time left until next time control for black/white */
         int increments[2];  /* time increments for black/white */
         int moves;          /* number of moves till next time control */
-        score_t score;
+        score_t score;      /* currently unused */
     };
 
 
@@ -503,6 +503,8 @@ namespace search
         int         tid() const { return _tt ? _tt->_tid : 0; }
         static int  time_limit() { return _time_limit.load(std::memory_order_relaxed); }
         static int  time_optimum() { return _time_optimum.load(std::memory_order_relaxed); }
+        static score_t prev_move_score();
+        static void set_last_search(score_t, int depth);
         Color       turn() const { return state().turn; }
 
         INLINE TT_Result& tt_result() { return StorageView<TT_Result>::get(_state->tt_result, _state->has_tt_result); }
@@ -592,8 +594,11 @@ namespace search
         }
 
         static size_t       _callback_count;
-        static atomic_int   _time_limit; /* milliseconds */
-        static atomic_int   _time_optimum; /* soft limit, milliseconds; 0 if none */
+        static atomic_int   _time_limit;        /* milliseconds */
+        static atomic_int   _time_optimum;      /* soft limit, milliseconds; 0 if none */
+        static score_t      _last_score;        /* score of the last search */
+        static size_t       _last_score_plies;  /* history size at the last search */
+        static int          _lmr_stable_iter;   /* scales with the last search depth */
         static atomic_time  _time_start;
         static std::string  _syzygy_path;
         static int          _tb_cardinality;
@@ -1379,20 +1384,44 @@ namespace search
     }
 
 
+    /* margin for OS context-switching, I/O overhead, etc. */
+    INLINE int time_margin(int time_limit)
+    {
+        return std::min<int>(MaxTimeMargin, std::max<int>(MinTimeMargin, time_limit / 15));
+    }
+
+
     /* static */ INLINE void Context::set_time_limit_ms(int time_limit)
     {
         set_start_time();
+
+        if (time_limit > 0)
+            time_limit = std::max(1, time_limit - time_margin(time_limit));
+
         _time_limit.store(time_limit, std::memory_order_relaxed);
         _time_optimum.store(0, std::memory_order_relaxed);
     }
 
 
+    /* static */ INLINE score_t Context::prev_move_score()
+    {
+        if (_history && _history->size() == _last_score_plies + 2)
+            return _last_score;
+
+        return SCORE_MIN;
+    }
+
+
+    /* static */ INLINE void Context::set_last_search(score_t score, int depth)
+    {
+        _last_score = score;
+        _last_score_plies = _history ? _history->size() : 0;
+        _lmr_stable_iter = depth * LMR_STABLE_DEPTH_PCT / 100;
+    }
+
+
     INLINE void Context::set_time_ctrl(const TimeControl& ctrl)
     {
-        // Margin for OS context-switching, I/O overhead, etc.
-        const int MAX_SAFETY_MARGIN = MaxTimeMargin;
-        const int MIN_SAFETY_MARGIN = MinTimeMargin;
-
         const auto side_to_move = turn();
         const auto millisec = std::max(0, ctrl.millisec[side_to_move]);
         const auto bonus = std::max(0, ctrl.increments[side_to_move]);
@@ -1403,7 +1432,7 @@ namespace search
             const int moves_played = int(_history->size() / 2); // plies -> moves
             const int estimated_moves_left = AVERAGE_MOVES_PER_GAME - moves_played;
 
-            if (bonus >= millisec - MAX_SAFETY_MARGIN)
+            if (bonus >= millisec - MaxTimeMargin)
             {
                 moves = 1; // bonus dominates, play move-by-move
             }
@@ -1414,9 +1443,8 @@ namespace search
         }
 
         int time_limit = std::max(millisec / moves, std::min(millisec, bonus));
-        const int margin = std::min(MAX_SAFETY_MARGIN, std::max(MIN_SAFETY_MARGIN, time_limit / 15));
 
-        time_limit = std::max(1, time_limit - margin);
+        time_limit = std::max(1, time_limit - time_margin(time_limit));
 
         // DEBUG
         // std::cout << "info string movestogo " << moves << " time_limit " << time_limit << std::endl;
@@ -1426,10 +1454,12 @@ namespace search
             /*
              * Early stops leave about half the budget unused, so the target is scaled
              * up (at most 1/5 of the clock); the hard limit is capped at 1/4 of the clock.
+             * Without increment nothing refills the clock, so the target is not scaled.
              */
-            const int optimum = std::max<int64_t>(time_limit, std::min<int64_t>(int64_t(time_limit) * TM_TARGET_PCT / 100, millisec / 5));
+            const int target_pct = bonus > 0 ? TM_TARGET_PCT : 100;
+            const int optimum = std::max<int64_t>(1, std::min<int64_t>(int64_t(time_limit) * target_pct / 100, millisec / 5));
             _time_optimum.store(optimum, std::memory_order_relaxed);
-            time_limit = std::max<int64_t>(optimum, std::min<int64_t>(int64_t(optimum) * TM_HARD_PCT / 100, millisec / 4));
+            time_limit = std::max<int64_t>(1, std::min<int64_t>(int64_t(optimum) * TM_HARD_PCT / 100, millisec / 4));
         }
 
         _time_limit.store(time_limit, std::memory_order_relaxed);
