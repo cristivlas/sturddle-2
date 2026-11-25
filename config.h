@@ -323,8 +323,10 @@ DECLARE_VALUE(  TM_FALL_PCT,                        130,  100,     300)
 DECLARE_VALUE(  TM_HARD_PCT,                        200,  100,     500)
 DECLARE_VALUE(  TM_NEW_ITER_PCT,                     50,   10,     100)
 DECLARE_VALUE(  TM_STABLE_ITERS,                      4,    1,      10)
+DECLARE_VALUE(  TM_STABLE_ITER_DIV,                   4,    2,      20)
 DECLARE_VALUE(  TM_STABLE_PCT,                       60,   20,     100)
 DECLARE_VALUE(  TM_TARGET_PCT,                      200,  100,     300)
+DECLARE_VALUE(  TM_UNSTABLE_ITERS,                    2,    1,       5)
 DECLARE_VALUE(  TM_UNSTABLE_PCT,                    140,  100,     300)
 
 GROUP(Search)
@@ -342,7 +344,8 @@ DECLARE_VALUE(  IMPROVEMENT_EXTENSION_DEPTH,          6,    0,      15)
 
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_THRESHOLD,        4,    0,      10)
 
-DECLARE_VALUE(  LMR_STABLE_MIN_ITER,                 13,    1,      64)
+DECLARE_VALUE(  LMR_STABLE_DEPTH_PCT,                70,    0,     100)
+DECLARE_VALUE(  LMR_STABLE_MIN_ITER,                 16,    1,      64)
 
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
 

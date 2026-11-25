@@ -226,7 +226,7 @@ constexpr int ENDGAME_PIECE_COUNT           = 12;
 
 /* https://www.chessprogramming.org/Multi-Cut */
 constexpr int MULTICUT_M                    = 6;
-constexpr int MULTICUT_C                    = 3;
+constexpr int MULTICUT_C                    = 2;
 
 
 namespace search

@@ -457,6 +457,9 @@ namespace search
     bool        Context::_tb_initialized(false);
     atomic_int  Context::_time_limit(-1); /* milliseconds */
     atomic_int  Context::_time_optimum(0);
+    score_t     Context::_last_score(SCORE_MIN);
+    size_t      Context::_last_score_plies(0);
+    int         Context::_lmr_stable_iter(0);
     atomic_time Context::_time_start;
     size_t Context::_callback_count(0);
     HistoryPtr Context::_history; /* moves played so far */
@@ -1353,10 +1356,11 @@ namespace search
             reduction -= 2 * _parent->is_counter_move(_move);
 
             /*
-             * Root score is stable (aspiration window never widened) and the search
-             * is deep enough: reduce non-tactical moves one more ply.
+             * Root score is stable (aspiration window never widened) and the search is
+             * deep enough relative to the last one: reduce non-tactical moves one more ply.
              */
-            if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= LMR_STABLE_MIN_ITER)
+            if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF
+                && iteration() >= std::max<int>(LMR_STABLE_MIN_ITER, _lmr_stable_iter))
                 ++reduction;
         }
 

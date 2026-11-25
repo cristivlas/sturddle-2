@@ -669,6 +669,8 @@ private:
     search::TranspositionTable _tt;
     std::string _book = "book.bin";
     std::atomic_int _extended_time = 0; /* for pondering */
+    search::TimeControl _ponder_ctrl = {}; /* clock at "go ponder", applied on ponderhit */
+    bool _ponder_movetime = false; /* "go ponder movetime": extend by _extended_time instead */
     int _book_depth = max_depth;
     int _depth = max_depth;
     int _ply_count = 0;
@@ -1057,11 +1059,22 @@ void UCI::go(const Arguments &args)
         movetime = std::max<int>(0, time_remaining[turn] / std::max(movestogo, 40));
     LOG_DEBUG(std::format("movetime {}, movestogo {}", movetime, movestogo));
 
+    search::TimeControl ctrl;
+
+    ctrl.millisec[chess::BLACK] = time_remaining[chess::BLACK];
+    ctrl.millisec[chess::WHITE] = time_remaining[chess::WHITE];
+    ctrl.increments[chess::BLACK] = time_increments[chess::BLACK];
+    ctrl.increments[chess::WHITE] = time_increments[chess::WHITE];
+    ctrl.moves = movestogo;
+    ctrl.score = _score;
+
     _extended_time = 0;
     _output_expected = true;
 
     if (do_ponder)
     {
+        _ponder_ctrl = ctrl;
+        _ponder_movetime = explicit_movetime;
         _extended_time = std::max(1, movetime);
         ctxt->set_time_limit_ms(INFINITE);
 
@@ -1101,15 +1114,6 @@ void UCI::go(const Arguments &args)
             }
             else
             {
-                search::TimeControl ctrl;
-
-                ctrl.millisec[chess::BLACK] = time_remaining[chess::BLACK];
-                ctrl.millisec[chess::WHITE] = time_remaining[chess::WHITE];
-                ctrl.increments[chess::BLACK] = time_increments[chess::BLACK];
-                ctrl.increments[chess::WHITE] = time_increments[chess::WHITE];
-                ctrl.moves = movestogo;
-                ctrl.score = _score;
-
                 search::Context::set_start_time();
                 ctxt->set_time_ctrl(ctrl);
             }
@@ -1260,7 +1264,15 @@ void UCI::ponderhit()
     if (int ext = _extended_time)
     {
         _extended_time = 0;
-        context().set_time_limit_ms(ext);
+        if (_ponder_movetime)
+        {
+            context().set_time_limit_ms(ext);
+        }
+        else
+        {
+            /* the clock keeps running from "go ponder", so time spent pondering counts as used */
+            context().set_time_ctrl(_ponder_ctrl);
+        }
     }
     else
     {
