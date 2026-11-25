@@ -175,9 +175,6 @@ svg.chart .val { fill: var(--fg); font-weight: 600; }
 <p>I haven't found re-sorting after every pass, or the leftmost-PV idea, described elsewhere, but I haven't read everything, so I don't claim they're new.</p>
 <p class="note">Does MTD(f) beat NegaScout here? In my tests, yes. But it's not a fair fight. All the pruning, reductions and heuristics were tuned with MTD(f) as the default, and, embarrassingly, the NegaScout path had nasty bugs until recently. I underestimated how much tuning matters.</p>
 
-<h3>Multi-cut, slightly bent</h3>
-<p>Multi-cut prunes a node when several of its first moves already fail high at reduced depth. A <a href="https://skemman.is/bitstream/1946/9180/1/research-report.pdf">research report</a> proposes trying it only at nodes that produced cutoffs before. Sturddle always tries it, but needs one fewer cutoff (2 of the first 6 moves instead of 3) when the transposition table already holds a lower bound near beta. It's a soft version of the paper's filter.</p>
-
 <h3>Late-move reductions vs. the clock</h3>
 <p>Sturddle didn't scale well at long time controls, and my hunch was that late-move reductions were too aggressive. I've tried several variations, including one that relaxes them when there's time to spare: the divisor in the classic <code>log(depth) * log(moves) / divisor</code> formula depends on how much of the move's time budget is already spent (the <code>LMR_TIME_SCALING</code> flag). So far the data isn't conclusive, and the flag is off for now. Pruning by time control was <a href="https://talkchess.com/viewtopic.php?p=498929">debated on CCC in 2012</a>, mostly skeptically.</p>
 
