@@ -6,7 +6,7 @@ IMAGE=sturddle-native-builder:llvm-${LLVM_VERSION}
 
 docker build --build-arg LLVM_VERSION=${LLVM_VERSION} -t ${IMAGE} tools/native-bundle
 docker run --rm \
-    -v $(pwd):/build \
+    -v "$(pwd)":/build \
     -u $(id -u):$(id -g) \
     -e PYTHONUNBUFFERED=1 \
     ${IMAGE} python3 tools/native-bundle/build.py "$@"

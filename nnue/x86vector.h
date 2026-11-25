@@ -227,7 +227,7 @@ INLINE Vec4i dot_add(Vec4i const acc, Vec16uc const a, Vec16c const b)
     {
         if constexpr (N == Vec16f::size())
         {
-            __m256bh vh = (__m256bh)_mm256_load_si256((const __m256i*)p);
+            const __m256i vh = _mm256_load_si256((const __m256i*)p);
             // bf16 to float32: zero-extend to 32 bits, shift left by 16
             v = _mm512_castsi512_ps(_mm512_slli_epi32(_mm512_cvtepu16_epi32(vh), 16));
         }

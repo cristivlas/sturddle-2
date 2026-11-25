@@ -10,6 +10,7 @@ Copyright (c) 2023 - 2026 Cristian Vlasceanu.
 '''
 import argparse
 import importlib.util
+import io
 import os
 import platform
 import shutil
@@ -64,9 +65,37 @@ def banner(text):
     print('*********************************************************')
 
 
+# returns the PGO status printed by make-native.py, if any
 def make(out_dir, *args):
-    if subprocess.call([sys.executable, str(MAKE_NATIVE), *args, '--no-digest', '--out-dir', str(out_dir)], cwd=ROOT):
+    cmd = [sys.executable, '-u', str(MAKE_NATIVE), *args, '--no-digest', '--out-dir', str(out_dir)]
+    status = None
+    with subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as proc:
+        # newline='' keeps the \r of the profiling progress
+        for line in io.TextIOWrapper(proc.stdout, newline='', errors='replace'):
+            print(line, end='', flush=True)
+            if line.startswith(make_native.PGO_STATUS):
+                status = line.removeprefix(make_native.PGO_STATUS).strip()
+    if proc.returncode:
         sys.exit(f'ERROR: make-native.py {" ".join(args)} failed')
+    return status
+
+
+def find_signtool():
+    if path := shutil.which('signtool'):
+        return path
+    kits = Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) / 'Windows Kits' / '10' / 'bin'
+    found = sorted(kits.glob('*/x64/signtool.exe'))
+    if not found:
+        sys.exit('ERROR: signtool not found')
+    return str(found[-1])
+
+
+# sign_args is passed verbatim, so the command is a string
+def sign(signtool, sign_args, paths):
+    files = subprocess.list2cmdline([str(p) for p in paths])
+    for cmd in (f'"{signtool}" sign {sign_args} {files}', f'"{signtool}" verify /pa {files}'):
+        if subprocess.run(cmd).returncode:
+            sys.exit('ERROR: signtool failed')
 
 
 def write_record(writer, path, is_exe):
@@ -107,7 +136,14 @@ def main():
     parser.add_argument('-n', '--name', default='sturddle', help='Executable base name (default: "sturddle")')
     parser.add_argument('--level', type=int, default=19, help='zstd compression level (default: 19)')
     parser.add_argument('--pgo', action='store_true', help='Profile-guided optimization (see make-native.py).')
+    parser.add_argument('--sign', metavar='ARGS', help='Sign engines and bundle; ARGS go to signtool sign.')
     args = parser.parse_args()
+
+    signtool = None
+    if args.sign:
+        if not sys.platform.startswith('win'):
+            parser.error('--sign is Windows only')
+        signtool = find_signtool()
 
     archs = flavors()
     version = make_native.parse_version()
@@ -119,23 +155,37 @@ def main():
         launcher = build_dir / exe_name(f'sturddle-{version}-launcher')
 
         pgo = ['--pgo', '--launcher-exe', str(launcher)] if args.pgo else []
+        pgo_status = {}
         for arch in archs:
             banner(f'Building {arch}')
-            make(build_dir, arch, *pgo)
+            pgo_status[arch] = make(build_dir, arch, *pgo)
         banner('Bundling')
 
-        exes = [build_dir / exe_name(f'sturddle-{version}{make_native.ARCH_SUFFIX[arch]}') for arch in archs]
+        exes = [build_dir / exe_name(f'sturddle-{version}{make_native.arch_suffix(arch)}') for arch in archs]
         files = [(exe, True) for exe in exes if exe.exists()]
         files += [(build_dir / asset, False) for asset in ASSETS]
+
+        if signtool:
+            sign(signtool, args.sign, [path for path, is_exe in files if is_exe])
 
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         out_path = OUT_DIR / bundle_name(args.name, version)
         write_bundle(out_path, launcher, files, args.level)
         shutil.copy(ZSTD_LICENSE, OUT_DIR / 'zstd-license.txt')
 
+        if signtool:
+            sign(signtool, args.sign, [out_path])
+
     dgst = make_native.write_sha256(out_path)
     print(f'\nBuilt {out_path}')
     print(f'Digest {dgst}')
+
+    if args.pgo:
+        width = max(map(len, archs))
+        print()
+        for arch, status in pgo_status.items():
+            # no status: make-native skipped the flavor (MSVC)
+            print(f'PGO {arch:<{width}}  {status or "none (not built)"}')
 
 
 if __name__ == '__main__':

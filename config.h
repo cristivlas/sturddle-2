@@ -318,6 +318,16 @@ DECLARE_CONST(  MULTICUT,                             1,    0,       1)
 DECLARE_VALUE(  AVERAGE_MOVES_PER_GAME,              36,   20,     100)
 DECLARE_PARAM(  MaxTimeMargin,                       50,    0,     100)
 DECLARE_PARAM(  MinTimeMargin,                       15,    0,     100)
+DECLARE_VALUE(  TM_FALL_CP,                          30,    0,     200)
+DECLARE_VALUE(  TM_FALL_PCT,                        130,  100,     300)
+DECLARE_VALUE(  TM_HARD_PCT,                        200,  100,     500)
+DECLARE_VALUE(  TM_NEW_ITER_PCT,                     50,   10,     100)
+DECLARE_VALUE(  TM_STABLE_ITERS,                      4,    1,      10)
+DECLARE_VALUE(  TM_STABLE_ITER_DIV,                   4,    2,      20)
+DECLARE_VALUE(  TM_STABLE_PCT,                       60,   20,     100)
+DECLARE_VALUE(  TM_TARGET_PCT,                      200,  100,     300)
+DECLARE_VALUE(  TM_UNSTABLE_ITERS,                    2,    1,       5)
+DECLARE_VALUE(  TM_UNSTABLE_PCT,                    140,  100,     300)
 
 GROUP(Search)
 
@@ -334,12 +344,8 @@ DECLARE_VALUE(  IMPROVEMENT_EXTENSION_DEPTH,          6,    0,      15)
 
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_THRESHOLD,        4,    0,      10)
 
-#if LMR_TIME_SCALING
-DECLARE_VALUE(  LMR_DIVISOR_CALM_PCT,               400,  100,     800)
-DECLARE_VALUE(  LMR_DIVISOR_RUSHED_PCT,             200,  100,     800)
-DECLARE_VALUE(  LMR_RUSH_START_PCT,                  20,    0,     100)
-DECLARE_VALUE(  LMR_RUSH_FULL_PCT,                   50,    0,     100)
-#endif /* LMR_TIME_SCALING */
+DECLARE_VALUE(  LMR_STABLE_DEPTH_PCT,                70,    0,     100)
+DECLARE_VALUE(  LMR_STABLE_MIN_ITER,                 16,    1,      64)
 
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
 
@@ -393,6 +399,7 @@ DECLARE_VALUE(  SINGULAR_MIN_DEPTH_NON_PV,            5,    1,      10)
 
 DECLARE_CONST(  STATIC_EXCHANGES,                     0,    0,       1)
 DECLARE_VALUE(  STANDPAT_MARGIN,                    116,    0,     230)
+DECLARE_VALUE(  TT_AGE_WEIGHT,                        8,    0,      32)
 DECLARE_VALUE(  TT_OVERWRITE_MARGIN,                  3,    0,       8)
 
 /* Aspiration window */

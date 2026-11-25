@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -33,16 +34,12 @@ ARCH_FLAGS = {
     'ARMv8_2':     ['-DUSE_MAGIC_BITS', '-march=armv8.2-a+fp16+dotprod'],
 }
 
-ARCH_SUFFIX = {
-    'native':      '',
-    'generic':     '-generic',
-    'AVX':         '-avx',
-    'AVX2':        '-avx2',
-    'AVX2_VNNI':   '-avx2-vnni',
-    'AVX512':      '-avx512',
-    'AVX512_BF16': '-avx512-bf16',
-    'ARMv8_2':     '-armv8-2',
-}
+# gcc ignores unknown -Wno- flags
+SHARED_WARNINGS = [
+    '-Wno-unused-label',
+    '-Wno-unused-variable',
+    '-Wno-nan-infinity-disabled',
+]
 
 LAUNCHER_SOURCES = [
     'tools/native-bundle/launcher.cpp',
@@ -91,14 +88,24 @@ PHASE_PLIES = [
     (80, 1000),
 ]
 MAX_MISMATCH = 0.1
+# --pgo outcome, read by tools/native-bundle/build.py
+PGO_STATUS = 'PGO: '
 
 
 def parse_version():
     text = (REPO_ROOT / 'version.h').read_text()
-    major = re.search(r'^#define\s+STURDDLE_VERSION_MAJOR\s+(\d+)', text, re.M).group(1)
-    minor = re.search(r'^#define\s+STURDDLE_VERSION_MINOR\s+(\d+)', text, re.M).group(1)
-    patch = re.search(r'^#define\s+STURDDLE_VERSION_PATCH\s+"([^"]+)"', text, re.M).group(1)
+
+    def define(name, value):
+        return re.search(rf'^#define\s+STURDDLE_VERSION_{name}\s+{value}', text, re.M).group(1)
+
+    major = define('MAJOR', r'(\d+)')
+    minor = define('MINOR', r'(\d+)')
+    patch = define('PATCH', r'"([^"]+)"')
     return f'{major}.{minor}.{patch}'
+
+
+def arch_suffix(arch):
+    return '' if arch == 'native' else '-' + arch.lower().replace('_', '-')
 
 
 MSVC_WARNINGS = [
@@ -196,10 +203,13 @@ class Build:
         if toolchain:
             # BUILD_STAMP changes daily
             flags = self.cxxflags + [d for d in self.define_args if not d.startswith('-DBUILD_STAMP=')]
-            pgo.build(self.exe, self.make, toolchain, flags)
+            status = pgo.build(self.exe, self.make, toolchain, flags)
         else:
             self.make(self.exe)
+            status = f'none ({self.no_pgo})' if pgo else None
 
+        if pgo:
+            print(f'{PGO_STATUS}{status}')
         return self.exe
 
 
@@ -234,9 +244,7 @@ class WindowsBuild(Build):
                 '-Wmissing-field-initializers',
                 '-Wno-deprecated-declarations',
                 '-Wno-unused-command-line-argument',
-                '-Wno-unused-label',
-                '-Wno-unused-variable',
-                '-Wno-nan-infinity-disabled',
+                *SHARED_WARNINGS,
             ]
         else:
             if arch and arch not in MSVC_ARCH_FLAGS:
@@ -275,8 +283,6 @@ class WindowsBuild(Build):
 
 
 class LinuxBuild(Build):
-    no_pgo = '--pgo needs clang++' # TODO: add gcc support
-
     def __init__(self, out_dir, name, arch, sources, define_args):
         cxx = os.environ.get('CXX')
         if not cxx:
@@ -303,25 +309,22 @@ class LinuxBuild(Build):
         cxxflags += ARCH_FLAGS.get(arch, []) + [
             '-Wextra',
             '-Werror',
-            '-Wno-unused-label',
+            *SHARED_WARNINGS,
             '-Wno-unknown-pragmas',
             '-Wno-unused-parameter',
-            '-Wno-unused-variable',
             '-Wno-empty-body',
             '-Wno-int-in-bool-context',
             '-fno-stack-protector',
             '-D_FORTIFY_SOURCE=0',
         ]
+        self.link_flags = ['-lpthread']
         if is_clang:
             cxxflags += [
                 '-Wno-macro-redefined',
                 '-Wno-deprecated-declarations',
-                '-Wno-nan-infinity-disabled',
                 '-stdlib=libc++',
                 '-fexperimental-library',
             ]
-        self.link_flags = ['-lpthread']
-        if is_clang:
             self.link_flags += [
                 '-fuse-ld=lld',
                 f'-L/usr/lib/llvm-{cc_ver}/lib/',
@@ -336,6 +339,9 @@ class LinuxBuild(Build):
                 '-lc++abi',
                 '-Wl,-Bdynamic',
             ]
+        else:
+            # same as clang: VNNI-VL intrinsics cast their args, float -> __bf16 narrows
+            cxxflags += ['-flax-vector-conversions', '-Wno-narrowing']
         self.cxx = cxx
         self.cc_ver = cc_ver
         self.is_clang = is_clang
@@ -355,7 +361,7 @@ class LinuxBuild(Build):
 
     def pgo_toolchain(self):
         if not self.is_clang:
-            return None
+            return GccPgo([f'gcov-dump-{self.cc_ver}', 'gcov-dump'], [os.environ['PATH']])
         return ClangPgo([f'llvm-profdata-{self.cc_ver}', 'llvm-profdata'], [f'/usr/lib/llvm-{self.cc_ver}/bin', os.environ['PATH']])
 
 
@@ -429,7 +435,46 @@ def run_workload(engine, positions, depth):
         sys.exit(f'ERROR: {engine.name} failed (rc={rc})')
 
 
-class ClangPgo:
+class PgoToolchain(ABC):
+    @property
+    @abstractmethod
+    def suffix(self):
+        """
+        goes on the profile name in --pgo-dir
+        """
+
+    @abstractmethod
+    def instrument(self, raw_dir):
+        """
+        compile and link flags for a build that profiles into raw_dir
+        """
+
+    @abstractmethod
+    def use(self, profile):
+        """
+        compile and link flags for a build that uses profile
+        """
+
+    @abstractmethod
+    def merge(self, raw_dir, profile):
+        """
+        raw_dir data -> profile
+        """
+
+    @abstractmethod
+    def unusable(self, output):
+        """
+        failed build output says profile is unreadable
+        """
+
+    @abstractmethod
+    def mismatch(self, outputs, profile):
+        """
+        mismatched and total function counts
+        """
+
+
+class ClangPgo(PgoToolchain):
     suffix = '.profdata'
     mismatch_warning = re.compile(r'of (\d+) functions?, (\d+) ha(?:s|ve) mismatched data')
 
@@ -454,6 +499,50 @@ class ClangPgo:
     def mismatch(self, outputs, profile):
         counts = self.mismatch_warning.findall(''.join(outputs))
         return sum(int(m) for _, m in counts), sum(int(t) for t, _ in counts)
+
+
+class GccPgo(PgoToolchain):
+    # the profile is a directory with one .gcda file per source
+    suffix = '-gcc'
+    # gcc names .gcda files after the object path, which is a new temp dir on every build;
+    # these flags name them after the source instead. Any aux files go to the (ignored) pgo/
+    naming = [f'-fprofile-prefix-path={REPO_ROOT}', '-dumpdir', 'pgo/']
+    stale_warnings = ('coverage-mismatch', 'missing-profile')
+    # first quoted name on the line: the function, or the .gcda file if missing altogether
+    stale_warning = re.compile(r"[\u2018'](.+?)[\u2019'].*\[-W(?:coverage-mismatch|missing-profile)\]")
+
+    def __init__(self, dump_names, dump_dirs):
+        self.dump_names = dump_names
+        self.dump_dirs = dump_dirs
+
+    def instrument(self, raw_dir):
+        return [f'-fprofile-generate={raw_dir}', *self.naming], []
+
+    def use(self, profile):
+        return [
+            f'-fprofile-use={profile}',
+            *(f'-Wno-error={w}' for w in self.stale_warnings),
+            *self.naming,
+        ], []
+
+    def merge(self, raw_dir, profile):
+        if profile.exists():
+            shutil.rmtree(profile)
+        shutil.copytree(raw_dir, profile)
+
+    def unusable(self, output):
+        # 'is version': written by another gcc release
+        return any(e in output for e in ('is not a gcov data file', 'is version', 'is corrupted'))
+
+    # gcc only names the stale functions, so count them all in the profile itself;
+    # per output, as the total counts a header function once per source
+    def mismatch(self, outputs, profile):
+        mismatched = sum(len(set(self.stale_warning.findall(output))) for output in outputs)
+        gcda = sorted(profile.glob('*.gcda'))
+        if not mismatched or not gcda:
+            return mismatched, 0
+        dump = subprocess.check_output([find_tool(self.dump_names, self.dump_dirs), *gcda], text=True)
+        return mismatched, dump.count(':FUNCTION ident=')
 
 
 class Pgo:
@@ -489,21 +578,23 @@ class Pgo:
                 built = True
                 mismatched, total = toolchain.mismatch(outputs, profile)
                 if mismatched <= MAX_MISMATCH * total:
-                    return
+                    return 'reused'
                 reason = f'{mismatched} of {total} functions mismatched'
         else:
             reason = 'no matching profile'
 
         if not self.can_profile():
             print(f'WARNING: {reason}, cannot profile {self.arch} on this CPU')
-            if not built:
-                make(exe)
-            return
+            if built:
+                return f'stale ({reason}, cannot profile on this CPU)'
+            make(exe)
+            return f'none ({reason}, cannot profile on this CPU)'
 
         print(f'{reason}, profiling {self.arch}')
         self.collect(exe.name, make, toolchain, profile)
         meta_path.write_text(json.dumps(meta, indent=2))
         make(exe, *toolchain.use(profile))
+        return f'profiled ({reason})'
 
     def can_profile(self):
         if self.arch == 'native':
@@ -541,7 +632,7 @@ def main():
     parser.add_argument('--launcher', action='store_true', help='Build the launcher instead of the engine.')
     parser.add_argument('--out-dir', type=Path, default=OUT_DIR, help='Output directory (default: dist/native).')
     parser.add_argument('--no-digest', action='store_true', help='Skip writing the -sha256.txt digest.')
-    parser.add_argument('--pgo', action='store_true', help='Profile-guided optimization (clang-cl and clang++ only).')
+    parser.add_argument('--pgo', action='store_true', help='Profile-guided optimization (clang-cl, clang++ and g++ only).')
     parser.add_argument('--pgo-dir', type=Path, default=PGO_DIR, help='Profile directory (default: pgo).')
     parser.add_argument('--pgo-positions', type=int, default=100, help='Positions to profile (default: 100).')
     parser.add_argument('--pgo-games', type=Path, default=PGN_DIR, help='Directory of PGN games to sample --pgo positions from (default: test/runs).')
@@ -578,7 +669,7 @@ def main():
         define_args = [f'-D{d}' for d in defines] + [f'-DBUILD_STAMP={build_stamp}', f'-DBUILD_FLAVOR={args.arch}']
 
         pgo = Pgo(args, build_launcher) if args.pgo else None
-        exe = build(out_dir, f'sturddle-{version}{ARCH_SUFFIX[args.arch]}', args.arch, SOURCES, define_args).run(pgo)
+        exe = build(out_dir, f'sturddle-{version}{arch_suffix(args.arch)}', args.arch, SOURCES, define_args).run(pgo)
 
         assets = ('book.bin',) if embed else ('weights.bin', 'book.bin')
         for asset in assets:

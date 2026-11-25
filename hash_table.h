@@ -696,7 +696,7 @@ namespace search
                         }
 
                         const int age = (32 + generation() - e._generation) & 31;
-                        const int score = e._depth - 2 * age + e.is_exact();
+                        const int score = e._depth - TT_AGE_WEIGHT * age + e.is_exact();
 
                         /* last slot is reserved for always-replace, keep deep entries out of it */
                         if (replacement_score > score && slot != bucket_t::size() - 1)

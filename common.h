@@ -75,6 +75,9 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 
 #define ADAPTIVE_NULL_MOVE                  true
 
+/* Soft time limit scaled by best move stability, hard limit as a safety net */
+#define ADAPTIVE_TIME_MANAGEMENT            true
+
 /* Reduce deep non-PV nodes by one ply */
 #define BLANKET_REDUCTION                   false
 
@@ -108,9 +111,6 @@ constexpr size_t ONE_MEGABYTE = 1024 * 1024;
 #define IGNORE_CANCELLED_ITER               false
 
 #define KILLER_MOVE_HEURISTIC               true
-
-/* Scale LMR divisor by time pressure; fixed divisor of 2 otherwise */
-#define LMR_TIME_SCALING                    false
 
 #define MTDF_CSTAR_BISECT                   true
 
@@ -226,7 +226,7 @@ constexpr int ENDGAME_PIECE_COUNT           = 12;
 
 /* https://www.chessprogramming.org/Multi-Cut */
 constexpr int MULTICUT_M                    = 6;
-constexpr int MULTICUT_C                    = 3;
+constexpr int MULTICUT_C                    = 2;
 
 
 namespace search

@@ -101,8 +101,6 @@ TranspositionTable::TranspositionTable(const TranspositionTable& other)
     , _tid(other._tid)
     , _iteration(other._iteration)
     , _eval_depth(other._eval_depth)
-    , _lmr_iteration(other._lmr_iteration)
-    , _lmr_scale(other._lmr_scale)
     , _ply_history(other._ply_history)
     , _w_alpha(other._w_alpha)
     , _w_beta(other._w_beta)
@@ -135,8 +133,6 @@ void TranspositionTable::swap(TranspositionTable& other) noexcept
     swap(_tid, other._tid);
     swap(_iteration, other._iteration);
     swap(_eval_depth, other._eval_depth);
-    swap(_lmr_iteration, other._lmr_iteration);
-    swap(_lmr_scale, other._lmr_scale);
     swap(_ply_history, other._ply_history);
     swap(_w_alpha, other._w_alpha);
     swap(_w_beta, other._w_beta);
@@ -194,7 +190,6 @@ void TranspositionTable::clear()
 {
     _iteration = 0;
     _eval_depth = 0;
-    _lmr_iteration = -1;
 
     /* Clear aspiration window */
     _w_alpha = SCORE_MIN;
@@ -248,6 +243,7 @@ void TranspositionTable::init(bool new_game)
 
         _killer_moves.fill({});
         _ply_history.fill({});
+        Context::set_last_search(SCORE_MIN, 0);
     #if CORRECTION_HISTORY
         _pawn_correction[BLACK].fill(0);
         _pawn_correction[WHITE].fill(0);
@@ -419,6 +415,7 @@ NOINLINE bool verify_null_move(Context& ctxt, Context& null_move_ctxt)
 
 /*
  * https://www.chessprogramming.org/Multi-Cut
+ * https://skemman.is/bitstream/1946/9180/1/research-report.pdf
  */
 static bool multicut(Context& ctxt, TranspositionTable& table)
 {
@@ -431,6 +428,10 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
         || ctxt.is_evasion()
         || ctxt.is_check()
        )
+        return false;
+
+    /* try only if this position has failed high before */
+    if (!ctxt.tt_entry().is_lower() || ctxt.tt_entry()._value + MULTICUT_MARGIN < ctxt._beta)
         return false;
 
     const auto& state = ctxt.state();
@@ -447,16 +448,6 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
 
     BaseMove best_move;
     score_t best_score = SCORE_MIN;
-
-    /*
-     * A take on the idea from https://skemman.is/bitstream/1946/9180/1/research-report.pdf
-     * The paper proposes trying the heuristic only at nodes that have produced cutoffs at
-     * lower depths, to increase its chances to succeed. Here, the idea is to try the heuristic
-     * regardless, but lower the count of cutoffs required to "succeed" if the position has
-     * produced cutoffs before.
-     */
-    const auto min_cutoffs = MULTICUT_C
-       - (ctxt.tt_entry().is_lower() && ctxt.tt_entry()._value + MULTICUT_MARGIN >= ctxt._beta);
 
     while (auto next_ctxt = ctxt.next(false, 0, move_count))
     {
@@ -476,14 +467,10 @@ static bool multicut(Context& ctxt, TranspositionTable& table)
                 best_move = next_ctxt->_move;
             }
 
-            if (++cutoffs >= min_cutoffs)
+            if (++cutoffs >= MULTICUT_C)
             {
                 ctxt._score = score >= MATE_HIGH ? ctxt._beta : score;
                 ctxt._best_move = best_move;
-
-                /* Store it in the TT as a cutoff move. */
-                ctxt._alpha = ctxt._score;
-
                 return true;
             }
         }
@@ -1433,6 +1420,48 @@ static void sort_by_score(std::vector<RootLine>::iterator first, std::vector<Roo
 
 
 /*
+ * Adaptive time management. After each iteration, spend less time if the best
+ * move is stable, more if it just changed or the score dropped. Stop when half
+ * the target is used: the next iteration likely won't finish.
+ */
+class TimeKeeper
+{
+    BaseMove _best_move;
+    int _stable = 0;
+    score_t _score = SCORE_MIN;
+    const score_t _prev_move_score = Context::prev_move_score();
+
+public:
+    INLINE bool should_stop(const BaseMove& best_move, score_t score, int iteration)
+    {
+        const int64_t optimum = Context::time_optimum();
+        if (optimum <= 0)
+            return false;
+
+        _stable = (best_move == _best_move) ? _stable + 1 : 0;
+        _best_move = best_move;
+
+        /* deeper searches flip the best move less often, so require a longer streak */
+        const int stable_iters = std::max<int>(TM_STABLE_ITERS, iteration / TM_STABLE_ITER_DIV);
+
+        int pct = 100;
+        if (_stable >= stable_iters)
+            pct = TM_STABLE_PCT;
+        else if (_stable < TM_UNSTABLE_ITERS)
+            pct = TM_UNSTABLE_PCT;
+
+        const auto ref_score = std::max(_score, _prev_move_score);
+        if (is_valid(ref_score) && ref_score - score >= TM_FALL_CP)
+            pct = pct * TM_FALL_PCT / 100;
+
+        _score = score;
+
+        return Context::elapsed_milliseconds() > optimum * pct / 100 * TM_NEW_ITER_PCT / 100;
+    }
+};
+
+
+/*
  * Search with iterative deepening.
  */
 score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter_count)
@@ -1449,6 +1478,8 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
         root_lines.reserve(max_lines);
 
     bool exhausted = false; /* found fewer root moves than max_lines */
+    int completed = 0;      /* last completed iteration */
+    TimeKeeper time_keeper;
 
     for (int i = 1; i != max_iter_count;)
     {
@@ -1614,12 +1645,21 @@ score_t search::iterative(Context& ctxt, TranspositionTable& table, int max_iter
         if (cancelled)
             break;
 
+        completed = i;
+
         if (singleton && !table._analysis)
+            break;
+
+        if (time_keeper.should_stop(ctxt._best_move, score, i))
             break;
 
         if (i++ == 1)
             ctxt.update_root_accumulators();
     }
+
+    /* skip ponder misses, analysis and fixed-time searches */
+    if (completed && Context::time_optimum() > 0)
+        Context::set_last_search(root_lines[0]._score, completed);
 
     return root_lines[0]._score;
 }

@@ -87,7 +87,7 @@ static void setup_crash_handler()
  */
 static struct LMR
 {
-    float _table[PLY_MAX][64] = {}; /* log(depth) * log(moves), scaled by lmr_divisor() at lookup */
+    int _table[PLY_MAX][64] = {};
 
     LMR()
     {
@@ -95,7 +95,7 @@ static struct LMR
         {
             for (int moves = 1; moves < 64; ++moves)
             {
-                _table[depth][moves] = log(depth) * log(moves);
+                _table[depth][moves] = 0.5 + log(depth) * log(moves) / 2;
             }
         }
     }
@@ -456,6 +456,10 @@ namespace search
     int         Context::_tb_cardinality(0);
     bool        Context::_tb_initialized(false);
     atomic_int  Context::_time_limit(-1); /* milliseconds */
+    atomic_int  Context::_time_optimum(0);
+    score_t     Context::_last_score(SCORE_MIN);
+    size_t      Context::_last_score_plies(0);
+    int         Context::_lmr_stable_iter(0);
     atomic_time Context::_time_start;
     size_t Context::_callback_count(0);
     HistoryPtr Context::_history; /* moves played so far */
@@ -1317,22 +1321,6 @@ namespace search
     }
 
 
-#if LMR_TIME_SCALING
-    /* Reduce more when an iteration starts late, or when there is no time limit. */
-    static INLINE float lmr_divisor()
-    {
-        const auto limit = Context::time_limit();
-        if (limit <= 0)
-            return LMR_DIVISOR_RUSHED_PCT / 100.0f;
-
-        const auto elapsed_pct = 100.0f * Context::elapsed_milliseconds() / limit;
-        const auto span = std::max<int>(1, LMR_RUSH_FULL_PCT - LMR_RUSH_START_PCT);
-        const auto t = std::clamp((elapsed_pct - LMR_RUSH_START_PCT) / span, 0.0f, 1.0f);
-        return (LMR_DIVISOR_CALM_PCT + t * (LMR_DIVISOR_RUSHED_PCT - LMR_DIVISOR_CALM_PCT)) / 100.0f;
-    }
-#endif /* LMR_TIME_SCALING */
-
-
     /*
      * Late move reduction and pruning.
      * https://www.chessprogramming.org/Late_Move_Reductions
@@ -1355,20 +1343,8 @@ namespace search
 
         count += _tt->_pass / 4;
 
-    #if LMR_TIME_SCALING
-        /* LMR divisor changes once per root iteration */
-        if (_tt->_lmr_iteration != iteration())
-        {
-            _tt->_lmr_iteration = iteration();
-            _tt->_lmr_scale = 1.0f / lmr_divisor();
-        }
-        const auto lmr_scale = _tt->_lmr_scale;
-    #else
-        constexpr float lmr_scale = 0.5f;
-    #endif /* LMR_TIME_SCALING */
-
         /* Lookup reduction in the Late Move Reduction table. */
-        int reduction = 0.5f + LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)] * lmr_scale;
+        int reduction = LMR._table[std::min(depth, PLY_MAX-1)][std::min(count, 63)];
 
     #if !BLANKET_REDUCTION
         reduction += _parent->_cut_node && !_parent->is_pv_node();
@@ -1379,7 +1355,12 @@ namespace search
             reduction += !_parent->has_improved<THEM>();
             reduction -= 2 * _parent->is_counter_move(_move);
 
-            if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF && iteration() >= 13)
+            /*
+             * Root score is stable (aspiration window never widened) and the search is
+             * deep enough relative to the last one: reduce non-tactical moves one more ply.
+             */
+            if (get_tt()->_w_beta <= get_tt()->_w_alpha + 2 * WINDOW_HALF
+                && iteration() >= std::max<int>(LMR_STABLE_MIN_ITER, _lmr_stable_iter))
                 ++reduction;
         }
 

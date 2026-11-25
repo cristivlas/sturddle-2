@@ -20,11 +20,43 @@
  */
 /* Generates the attacks.h file */
 
+#include <charconv>
+#include <string_view>
 #include "hash_builder.h"
 
-int main()
+static std::optional<uint64_t> parse_seed(std::string_view arg)
 {
-    HashBuilder builder;
+    uint64_t seed = 0;
+    const auto [end, ec] = std::from_chars(arg.data(), arg.data() + arg.size(), seed);
+    if (ec != std::errc() || end != arg.data() + arg.size())
+        return std::nullopt;
+    return seed;
+}
+
+int main(int argc, char* argv[])
+{
+    std::optional<uint64_t> seed;
+
+    if (argc > 1)
+    {
+        if (argc == 3)
+        {
+            seed = parse_seed(argv[2]);
+        }
+        else if (argc == 2)
+        {
+            std::random_device rd;
+            seed = (uint64_t(rd()) << 32) | rd();
+        }
+        if (std::string_view(argv[1]) != "--search" || !seed)
+        {
+            std::cerr << "usage: " << argv[0] << " [--search [seed]]\n";
+            return -1;
+        }
+        std::cerr << "seed: " << *seed << "\n";
+    }
+
+    HashBuilder builder(seed);
 
     chess::_init();
 
