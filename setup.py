@@ -216,6 +216,8 @@ if platform.startswith('win'):
             '-Wno-unused-command-line-argument',
             '-Wno-unused-label',
             '-Wno-unused-variable',
+            '-Wno-unused-but-set-global',
+            '-Wno-unknown-warning-option',
             '-Wno-nan-infinity-disabled',
         ]
         if not environ.get('BUILD_DEBUG', None):

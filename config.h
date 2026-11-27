@@ -344,7 +344,7 @@ DECLARE_VALUE(  IMPROVEMENT_EXTENSION_DEPTH,          6,    0,      15)
 
 DECLARE_VALUE(  LATE_MOVE_REDUCTION_THRESHOLD,        4,    0,      10)
 
-DECLARE_VALUE(  LMR_STABLE_DEPTH_PCT,                70,    0,     100)
+DECLARE_VALUE(  LMR_STABLE_DEPTH_PCT,                55,    0,     100)
 DECLARE_VALUE(  LMR_STABLE_MIN_ITER,                 16,    1,      64)
 
 DECLARE_VALUE(  LMP_BASE,                             2,    2,       4)
