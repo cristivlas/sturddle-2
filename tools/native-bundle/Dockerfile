@@ -9,7 +9,6 @@ RUN apt-get update && \
     wget \
     lsb-release \
     software-properties-common \
-    gnupg \
     python3-venv && \
     wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
